@@ -413,7 +413,21 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.original_worker_repository = worker.ticket_repository
         main.ticket_repository = self.repository
         worker.ticket_repository = self.repository
-        self.client = TestClient(main.app)
+        self.test_admin = self.repository.save_workspace_account(
+            {
+                "account_id": "account-intake-test-admin",
+                "email": "account-intake-test-admin@example.com",
+                "display_name": "Account Intake Test Admin",
+                "role": "admin",
+                "password_hash": main.hash_workspace_password("account-intake-test-password"),
+                "active": True,
+            }
+        )
+        self.admin_access_token = main.create_workspace_access_token(self.test_admin)
+        self.client = TestClient(
+            main.app,
+            headers={"Authorization": f"Bearer {self.admin_access_token}"},
+        )
         # Keep API tests deterministic even when the local .env contains live routing credentials.
         self._llm_patcher = patch(
             "backend.services.support_router._llm_route_decision",
@@ -4745,7 +4759,14 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(single.status_code, 200, single.text)
         self.assertEqual(batch.status_code, 200, batch.text)
-        self.assertEqual(batch.json()["details"], [single.json()])
+        single_payload = single.json()
+        batch_payload = batch.json()["details"][0]
+        self.assertEqual(
+            {key: value for key, value in batch_payload.items() if key not in {"zendesk_comments", "zendesk_comments_included"}},
+            {key: value for key, value in single_payload.items() if key not in {"zendesk_comments", "zendesk_comments_included"}},
+        )
+        self.assertFalse(batch_payload["zendesk_comments_included"])
+        self.assertTrue(single_payload["zendesk_comments_included"])
 
     def test_account_case_revision_tracks_persona_assignment_identity(self) -> None:
         ticket_id = "TK-PERSONA-REVISION"

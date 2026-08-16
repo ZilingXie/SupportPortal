@@ -28,6 +28,10 @@ from backend.services.account_case_filters import (
     backend_operation_metadata,
     normalize_account_case_filter,
 )
+from backend.services.account_zendesk_comments import (
+    NormalizedZendeskSnapshot,
+    build_conversation_revision,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -690,6 +694,37 @@ def _account_case_detail_revision(
         sort_keys=True,
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _account_comment_sync_payload(
+    *,
+    source_updated_at: Any = None,
+    synced_at: Any = None,
+    comment_count: Any = 0,
+    comments_revision: Any = None,
+    snapshot_hash: Any = None,
+) -> dict[str, Any]:
+    return {
+        "source_updated_at": _to_iso(source_updated_at) if source_updated_at is not None else None,
+        "synced_at": _to_iso(synced_at) if synced_at is not None else None,
+        "comment_count": max(0, int(comment_count or 0)),
+        "comments_revision": str(comments_revision or "").strip() or None,
+        "snapshot_hash": str(snapshot_hash or "").strip() or None,
+    }
+
+
+def _account_comment_payload_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "zendesk_comment_id": str(row[0]),
+        "is_public": bool(row[1]),
+        "is_initial": bool(row[2]),
+        "author_id": str(row[3] or "").strip() or None,
+        "author_name": str(row[4] or "").strip() or None,
+        "author_kind": str(row[5] or "unknown").strip() or "unknown",
+        "body": str(row[6] or ""),
+        "via_channel": str(row[7] or "").strip() or None,
+        "created_at": _to_iso(row[8]),
+    }
 
 
 def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, Any]:
@@ -2087,6 +2122,22 @@ class TicketRepository(Protocol):
     ) -> dict[str, dict[str, Any]]:
         ...
 
+    def get_account_case_comment_sync(self, ticket_id: str) -> dict[str, Any] | None:
+        ...
+
+    def get_account_case_comments(self, ticket_id: str) -> list[dict[str, Any]]:
+        ...
+
+    def sync_account_case_comments(
+        self,
+        *,
+        ticket_id: str,
+        account_case_id: str,
+        snapshot: NormalizedZendeskSnapshot,
+        synced_at: str,
+    ) -> dict[str, Any]:
+        ...
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -2425,12 +2476,18 @@ class InMemoryTicketRepository:
             ticket = self.get_ticket(client_ticket_id)
             record["_route_correction"] = correction
             record["_latest_reply_job"] = latest_reply_job
+            comment_sync = self.get_account_case_comment_sync(client_ticket_id)
+            record["_zendesk_comment_sync"] = comment_sync
             record["_detail_revision"] = _account_case_detail_revision(
                 record,
                 ticket,
                 latest_reply_job,
                 correction,
                 persona_assignment=persona_assignments.get(client_ticket_id),
+            )
+            record["_conversation_revision"] = build_conversation_revision(
+                record["_detail_revision"],
+                comment_sync.get("comments_revision") if isinstance(comment_sync, dict) else None,
             )
             enriched_items.append(record)
         return enriched_items, total, filter_counts
@@ -2497,6 +2554,8 @@ class InMemoryTicketRepository:
                 "latest_reply_job": latest_reply_job,
                 "route_correction": correction,
                 "persona_assignment": persona_assignment,
+                "zendesk_comments": self.get_account_case_comments(ticket_id),
+                "zendesk_comment_sync": self.get_account_case_comment_sync(ticket_id),
                 "detail_revision": _account_case_detail_revision(
                     account_case,
                     ticket,
@@ -2505,7 +2564,112 @@ class InMemoryTicketRepository:
                     persona_assignment=persona_assignment,
                 ),
             }
+            sync_state = result[identifier].get("zendesk_comment_sync") or {}
+            result[identifier]["conversation_revision"] = build_conversation_revision(
+                result[identifier]["detail_revision"],
+                sync_state.get("comments_revision") if isinstance(sync_state, dict) else None,
+            )
         return result
+
+    def get_account_case_comment_sync(self, ticket_id: str) -> dict[str, Any] | None:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        with self._assignment_lock:
+            state = self._account_case_comment_sync.get(normalized_ticket_id)
+            return copy.deepcopy(state) if isinstance(state, dict) else None
+
+    def get_account_case_comments(self, ticket_id: str) -> list[dict[str, Any]]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        with self._assignment_lock:
+            comments = [
+                copy.deepcopy(item)
+                for item in self._account_case_comments.get(normalized_ticket_id, {}).values()
+                if isinstance(item, dict)
+            ]
+        comments.sort(
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("zendesk_comment_id") or ""),
+            )
+        )
+        return comments
+
+    def sync_account_case_comments(
+        self,
+        *,
+        ticket_id: str,
+        account_case_id: str,
+        snapshot: NormalizedZendeskSnapshot,
+        synced_at: str,
+    ) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_case_id = str(account_case_id or "").strip()
+        with self._assignment_lock:
+            account_case = self.get_account_case_by_ticket_id(normalized_ticket_id)
+            if (
+                not normalized_ticket_id
+                or not normalized_case_id
+                or not isinstance(account_case, dict)
+                or str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
+                != normalized_case_id
+            ):
+                raise KeyError(normalized_ticket_id or normalized_case_id)
+
+            current_state = self._account_case_comment_sync.get(normalized_ticket_id)
+            incoming_source = snapshot.source_updated_at
+            current_source = str((current_state or {}).get("source_updated_at") or "").strip()
+            if current_source and incoming_source < current_source:
+                return {
+                    "status": "stale_ignored",
+                    **copy.deepcopy(current_state),
+                }
+            if current_state and str(current_state.get("snapshot_hash") or "") == snapshot.snapshot_hash:
+                return {
+                    "status": "unchanged",
+                    **copy.deepcopy(current_state),
+                }
+
+            existing_ids = set(self._account_case_comments.get(normalized_ticket_id, {}))
+            incoming_ids = {comment.zendesk_comment_id for comment in snapshot.comments}
+            missing_ids = sorted(existing_ids - incoming_ids)
+            if missing_ids:
+                return {
+                    "status": "incomplete_snapshot",
+                    "missing_comment_ids": missing_ids,
+                    **(copy.deepcopy(current_state) if isinstance(current_state, dict) else {}),
+                }
+
+            comments_by_id = self._account_case_comments.setdefault(normalized_ticket_id, {})
+            for comment in snapshot.comments:
+                comments_by_id[comment.zendesk_comment_id] = {
+                    **comment.as_storage_payload(),
+                    "account_case_id": normalized_case_id,
+                    "client_ticket_id": normalized_ticket_id,
+                    "synced_at": synced_at,
+                }
+            state = {
+                "account_case_id": normalized_case_id,
+                "client_ticket_id": normalized_ticket_id,
+                "source_updated_at": snapshot.source_updated_at,
+                "snapshot_hash": snapshot.snapshot_hash,
+                "comments_revision": snapshot.comments_revision,
+                "comment_count": len(comments_by_id),
+                "synced_at": synced_at,
+            }
+            self._account_case_comment_sync[normalized_ticket_id] = state
+            self.record_workspace_audit_event(
+                "account_zendesk_comments_synced",
+                actor_id="zendesk_n8n",
+                target_id=normalized_case_id,
+                payload={
+                    "status": "synced",
+                    "client_ticket_id": normalized_ticket_id,
+                    "source_updated_at": snapshot.source_updated_at,
+                    "comment_count": len(comments_by_id),
+                    "new_comment_count": len(incoming_ids - existing_ids),
+                },
+                created_at=synced_at,
+            )
+            return {"status": "synced", **copy.deepcopy(state)}
 
     def count_account_cases(
         self,
@@ -2547,6 +2711,8 @@ class InMemoryTicketRepository:
         self._account_route_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_reply_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_reply_jobs: dict[str, dict[str, Any]] = {}
+        self._account_case_comments: dict[str, dict[str, dict[str, Any]]] = {}
+        self._account_case_comment_sync: dict[str, dict[str, Any]] = {}
         self._account_personas: dict[str, dict[str, Any]] = {}
         self._account_persona_versions: dict[str, list[dict[str, Any]]] = {}
         self._account_persona_assignments: dict[str, dict[str, Any]] = {}
@@ -5912,9 +6078,265 @@ class PostgresTicketRepository:
                         bundle.get("route_correction"),
                         persona_assignment=bundle.get("persona_assignment"),
                     )
+                ticket_ids = [
+                    str(bundle.get("account_case", {}).get("client_ticket_id") or "").strip()
+                    for bundle in result.values()
+                    if isinstance(bundle.get("account_case"), dict)
+                    and str(bundle.get("account_case", {}).get("client_ticket_id") or "").strip()
+                ]
+                comments_by_ticket: dict[str, list[dict[str, Any]]] = {}
+                sync_by_ticket: dict[str, dict[str, Any]] = {}
+                if ticket_ids:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT zendesk_comment_id, is_public, is_initial, author_id, "
+                            "author_name, author_kind, body, via_channel, created_at, client_ticket_id "
+                            "FROM {} WHERE client_ticket_id = ANY(%s::TEXT[]) "
+                            "ORDER BY created_at ASC, zendesk_comment_id ASC"
+                        ).format(self._table("support_account_case_comments")),
+                        (ticket_ids,),
+                    )
+                    for row in cur.fetchall():
+                        comments_by_ticket.setdefault(str(row[9]), []).append(
+                            _account_comment_payload_from_row(row[:9])
+                        )
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT client_ticket_id, account_case_id, source_updated_at, "
+                            "snapshot_hash, comments_revision, comment_count, synced_at "
+                            "FROM {} WHERE client_ticket_id = ANY(%s::TEXT[])"
+                        ).format(self._table("support_account_case_comment_sync_state")),
+                        (ticket_ids,),
+                    )
+                    for row in cur.fetchall():
+                        sync_by_ticket[str(row[0])] = _account_comment_sync_payload(
+                            source_updated_at=row[2],
+                            synced_at=row[6],
+                            comment_count=row[5],
+                            comments_revision=row[4],
+                            snapshot_hash=row[3],
+                        ) | {
+                            "account_case_id": str(row[1]),
+                            "client_ticket_id": str(row[0]),
+                        }
+                for bundle in result.values():
+                    account_case = bundle.get("account_case")
+                    ticket_id = str(account_case.get("client_ticket_id") or "").strip() if isinstance(account_case, dict) else ""
+                    sync_state = sync_by_ticket.get(ticket_id)
+                    bundle["zendesk_comments"] = comments_by_ticket.get(ticket_id, [])
+                    bundle["zendesk_comment_sync"] = sync_state
+                    bundle["conversation_revision"] = build_conversation_revision(
+                        bundle.get("detail_revision"),
+                        sync_state.get("comments_revision") if isinstance(sync_state, dict) else None,
+                    )
                 return result
 
         return self._run_with_connection_retry("get_account_case_details", _operation)
+
+    def get_account_case_comment_sync(self, ticket_id: str) -> dict[str, Any] | None:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        if not normalized_ticket_id:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT client_ticket_id, account_case_id, source_updated_at, "
+                        "snapshot_hash, comments_revision, comment_count, synced_at "
+                        "FROM {} WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_case_comment_sync_state")),
+                    (normalized_ticket_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return _account_comment_sync_payload(
+                    source_updated_at=row[2],
+                    synced_at=row[6],
+                    comment_count=row[5],
+                    comments_revision=row[4],
+                    snapshot_hash=row[3],
+                ) | {
+                    "client_ticket_id": str(row[0]),
+                    "account_case_id": str(row[1]),
+                }
+
+        return self._run_with_connection_retry("get_account_case_comment_sync", _operation)
+
+    def get_account_case_comments(self, ticket_id: str) -> list[dict[str, Any]]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        if not normalized_ticket_id:
+            return []
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT zendesk_comment_id, is_public, is_initial, author_id, "
+                        "author_name, author_kind, body, via_channel, created_at "
+                        "FROM {} WHERE client_ticket_id=%s "
+                        "ORDER BY created_at ASC, zendesk_comment_id ASC"
+                    ).format(self._table("support_account_case_comments")),
+                    (normalized_ticket_id,),
+                )
+                return [_account_comment_payload_from_row(row) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry("get_account_case_comments", _operation)
+
+    def sync_account_case_comments(
+        self,
+        *,
+        ticket_id: str,
+        account_case_id: str,
+        snapshot: NormalizedZendeskSnapshot,
+        synced_at: str,
+    ) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_case_id = str(account_case_id or "").strip()
+        if not normalized_ticket_id or not normalized_case_id:
+            raise ValueError("ticket_id and account_case_id are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT account_case_id FROM {} "
+                        "WHERE client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_ticket_id,),
+                )
+                case_row = cur.fetchone()
+                if case_row is None or str(case_row[0] or "").strip() != normalized_case_id:
+                    raise KeyError(normalized_ticket_id)
+
+                cur.execute(
+                    sql.SQL(
+                        "SELECT source_updated_at, snapshot_hash, comments_revision, comment_count, synced_at "
+                        "FROM {} WHERE client_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_case_comment_sync_state")),
+                    (normalized_ticket_id,),
+                )
+                existing_state_row = cur.fetchone()
+                existing_state = (
+                    _account_comment_sync_payload(
+                        source_updated_at=existing_state_row[0],
+                        synced_at=existing_state_row[4],
+                        comment_count=existing_state_row[3],
+                        comments_revision=existing_state_row[2],
+                        snapshot_hash=existing_state_row[1],
+                    )
+                    if existing_state_row is not None
+                    else None
+                )
+                if existing_state and snapshot.source_updated_at < str(existing_state.get("source_updated_at") or ""):
+                    return {"status": "stale_ignored", **existing_state}
+                if existing_state and str(existing_state.get("snapshot_hash") or "") == snapshot.snapshot_hash:
+                    return {"status": "unchanged", **existing_state}
+
+                cur.execute(
+                    sql.SQL(
+                        "SELECT zendesk_comment_id FROM {} WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_case_comments")),
+                    (normalized_ticket_id,),
+                )
+                existing_ids = {str(row[0]) for row in cur.fetchall()}
+                incoming_ids = {comment.zendesk_comment_id for comment in snapshot.comments}
+                missing_ids = sorted(existing_ids - incoming_ids)
+                if missing_ids:
+                    return {
+                        "status": "incomplete_snapshot",
+                        "missing_comment_ids": missing_ids,
+                        **(existing_state or {}),
+                    }
+
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET is_initial=FALSE WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_case_comments")),
+                    (normalized_ticket_id,),
+                )
+                comment_table = self._table("support_account_case_comments")
+                for comment in snapshot.comments:
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (account_case_id, client_ticket_id, zendesk_comment_id, "
+                            "is_public, is_initial, author_id, author_name, author_kind, body, "
+                            "via_channel, created_at, synced_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                            "ON CONFLICT (client_ticket_id, zendesk_comment_id) DO UPDATE SET "
+                            "account_case_id=EXCLUDED.account_case_id, is_public=EXCLUDED.is_public, "
+                            "is_initial=EXCLUDED.is_initial, author_id=EXCLUDED.author_id, "
+                            "author_name=EXCLUDED.author_name, author_kind=EXCLUDED.author_kind, "
+                            "body=EXCLUDED.body, via_channel=EXCLUDED.via_channel, "
+                            "created_at=EXCLUDED.created_at, synced_at=EXCLUDED.synced_at"
+                        ).format(comment_table),
+                        (
+                            normalized_case_id,
+                            normalized_ticket_id,
+                            comment.zendesk_comment_id,
+                            comment.is_public,
+                            comment.is_initial,
+                            comment.author_id,
+                            comment.author_name,
+                            comment.author_kind,
+                            comment.body,
+                            comment.via_channel,
+                            comment.created_at,
+                            synced_at,
+                        ),
+                    )
+                state_values = (
+                    normalized_ticket_id,
+                    normalized_case_id,
+                    snapshot.source_updated_at,
+                    snapshot.snapshot_hash,
+                    snapshot.comments_revision,
+                    len(snapshot.comments),
+                    synced_at,
+                )
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (client_ticket_id, account_case_id, source_updated_at, snapshot_hash, "
+                        "comments_revision, comment_count, synced_at) VALUES (%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (client_ticket_id) DO UPDATE SET account_case_id=EXCLUDED.account_case_id, "
+                        "source_updated_at=EXCLUDED.source_updated_at, snapshot_hash=EXCLUDED.snapshot_hash, "
+                        "comments_revision=EXCLUDED.comments_revision, comment_count=EXCLUDED.comment_count, "
+                        "synced_at=EXCLUDED.synced_at"
+                    ).format(self._table("support_account_case_comment_sync_state")),
+                    state_values,
+                )
+                audit_payload = {
+                    "status": "synced",
+                    "client_ticket_id": normalized_ticket_id,
+                    "source_updated_at": snapshot.source_updated_at,
+                    "comment_count": len(snapshot.comments),
+                    "new_comment_count": len(incoming_ids - existing_ids),
+                }
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (event_type, actor_id, target_id, payload, created_at) "
+                        "VALUES (%s,%s,%s,%s,%s)"
+                    ).format(self._table("support_workspace_audit_events")),
+                    (
+                        "account_zendesk_comments_synced",
+                        "zendesk_n8n",
+                        normalized_case_id,
+                        Json(audit_payload),
+                        synced_at,
+                    ),
+                )
+                return {
+                    "status": "synced",
+                    "account_case_id": normalized_case_id,
+                    "client_ticket_id": normalized_ticket_id,
+                    "source_updated_at": snapshot.source_updated_at,
+                    "snapshot_hash": snapshot.snapshot_hash,
+                    "comments_revision": snapshot.comments_revision,
+                    "comment_count": len(snapshot.comments),
+                    "synced_at": synced_at,
+                }
+
+        return self._run_with_connection_retry("sync_account_case_comments", _operation)
 
     def list_account_cases(
         self,
@@ -5977,6 +6399,7 @@ class PostgresTicketRepository:
                         ticket_row.updated_at AS _ticket_updated_at,
                         message_meta.message_count AS _message_count,
                         message_meta.latest_message_at AS _latest_message_at,
+                        TO_JSONB(comment_sync_row) AS _zendesk_comment_sync,
                         CASE
                             WHEN persona_assignment_row.ticket_id IS NULL THEN NULL
                             ELSE JSONB_BUILD_OBJECT(
@@ -6018,6 +6441,8 @@ class PostgresTicketRepository:
                     ) latest_reply ON TRUE
                     LEFT JOIN {} correction_row
                       ON correction_row.billing_ticket_id = page.billing_ticket_id
+                    LEFT JOIN {} comment_sync_row
+                      ON comment_sync_row.client_ticket_id = page.client_ticket_id
                     LEFT JOIN {} persona_assignment_row
                       ON persona_assignment_row.ticket_id = page.client_ticket_id
                     LEFT JOIN {} persona_row
@@ -6031,6 +6456,7 @@ class PostgresTicketRepository:
                     self._table("support_ticket_messages"),
                     self._table("support_account_reply_jobs"),
                     self._table("support_billing_route_corrections"),
+                    self._table("support_account_case_comment_sync_state"),
                     self._table("support_account_persona_assignments"),
                     self._table("support_account_personas"),
                 )
@@ -6057,6 +6483,24 @@ class PostgresTicketRepository:
                             persona_assignment=persona_assignment,
                             message_count=int(record.pop("_message_count", 0) or 0),
                             latest_message_at=record.pop("_latest_message_at", None),
+                        )
+                        sync_state = record.pop("_zendesk_comment_sync", None)
+                        if isinstance(sync_state, dict):
+                            record["_zendesk_comment_sync"] = _account_comment_sync_payload(
+                                source_updated_at=sync_state.get("source_updated_at"),
+                                synced_at=sync_state.get("synced_at"),
+                                comment_count=sync_state.get("comment_count"),
+                                comments_revision=sync_state.get("comments_revision"),
+                                snapshot_hash=sync_state.get("snapshot_hash"),
+                            ) | {
+                                "account_case_id": str(sync_state.get("account_case_id") or "").strip() or None,
+                                "client_ticket_id": str(sync_state.get("client_ticket_id") or "").strip() or None,
+                            }
+                        record["_conversation_revision"] = build_conversation_revision(
+                            record.get("_detail_revision"),
+                            (record.get("_zendesk_comment_sync") or {}).get("comments_revision")
+                            if isinstance(record.get("_zendesk_comment_sync"), dict)
+                            else None,
                         )
                         items.append(record)
                 return items, total
@@ -6143,6 +6587,7 @@ class PostgresTicketRepository:
                             ticket_row.updated_at AS _ticket_updated_at,
                             message_meta.message_count AS _message_count,
                             message_meta.latest_message_at AS _latest_message_at,
+                            TO_JSONB(comment_sync_row) AS _zendesk_comment_sync,
                             CASE
                                 WHEN persona_assignment_row.ticket_id IS NULL THEN NULL
                                 ELSE JSONB_BUILD_OBJECT(
@@ -6185,6 +6630,8 @@ class PostgresTicketRepository:
                         ) latest_reply ON TRUE
                         LEFT JOIN {corrections} correction_row
                           ON correction_row.billing_ticket_id = page.billing_ticket_id
+                        LEFT JOIN {comment_sync} comment_sync_row
+                          ON comment_sync_row.client_ticket_id = page.client_ticket_id
                         LEFT JOIN {persona_assignments} persona_assignment_row
                           ON persona_assignment_row.ticket_id = page.client_ticket_id
                         LEFT JOIN {personas} persona_row
@@ -6201,6 +6648,7 @@ class PostgresTicketRepository:
                         messages=self._table("support_ticket_messages"),
                         reply_jobs=self._table("support_account_reply_jobs"),
                         corrections=self._table("support_billing_route_corrections"),
+                        comment_sync=self._table("support_account_case_comment_sync_state"),
                         persona_assignments=self._table("support_account_persona_assignments"),
                         personas=self._table("support_account_personas"),
                     )
@@ -6232,6 +6680,24 @@ class PostgresTicketRepository:
                                 persona_assignment=persona_assignment,
                                 message_count=int(record.pop("_message_count", 0) or 0),
                                 latest_message_at=record.pop("_latest_message_at", None),
+                            )
+                            sync_state = record.pop("_zendesk_comment_sync", None)
+                            if isinstance(sync_state, dict):
+                                record["_zendesk_comment_sync"] = _account_comment_sync_payload(
+                                    source_updated_at=sync_state.get("source_updated_at"),
+                                    synced_at=sync_state.get("synced_at"),
+                                    comment_count=sync_state.get("comment_count"),
+                                    comments_revision=sync_state.get("comments_revision"),
+                                    snapshot_hash=sync_state.get("snapshot_hash"),
+                                ) | {
+                                    "account_case_id": str(sync_state.get("account_case_id") or "").strip() or None,
+                                    "client_ticket_id": str(sync_state.get("client_ticket_id") or "").strip() or None,
+                                }
+                            record["_conversation_revision"] = build_conversation_revision(
+                                record.get("_detail_revision"),
+                                (record.get("_zendesk_comment_sync") or {}).get("comments_revision")
+                                if isinstance(record.get("_zendesk_comment_sync"), dict)
+                                else None,
                             )
                             items.append(record)
                     return items, total, filter_counts
@@ -8003,6 +8469,59 @@ class PostgresTicketRepository:
                     sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (account_case_id)").format(
                         sql.Identifier("idx_support_account_cases_account_case_id"),
                         self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            account_case_id TEXT NOT NULL REFERENCES {}(account_case_id) ON DELETE CASCADE,
+                            client_ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            zendesk_comment_id TEXT NOT NULL,
+                            is_public BOOLEAN NOT NULL,
+                            is_initial BOOLEAN NOT NULL DEFAULT FALSE,
+                            author_id TEXT,
+                            author_name TEXT,
+                            author_kind TEXT NOT NULL DEFAULT 'unknown',
+                            body TEXT NOT NULL,
+                            via_channel TEXT,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            synced_at TIMESTAMPTZ NOT NULL,
+                            PRIMARY KEY (client_ticket_id, zendesk_comment_id)
+                        )
+                        """
+                    ).format(
+                        self._table("support_account_case_comments"),
+                        self._table("support_account_cases"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            client_ticket_id TEXT PRIMARY KEY REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            account_case_id TEXT NOT NULL UNIQUE REFERENCES {}(account_case_id) ON DELETE CASCADE,
+                            source_updated_at TIMESTAMPTZ NOT NULL,
+                            snapshot_hash TEXT NOT NULL,
+                            comments_revision TEXT NOT NULL,
+                            comment_count INTEGER NOT NULL DEFAULT 0,
+                            synced_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(
+                        self._table("support_account_case_comment_sync_state"),
+                        self._table("support_tickets"),
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} "
+                        "(account_case_id, created_at ASC, zendesk_comment_id ASC)"
+                    ).format(
+                        sql.Identifier("idx_support_account_case_comments_created"),
+                        self._table("support_account_case_comments"),
                     )
                 )
                 cur.execute(

@@ -31,6 +31,8 @@ const DETAIL_FRESH_MS = 60_000;
 const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
 const SUMMARY_CACHE_LIMIT = 20;
 const DETAIL_CACHE_LIMIT = 20;
+const ACCOUNT_ACCESS_TOKEN_KEY = "supportportal_account_workspace_access_token";
+const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
 
 const DEFAULT_FILTER_DEFINITIONS = [
   { id: "all", label: "All", children: [] },
@@ -87,6 +89,13 @@ const DEFAULT_FILTER_DEFINITIONS = [
 ];
 
 const state = {
+  authStatus: "checking",
+  authError: "",
+  loginEmail: "",
+  loginPassword: "",
+  account: null,
+  accessToken: "",
+  isLoggingIn: false,
   view: "create",
   title: "",
   question: "",
@@ -136,6 +145,7 @@ const state = {
 let composerRuntime = null;
 let isFetchingRouteErrorSummary = false;
 let replyPollTimer = null;
+let commentPollTimer = null;
 let reroutePollTimer = null;
 let summaryRequestController = null;
 let caseSearchRequestController = null;
@@ -180,6 +190,164 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function readAccountStorage(key, fallback = null) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    try {
+      return JSON.parse(raw);
+    } catch (_error) {
+      return raw;
+    }
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function writeAccountStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (_error) {
+    // Account data remains server-backed when browser storage is unavailable.
+  }
+}
+
+function removeAccountStorage(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (_error) {
+    // Ignore private-browsing storage failures.
+  }
+}
+
+function isAccountAdmin(account = state.account) {
+  return String(account?.role || "").trim().toLowerCase() === "admin";
+}
+
+function clearAccountSession() {
+  state.account = null;
+  state.accessToken = "";
+  state.authStatus = "login";
+  state.authError = "";
+  removeAccountStorage(ACCOUNT_ACCESS_TOKEN_KEY);
+  removeAccountStorage(ACCOUNT_ACCOUNT_KEY);
+}
+
+function accountRequestHeaders(options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (state.accessToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${state.accessToken}`);
+  }
+  return headers;
+}
+
+async function accountFetch(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: accountRequestHeaders(options) });
+  if (response.status === 401 && state.authStatus === "ready") {
+    clearAccountSession();
+    render();
+  }
+  return response;
+}
+
+async function handleAccountLogin(event) {
+  event?.preventDefault?.();
+  const form = event?.currentTarget;
+  const formData = new FormData(form);
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "");
+  if (!email || !password) {
+    state.authError = "Email and password are required.";
+    render();
+    return;
+  }
+  state.isLoggingIn = true;
+  state.authError = "";
+  render();
+  try {
+    const response = await fetch("/api/workspace/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Invalid email or password."));
+    }
+    const account = payload?.account;
+    const accessToken = String(payload?.access_token || "").trim();
+    if (!account || !accessToken) throw new Error("Workspace login returned an invalid session.");
+    state.account = account;
+    state.accessToken = accessToken;
+    state.loginEmail = email;
+    state.loginPassword = "";
+    writeAccountStorage(ACCOUNT_ACCESS_TOKEN_KEY, accessToken);
+    writeAccountStorage(ACCOUNT_ACCOUNT_KEY, account);
+    if (!isAccountAdmin(account)) {
+      state.authStatus = "forbidden";
+      render();
+      return;
+    }
+    state.authStatus = "ready";
+    await loadAccountWorkspace();
+  } catch (error) {
+    state.authError = error instanceof Error ? error.message : "Account login failed.";
+  } finally {
+    state.isLoggingIn = false;
+    render();
+  }
+}
+
+function signOutAccount() {
+  summaryRequestController?.abort();
+  caseSearchRequestController?.abort();
+  detailRequestControllers.forEach((controller) => controller.abort());
+  clearAccountSession();
+  state.history = [];
+  state.activeItem = null;
+  state.view = "create";
+  render();
+}
+
+async function loadAccountWorkspace() {
+  state.authStatus = "ready";
+  await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
+  render();
+}
+
+async function initializeAccountAuth() {
+  const storedToken = String(readAccountStorage(ACCOUNT_ACCESS_TOKEN_KEY, "") || "").trim();
+  const storedAccount = readAccountStorage(ACCOUNT_ACCOUNT_KEY, null);
+  if (!storedToken) {
+    state.authStatus = "login";
+    render();
+    return;
+  }
+  state.accessToken = storedToken;
+  state.account = storedAccount;
+  try {
+    const response = await fetch("/api/workspace/me", {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${storedToken}` },
+    });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) throw new Error(responseErrorMessage(payload, "Workspace session expired."));
+    state.account = payload?.account || storedAccount;
+    writeAccountStorage(ACCOUNT_ACCOUNT_KEY, state.account);
+    if (!isAccountAdmin(state.account)) {
+      state.authStatus = "forbidden";
+      render();
+      return;
+    }
+    state.authStatus = "ready";
+    await loadAccountWorkspace();
+  } catch (error) {
+    clearAccountSession();
+    state.authError = error instanceof Error ? error.message : "Workspace session expired.";
+    render();
+  }
 }
 
 function statusLabel(status) {
@@ -379,6 +547,37 @@ function updateReplyPolling() {
   }, 12000);
 }
 
+function updateCommentPolling() {
+  if (commentPollTimer) {
+    window.clearTimeout(commentPollTimer);
+    commentPollTimer = null;
+  }
+  const item = state.activeItem;
+  if (state.authStatus !== "ready" || state.view !== "detail" || !item) return;
+  commentPollTimer = window.setTimeout(async () => {
+    if (document.hidden || state.view !== "detail" || !state.activeItem) {
+      updateCommentPolling();
+      return;
+    }
+    const ticketId = accountCaseIdentifier(state.activeItem);
+    const previousRevision = String(state.activeItem.conversation_revision || "");
+    const detail = ticketId
+      ? await fetchTicketDetail(ticketId, { force: true, requireZendeskComments: true })
+      : null;
+    if (
+      detail
+      && state.view === "detail"
+      && accountCaseIdentifier(state.activeItem) === ticketId
+      && String(detail.conversation_revision || "") !== previousRevision
+    ) {
+      state.activeItem = detail;
+      render();
+      return;
+    }
+    updateCommentPolling();
+  }, 20000);
+}
+
 function accountCaseIdentifier(item) {
   return String(item?.account_case_id || item?.billing_ticket_id || item?.ticket_id || item?.client_ticket_id || "").trim();
 }
@@ -551,7 +750,7 @@ function prefetchTicketDetails(items) {
 
   const controller = new AbortController();
   detailRequestControllers.add(controller);
-  const batchPromise = fetch("/api/account/cases/batch-details", {
+  const batchPromise = accountFetch("/api/account/cases/batch-details", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ case_ids: caseIds }),
@@ -618,7 +817,7 @@ async function fetchTickets({ force = false, renderOnUpdate = false } = {}) {
   }
 
   try {
-    const response = await fetch(buildTicketListUrl(), { cache: "no-store", signal: controller.signal });
+    const response = await accountFetch(buildTicketListUrl(), { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error("Could not load Account Cases.");
     const data = await response.json();
     if (generation !== summaryRequestGeneration || cacheKey !== currentSummaryKey()) return;
@@ -705,7 +904,7 @@ async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {})
   if (!normalizedJobId) return fetchLatestRerouteJob({ refreshCasesOnCompletion });
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, {
+    const response = await accountFetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`, {
       cache: "no-store",
     });
     const payload = await readResponsePayload(response);
@@ -733,7 +932,7 @@ async function fetchRerouteJob(jobId, { refreshCasesOnCompletion = false } = {})
 async function fetchLatestRerouteJob({ refreshCasesOnCompletion = false } = {}) {
   const wasActive = isActiveRerouteJob();
   try {
-    const response = await fetch("/api/account/rerun-jobs/latest");
+    const response = await accountFetch("/api/account/rerun-jobs/latest");
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       throw new Error(responseErrorMessage(payload, "Could not load rerun status."));
@@ -775,7 +974,7 @@ async function startFullReroute() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch("/api/account/rerun-jobs", { method: "POST" });
+    const response = await accountFetch("/api/account/rerun-jobs", { method: "POST" });
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       if (response.status === 409) {
@@ -808,7 +1007,7 @@ async function resumeRerouteJob() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, {
+    const response = await accountFetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}/resume`, {
       method: "POST",
       cache: "no-store",
     });
@@ -840,7 +1039,7 @@ async function startSingleCaseRerun() {
   state.rerouteError = "";
   render();
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`, {
       method: "POST",
       cache: "no-store",
       headers: { "Idempotency-Key": snapshot.idempotencyKey },
@@ -872,18 +1071,23 @@ async function startSingleCaseRerun() {
   }
 }
 
-async function fetchTicketDetail(ticketId, { force = false } = {}) {
+async function fetchTicketDetail(ticketId, { force = false, requireZendeskComments = false } = {}) {
   const summary = state.history.find((item) => accountCaseAliases(item).has(String(ticketId))) || null;
   const expectedRevision = String(summary?.detail_revision || "");
   const cached = !force ? findDetailCacheEntry(ticketId, expectedRevision) : null;
-  if (cached && Date.now() - cached.cachedAt < DETAIL_FRESH_MS) return cached.data;
+  const cacheHasComments = cached?.data?.zendesk_comments_included !== false;
+  if (
+    cached
+    && Date.now() - cached.cachedAt < DETAIL_FRESH_MS
+    && (!requireZendeskComments || cacheHasComments)
+  ) return cached.data;
   if (!force && detailInflight.has(ticketId)) return detailInflight.get(ticketId);
 
   const controller = new AbortController();
   detailRequestControllers.add(controller);
   const request = (async () => {
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, {
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(ticketId)}`, {
       cache: "no-store",
       signal: controller.signal,
     });
@@ -920,7 +1124,7 @@ async function searchCaseByNumber(event) {
   state.caseSearchError = "";
   render();
   try {
-    const response = await fetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, {
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(ticketNumber)}`, {
       cache: "no-store",
       signal: controller.signal,
     });
@@ -956,7 +1160,7 @@ async function fetchRouteErrorSummary() {
   if (isFetchingRouteErrorSummary) return;
   isFetchingRouteErrorSummary = true;
   try {
-    const response = await fetch("/api/account/route-errors/summary?limit=100");
+    const response = await accountFetch("/api/account/route-errors/summary?limit=100");
     if (!response.ok) return;
     state.routeErrorSummary = await response.json();
   } catch {
@@ -998,7 +1202,10 @@ async function openTicket(ticketId) {
   render();
 
   if (cached && Date.now() - cached.cachedAt < DETAIL_FRESH_MS) return;
-  const detail = await fetchTicketDetail(ticketId, { force: Boolean(cached) });
+  const detail = await fetchTicketDetail(ticketId, {
+    force: Boolean(cached),
+    requireZendeskComments: true,
+  });
   if (generation !== detailOpenGeneration) return;
   if (!detail) {
     state.detailLoading = false;
@@ -1043,7 +1250,7 @@ async function submitAccountIntake(event) {
   render();
 
   try {
-    const response = await fetch("/account", {
+    const response = await accountFetch("/account", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1340,29 +1547,74 @@ function renderMessageThread() {
   const item = state.activeItem;
   if (!item) return "";
   const messages = Array.isArray(item.messages) ? item.messages : [];
-  if (!messages.length) return "";
+  const zendeskComments = item.zendesk_comments_included === false
+    ? []
+    : (Array.isArray(item.zendesk_comments) ? item.zendesk_comments : []);
+  if (!messages.length && !zendeskComments.length) {
+    if (!item.zendesk_comment_sync) return "";
+    return `
+      <div class="message-thread">
+        <div class="detail-section-title">Conversation</div>
+        <p class="conversation-empty">No conversation messages have been stored yet.</p>
+      </div>
+    `;
+  }
+
+  const renderMessage = (msg) => {
+    const role = String(msg.role || "").toLowerCase();
+    const content = String(msg.content || "");
+    const isCustomer = role === "customer" || role === "user";
+    const isAi = role === "assistant" || role === "ai";
+    const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
+    const rowClass = isCustomer ? "msg-row--customer" : "msg-row--assistant";
+    const label = isCustomer ? "CUSTOMER REQUEST" : isAi ? "AI REPLY" : "SUPPORT NOTE";
+    const timestamp = formatMessageTimestamp(msg.created_at);
+    return `
+      <div class="msg-row ${rowClass}">
+        <div class="msg-bubble ${bubbleClass}">
+          <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
+          <div class="msg-content">${renderMarkdownMessage(content)}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderZendeskComment = (comment) => {
+    const isPublic = comment?.is_public !== false;
+    const authorKind = String(comment?.author_kind || "unknown").toLowerCase();
+    const isCustomer = authorKind === "customer";
+    const kindLabel = isPublic
+      ? (isCustomer ? "CUSTOMER · PUBLIC" : "AGENT · PUBLIC")
+      : "INTERNAL NOTE";
+    const bubbleClass = !isPublic
+      ? "msg-bubble--internal"
+      : isCustomer
+        ? "msg-bubble--zendesk-customer"
+        : "msg-bubble--zendesk-agent";
+    const rowClass = !isPublic || !isCustomer ? "msg-row--assistant" : "msg-row--customer";
+    const authorName = String(comment?.author_name || "").trim();
+    const authorMeta = authorName ? ` · ${escapeHtml(authorName)}` : "";
+    const timestamp = formatMessageTimestamp(comment?.created_at);
+    return `
+      <div class="msg-row ${rowClass} msg-row--zendesk ${!isPublic ? "msg-row--internal" : ""}">
+        <div class="msg-bubble ${bubbleClass}">
+          <div class="msg-header">
+            <span class="msg-label">${!isPublic ? '<span class="material-symbols-outlined msg-lock" aria-hidden="true">lock</span>' : ""}${escapeHtml(kindLabel)}${authorMeta}</span>
+            <time datetime="${escapeHtml(comment?.created_at || "")}">${escapeHtml(timestamp)}</time>
+          </div>
+          <div class="msg-content">${renderMarkdownMessage(comment?.body || "")}</div>
+        </div>
+      </div>
+    `;
+  };
 
   return `
     <div class="message-thread">
       <div class="detail-section-title">Conversation</div>
-      ${messages
-        .map((msg) => {
-          const role = String(msg.role || "").toLowerCase();
-          const content = String(msg.content || "");
-          const isCustomer = role === "customer" || role === "user";
-          const bubbleClass = isCustomer ? "msg-bubble--customer" : "msg-bubble--assistant";
-          const label = isCustomer ? "Customer" : "AI";
-          const timestamp = formatMessageTimestamp(msg.created_at);
-          return `
-        <div class="msg-row ${isCustomer ? "msg-row--customer" : "msg-row--assistant"}">
-          <div class="msg-bubble ${bubbleClass}">
-            <div class="msg-header"><span class="msg-label">${escapeHtml(label)}</span><time datetime="${escapeHtml(msg.created_at || "")}">${escapeHtml(timestamp)}</time></div>
-            <div class="msg-content">${renderMarkdownMessage(content)}</div>
-          </div>
-        </div>
-      `;
-        })
-        .join("")}
+      ${messages.map(renderMessage).join("")}
+      ${zendeskComments.length
+        ? `<div class="zendesk-comments-divider"><span class="material-symbols-outlined" aria-hidden="true">forum</span><span>Zendesk comments</span><span class="zendesk-comments-count">${zendeskComments.length}</span></div>${zendeskComments.map(renderZendeskComment).join("")}`
+        : ""}
       ${renderAiReplyState(item)}
     </div>
   `;
@@ -1687,6 +1939,9 @@ function renderDetailView() {
               .join("")}</ul></div>`
           : ""
       }
+      ${item.zendesk_comment_sync
+        ? `<div class="zendesk-sync-meta" role="status"><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>Zendesk snapshot synced: ${escapeHtml(item.zendesk_comment_sync.comment_count ?? 0)} comments</span><time datetime="${escapeHtml(item.zendesk_comment_sync.synced_at || "")}">${escapeHtml(formatMessageTimestamp(item.zendesk_comment_sync.synced_at))}</time></div>`
+        : ""}
       ${renderMessageThread()}
       ${renderReplyComposer()}
     </div>
@@ -1718,7 +1973,7 @@ async function submitRouteCorrection() {
           execution_action: state.correctionAction,
           corrector: "operator",
         };
-    const response = await fetch(`/api/account/cases/${billingTicketId}/route-correction`, {
+    const response = await accountFetch(`/api/account/cases/${billingTicketId}/route-correction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(correctionPayload),
@@ -1754,7 +2009,7 @@ async function submitRouteReview(reviewStatus) {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/cases/${billingTicketId}/route-review`, {
+    const response = await accountFetch(`/api/account/cases/${billingTicketId}/route-review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1796,7 +2051,7 @@ async function submitReply() {
 
   try {
     const billingTicketId = item.account_case_id || item.billing_ticket_id || item.ticket_id || "";
-    const response = await fetch(`/api/account/cases/${billingTicketId}/reply`, {
+    const response = await accountFetch(`/api/account/cases/${billingTicketId}/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
@@ -1935,7 +2190,56 @@ function renderRerouteConfirmation() {
   `;
 }
 
+function renderAccountAuthGate() {
+  if (state.authStatus === "checking") {
+    return `
+      <main class="account-auth-shell">
+        <section class="account-auth-card" role="status" aria-live="polite">
+          <div class="brand-mark"><span class="material-symbols-outlined">support_agent</span></div>
+          <p class="eyebrow">Account intake</p>
+          <h1>Checking workspace access</h1>
+          <p class="account-auth-copy">Verifying your Support Portal session...</p>
+        </section>
+      </main>
+    `;
+  }
+  if (state.authStatus === "forbidden") {
+    return `
+      <main class="account-auth-shell">
+        <section class="account-auth-card" role="alert">
+          <div class="brand-mark brand-mark--warning"><span class="material-symbols-outlined">lock</span></div>
+          <p class="eyebrow">Account intake</p>
+          <h1>Admin access required</h1>
+          <p class="account-auth-copy">This workspace is limited to Support Portal administrators. Engineer accounts cannot open Account Cases.</p>
+          <button class="primary-button" type="button" data-action="account-sign-out"><span class="material-symbols-outlined">logout</span>Sign out</button>
+        </section>
+      </main>
+    `;
+  }
+  return `
+    <main class="account-auth-shell">
+      <section class="account-auth-card">
+        <div class="brand-mark"><span class="material-symbols-outlined">support_agent</span></div>
+        <p class="eyebrow">Support Portal · Account intake</p>
+        <h1>Sign in to Account Cases</h1>
+        <p class="account-auth-copy">Admin workspace access is required to view case conversations, Zendesk comments, and rerun controls.</p>
+        <form class="account-login-form" data-account-login-form>
+          <label class="field"><span class="field-label">Workspace email</span><input class="input" type="email" name="email" autocomplete="username" value="${escapeHtml(state.loginEmail)}" required /></label>
+          <label class="field"><span class="field-label">Password</span><input class="input" type="password" name="password" autocomplete="current-password" required /></label>
+          <button class="primary-button" type="submit" ${state.isLoggingIn ? "disabled" : ""}><span class="material-symbols-outlined">login</span>${state.isLoggingIn ? "Signing in..." : "Sign in"}</button>
+        </form>
+        ${state.authError ? `<div class="error-banner" role="alert"><span class="material-symbols-outlined">error</span>${escapeHtml(state.authError)}</div>` : ""}
+      </section>
+    </main>
+  `;
+}
+
 function render() {
+  if (state.authStatus !== "ready") {
+    appRoot.innerHTML = renderAccountAuthGate();
+    bind();
+    return;
+  }
   appRoot.innerHTML = `
     <main class="account-shell">
       <aside class="side-panel">
@@ -1961,6 +2265,11 @@ function render() {
             Rerun
           </button>
         </div>
+        <div class="account-session">
+          <span class="material-symbols-outlined" aria-hidden="true">verified_user</span>
+          <span><strong>${escapeHtml(state.account?.display_name || state.account?.email || "Admin")}</strong><small>Admin workspace</small></span>
+          <button class="icon-button" type="button" data-action="account-sign-out" aria-label="Sign out"><span class="material-symbols-outlined">logout</span></button>
+        </div>
         ${renderRerouteStatus()}
         <div class="history-stack" id="history-list">
           ${renderHistorySidebar()}
@@ -1985,12 +2294,14 @@ function render() {
   `;
   bind();
   updateReplyPolling();
+  updateCommentPolling();
   updateReroutePolling();
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) {
+  if (!document.hidden && state.authStatus === "ready") {
     updateReplyPolling();
+    updateCommentPolling();
     void fetchTickets({ force: true, renderOnUpdate: true });
     if (state.view === "detail" && state.activeItem) {
       const ticketId = accountCaseIdentifier(state.activeItem);
@@ -2023,6 +2334,7 @@ window.addEventListener("pagehide", () => {
   summaryRequestController?.abort();
   caseSearchRequestController?.abort();
   detailRequestControllers.forEach((controller) => controller.abort());
+  if (commentPollTimer) window.clearTimeout(commentPollTimer);
   summaryCache.clear();
   detailCache.clear();
   detailInflight.clear();
@@ -2037,6 +2349,12 @@ document.addEventListener("keydown", (event) => {
 });
 
 function bind() {
+  const loginForm = document.querySelector("[data-account-login-form]");
+  if (loginForm) loginForm.addEventListener("submit", handleAccountLogin);
+  document.querySelectorAll("[data-action='account-sign-out']").forEach((el) => {
+    el.addEventListener("click", signOutAccount);
+  });
+  if (state.authStatus !== "ready") return;
   const caseSearchForm = document.querySelector("[data-case-search-form]");
   if (caseSearchForm) caseSearchForm.addEventListener("submit", searchCaseByNumber);
   const caseSearchInput = document.querySelector("[data-case-search-input]");
@@ -2175,7 +2493,5 @@ function bind() {
 renderSharedComposerFormattingToolbarButtons(state.composerToolbarState);
 serializeRichComposerHtmlToMarkdown("");
 void composerRuntime;
-(async () => {
-  await Promise.all([fetchTickets(), fetchLatestRerouteJob()]);
-  render();
-})();
+render();
+void initializeAccountAuth();

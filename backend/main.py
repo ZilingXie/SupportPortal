@@ -4,6 +4,7 @@ import asyncio
 import contextvars
 import copy
 import hashlib
+import hmac
 import importlib.util
 import json
 import logging
@@ -189,6 +190,11 @@ from backend.services.account_route_pipeline import (
 )
 from backend.services.account_ai_execution import AccountProcessingFailure, AccountRerunDegradedError
 from backend.services.account_failure_alerts import notify_account_failure
+from backend.services.account_zendesk_comments import (
+    ZendeskCommentSnapshotError,
+    build_conversation_revision,
+    normalize_snapshot,
+)
 from backend.services.account_case_filters import (
     account_case_filter_definitions,
     normalize_account_case_filter,
@@ -1053,6 +1059,12 @@ class AccountCaseBatchDetailRequest(BaseModel):
     case_ids: list[str] = Field(min_length=1, max_length=10)
 
 
+class ZendeskCommentSnapshotRequest(BaseModel):
+    source_updated_at: str = Field(min_length=1, max_length=64)
+    snapshot_complete: bool
+    comments: list[dict[str, Any]] = Field(max_length=10_000)
+
+
 class AssetUploadIntentRequest(BaseModel):
     ticket_id: str = Field(min_length=1, max_length=128)
     customer_id: str = Field(min_length=1, max_length=128)
@@ -1409,6 +1421,20 @@ def require_workspace_admin(
     if principal.role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     return principal
+
+
+def require_zendesk_account_sync_token(
+    sync_token: str | None = Header(default=None, alias="X-Zendesk-Account-Sync-Token"),
+    authorization: str | None = Header(default=None),
+) -> None:
+    expected = str(os.getenv("ZENDESK_ACCOUNT_SYNC_TOKEN") or "").strip()
+    supplied = str(sync_token or "").strip()
+    if not supplied:
+        supplied = _authorization_bearer_token(authorization)
+    if not expected:
+        raise HTTPException(status_code=503, detail="Zendesk Account sync is not configured")
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Zendesk Account sync authentication required")
 
 
 def _bootstrap_workspace_admin() -> None:
@@ -4076,10 +4102,31 @@ def _build_account_case_summary(ticket: dict[str, Any]) -> dict[str, Any]:
             else None
         )
     )
+    sync_state = ticket.get("_zendesk_comment_sync")
+    if isinstance(sync_state, dict):
+        summary["zendesk_comment_sync"] = {
+            key: copy.deepcopy(sync_state.get(key))
+            for key in (
+                "source_updated_at",
+                "synced_at",
+                "comment_count",
+                "comments_revision",
+            )
+        }
+    else:
+        summary["zendesk_comment_sync"] = None
+    summary["conversation_revision"] = str(
+        ticket.get("_conversation_revision")
+        or build_conversation_revision(summary.get("detail_revision"), None)
+    )
     return summary
 
 
-def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
+def _build_account_case_detail(
+    bundle: dict[str, Any],
+    *,
+    include_zendesk_comments: bool = True,
+) -> dict[str, Any]:
     account_case = bundle.get("account_case")
     if not isinstance(account_case, dict):
         raise ValueError("account case detail bundle is missing account_case")
@@ -4128,6 +4175,27 @@ def _build_account_case_detail(bundle: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     view_model["detail_revision"] = str(bundle.get("detail_revision") or "")
+    view_model["conversation_revision"] = str(bundle.get("conversation_revision") or "")
+    sync_state = bundle.get("zendesk_comment_sync")
+    view_model["zendesk_comment_sync"] = (
+        {
+            key: copy.deepcopy(sync_state.get(key))
+            for key in (
+                "source_updated_at",
+                "synced_at",
+                "comment_count",
+                "comments_revision",
+            )
+        }
+        if isinstance(sync_state, dict)
+        else None
+    )
+    view_model["zendesk_comments_included"] = bool(include_zendesk_comments)
+    view_model["zendesk_comments"] = (
+        copy.deepcopy(bundle.get("zendesk_comments") or [])
+        if include_zendesk_comments
+        else []
+    )
     return {**account_case, **view_model}
 
 
@@ -5066,8 +5134,107 @@ async def submit_billing_response(request: BillingResponseSubmitRequest) -> dict
     }
 
 
-@app.get("/api/account/cases")
-@app.get("/api/account/billing-tickets", deprecated=True)
+def _normalize_zendesk_comment_sync_ticket_id(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or not re.fullmatch(r"\d{1,128}", normalized):
+        raise HTTPException(status_code=422, detail="Zendesk ticket id must be numeric")
+    return normalized
+
+
+@app.get(
+    "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comment-sync-target",
+    dependencies=[Depends(require_zendesk_account_sync_token)],
+)
+async def get_zendesk_account_comment_sync_target(zendesk_ticket_id: str) -> dict[str, Any]:
+    normalized_ticket_id = _normalize_zendesk_comment_sync_ticket_id(zendesk_ticket_id)
+    account_case = await async_to_thread(
+        ticket_repository.get_account_case_by_ticket_id,
+        normalized_ticket_id,
+    )
+    if not isinstance(account_case, dict):
+        return {
+            "is_account_case": False,
+            "zendesk_ticket_id": normalized_ticket_id,
+        }
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    return {
+        "is_account_case": bool(account_case_id),
+        "zendesk_ticket_id": normalized_ticket_id,
+        "account_case_id": account_case_id or None,
+        "comments_endpoint": (
+            f"/api/integrations/zendesk/account-cases/{normalized_ticket_id}/comments"
+            if account_case_id
+            else None
+        ),
+    }
+
+
+@app.put(
+    "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comments",
+    dependencies=[Depends(require_zendesk_account_sync_token)],
+)
+async def sync_zendesk_account_comments(
+    zendesk_ticket_id: str,
+    request: ZendeskCommentSnapshotRequest,
+) -> dict[str, Any]:
+    normalized_ticket_id = _normalize_zendesk_comment_sync_ticket_id(zendesk_ticket_id)
+    try:
+        snapshot = normalize_snapshot(request.model_dump())
+    except ZendeskCommentSnapshotError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    account_case = await async_to_thread(
+        ticket_repository.get_account_case_by_ticket_id,
+        normalized_ticket_id,
+    )
+    if not isinstance(account_case, dict):
+        raise HTTPException(status_code=404, detail="Account Case not found")
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    if not account_case_id:
+        raise HTTPException(status_code=409, detail="Account Case has no canonical id")
+
+    result = await async_to_thread(
+        ticket_repository.sync_account_case_comments,
+        ticket_id=normalized_ticket_id,
+        account_case_id=account_case_id,
+        snapshot=snapshot,
+        synced_at=now_iso(),
+    )
+    status = str(result.get("status") or "").strip().lower()
+    if status == "incomplete_snapshot":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "incomplete_snapshot",
+                "message": "Zendesk snapshot omitted comments already stored in Account.",
+                "missing_comment_ids": list(result.get("missing_comment_ids") or []),
+            },
+        )
+    return {
+        "status": status or "synced",
+        "is_account_case": True,
+        "zendesk_ticket_id": normalized_ticket_id,
+        "account_case_id": account_case_id,
+        "comment_count": int(result.get("comment_count") or 0),
+        "source_updated_at": result.get("source_updated_at"),
+        "synced_at": result.get("synced_at"),
+        "comments_revision": result.get("comments_revision"),
+    }
+
+
+@app.get("/api/account/cases", dependencies=[Depends(require_workspace_admin)])
+@app.get(
+    "/api/account/billing-tickets",
+    deprecated=True,
+    dependencies=[Depends(require_workspace_admin)],
+)
 def list_billing_tickets(
     limit: int = 30,
     page: int = 1,
@@ -6838,8 +7005,17 @@ async def _run_account_full_reroute_job(
         )
 
 
-@app.post("/api/account/rerun-jobs", status_code=202)
-@app.post("/api/account/reroute-jobs", status_code=202, include_in_schema=False)
+@app.post(
+    "/api/account/rerun-jobs",
+    status_code=202,
+    dependencies=[Depends(require_workspace_admin)],
+)
+@app.post(
+    "/api/account/reroute-jobs",
+    status_code=202,
+    include_in_schema=False,
+    dependencies=[Depends(require_workspace_admin)],
+)
 async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> dict[str, Any]:
     try:
         return await _enqueue_account_rerun_job(background_tasks)
@@ -6847,12 +7023,17 @@ async def create_account_full_rerun_job(background_tasks: BackgroundTasks) -> di
         raise _account_rerun_storage_http_exception(exc) from exc
 
 
-@app.post("/api/account/cases/{account_case_id}/rerun", status_code=202)
+@app.post(
+    "/api/account/cases/{account_case_id}/rerun",
+    status_code=202,
+    dependencies=[Depends(require_workspace_admin)],
+)
 @app.post(
     "/api/account/billing-tickets/{account_case_id}/rerun",
     status_code=202,
     deprecated=True,
     include_in_schema=False,
+    dependencies=[Depends(require_workspace_admin)],
 )
 async def create_account_case_rerun_job(
     account_case_id: str,
@@ -6885,14 +7066,22 @@ async def create_account_case_rerun_job(
         raise _account_rerun_storage_http_exception(exc) from exc
 
 
-@app.get("/api/account/rerun-jobs/latest")
-@app.get("/api/account/reroute-jobs/latest", include_in_schema=False)
+@app.get("/api/account/rerun-jobs/latest", dependencies=[Depends(require_workspace_admin)])
+@app.get(
+    "/api/account/reroute-jobs/latest",
+    include_in_schema=False,
+    dependencies=[Depends(require_workspace_admin)],
+)
 def get_latest_account_rerun_job() -> dict[str, Any]:
     return next(iter(_account_full_reroute_jobs(limit=1)), {"status": "not_started"})
 
 
-@app.get("/api/account/rerun-jobs/{job_id}")
-@app.get("/api/account/reroute-jobs/{job_id}", include_in_schema=False)
+@app.get("/api/account/rerun-jobs/{job_id}", dependencies=[Depends(require_workspace_admin)])
+@app.get(
+    "/api/account/reroute-jobs/{job_id}",
+    include_in_schema=False,
+    dependencies=[Depends(require_workspace_admin)],
+)
 def get_account_rerun_job(job_id: str) -> dict[str, Any]:
     job = _account_full_reroute_job(job_id)
     if job is None:
@@ -6900,8 +7089,17 @@ def get_account_rerun_job(job_id: str) -> dict[str, Any]:
     return job
 
 
-@app.post("/api/account/rerun-jobs/{job_id}/resume", status_code=202)
-@app.post("/api/account/reroute-jobs/{job_id}/resume", status_code=202, include_in_schema=False)
+@app.post(
+    "/api/account/rerun-jobs/{job_id}/resume",
+    status_code=202,
+    dependencies=[Depends(require_workspace_admin)],
+)
+@app.post(
+    "/api/account/reroute-jobs/{job_id}/resume",
+    status_code=202,
+    include_in_schema=False,
+    dependencies=[Depends(require_workspace_admin)],
+)
 async def resume_account_rerun_job(job_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
     try:
         return await _resume_account_rerun_job(background_tasks, str(job_id or "").strip())
@@ -6911,8 +7109,12 @@ async def resume_account_rerun_job(job_id: str, background_tasks: BackgroundTask
         raise _account_rerun_storage_http_exception(exc) from exc
 
 
-@app.get("/api/account/cases/{billing_ticket_id}")
-@app.get("/api/account/billing-tickets/{billing_ticket_id}", deprecated=True)
+@app.get("/api/account/cases/{billing_ticket_id}", dependencies=[Depends(require_workspace_admin)])
+@app.get(
+    "/api/account/billing-tickets/{billing_ticket_id}",
+    deprecated=True,
+    dependencies=[Depends(require_workspace_admin)],
+)
 def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     details = ticket_repository.get_account_case_details([billing_ticket_id])
     bundle = details.get(str(billing_ticket_id).strip())
@@ -6921,7 +7123,7 @@ def get_billing_ticket(billing_ticket_id: str) -> dict[str, Any]:
     return _build_account_case_detail(bundle)
 
 
-@app.post("/api/account/cases/batch-details")
+@app.post("/api/account/cases/batch-details", dependencies=[Depends(require_workspace_admin)])
 def get_account_case_batch_details(request: AccountCaseBatchDetailRequest) -> dict[str, Any]:
     if any(len(str(case_id or "").strip()) > 128 for case_id in request.case_ids):
         raise HTTPException(status_code=422, detail="account case ids must not exceed 128 characters")
@@ -6936,13 +7138,14 @@ def get_account_case_batch_details(request: AccountCaseBatchDetailRequest) -> di
         raise HTTPException(status_code=422, detail="at least one account case id is required")
     bundles = ticket_repository.get_account_case_details(case_ids)
     details = [
-        _build_account_case_detail(bundles[case_id])
+        _build_account_case_detail(bundles[case_id], include_zendesk_comments=False)
         for case_id in case_ids
         if case_id in bundles
     ]
     return {
         "details": details,
         "missing_case_ids": [case_id for case_id in case_ids if case_id not in bundles],
+        "zendesk_comments_included": False,
     }
 
 
@@ -6966,8 +7169,15 @@ def _original_route_tuple_from_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/route-correction")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-correction", deprecated=True)
+@app.post(
+    "/api/account/cases/{billing_ticket_id}/route-correction",
+    dependencies=[Depends(require_workspace_admin)],
+)
+@app.post(
+    "/api/account/billing-tickets/{billing_ticket_id}/route-correction",
+    deprecated=True,
+    dependencies=[Depends(require_workspace_admin)],
+)
 async def correct_billing_ticket_route(
     billing_ticket_id: str,
     request: BillingRouteCorrectionRequest,
@@ -7121,8 +7331,15 @@ async def correct_billing_ticket_route(
     }
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/route-review")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/route-review", deprecated=True)
+@app.post(
+    "/api/account/cases/{billing_ticket_id}/route-review",
+    dependencies=[Depends(require_workspace_admin)],
+)
+@app.post(
+    "/api/account/billing-tickets/{billing_ticket_id}/route-review",
+    deprecated=True,
+    dependencies=[Depends(require_workspace_admin)],
+)
 async def review_billing_ticket_route(
     billing_ticket_id: str,
     request: BillingRouteReviewRequest,
@@ -7174,7 +7391,7 @@ async def review_billing_ticket_route(
     }
 
 
-@app.get("/api/account/route-errors/summary")
+@app.get("/api/account/route-errors/summary", dependencies=[Depends(require_workspace_admin)])
 def get_account_route_error_summary(limit: int = 100) -> dict[str, Any]:
     safe_limit = max(1, min(limit, 500))
     tickets = ticket_repository.list_account_cases(limit=safe_limit)
@@ -7998,8 +8215,15 @@ async def _reply_to_billing_ticket_impl(
     }
 
 
-@app.post("/api/account/cases/{billing_ticket_id}/reply")
-@app.post("/api/account/billing-tickets/{billing_ticket_id}/reply", deprecated=True)
+@app.post(
+    "/api/account/cases/{billing_ticket_id}/reply",
+    dependencies=[Depends(require_workspace_admin)],
+)
+@app.post(
+    "/api/account/billing-tickets/{billing_ticket_id}/reply",
+    deprecated=True,
+    dependencies=[Depends(require_workspace_admin)],
+)
 async def reply_to_billing_ticket(
     billing_ticket_id: str,
     request: BillingReplyRequest,

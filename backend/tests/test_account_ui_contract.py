@@ -36,8 +36,8 @@ class AccountUiContractTests(unittest.TestCase):
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn("Rerun", app_source)
-        self.assertIn('fetch("/api/account/rerun-jobs"', app_source)
-        self.assertIn('fetch("/api/account/rerun-jobs/latest"', app_source)
+        self.assertIn('accountFetch("/api/account/rerun-jobs"', app_source)
+        self.assertIn('accountFetch("/api/account/rerun-jobs/latest"', app_source)
         self.assertIn("readResponsePayload", app_source)
         self.assertIn("responseErrorMessage", app_source)
         self.assertIn("detail.message", app_source)
@@ -68,8 +68,8 @@ class AccountUiContractTests(unittest.TestCase):
             "Rerun this case",
             "startSingleCaseRerun",
             "rerouteTargetSnapshot",
-            'fetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`',
-            'fetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`',
+            'accountFetch(`/api/account/cases/${encodeURIComponent(caseId)}/rerun`',
+            'accountFetch(`/api/account/rerun-jobs/${encodeURIComponent(jobId)}`',
             "All non-customer messages will be permanently deleted",
             "Engineer, manual, and internal messages are included",
             "The current route review and correction will be reset",
@@ -134,7 +134,7 @@ class AccountUiContractTests(unittest.TestCase):
             "function showToast() {}\n"
             "function responseErrorMessage(_payload, fallback) { return fallback; }\n"
             "async function readResponsePayload(response) { return response.payload; }\n"
-            "async function fetch(_url, options) {\n"
+            "async function accountFetch(_url, options) {\n"
             "  requestKeys.push(options.headers['Idempotency-Key']);\n"
             "  if (!shouldSucceed) throw new Error('network unavailable');\n"
             "  return { ok: true, status: 202, payload: { job_id: 'job-replayed', status: 'queued' } };\n"
@@ -190,7 +190,7 @@ class AccountUiContractTests(unittest.TestCase):
           state.rerouteJob = {{ job_id: 'old-job', status: 'completed_with_errors' }};
           state.rerouteError = '';
         }}
-        async function fetch() {{
+        async function accountFetch() {{
           return {{
             ok: false,
             status: 409,
@@ -392,7 +392,7 @@ class AccountUiContractTests(unittest.TestCase):
     def test_account_app_posts_title_and_question_to_account_endpoint(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn('fetch("/account"', app_source)
+        self.assertIn('accountFetch("/account"', app_source)
         self.assertIn("/api/account/cases", app_source)
         self.assertIn("title", app_source)
         self.assertIn("question", app_source)
@@ -576,7 +576,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("const CACHE_HARD_EXPIRY_MS = 5 * 60_000", app_source)
         self.assertIn("const SUMMARY_CACHE_LIMIT = 20", app_source)
         self.assertIn("const DETAIL_CACHE_LIMIT = 20", app_source)
-        self.assertIn('fetch("/api/account/cases/batch-details"', app_source)
+        self.assertIn('accountFetch("/api/account/cases/batch-details"', app_source)
         self.assertIn("AbortController", app_source)
         self.assertIn("summaryRequestGeneration", app_source)
         self.assertIn("filterCountsVersion", app_source)
@@ -598,7 +598,8 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('window.addEventListener("pagehide"', app_source)
         self.assertIn('document.addEventListener("visibilitychange"', app_source)
         self.assertIn('cache: "no-store"', app_source)
-        self.assertNotIn("localStorage", app_source)
+        self.assertIn("localStorage", app_source)
+        self.assertIn("ACCOUNT_ACCESS_TOKEN_KEY", app_source)
         self.assertNotIn("sessionStorage", app_source)
         self.assertNotIn("indexedDB", app_source)
         self.assertIn("detail-loading", app_source)
