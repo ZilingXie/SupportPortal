@@ -565,6 +565,43 @@ class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["retry_case_modes"], {case_ids[0]: "reply"})
         self.assertTrue(stored["reply_job_ids"])
 
+    async def test_shutdown_during_reply_checkpoint_retry_releases_job_without_route_result(self) -> None:
+        case_ids = self._seed_cases(1)
+        queued = await main._enqueue_account_rerun_job(
+            SimpleNamespace(add_task=lambda *args: None),
+            target_case_ids=case_ids,
+            scope_override="all_cases",
+            retry_case_modes={case_ids[0]: "reply"},
+            idempotency_key="synthetic-reply-checkpoint-shutdown",
+            request_scope="test:synthetic-reply-checkpoint-shutdown",
+        )
+        side_effects = {
+            "email": {"status": "not_requested"},
+            "reply": {
+                "status": "scheduled",
+                "reply_job": {"job_id": "reply-checkpoint-shutdown"},
+            },
+        }
+        with patch.object(
+            main,
+            "_run_account_rerun_post_commit_side_effects",
+            new=AsyncMock(return_value=side_effects),
+        ), patch.object(
+            main,
+            "_wait_for_account_rerun_reply_preparation",
+            side_effect=main._AccountRerunShutdownRequested(),
+        ):
+            await main._run_account_full_reroute_job(str(queued["job_id"]))
+
+        stored = self.repository.get_account_reroute_job(str(queued["job_id"]))
+        assert stored is not None
+        self.assertEqual(stored["status"], "queued")
+        self.assertEqual(stored["failed"], 0)
+        self.assertEqual(stored["succeeded"], 0)
+        self.assertEqual(stored["completed_case_ids"], [])
+        self.assertEqual(stored["retry_case_modes"], {case_ids[0]: "reply"})
+        self.assertEqual(stored["checkpoint"]["stage"], "reply_prepare")
+
     async def test_execution_failure_incident_identity_is_per_job(self) -> None:
         account_case = {
             "account_case_id": "AC-INCIDENT",
