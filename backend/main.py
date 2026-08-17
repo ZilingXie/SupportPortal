@@ -208,6 +208,10 @@ from backend.services.zendesk_comments import (
     ZendeskCommentError,
     add_internal_comment,
 )
+from backend.services.zendesk_ticket_assignment import (
+    ZendeskAssignmentResult,
+    assign_ticket_to_configured_ai,
+)
 from backend.services.account_case_filters import (
     account_case_filter_definitions,
     normalize_account_case_filter,
@@ -4818,6 +4822,88 @@ async def add_account_message_as_zendesk_internal_comment(
         except Exception:
             LOGGER.exception("Could not persist Zendesk internal comment idempotency state")
     return success_payload
+
+
+def _account_zendesk_assignment_http_error(exc: ZendeskCommentError) -> HTTPException:
+    if exc.error_code == "zendesk_assignee_config_missing":
+        return HTTPException(status_code=503, detail="AI Zendesk assignee is not configured")
+    if exc.error_code == "zendesk_assignee_invalid":
+        return HTTPException(status_code=502, detail="Configured AI Zendesk assignee is unavailable")
+    if exc.error_code == "zendesk_assignment_unverified":
+        return HTTPException(status_code=409, detail="Zendesk assignment result could not be verified")
+    if exc.error_code == "zendesk_assignment_input_invalid":
+        return HTTPException(status_code=422, detail="Zendesk ticket id is required")
+    if exc.category == "retryable":
+        return HTTPException(status_code=503, detail="Zendesk is temporarily unavailable; retry the assignment")
+    if exc.category == "outcome_unknown":
+        return HTTPException(status_code=409, detail="Zendesk assignment result is unknown; verify the ticket before retrying")
+    if exc.status_code in {401, 403, 422}:
+        return HTTPException(
+            status_code=502,
+            detail="Zendesk rejected the assignment; confirm the AI Agent belongs to the ticket group",
+        )
+    return HTTPException(status_code=502, detail="Zendesk rejected the AI assignment; check the integration configuration")
+
+
+def _account_zendesk_assignment_payload(
+    *,
+    account_case_id: str,
+    result: ZendeskAssignmentResult,
+) -> dict[str, Any]:
+    return {
+        "status": "assigned",
+        "account_case_id": str(account_case_id or "").strip(),
+        "zendesk_ticket_id": result.ticket_id,
+        "assignee_id": result.assignee_id,
+        "assignee_email": result.assignee_email,
+        "assignee_name": result.assignee_name,
+        "group_id": result.group_id,
+        "already_assigned": bool(result.already_assigned),
+    }
+
+
+@app.post(
+    "/api/account/cases/{account_case_id}/zendesk-ai-assignment",
+)
+async def assign_account_case_to_zendesk_ai(
+    account_case_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    del principal
+    normalized_case_id = str(account_case_id or "").strip()
+    if not normalized_case_id:
+        raise HTTPException(status_code=422, detail="account case id is required")
+
+    bundles = await async_to_thread(ticket_repository.get_account_case_details, [normalized_case_id])
+    bundle = bundles.get(normalized_case_id)
+    if not isinstance(bundle, dict):
+        raise HTTPException(status_code=404, detail="account case not found")
+    account_case = bundle.get("account_case")
+    if not isinstance(account_case, dict):
+        raise HTTPException(status_code=404, detail="account case not found")
+    canonical_ticket = bundle.get("ticket")
+    ticket_id = str(
+        (canonical_ticket or {}).get("ticket_id")
+        if isinstance(canonical_ticket, dict)
+        else ""
+    ).strip()
+    zendesk_ticket_id = _zendesk_ticket_id_from_source(account_case.get("source"))
+    if not zendesk_ticket_id and ticket_id.isdigit():
+        zendesk_ticket_id = ticket_id
+    if not zendesk_ticket_id:
+        raise HTTPException(status_code=400, detail="Account Case is not linked to a Zendesk ticket")
+
+    try:
+        result = await async_to_thread(
+            assign_ticket_to_configured_ai,
+            ticket_id=zendesk_ticket_id,
+        )
+    except ZendeskCommentError as exc:
+        raise _account_zendesk_assignment_http_error(exc) from None
+    return _account_zendesk_assignment_payload(
+        account_case_id=normalized_case_id,
+        result=result,
+    )
 
 
 async def _create_account_intake_impl(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
