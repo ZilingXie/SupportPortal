@@ -481,8 +481,8 @@
       "source_ref": "docs/project/tasks/routing-fallback-billing-risk-sniff.json",
       "legacy_id": "routing-fallback-billing-risk-sniff",
       "target_type": "function",
-      "target_id": "routing-fallback-billing-risk-sniff",
-      "disposition": "promoted"
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/routing-real-zendesk-replay.json",
@@ -516,8 +516,8 @@
       "source_ref": "docs/project/tasks/routing-taxonomy.json",
       "legacy_id": "routing-taxonomy",
       "target_type": "function",
-      "target_id": "routing-taxonomy",
-      "disposition": "promoted"
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/zendesk-account-comment-identity.json",
@@ -944,6 +944,34 @@
       "legacy_id": "engineer-case-handoff",
       "target_type": "function",
       "target_id": "engineer-ai-intake",
+      "disposition": "merged"
+    },
+    {
+      "source_ref": "docs/project/functions/automation-execution.json",
+      "legacy_id": "automation-execution",
+      "target_type": "function",
+      "target_id": "automation-execution-loop",
+      "disposition": "merged"
+    },
+    {
+      "source_ref": "docs/project/functions/controlled-rollout.json",
+      "legacy_id": "controlled-rollout",
+      "target_type": "function",
+      "target_id": "case-automation",
+      "disposition": "merged"
+    },
+    {
+      "source_ref": "docs/project/functions/routing-quality-validation.json",
+      "legacy_id": "routing-quality-validation",
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
+    },
+    {
+      "source_ref": "docs/project/functions/zendesk-delivery.json",
+      "legacy_id": "zendesk-delivery",
+      "target_type": "function",
+      "target_id": "zendesk-connection",
       "disposition": "merged"
     }
   ]

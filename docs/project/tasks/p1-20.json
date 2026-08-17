@@ -44,6 +44,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p2-20 迁移为 p1-20；迁移到 phase-1 / account-automation / zendesk-delivery。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 zendesk-delivery 重新归类到 zendesk-connection。"
     }
   ],
   "legacy_refs": [],
@@ -53,5 +58,5 @@
   ],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "zendesk-delivery"
+  "function_id": "zendesk-connection"
 }

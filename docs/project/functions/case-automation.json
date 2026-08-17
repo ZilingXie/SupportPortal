@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "function_id": "human-review",
+  "function_id": "case-automation",
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "title": "Human Review",
-  "goal": "为敏感、低置信、失败或需人工确认的 Case 提供可审计的人工审核与接管路径。",
+  "title": "Case Automation",
+  "goal": "定义并交付可安全扩展的 Account/Billing Case 自动化能力和受控范围。",
   "acceptance_criteria": [],
   "evidence": [],
   "source_refs": [
@@ -13,5 +13,7 @@
     "docs/feature_list.md",
     "docs/roadmap.html#lanes"
   ],
-  "legacy_ids": []
+  "legacy_ids": [
+    "controlled-rollout"
+  ]
 }

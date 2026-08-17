@@ -240,7 +240,7 @@
       "task_ids": [],
       "schema_version": 2,
       "function_ids": [
-        "routing-taxonomy"
+        "case-route"
       ],
       "legacy_task_ids": [
         "routing-taxonomy"
@@ -273,7 +273,7 @@
       "task_ids": [],
       "schema_version": 2,
       "function_ids": [
-        "routing-taxonomy"
+        "case-route"
       ],
       "legacy_task_ids": [
         "routing-taxonomy"

@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "function_id": "routing-taxonomy",
+  "function_id": "case-route",
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "title": "Account 路由分类体系",
-  "goal": "统一 Automation、Human Review、classification-only 和 fallback 的路由边界。",
+  "title": "Case Route",
+  "goal": "建立可解释、可验证的 Case 分类、风险保护和路由质量边界。",
   "acceptance_criteria": [],
   "evidence": [
     {
@@ -18,14 +18,23 @@
       "number": 731,
       "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
       "label": "PR #731"
+    },
+    {
+      "type": "pr",
+      "number": 520,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
+      "label": "PR #520"
     }
   ],
   "source_refs": [
     "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
     "docs/roadmap.html",
-    "docs/feature_list.md"
+    "docs/feature_list.md",
+    "docs/roadmap.html#lanes"
   ],
   "legacy_ids": [
-    "routing-taxonomy"
+    "routing-taxonomy",
+    "routing-fallback-billing-risk-sniff",
+    "routing-quality-validation"
   ]
 }
