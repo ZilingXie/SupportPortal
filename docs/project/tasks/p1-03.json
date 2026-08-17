@@ -62,6 +62,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p2-03 迁移为 p1-03；迁移到 phase-1 / account-automation / routing-taxonomy。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
     }
   ],
   "legacy_refs": [
@@ -78,5 +83,5 @@
   ],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "routing-taxonomy"
+  "function_id": "case-route"
 }

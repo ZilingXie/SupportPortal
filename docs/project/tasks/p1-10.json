@@ -112,6 +112,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p2-10 迁移为 p1-10；迁移到 phase-1 / account-automation / automation-execution。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 automation-execution 重新归类到 automation-execution-loop。"
     }
   ],
   "legacy_refs": [],
@@ -121,5 +126,5 @@
   ],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "automation-execution"
+  "function_id": "automation-execution-loop"
 }

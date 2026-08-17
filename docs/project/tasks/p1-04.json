@@ -41,11 +41,16 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p2-04 迁移为 p1-04；迁移到 phase-1 / account-automation / routing-fallback-billing-risk-sniff。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 routing-fallback-billing-risk-sniff 重新归类到 case-route。"
     }
   ],
   "legacy_refs": [],
   "schema_version": 2,
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "routing-fallback-billing-risk-sniff"
+  "function_id": "case-route"
 }

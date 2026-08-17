@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T07:34:10Z",
-  "source_base_commit": "567a7675d86d6d5f0f9c8b1262a3a3f0bb742950",
-  "registry_digest": "78efa747c77acef38d93954e8f483f3ed9eac60ec4c047b9004f96220f0fcf00",
+  "generated_at": "2026-08-17T07:58:20Z",
+  "source_base_commit": "fdfcf10634f76bf4d43a1a1b7f4d1d3635e10f3e",
+  "registry_digest": "97ae664e8039cbcac4682468d136f815081feb012edb5c5638ad02128f724fb9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -314,11 +314,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
   "functions": [
     {
       "schema_version": 2,
-      "function_id": "automation-execution",
+      "function_id": "automation-execution-loop",
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "title": "Account Automation 执行闭环",
-      "goal": "实现幂等、rerun、Persona 和内部处理的稳定执行链路。",
+      "title": "Automation 执行闭环",
+      "goal": "让 Case 自动化执行具备幂等、恢复、监控、失败可见和向人工升级的闭环。",
       "acceptance_criteria": [],
       "evidence": [
         {
@@ -386,7 +386,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 732,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/732",
           "label": "PR #732"
-        },
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html",
+        "docs/feature_list.md",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [
+        "automation-execution"
+      ],
+      "status": "active",
+      "task_count": 7,
+      "done_count": 1,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "case-automation",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "title": "Case Automation",
+      "goal": "定义并交付可安全扩展的 Account/Billing Case 自动化能力和受控范围。",
+      "acceptance_criteria": [],
+      "evidence": [
         {
           "type": "pr",
           "number": 749,
@@ -406,112 +430,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md",
         "docs/roadmap.html#lanes"
       ],
-      "legacy_ids": [],
+      "legacy_ids": [
+        "controlled-rollout"
+      ],
       "status": "active",
       "task_count": 5,
-      "done_count": 2,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "controlled-rollout",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "title": "Account Automation 受控发布",
-      "goal": "用指标、Replay 和人工审核门禁逐步扩大自动化范围。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "active",
-      "task_count": 7,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "human-review",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "title": "敏感请求 Human Review",
-      "goal": "让失败、低置信和敏感请求进入可解释的人工接管流程。",
-      "acceptance_criteria": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 744,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
-          "label": "PR #744"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
-        "docs/roadmap.html",
-        "docs/feature_list.md",
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "active",
-      "task_count": 4,
       "done_count": 1,
       "blocked_count": 0
     },
     {
       "schema_version": 2,
-      "function_id": "routing-fallback-billing-risk-sniff",
+      "function_id": "case-route",
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "title": "Billing 风险保护 Gate",
-      "goal": "在 Conservative Fallback 前识别高风险 Billing 请求并保留安全边界。",
-      "acceptance_criteria": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 520,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
-          "label": "PR #520"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "legacy_ids": [
-        "routing-fallback-billing-risk-sniff"
-      ],
-      "status": "done",
-      "task_count": 1,
-      "done_count": 1,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "routing-quality-validation",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "title": "路由质量验证",
-      "goal": "用 Golden Set、负样本和真实 Replay 持续验证路由质量。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "active",
-      "task_count": 4,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "routing-taxonomy",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "title": "Account 路由分类体系",
-      "goal": "统一 Automation、Human Review、classification-only 和 fallback 的路由边界。",
+      "title": "Case Route",
+      "goal": "建立可解释、可验证的 Case 分类、风险保护和路由质量边界。",
       "acceptance_criteria": [],
       "evidence": [
         {
@@ -525,6 +458,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 731,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
           "label": "PR #731"
+        },
+        {
+          "type": "pr",
+          "number": 520,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
+          "label": "PR #520"
         },
         {
           "type": "pr",
@@ -596,23 +535,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
         "docs/roadmap.html",
-        "docs/feature_list.md"
+        "docs/feature_list.md",
+        "docs/roadmap.html#lanes"
       ],
       "legacy_ids": [
-        "routing-taxonomy"
+        "routing-taxonomy",
+        "routing-fallback-billing-risk-sniff",
+        "routing-quality-validation"
       ],
-      "status": "done",
-      "task_count": 3,
-      "done_count": 3,
+      "status": "active",
+      "task_count": 8,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
       "schema_version": 2,
-      "function_id": "zendesk-delivery",
+      "function_id": "human-review",
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "title": "Zendesk 交付与身份",
-      "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",
+      "title": "Human Review",
+      "goal": "为敏感、低置信、失败或需人工确认的 Case 提供可审计的人工审核与接管路径。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 744,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
+          "label": "PR #744"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html",
+        "docs/feature_list.md",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 4,
+      "done_count": 1,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "zendesk-connection",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "title": "Zendesk Connection",
+      "goal": "确保 Zendesk 的建单、派单、评论写回和身份信息可可靠连接与展示。",
       "acceptance_criteria": [],
       "evidence": [
         {
@@ -646,7 +616,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/zendesk_account_comment_sync.md",
         "docs/feature_list.md"
       ],
-      "legacy_ids": [],
+      "legacy_ids": [
+        "zendesk-delivery"
+      ],
       "status": "active",
       "task_count": 3,
       "done_count": 0,
@@ -1080,6 +1052,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-01 迁移为 p1-01；迁移到 phase-1 / account-automation / routing-taxonomy。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1095,7 +1072,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-taxonomy"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1143,6 +1120,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-02 迁移为 p1-02；迁移到 phase-1 / account-automation / routing-taxonomy。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1159,7 +1141,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-taxonomy"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1225,6 +1207,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-03 迁移为 p1-03；迁移到 phase-1 / account-automation / routing-taxonomy。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1241,7 +1228,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-taxonomy"
+      "function_id": "case-route"
     },
     {
       "legacy_ids": [
@@ -1286,13 +1273,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-04 迁移为 p1-04；迁移到 phase-1 / account-automation / routing-fallback-billing-risk-sniff。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-fallback-billing-risk-sniff 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [],
       "schema_version": 2,
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-fallback-billing-risk-sniff"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1327,6 +1319,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-05 迁移为 p1-05；迁移到 phase-1 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1342,7 +1339,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-quality-validation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1377,6 +1374,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-06 迁移为 p1-06；迁移到 phase-1 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1392,7 +1394,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-quality-validation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1427,6 +1429,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-07 迁移为 p1-07；迁移到 phase-1 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1442,7 +1449,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-quality-validation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1477,6 +1484,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-08 迁移为 p1-08；迁移到 phase-1 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1492,7 +1504,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "routing-quality-validation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -1527,6 +1539,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-09 迁移为 p1-09；迁移到 phase-1 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 automation-execution 重新归类到 case-automation。"
         }
       ],
       "legacy_refs": [
@@ -1542,7 +1559,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "automation-execution"
+      "function_id": "case-automation"
     },
     {
       "schema_version": 2,
@@ -1658,6 +1675,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-10 迁移为 p1-10；迁移到 phase-1 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 automation-execution 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [],
@@ -1667,7 +1689,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "automation-execution"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -1717,6 +1739,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-11 迁移为 p1-11；迁移到 phase-1 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 automation-execution 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [
@@ -1732,7 +1759,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "automation-execution"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -1781,6 +1808,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-12 迁移为 p1-12；迁移到 phase-1 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 automation-execution 重新归类到 case-automation。"
         }
       ],
       "legacy_refs": [],
@@ -1790,7 +1822,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "automation-execution"
+      "function_id": "case-automation"
     },
     {
       "schema_version": 2,
@@ -1825,6 +1857,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-13 迁移为 p1-13；迁移到 phase-1 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 automation-execution 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [
@@ -1840,7 +1877,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "automation-execution"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2114,6 +2151,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-18 迁移为 p1-18；迁移到 phase-1 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 zendesk-delivery 重新归类到 zendesk-connection。"
         }
       ],
       "legacy_refs": [
@@ -2129,7 +2171,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "zendesk-delivery"
+      "function_id": "zendesk-connection"
     },
     {
       "schema_version": 2,
@@ -2164,6 +2206,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-19 迁移为 p1-19；迁移到 phase-1 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 zendesk-delivery 重新归类到 zendesk-connection。"
         }
       ],
       "legacy_refs": [
@@ -2179,7 +2226,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "zendesk-delivery"
+      "function_id": "zendesk-connection"
     },
     {
       "schema_version": 2,
@@ -2227,6 +2274,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-20 迁移为 p1-20；迁移到 phase-1 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 zendesk-delivery 重新归类到 zendesk-connection。"
         }
       ],
       "legacy_refs": [],
@@ -2236,7 +2288,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "zendesk-delivery"
+      "function_id": "zendesk-connection"
     },
     {
       "schema_version": 2,
@@ -2271,6 +2323,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-21 迁移为 p1-21；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [
@@ -2286,7 +2343,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2321,6 +2378,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-22 迁移为 p1-22；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [
@@ -2336,7 +2398,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2376,6 +2438,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-23 迁移为 p1-23；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
         }
       ],
       "legacy_refs": [
@@ -2391,7 +2458,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "case-automation"
     },
     {
       "schema_version": 2,
@@ -2426,6 +2493,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-24 迁移为 p1-24；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [
@@ -2441,7 +2513,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2476,6 +2548,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-25 迁移为 p1-25；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
         }
       ],
       "legacy_refs": [
@@ -2491,7 +2568,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "case-automation"
     },
     {
       "schema_version": 2,
@@ -2526,6 +2603,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-26 迁移为 p1-26；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 automation-execution-loop。"
         }
       ],
       "legacy_refs": [
@@ -2541,7 +2623,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2576,6 +2658,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-27 迁移为 p1-27；迁移到 phase-1 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
         }
       ],
       "legacy_refs": [
@@ -2591,7 +2678,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "controlled-rollout"
+      "function_id": "case-automation"
     },
     {
       "schema_version": 2,
@@ -5699,7 +5786,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "task_ids": [],
         "schema_version": 2,
         "function_ids": [
-          "routing-taxonomy"
+          "case-route"
         ],
         "legacy_task_ids": [
           "routing-taxonomy"
@@ -5732,7 +5819,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "task_ids": [],
         "schema_version": 2,
         "function_ids": [
-          "routing-taxonomy"
+          "case-route"
         ],
         "legacy_task_ids": [
           "routing-taxonomy"
@@ -5891,7 +5978,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     }
   ],
   "migration": {
-    "source_count": 134,
+    "source_count": 138,
     "generated_from": [
       "docs/roadmap.html",
       "docs/roadmap/meetings.html",
@@ -6373,8 +6460,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/routing-fallback-billing-risk-sniff.json",
         "legacy_id": "routing-fallback-billing-risk-sniff",
         "target_type": "function",
-        "target_id": "routing-fallback-billing-risk-sniff",
-        "disposition": "promoted"
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-real-zendesk-replay.json",
@@ -6408,8 +6495,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/routing-taxonomy.json",
         "legacy_id": "routing-taxonomy",
         "target_type": "function",
-        "target_id": "routing-taxonomy",
-        "disposition": "promoted"
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/zendesk-account-comment-identity.json",
@@ -6837,6 +6924,34 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_type": "function",
         "target_id": "engineer-ai-intake",
         "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/functions/automation-execution.json",
+        "legacy_id": "automation-execution",
+        "target_type": "function",
+        "target_id": "automation-execution-loop",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/functions/controlled-rollout.json",
+        "legacy_id": "controlled-rollout",
+        "target_type": "function",
+        "target_id": "case-automation",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/functions/routing-quality-validation.json",
+        "legacy_id": "routing-quality-validation",
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/functions/zendesk-delivery.json",
+        "legacy_id": "zendesk-delivery",
+        "target_type": "function",
+        "target_id": "zendesk-connection",
+        "disposition": "merged"
       }
     ],
     "aliases": {
@@ -7110,7 +7225,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "routing-fallback-billing-risk-sniff": {
         "target_type": "function",
-        "target_id": "routing-fallback-billing-risk-sniff"
+        "target_id": "case-route"
       },
       "routing-real-zendesk-replay": {
         "target_type": "task",
@@ -7130,7 +7245,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "routing-taxonomy": {
         "target_type": "function",
-        "target_id": "routing-taxonomy"
+        "target_id": "case-route"
       },
       "zendesk-account-comment-identity": {
         "target_type": "task",
@@ -7375,6 +7490,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "engineer-case-handoff": {
         "target_type": "function",
         "target_id": "engineer-ai-intake"
+      },
+      "automation-execution": {
+        "target_type": "function",
+        "target_id": "automation-execution-loop"
+      },
+      "controlled-rollout": {
+        "target_type": "function",
+        "target_id": "case-automation"
+      },
+      "routing-quality-validation": {
+        "target_type": "function",
+        "target_id": "case-route"
+      },
+      "zendesk-delivery": {
+        "target_type": "function",
+        "target_id": "zendesk-connection"
       }
     }
   }
