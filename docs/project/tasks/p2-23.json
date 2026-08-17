@@ -2,16 +2,14 @@
   "schema_version": 2,
   "task_id": "p2-23",
   "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
-  "status": "blocked",
-  "owner": "unassigned",
+  "status": "planned",
+  "owner": "zac",
   "summary": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
-  "next_action": "明确解除 blocker 的验证步骤。",
+  "next_action": "开始受控试运行质量验证，形成 Billing 自动化扩围的决策依据。",
   "acceptance_criteria": [
     "完成 Decision 维度的交付和验证。"
   ],
-  "blockers": [
-    "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。"
-  ],
+  "blockers": [],
   "evidence": [],
   "source_refs": [
     "docs/roadmap.html#lanes"
@@ -28,6 +26,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "status_reclassified",
+      "summary": "按 review 结论调整为未开始，负责人设为 zac；等待受控试运行证据后再做扩围决策。"
     }
   ],
   "legacy_refs": [

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T06:56:01Z",
-  "source_base_commit": "43395cb5e95e9888fb65d6317588181673ebb8a1",
-  "registry_digest": "7543129a5719fe80c3873fcedeeb0cb400bb2058fada182ba6207090e72ba912",
+  "generated_at": "2026-08-17T07:02:32Z",
+  "source_base_commit": "ab289e1592a38916901ec2845ca49fac26dae2f4",
+  "registry_digest": "54c30adff97a3cb03de9812e22cb861490f0cd58cc3c2460ad605fcb5d034c07",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -425,7 +425,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 7,
       "done_count": 0,
-      "blocked_count": 1
+      "blocked_count": 0
     },
     {
       "schema_version": 2,
@@ -1979,7 +1979,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-18",
       "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "status": "planned",
+      "status": "active",
       "owner": "zac",
       "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
       "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
@@ -2029,6 +2029,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "internal_comment_spinner_timeout_fixed",
           "summary": "为 /account Zendesk internal comment 请求增加前端有界超时，确保 Adding... 在请求挂起时清除并显示错误。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "status_reclassified",
+          "summary": "按 review 结论改为进行中；internal comment 已完成，external/customer reply 仍待完成。"
         }
       ],
       "legacy_refs": [
@@ -2232,16 +2237,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-23",
       "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
-      "status": "blocked",
-      "owner": "unassigned",
+      "status": "planned",
+      "owner": "zac",
       "summary": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
-      "next_action": "明确解除 blocker 的验证步骤。",
+      "next_action": "开始受控试运行质量验证，形成 Billing 自动化扩围的决策依据。",
       "acceptance_criteria": [
         "完成 Decision 维度的交付和验证。"
       ],
-      "blockers": [
-        "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。"
-      ],
+      "blockers": [],
       "evidence": [],
       "source_refs": [
         "docs/roadmap.html#lanes"
@@ -2258,6 +2261,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "status_reclassified",
+          "summary": "按 review 结论调整为未开始，负责人设为 zac；等待受控试运行证据后再做扩围决策。"
         }
       ],
       "legacy_refs": [
