@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task_id": "p2-38",
   "title": "完成 GraphRAG Ingest 模型 Bake-off",
-  "status": "active",
+  "status": "planned",
   "owner": "unassigned",
   "summary": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
   "next_action": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
@@ -15,7 +15,7 @@
     "docs/roadmap.html#lanes"
   ],
   "created_at": "2026-08-16",
-  "updated_at": "2026-08-16",
+  "updated_at": "2026-08-17",
   "history": [
     {
       "at": "2026-08-16",
@@ -26,6 +26,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "状态从 active 调整为 planned（未开始）。"
     }
   ],
   "legacy_refs": [

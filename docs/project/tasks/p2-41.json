@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task_id": "p2-41",
   "title": "用真实查询评估 RAG 与 RAG+KG 的效果门禁",
-  "status": "active",
+  "status": "planned",
   "owner": "unassigned",
   "summary": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
   "next_action": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
@@ -15,7 +15,7 @@
     "docs/roadmap.html#lanes"
   ],
   "created_at": "2026-08-16",
-  "updated_at": "2026-08-16",
+  "updated_at": "2026-08-17",
   "history": [
     {
       "at": "2026-08-16",
@@ -26,6 +26,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "迁移到 phase-2 / rag-knowledge / rag-evaluation。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "状态从 active 调整为 planned（未开始）。"
     }
   ],
   "legacy_refs": [

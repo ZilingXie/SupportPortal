@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-16",
+  "title": "建立 Billing 人工审核与客户回复工作流",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
+  "next_action": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
+  "acceptance_criteria": [
+    "完成 Review 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane billing-routing 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / human-review。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p2-16 迁移为 p1-16；迁移到 phase-1 / account-automation / human-review。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "billing-routing",
+      "item_id": "billing-human-review"
+    }
+  ],
+  "legacy_ids": [
+    "billing-human-review",
+    "p2-16"
+  ],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "human-review"
+}

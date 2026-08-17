@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-48",
+  "title": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
+  "status": "planned",
+  "owner": "项目团队",
+  "summary": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
+  "next_action": "补齐验收证据并更新状态。",
+  "acceptance_criteria": [
+    "覆盖已回复、超时和内部任务无法完成三条路径。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18"
+  ],
+  "created_at": "2026-06-18",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-3 / agent-collaboration / agent-billing-poc。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p3-02 迁移为 p2-48；迁移到 phase-2 / agent-collaboration / agent-billing-poc。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "agent-system-2026-06-18",
+      "item_id": "AG-04"
+    }
+  ],
+  "legacy_ids": [
+    "AG-04",
+    "p3-02"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "agent-collaboration",
+  "function_id": "agent-billing-poc"
+}

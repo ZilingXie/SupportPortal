@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "function_id": "project-governance",
-  "phase_id": "phase-2",
+  "phase_id": "phase-1",
   "module_id": "platform-delivery",
   "title": "项目进度治理",
   "goal": "维护 Project Overview、Task 标题和 AI 工作规则的单一事实源。",

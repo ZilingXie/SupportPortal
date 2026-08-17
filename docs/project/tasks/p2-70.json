@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-70",
+  "title": "设计 Account Human Review 到 Engineer Case 的显式交接",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
+  "next_action": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
+  "acceptance_criteria": [
+    "完成 Later 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane billing-routing 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-handoff。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p3-24 迁移为 p2-70；迁移到 phase-2 / engineer-workspace / engineer-ai-intake；Function engineer-case-handoff 合并到 engineer-ai-intake。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "billing-routing",
+      "item_id": "billing-human-review-handoff"
+    }
+  ],
+  "legacy_ids": [
+    "billing-human-review-handoff",
+    "p3-24"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "engineer-workspace",
+  "function_id": "engineer-ai-intake"
+}

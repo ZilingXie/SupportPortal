@@ -1,0 +1,64 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-02",
+  "title": "建立 Compliance 与 Security 分类及人工边界",
+  "status": "done",
+  "owner": "zac",
+  "summary": "新增并完善 Compliance / Security 分类。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "分类为 Security & Compliance，路由到 human_review，不自动生成客户回复。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "pr",
+      "number": 729,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/729",
+      "label": "PR #729"
+    },
+    {
+      "type": "pr",
+      "number": 731,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
+      "label": "PR #731"
+    }
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p2-02 迁移为 p1-02；迁移到 phase-1 / account-automation / routing-taxonomy。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-02"
+    }
+  ],
+  "legacy_ids": [
+    "routing-security-compliance",
+    "TS-02",
+    "p2-02"
+  ],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "routing-taxonomy"
+}

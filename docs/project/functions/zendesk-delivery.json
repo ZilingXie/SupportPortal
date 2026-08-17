@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "function_id": "zendesk-delivery",
-  "phase_id": "phase-2",
+  "phase_id": "phase-1",
   "module_id": "account-automation",
   "title": "Zendesk 交付与身份",
   "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",

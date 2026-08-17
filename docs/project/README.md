@@ -14,7 +14,7 @@
 
 ## 层级和 ID
 
-- Phase 只有 `phase-1`、`phase-2`、`phase-3`；Phase 1 已完成，长期任务归入 Phase 3。
+- Phase 只有 `phase-1`、`phase-2`、`phase-3`；当前 Phase 1 聚焦 Account Automation、Admin Operations 和 Platform Delivery，其他已登记任务归入 Phase 2，Phase 3 作为后续预留阶段。
 - Module 是稳定业务域；Function 是可以单独汇报的能力；Task 是具体可执行、可验收的小功能。
 - Function 使用语义 ID，例如 `routing-taxonomy`；Task 使用 `pN-xx`，页面统一显示 `#` 前缀。
 - Function 状态从子 Task 派生，不维护第二套手工状态；Task 调整 Phase 时必须保留旧 ID alias。

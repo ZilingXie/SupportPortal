@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "function_id": "routing-taxonomy",
-  "phase_id": "phase-2",
+  "phase_id": "phase-1",
   "module_id": "account-automation",
   "title": "Account 路由分类体系",
   "goal": "统一 Automation、Human Review、classification-only 和 fallback 的路由边界。",
