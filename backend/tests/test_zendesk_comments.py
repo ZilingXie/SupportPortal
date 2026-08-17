@@ -37,7 +37,20 @@ class ZendeskCommentServiceTests(unittest.TestCase):
         with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
             "backend.services.zendesk_comments.urllib.request.urlopen",
             return_value=_FakeResponse(
-                {"ticket": {"comment": {"id": 987654, "public": False}}}
+                {
+                    "audit": {
+                        "events": [
+                            {"field_name": "status", "id": 987653, "type": "Change", "value": "open"},
+                            {
+                                "body": "validation marker",
+                                "id": 987654,
+                                "public": False,
+                                "type": "Comment",
+                            },
+                        ]
+                    },
+                    "ticket": {"id": 12807, "status": "open"},
+                }
             ),
         ) as urlopen:
             result = add_internal_comment(ticket_id="12807", body="validation marker")
@@ -92,7 +105,32 @@ class ZendeskCommentServiceTests(unittest.TestCase):
     def test_success_requires_verified_private_visibility(self) -> None:
         with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
             "backend.services.zendesk_comments.urllib.request.urlopen",
-            return_value=_FakeResponse({"ticket": {"comment": {"id": 1, "public": True}}}),
+            return_value=_FakeResponse(
+                {
+                    "audit": {
+                        "events": [
+                            {"body": "private body", "id": 1, "public": True, "type": "Comment"}
+                        ]
+                    },
+                    "ticket": {"id": 12807},
+                }
+            ),
+        ):
+            with self.assertRaises(ZendeskCommentError) as raised:
+                add_internal_comment(ticket_id="12807", body="private body")
+
+        self.assertEqual(raised.exception.category, "outcome_unknown")
+        self.assertEqual(raised.exception.error_code, "zendesk_comment_visibility_unverified")
+
+    def test_missing_comment_event_is_outcome_unknown(self) -> None:
+        with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen",
+            return_value=_FakeResponse(
+                {
+                    "audit": {"events": [{"field_name": "status", "type": "Change", "value": "open"}]},
+                    "ticket": {"id": 12807},
+                }
+            ),
         ):
             with self.assertRaises(ZendeskCommentError) as raised:
                 add_internal_comment(ticket_id="12807", body="private body")
