@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "agent-evidence-evaluation",
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "title": "Agent Evidence 与 Replay",
+  "goal": "建立真实证据工具、Replay 评测和回归门禁。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

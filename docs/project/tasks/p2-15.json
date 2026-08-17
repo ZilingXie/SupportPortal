@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-15",
+  "title": "在 Account 处理失败后触发告警并进入 Human Review",
+  "status": "done",
+  "owner": "zac",
+  "summary": "增加 AI 故障告警和人工接管机制。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "pr",
+      "number": 744,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
+      "label": "PR #744"
+    }
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / human-review。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-05"
+    }
+  ],
+  "legacy_ids": [
+    "account-failure-alerts",
+    "TS-05"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "human-review"
+}

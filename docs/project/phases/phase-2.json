@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "phase_id": "phase-2",
+  "title": "Phase 2：确定性 Automation + Controlled Validation",
+  "status": "active",
+  "summary": "收口 Account & Billing、路由策略、回复质量和可观测性，逐步扩大可验证自动化范围。",
+  "target_date": null,
+  "exit_criteria": [
+    "Registered automation outcome 的路由、字段、内部处理和客户跟进都有可验证证据。",
+    "Automated coverage、route accuracy、失败原因和人工审核结果可持续观察。",
+    "敏感、低置信或失败路径明确进入 Human Review。"
+  ],
+  "source_refs": [
+    "docs/roadmap.html",
+    "docs/roadmap/phase2.html",
+    "docs/roadmap/meetings.html"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "function_id": "project-governance",
+  "phase_id": "phase-2",
+  "module_id": "platform-delivery",
+  "title": "项目进度治理",
+  "goal": "维护 Project Overview、Task 标题和 AI 工作规则的单一事实源。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html",
+    "docs/feature_list.md",
+    "docs/projectoverview.html",
+    "backend/tests/test_project_overview_contract.py",
+    "docs/project/tasks"
+  ],
+  "legacy_ids": []
+}

@@ -56,6 +56,7 @@ class NormalizedZendeskComment:
             "author_id": self.author_id,
             "author_name": self.author_name,
             "author_kind": self.author_kind,
+            "is_agent": author_is_agent(self.author_kind),
             "body": self.body,
             "via_channel": self.via_channel,
             "created_at": self.created_at,
@@ -108,16 +109,60 @@ def _parse_public(value: Any) -> bool:
     return bool(value)
 
 
-def _author_kind(role: Any, *, is_public: bool) -> str:
+def _parse_optional_bool(value: Any, *, field: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    raise ZendeskCommentSnapshotError(
+        "invalid_snapshot",
+        f"{field} must be a boolean",
+    )
+
+
+def _author_kind(role: Any, *, is_agent: Any = None, is_public: bool) -> str:
     normalized = str(role or "").strip().lower()
+    parsed_is_agent = _parse_optional_bool(is_agent, field="author is_agent")
+
+    role_kind: str | None = None
     if normalized in {"end-user", "end_user", "customer", "requester", "user"}:
-        return "customer"
-    if normalized in {"agent", "staff", "admin", "support"}:
-        return "agent"
-    if normalized in {"system", "bot", "automation"}:
-        return "system"
+        role_kind = "customer"
+    elif normalized in {"agent", "staff", "admin", "support"}:
+        role_kind = "agent"
+    elif normalized in {"system", "bot", "automation"}:
+        role_kind = "system"
+
+    flag_kind = None
+    if parsed_is_agent is not None:
+        flag_kind = "agent" if parsed_is_agent else "customer"
+
+    if role_kind and flag_kind and role_kind != flag_kind:
+        raise ZendeskCommentSnapshotError(
+            "author_identity_conflict",
+            "author role conflicts with author is_agent",
+        )
+    if role_kind:
+        return role_kind
+    if flag_kind:
+        return flag_kind
     # A private comment with no Zendesk role is still not a customer message.
     return "unknown"
+
+
+def author_is_agent(author_kind: Any) -> bool | None:
+    """Expose the UI/API boolean without adding a second stored identity field."""
+    normalized = str(author_kind or "").strip().lower()
+    if normalized == "agent":
+        return True
+    if normalized == "customer":
+        return False
+    return None
 
 
 def _canonical_json(value: Any) -> str:
@@ -172,8 +217,21 @@ def normalize_snapshot(payload: Any) -> NormalizedZendeskSnapshot:
             field="author name",
             max_length=MAX_COMMENT_AUTHOR_NAME_LENGTH,
         ) or None
+        raw_is_agent = author.get("is_agent")
+        if raw_is_agent is None:
+            raw_is_agent = author.get("is_staff")
+        if raw_is_agent is None:
+            raw_is_agent = raw_comment.get("is_agent")
+        if raw_is_agent is None:
+            raw_is_agent = raw_comment.get("is_staff")
+        raw_role = author.get("role")
+        if raw_role is None:
+            raw_role = author.get("author_kind")
+        if raw_role is None:
+            raw_role = raw_comment.get("author_kind")
         author_kind = _author_kind(
-            author.get("role", raw_comment.get("author_kind")),
+            raw_role,
+            is_agent=raw_is_agent,
             is_public=is_public,
         )
         body = str(raw_comment.get("body") or "").strip()

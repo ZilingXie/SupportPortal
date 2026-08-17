@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-22",
+  "title": "定义 Account Automation Dashboard 与 Monitor 指标",
+  "status": "active",
+  "owner": "unassigned",
+  "summary": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
+  "next_action": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
+  "acceptance_criteria": [
+    "完成 Metrics 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane billing-routing 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "billing-routing",
+      "item_id": "billing-dashboard-metrics"
+    }
+  ],
+  "legacy_ids": [
+    "billing-dashboard-metrics"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "controlled-rollout"
+}

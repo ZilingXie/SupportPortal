@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-36",
+  "title": "清理 Project Overview 中无法识别的 Task 标题",
+  "status": "done",
+  "owner": "Zac",
+  "summary": "将只显示管理标签、模糊短语或整段说明的 Task 标题改为可独立理解和汇报的功能名称。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "原先仅显示 P0/P1/P2、Phase、长期方向或低优先级保留的 Task 标题均改为具体功能名称。",
+    "其他模糊、截断或整段说明式标题也改为简洁的交付名称。",
+    "重命名不改变 Task ID、状态、优先级、里程碑、负责人或工作范围。",
+    "Project Overview 数据校验和桌面、移动端任务看板验收通过。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Project Overview registry title and route contract tests",
+      "command": "python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract backend.tests.test_dashboard_routes"
+    },
+    {
+      "type": "test",
+      "label": "Desktop and 390x844 browser verification for renamed Task cards"
+    }
+  ],
+  "source_refs": [
+    "docs/project/tasks",
+    "docs/projectoverview.html",
+    "backend/tests/test_project_overview_contract.py"
+  ],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-17",
+      "event": "created",
+      "summary": "为 Project Overview Task 标题可读性清理建立独立任务记录。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "completed",
+      "summary": "完成 46 个模糊 Task 标题清理，并补充 registry 契约和浏览器验证。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
+    }
+  ],
+  "legacy_refs": [],
+  "legacy_ids": [
+    "project-task-title-cleanup"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "platform-delivery",
+  "function_id": "project-governance"
+}

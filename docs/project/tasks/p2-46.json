@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-46",
+  "title": "定义 Client AI 与 Engineer AI 的 KG 使用边界",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。",
+  "next_action": "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。",
+  "acceptance_criteria": [
+    "完成 Access Policy 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / rag-knowledge / rag-scope-governance。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "rag-vs-kg",
+      "item_id": "kg-engineer-vs-client"
+    }
+  ],
+  "legacy_ids": [
+    "kg-engineer-vs-client"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "function_id": "rag-scope-governance"
+}

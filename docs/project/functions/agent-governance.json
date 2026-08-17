@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "function_id": "agent-governance",
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "title": "Agent 治理与自主边界",
+  "goal": "在证据、权限、成本和审计门禁下控制 Agent 自主行为。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18",
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

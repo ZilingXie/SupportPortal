@@ -5942,12 +5942,16 @@ async def sync_zendesk_account_comments(
                 "missing_comment_ids": list(result.get("missing_comment_ids") or []),
             },
         )
+    unresolved_author_count = sum(
+        1 for comment in snapshot.comments if comment.author_kind == "unknown"
+    )
     return {
         "status": status or "synced",
         "is_account_case": True,
         "zendesk_ticket_id": normalized_ticket_id,
         "account_case_id": account_case_id,
         "comment_count": int(result.get("comment_count") or 0),
+        "unresolved_author_count": unresolved_author_count,
         "source_updated_at": result.get("source_updated_at"),
         "synced_at": result.get("synced_at"),
         "comments_revision": result.get("comments_revision"),

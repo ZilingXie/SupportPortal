@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "production-ai-governance",
+  "phase_id": "phase-2",
+  "module_id": "platform-delivery",
+  "title": "生产 AI 治理",
+  "goal": "明确生产 AI 账号、数据留存和客户数据安全边界。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "legacy_ids": []
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-07",
+  "title": "扩展真实 Zendesk Replay Set 覆盖范围",
+  "status": "active",
+  "owner": "unassigned",
+  "summary": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
+  "next_action": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
+  "acceptance_criteria": [
+    "完成 Monitor 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane routing-rules 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "routing-rules",
+      "item_id": "routing-real-zendesk-replay"
+    }
+  ],
+  "legacy_ids": [
+    "routing-real-zendesk-replay"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "routing-quality-validation"
+}

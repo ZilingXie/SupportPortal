@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "engineer-case-delivery",
+  "phase_id": "phase-3",
+  "module_id": "engineer-workspace",
+  "title": "Engineer Case 派单交付",
+  "goal": "完成认证、数据库、排班、指标、Slack 和逐步派单。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

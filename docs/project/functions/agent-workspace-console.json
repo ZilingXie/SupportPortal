@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "agent-workspace-console",
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "title": "Agent Workspace 行动台",
+  "goal": "把 Multi-Agent Run 面板升级为工程师可执行的行动台。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

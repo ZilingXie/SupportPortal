@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "phase_id": "phase-1",
+  "title": "Phase 1：效率提升与工单系统基线",
+  "status": "done",
+  "summary": "历史基线阶段已完成；未完成旧记录已转入 Phase 3。",
+  "target_date": null,
+  "exit_criteria": [
+    "客户入口、工单基础能力和最小交付闭环已建立。"
+  ],
+  "source_refs": [
+    "docs/roadmap.html",
+    "docs/roadmap/phase1.html"
+  ]
+}

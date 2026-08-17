@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "agent-controlled-replan",
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "title": "Agent 受控重规划",
+  "goal": "让 Multi-Agent 调查支持可审计的 Targeted Replan。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

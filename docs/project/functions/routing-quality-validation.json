@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "routing-quality-validation",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "路由质量验证",
+  "goal": "用 Golden Set、负样本和真实 Replay 持续验证路由质量。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

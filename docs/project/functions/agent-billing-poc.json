@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "agent-billing-poc",
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "title": "Agent Billing 验证",
+  "goal": "收口 Billing route、回执和提醒的 Agent 验证闭环。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18"
+  ],
+  "legacy_ids": []
+}
