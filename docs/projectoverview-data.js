@@ -1,14 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-<<<<<<< HEAD
-  "generated_at": "2026-08-17T09:36:07Z",
-  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
-  "registry_digest": "19a934c9cbd5d4d1f5a190a95075f8a936c2b8f1c589b025bb35888f90378340",
-=======
-  "generated_at": "2026-08-17T09:13:45Z",
-  "source_base_commit": "753f32df324bce4429ff7d35f5b3ca4c2d434220",
-  "registry_digest": "eef70e555e03789d436947b196175afd90eb1e94f8a090a52ecb7304777a7668",
->>>>>>> origin/main
+  "generated_at": "2026-08-17T09:40:03Z",
+  "source_base_commit": "195a9685a753dd16d041aea1f369725ebe4a1517",
+  "registry_digest": "346739590dafba23ffd49143facaeb8a51232519dd67cd80cf6a125bc1537a44",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
