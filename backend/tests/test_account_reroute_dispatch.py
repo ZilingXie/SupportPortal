@@ -284,6 +284,22 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(public["reply_job_summary"]["source"], "observed")
         self.assertEqual(historical, original)
 
+    def test_public_recovery_contract_does_not_claim_zero_observed_replies_without_ids(self) -> None:
+        public = main._public_account_reroute_job({
+            "job_id": "legacy-recovery-with-replies",
+            "status": "needs_recovery",
+            "replies_scheduled": 13,
+            "reply_job_ids": [],
+        })
+
+        self.assertEqual(public["reply_job_summary"]["source"], "persisted")
+        self.assertFalse(public["reply_job_summary"]["available"])
+        self.assertEqual(public["reply_job_summary"]["total"], 13)
+        self.assertEqual(
+            public["reply_job_summary"]["reason_code"],
+            "account_rerun_reply_summary_unavailable",
+        )
+
     async def test_api_job_shape_hides_dispatch_and_idempotency_metadata(self) -> None:
         job = await self._enqueue_single(BackgroundTasks())
 

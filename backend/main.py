@@ -6491,6 +6491,8 @@ def _account_rerun_reply_job_summary(job: dict[str, Any]) -> dict[str, Any]:
         "unknown": 0,
     }
     if not reply_job_ids:
+        if persisted["total"]:
+            return persisted
         return {
             "source": "observed",
             "available": True,
@@ -7682,6 +7684,7 @@ async def _run_account_full_reroute_job(
             case_shutdown_requested = False
             case_failure_error = ""
             reply_job_id = ""
+            result: AccountFullRerouteResult | None = None
             caught_exception: Exception | None = None
             try:
                 retry_case_mode = str(
@@ -7920,8 +7923,11 @@ async def _run_account_full_reroute_job(
                 # a field-follow-up has not completed until its reply is ready
                 # and therefore keeps the older reply checkpoint semantics.
                 handoff_committed = bool(
-                    result.internal_email_to_send
-                    or result.reply_kind == "submission_confirmation"
+                    result is not None
+                    and (
+                        result.internal_email_to_send
+                        or result.reply_kind == "submission_confirmation"
+                    )
                 )
                 if handoff_committed:
                     if case_id not in completed_case_id_set:
