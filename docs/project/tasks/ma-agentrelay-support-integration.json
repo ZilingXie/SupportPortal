@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "ma-agentrelay-support-integration",
-  "title": "低优先级保留",
+  "title": "将 AgentRelay 多角色协作接入 Support Case",
   "topic_id": "agent-collaboration",
   "related_topic_ids": [],
   "milestone_id": "long-term-agent-collaboration",

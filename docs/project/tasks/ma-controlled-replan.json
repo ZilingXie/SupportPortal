@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "ma-controlled-replan",
-  "title": "低优先级保留",
+  "title": "为 Multi-Agent 调查恢复受控 Targeted Replan",
   "topic_id": "agent-collaboration",
   "related_topic_ids": [],
   "milestone_id": "long-term-agent-collaboration",

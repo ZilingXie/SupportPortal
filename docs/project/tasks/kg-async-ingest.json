@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-async-ingest",
-  "title": "P1",
+  "title": "将 KG Ingest 后台任务化并联动 RAG 入库",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

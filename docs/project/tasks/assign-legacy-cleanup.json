@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-legacy-cleanup",
-  "title": "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。",
+  "title": "清理 Legacy Engineer Case 状态、旧 UI 与兼容逻辑",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",

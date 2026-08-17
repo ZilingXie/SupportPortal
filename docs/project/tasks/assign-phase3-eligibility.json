@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-phase3-eligibility",
-  "title": "Phase 3",
+  "title": "为 Zendesk Intake 增加 AI Eligibility Gate",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",

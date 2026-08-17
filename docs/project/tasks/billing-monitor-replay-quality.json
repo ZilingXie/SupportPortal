@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-monitor-replay-quality",
-  "title": "Monitor real Zendesk replay set",
+  "title": "监控真实 Zendesk Replay Set 的路由与自动化质量",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

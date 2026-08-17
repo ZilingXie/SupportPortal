@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-expand",
-  "title": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
+  "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

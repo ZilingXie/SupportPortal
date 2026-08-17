@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-offline-graph-build",
-  "title": "P0",
+  "title": "在本地 Neo4j 构建完整官方文档知识图谱",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

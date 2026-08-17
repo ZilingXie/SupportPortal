@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-benchmark-ab",
-  "title": "P0",
+  "title": "用真实查询评估 RAG 与 RAG+KG 的效果门禁",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

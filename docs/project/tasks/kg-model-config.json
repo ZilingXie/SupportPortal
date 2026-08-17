@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-model-config",
-  "title": "P1",
+  "title": "固化生产 KG 配置、Secret 与环境变量边界",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

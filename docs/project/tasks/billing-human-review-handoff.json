@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-human-review-handoff",
-  "title": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
+  "title": "设计 Account Human Review 到 Engineer Case 的显式交接",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

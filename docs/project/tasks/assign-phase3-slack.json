@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-phase3-slack",
-  "title": "Phase 3",
+  "title": "通过 Slack 向工程师送达 Round Robin 派单",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",

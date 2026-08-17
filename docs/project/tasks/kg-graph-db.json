@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-graph-db",
-  "title": "P1",
+  "title": "评估 AWS Neptune 作为生产图数据库",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-recipient-env",
-  "title": "P2",
+  "title": "配置并验证 Automation 内部处理邮箱",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

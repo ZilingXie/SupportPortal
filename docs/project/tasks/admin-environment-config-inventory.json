@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "admin-environment-config-inventory",
-  "title": "Admin Environment Config names-only inventory",
+  "title": "仅展示 Admin Environment Config 名称清单",
   "topic_id": "admin-operations",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

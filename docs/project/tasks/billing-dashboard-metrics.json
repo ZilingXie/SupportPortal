@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-dashboard-metrics",
-  "title": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、a",
+  "title": "定义 Account Automation Dashboard 与 Monitor 指标",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

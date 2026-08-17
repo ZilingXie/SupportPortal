@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-phase3-admin-sync",
-  "title": "Phase 3",
+  "title": "在 Admin Dashboard 展示并同步 Slack 派单状态",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",
