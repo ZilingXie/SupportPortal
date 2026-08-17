@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.workspace_auth import WorkspacePrincipal
+from backend.services.zendesk_comments import ZendeskCommentError
 from backend.services.zendesk_ticket_assignment import ZendeskAssignmentResult
 
 
@@ -93,6 +94,35 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
         )
         response = self.client.post("/api/account/cases/AC-12807/zendesk-ai-assignment")
         self.assertEqual(response.status_code, 403, response.text)
+
+    def test_permission_error_is_not_reported_as_group_membership_error(self) -> None:
+        with patch(
+            "backend.main.assign_ticket_to_configured_ai",
+            side_effect=ZendeskCommentError(
+                "permanent",
+                status_code=403,
+                error_code="zendesk_http_error",
+            ),
+        ):
+            response = self.client.post("/api/account/cases/AC-12807/zendesk-ai-assignment")
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertIn("lacks permission", response.json()["detail"])
+        self.assertNotIn("ticket group", response.json()["detail"])
+
+    def test_unprocessable_assignment_reports_group_membership_error(self) -> None:
+        with patch(
+            "backend.main.assign_ticket_to_configured_ai",
+            side_effect=ZendeskCommentError(
+                "permanent",
+                status_code=422,
+                error_code="zendesk_http_error",
+            ),
+        ):
+            response = self.client.post("/api/account/cases/AC-12807/zendesk-ai-assignment")
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertIn("ticket group", response.json()["detail"])
 
 if __name__ == "__main__":
     unittest.main()

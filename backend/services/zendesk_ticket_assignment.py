@@ -49,19 +49,12 @@ def _configured_assignee_email() -> str:
 def _resolve_configured_assignee(*, expected_email: str, timeout_seconds: float) -> tuple[str, dict[str, Any]]:
     user_payload, _ = _request(
         method="GET",
-        url=f"{ZENDESK_USER_API_BASE}/search.json?query={urllib.parse.quote(expected_email, safe='')}",
+        url=f"{ZENDESK_USER_API_BASE}/me.json",
         timeout_seconds=timeout_seconds,
     )
-    users = user_payload.get("users") if isinstance(user_payload.get("users"), list) else []
-    matches = [
-        user
-        for user in users
-        if isinstance(user, dict)
-        and str(user.get("email") or "").strip().lower() == expected_email
-    ]
-    if len(matches) != 1:
+    user = user_payload.get("user") if isinstance(user_payload.get("user"), dict) else {}
+    if str(user.get("email") or "").strip().lower() != expected_email:
         raise _assignment_error("permanent", error_code="zendesk_assignee_invalid")
-    user = matches[0]
     assignee_id = str(user.get("id") or "").strip()
     role = str(user.get("role") or "").strip().lower()
     if (

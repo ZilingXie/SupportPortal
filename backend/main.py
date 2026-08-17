@@ -4837,7 +4837,12 @@ def _account_zendesk_assignment_http_error(exc: ZendeskCommentError) -> HTTPExce
         return HTTPException(status_code=503, detail="Zendesk is temporarily unavailable; retry the assignment")
     if exc.category == "outcome_unknown":
         return HTTPException(status_code=409, detail="Zendesk assignment result is unknown; verify the ticket before retrying")
-    if exc.status_code in {401, 403, 422}:
+    if exc.status_code in {401, 403}:
+        return HTTPException(
+            status_code=502,
+            detail="Zendesk integration lacks permission to verify or update the ticket",
+        )
+    if exc.status_code == 422:
         return HTTPException(
             status_code=502,
             detail="Zendesk rejected the assignment; confirm the AI Agent belongs to the ticket group",
