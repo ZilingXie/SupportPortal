@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 1,
-  "generated_at": "2026-08-17T02:41:24Z",
-  "source_base_commit": "998a42488dab8e8b3ecdf24696c28068eca66442",
-  "registry_digest": "37b03447425f28ae96e5248af4e0ccb358b6301d15590aa1967fc4842dd6a6e0",
+  "generated_at": "2026-08-17T05:54:34Z",
+  "source_base_commit": "8099043e7cfe17ed1f34ab2d6d79f83d0ac16d1f",
+  "registry_digest": "4b0a6d59d3f4512a22f63efde727a9283e7639adbb02b22756f0e25443221868",
   "project": {
     "schema_version": 1,
     "project_id": "supportportal",
@@ -713,22 +713,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "priority": "unclassified",
       "owner": "zac",
       "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "next_action": "补齐验收证据并更新状态。",
+      "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
       "acceptance_criteria": [
         "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk internal comment response parser and idempotency tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        }
+      ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "internal_comment_response_parser_fixed",
+          "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
         }
       ],
       "legacy_refs": [
