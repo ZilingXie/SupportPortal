@@ -30,6 +30,11 @@
     },
     {
       "type": "test",
+      "label": "Zendesk assignee identity and error classification regression suite",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+    },
+    {
+      "type": "test",
       "label": "Feature list and Project Overview validation",
       "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
     }
@@ -46,7 +51,12 @@
     {
       "at": "2026-08-17",
       "event": "verified",
-      "summary": "44 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+      "summary": "47 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "assignee_identity_resolution_fixed",
+      "summary": "改用 users/me 校验配置邮箱对应的凭据身份，避免 users/search 权限不足误报为 group membership，并区分 Zendesk 权限错误与 422 group 拒绝。"
     }
   ],
   "legacy_refs": [],

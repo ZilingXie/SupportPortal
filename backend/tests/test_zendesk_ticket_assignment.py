@@ -35,7 +35,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
 
     def test_updates_only_assignee_and_preserves_ticket_group(self) -> None:
         responses = [
-            _FakeResponse({"users": [{"id": 48557297720084, "email": "ai-support-agent@agora.io", "name": "AI Support", "role": "agent", "active": True, "suspended": False}]}),
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "name": "AI Support", "role": "agent", "active": True, "suspended": False}}),
             _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148, "status": "pending"}}),
             _FakeResponse({"ticket": {"id": 12807, "assignee_id": 48557297720084, "group_id": 27216254064148, "status": "pending"}}),
         ]
@@ -49,6 +49,8 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(result.group_id, "27216254064148")
         self.assertFalse(result.already_assigned)
         self.assertEqual(urlopen.call_count, 3)
+        identity_request = urlopen.call_args_list[0].args[0]
+        self.assertEqual(identity_request.full_url, "https://agoraio.zendesk.com/api/v2/users/me.json")
         update_request = urlopen.call_args_list[2].args[0]
         self.assertEqual(update_request.method, "PUT")
         self.assertEqual(
@@ -58,7 +60,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
 
     def test_already_assigned_does_not_put(self) -> None:
         responses = [
-            _FakeResponse({"users": [{"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False}]}),
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False}}),
             _FakeResponse({"ticket": {"id": 12807, "assignee_id": 48557297720084, "group_id": 27216254064148}}),
         ]
         with patch.dict(os.environ, self.config, clear=False), patch(
@@ -71,7 +73,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 2)
 
     def test_invalid_configured_user_fails_closed(self) -> None:
-        response = _FakeResponse({"users": [{"id": 48557297720084, "email": "other@example.com", "role": "agent", "active": True, "suspended": False}]})
+        response = _FakeResponse({"user": {"id": 48557297720084, "email": "other@example.com", "role": "agent", "active": True, "suspended": False}})
         with patch.dict(os.environ, self.config, clear=False), patch(
             "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
             return_value=response,
@@ -82,7 +84,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(raised.exception.error_code, "zendesk_assignee_invalid")
 
     def test_inactive_or_non_agent_user_fails_closed(self) -> None:
-        response = _FakeResponse({"users": [{"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "end-user", "active": True, "suspended": False}]})
+        response = _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "end-user", "active": True, "suspended": False}})
         with patch.dict(os.environ, self.config, clear=False), patch(
             "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
             return_value=response,

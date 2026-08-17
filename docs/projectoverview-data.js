@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T09:40:03Z",
-  "source_base_commit": "195a9685a753dd16d041aea1f369725ebe4a1517",
-  "registry_digest": "346739590dafba23ffd49143facaeb8a51232519dd67cd80cf6a125bc1537a44",
+  "generated_at": "2026-08-17T10:01:12Z",
+  "source_base_commit": "c56a62dce84a2d96b95820af7fb012e83423ca71",
+  "registry_digest": "299ba363bad0116e858c8827940821d683b9f578df3f63fa9988a708b589e9bc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -855,6 +855,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account Zendesk assignment regression suite",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk assignee identity and error classification regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
         },
         {
           "type": "test",
@@ -3830,6 +3835,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Zendesk assignee identity and error classification regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
           "label": "Feature list and Project Overview validation",
           "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
         }
@@ -3848,7 +3858,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-17",
           "event": "verified",
-          "summary": "44 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+          "summary": "47 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "assignee_identity_resolution_fixed",
+          "summary": "改用 users/me 校验配置邮箱对应的凭据身份，避免 users/search 权限不足误报为 group membership，并区分 Zendesk 权限错误与 422 group 拒绝。"
         }
       ],
       "legacy_refs": [],
