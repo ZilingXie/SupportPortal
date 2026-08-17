@@ -72,7 +72,14 @@ def build_account_failure_alert(
             f"- Failed case: {_safe_detail(summary.get('failed_case_id'), limit=120) or '<none>'}",
             f"- Failed stage: {_safe_detail(summary.get('failed_stage'), limit=120) or '<none>'}",
         ])
+        recovery_reason = _safe_detail(summary.get("recovery_reason"), limit=160)
+        if recovery_reason:
+            lines.append(f"- Recovery reason: {recovery_reason}")
+        stop_reason = _safe_detail(summary.get("stop_reason"), limit=160)
+        if stop_reason:
+            lines.append(f"- Stop reason: {stop_reason}")
     lines.extend([
+        "Account UI: /account",
         "Action: review the Account Case and continue manually. No customer reply was generated after the failure.",
     ])
     return subject, "\n".join(lines)

@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260814-account-rerun-reply-fix-1", html)
+        self.assertIn("20260817-account-rerun-recovery-fence-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -355,6 +355,7 @@ class AccountUiContractTests(unittest.TestCase):
           running: render({{ status: 'running', phase: 'Preflight', processed: 0, total: 4 }}),
           preflight: render({{ status: 'failed', stop_reason: 'preflight_failed', failed_stage: 'preflight', remaining: 4, preflight: {{ checks: {{ account_model: {{ status: 'failed', reason: 'unexpected_model' }} }} }} }}),
           stopped: render({{ status: 'failed', stop_reason: 'case_degraded', failed: 1, failed_case_id: 'AC-4', failed_stage: 'prepare', failed_reason_code: 'account_rerun_prepare_failed', alert_status: 'sent', stop_error: 'account route request failed', succeeded: 3, remaining: 0 }}),
+          recovery: render({{ status: 'needs_recovery', phase: 'Recovery required', recovery_reason: 'execution_lease_expired', failed_stage: 'execution_lease', failed_reason_code: 'account_rerun_execution_lease_expired', alert_status: 'sent', succeeded: 44, remaining: 135, reply_jobs_published: 0, reply_job_summary: {{ source: 'observed', available: true, published: 13, cancelled: 0 }} }}),
           completed: render({{ status: 'completed', succeeded: 4, remaining: 0 }}),
         }}));
         """
@@ -369,6 +370,13 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("account route request failed", rendered["stopped"])
         self.assertIn("account_rerun_prepare_failed", rendered["stopped"])
         self.assertIn("Alert: sent", rendered["stopped"])
+        self.assertIn("Interrupted", rendered["recovery"])
+        self.assertIn("execution lease expired", rendered["recovery"])
+        self.assertIn("44 succeeded", rendered["recovery"])
+        self.assertIn("135 unprocessed", rendered["recovery"])
+        self.assertIn("account_rerun_execution_lease_expired", rendered["recovery"])
+        self.assertIn("13 published", rendered["recovery"])
+        self.assertIn("Resume remaining cases", rendered["recovery"])
         self.assertIn("Completed", rendered["completed"])
         self.assertNotIn("Rerun complete", rendered["stopped"])
         self.assertIn("Resume rerun", rendered["stopped"])

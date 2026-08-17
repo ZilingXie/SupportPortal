@@ -6420,6 +6420,44 @@ def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("checkpoint", None)
     normalized.setdefault("retry_mode", None)
     normalized.setdefault("frozen_case_ids", list(normalized.get("target_case_ids") or []))
+    if str(normalized.get("status") or "").strip() == "needs_recovery":
+        # Older jobs predate the explicit recovery contract. Derive these fields
+        # on the response copy only so reading history never mutates the job.
+        normalized["phase"] = "Recovery required"
+        normalized["recovery_reason"] = (
+            str(normalized.get("recovery_reason") or "execution_lease_expired").strip()
+            or "execution_lease_expired"
+        )
+        normalized["stop_reason"] = (
+            str(normalized.get("stop_reason") or normalized["recovery_reason"]).strip()
+            or normalized["recovery_reason"]
+        )
+        normalized["failed_stage"] = (
+            str(normalized.get("failed_stage") or "execution_lease").strip()
+            or "execution_lease"
+        )
+        normalized["failed_reason_code"] = (
+            str(
+                normalized.get("failed_reason_code")
+                or "account_rerun_execution_lease_expired"
+            ).strip()
+            or "account_rerun_execution_lease_expired"
+        )
+        normalized["failed_case_id"] = None
+        normalized.setdefault(
+            "stop_error",
+            "Account rerun execution lease expired before the job completed.",
+        )
+        normalized.setdefault("recovery_alert_status", normalized.get("alert_status"))
+        normalized["alert_status"] = (
+            str(
+                normalized.get("alert_status")
+                or normalized.get("recovery_alert_status")
+                or "unknown"
+            ).strip()
+            or "unknown"
+        )
+        normalized["reply_job_summary"] = _account_rerun_reply_job_summary(normalized)
     if "remaining" not in normalized:
         normalized["remaining"] = max(
             0,
@@ -6431,6 +6469,74 @@ def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
         for key, value in normalized.items()
         if key not in _ACCOUNT_REROUTE_INTERNAL_FIELDS
     }
+
+
+def _account_rerun_reply_job_summary(job: dict[str, Any]) -> dict[str, Any]:
+    """Read reply-job states without changing or scheduling any reply."""
+
+    reply_job_ids = list(dict.fromkeys(
+        str(item or "").strip()
+        for item in job.get("reply_job_ids") or []
+        if str(item or "").strip()
+    ))
+    persisted = {
+        "source": "persisted",
+        "available": False,
+        "reason_code": "account_rerun_reply_summary_unavailable",
+        "total": int(job.get("replies_scheduled") or 0),
+        "published": int(job.get("reply_jobs_published") or 0),
+        "failed": int(job.get("reply_jobs_failed") or 0),
+        "cancelled": int(job.get("reply_jobs_cancelled") or 0),
+        "pending": int(job.get("reply_jobs_pending") or 0),
+        "unknown": 0,
+    }
+    if not reply_job_ids:
+        return {
+            "source": "observed",
+            "available": True,
+            "total": 0,
+            "published": 0,
+            "failed": 0,
+            "cancelled": 0,
+            "pending": 0,
+            "unknown": 0,
+        }
+    try:
+        reply_jobs = [
+            ticket_repository.get_account_reply_job(reply_job_id)
+            for reply_job_id in reply_job_ids
+        ]
+    except Exception as exc:
+        LOGGER.warning(
+            "Could not observe reply jobs for Account rerun %s: %s",
+            job.get("job_id"),
+            exc,
+        )
+        return persisted
+    summary = {
+        "source": "observed",
+        "available": True,
+        "total": len(reply_job_ids),
+        "published": 0,
+        "failed": 0,
+        "cancelled": 0,
+        "pending": 0,
+        "unknown": 0,
+    }
+    for reply_job in reply_jobs:
+        if not isinstance(reply_job, dict):
+            summary["unknown"] += 1
+            continue
+        status = str(reply_job.get("status") or "").strip().lower()
+        if status == "published":
+            summary["published"] += 1
+        elif status == "cancelled":
+            summary["cancelled"] += 1
+        elif status in {"failed", "manual_attention"}:
+            summary["failed"] += 1
+        else:
+            summary["pending"] += 1
+    return summary
 
 
 def _account_full_reroute_jobs(*, limit: int = 500) -> list[dict[str, Any]]:
@@ -6682,7 +6788,49 @@ async def _claim_and_run_account_reroute_job(
             datetime.now(timezone.utc) + ACCOUNT_REROUTE_EXECUTION_LEASE
         ).isoformat(),
     )
-    if claim.get("status") != "acquired":
+    claim_status = str(claim.get("status") or "").strip()
+    if claim_status == "needs_recovery":
+        recovery_job = claim.get("job") if isinstance(claim.get("job"), dict) else {}
+        # Lease recovery is terminal: do not resume the old Case loop. Claiming
+        # the alert separately fences concurrent dispatchers from duplicate mail.
+        try:
+            alert_claim = await _account_rerun_storage_call(
+                ticket_repository.claim_account_reroute_recovery_alert,
+                job_id,
+                claimed_at=now_iso(),
+            )
+            if str(alert_claim.get("status") or "") == "claimed":
+                alert_result = await _notify_account_rerun_failure(
+                    job=recovery_job,
+                    stage="execution_lease",
+                    code="account_rerun_execution_lease_expired",
+                    detail=(
+                        "The Account rerun execution lease expired before the job completed. "
+                        "No automatic recovery was started."
+                    ),
+                )
+                normalized_alert_status = (
+                    "sent"
+                    if alert_result in {"sent", "already_claimed"}
+                    else "skipped_config_missing"
+                    if alert_result == "skipped_config_missing"
+                    else "failed"
+                )
+                await _account_rerun_storage_call(
+                    ticket_repository.record_account_reroute_recovery_alert,
+                    job_id,
+                    alert_status=normalized_alert_status,
+                    recorded_at=now_iso(),
+                )
+        except Exception:
+            # Recovery remains visible even when the owner alert cannot be sent
+            # or persisted; no automatic retry is allowed here.
+            LOGGER.exception(
+                "Could not send or record Account rerun lease recovery alert for %s",
+                job_id,
+            )
+        return
+    if claim_status != "acquired":
         return
     await _run_account_full_reroute_job(
         job_id,
@@ -8714,7 +8862,7 @@ async def _notify_account_rerun_failure(
         detail=detail,
         summary={
             "build_ref": str(job.get("build_ref") or "unknown").strip() or "unknown",
-            "status": "failed",
+            "status": str(job.get("status") or "failed").strip() or "failed",
             "degraded": True,
             "processed": processed,
             "succeeded": succeeded,
@@ -8722,6 +8870,8 @@ async def _notify_account_rerun_failure(
             "remaining": max(0, total - processed),
             "failed_case_id": account_case_id or job.get("failed_case_id"),
             "failed_stage": stage,
+            "recovery_reason": str(job.get("recovery_reason") or "").strip() or None,
+            "stop_reason": str(job.get("stop_reason") or "").strip() or None,
         },
         now=now_iso(),
     )

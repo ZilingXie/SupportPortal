@@ -415,6 +415,54 @@ class PostgresAccountRerouteJobTests(unittest.TestCase):
         )
         self.assertEqual(second["status"], "created")
 
+    def test_needs_recovery_contract_and_alert_claim_are_persisted_once(self) -> None:
+        first = self._claim(self._job("account-rerun-recovery-contract"))
+        now = datetime.now(timezone.utc)
+        old_time = now - timedelta(hours=2)
+        claimed = self.repository.claim_account_reroute_job_execution(
+            str(first["job"]["job_id"]),
+            owner_token="abandoned-owner",
+            claimed_at=old_time.isoformat(),
+            lease_expires_at=(old_time + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(claimed["status"], "acquired")
+        recovered = self.repository.claim_account_reroute_job_execution(
+            "account-rerun-recovery-contract",
+            owner_token="recovery-scanner",
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(recovered["status"], "needs_recovery")
+        recovery_job = recovered["job"]
+        self.assertEqual(recovery_job["phase"], "Recovery required")
+        self.assertEqual(recovery_job["recovery_reason"], "execution_lease_expired")
+        self.assertEqual(recovery_job["failed_stage"], "execution_lease")
+        self.assertEqual(
+            recovery_job["failed_reason_code"],
+            "account_rerun_execution_lease_expired",
+        )
+
+        alert_claim = self.repository.claim_account_reroute_recovery_alert(
+            "account-rerun-recovery-contract",
+            claimed_at=now.isoformat(),
+        )
+        self.assertEqual(alert_claim["status"], "claimed")
+        duplicate_claim = self.repository.claim_account_reroute_recovery_alert(
+            "account-rerun-recovery-contract",
+            claimed_at=(now + timedelta(seconds=1)).isoformat(),
+        )
+        self.assertEqual(duplicate_claim["status"], "already_claimed")
+        recorded = self.repository.record_account_reroute_recovery_alert(
+            "account-rerun-recovery-contract",
+            alert_status="failed",
+            recorded_at=(now + timedelta(seconds=2)).isoformat(),
+        )
+        self.assertEqual(recorded["status"], "recorded")
+        stored = self.repository.get_account_reroute_job("account-rerun-recovery-contract")
+        assert stored is not None
+        self.assertEqual(stored["alert_status"], "failed")
+        self.assertEqual(stored["recovery_alert_status"], "failed")
+
     def test_progress_update_is_fenced_renews_lease_and_terminal_releases_it(self) -> None:
         self._claim(self._job("account-rerun-progress-fence"))
         now = datetime.now(timezone.utc)

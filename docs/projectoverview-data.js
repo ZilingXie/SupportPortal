@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T06:29:46Z",
-  "source_base_commit": "47799898c4bf9d471318cd167a701d1995f98b98",
-  "registry_digest": "e67da70b7301b58d4f2c612a337053ad1db38873efc0af89e54f43d761a649ed",
+  "generated_at": "2026-08-17T06:45:42Z",
+  "source_base_commit": "6dc623ad4c7d2a4d4c91087078c17a16ec0220bb",
+  "registry_digest": "9d607b5aa0f6db82cf101ffff95c95e99cad7b6dda2a39c98ca46c16eb257a00",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1518,13 +1518,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Account full rerun 的恢复、幂等和 fail-fast",
       "status": "done",
       "owner": "Zac",
-      "summary": "Rerun 具备冻结、preflight、恢复和结果边界；本轮修复失败后 legacy delivery 继续投递和重复告警。",
+      "summary": "Rerun 具备冻结、preflight、恢复和结果边界；失败后禁止继续投递，并将 lease 过期公开为 needs_recovery。",
       "next_action": "",
       "acceptance_criteria": [
         "Rerun 具备冻结、preflight、恢复和结果边界。",
         "Rerun Commit 前固定内部邮件收件人，缺失时零写入并只发送 job-level owner alert。",
         "terminal failed rerun 的 delivery key 被 legacy worker 跳过，不发送内部邮件或客户回复。",
-        "Resume 继续使用持久化收件人和已有 delivery/reply checkpoint，不重复投递。"
+        "Resume 继续使用持久化收件人和已有 delivery/reply checkpoint，不重复投递。",
+        "execution lease 过期只进入 needs_recovery，公开稳定原因、一次性 owner alert 和只读 reply 状态汇总，不自动恢复。"
       ],
       "blockers": [],
       "evidence": [
@@ -1594,7 +1595,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1615,6 +1616,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "recovery_contract_completed",
+          "summary": "补齐 needs_recovery API/UI 契约、一次性 lease-expiry owner alert、observed reply summary 与 InMemory/PostgreSQL parity；未执行正式 rerun。"
         }
       ],
       "legacy_refs": [],
