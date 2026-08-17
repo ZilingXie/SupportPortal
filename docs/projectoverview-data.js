@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T06:20:55Z",
-  "source_base_commit": "15a81af30b8241916fa985097e38ecc3f8d8150f",
-  "registry_digest": "03b625607b006f2c09369b23202fb28f8eb5e308c8d536fc7c5e9beb48339abf",
+  "generated_at": "2026-08-17T06:30:12Z",
+  "source_base_commit": "51b302a4949f611df142437a881732e6728951e3",
+  "registry_digest": "7b7c676b0b90ebaf79ef9a59b17b2f22b7bf94adc27e653f2e7065cb67387655",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -620,6 +620,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account UI contract tests",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk internal comment timeout and regression tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
         },
         {
           "type": "test",
@@ -1973,6 +1978,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account UI contract tests",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk internal comment timeout and regression tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
         }
       ],
       "source_refs": [
@@ -1995,6 +2005,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "internal_comment_response_parser_fixed",
           "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "internal_comment_spinner_timeout_fixed",
+          "summary": "为 /account Zendesk internal comment 请求增加前端有界超时，确保 Adding... 在请求挂起时清除并显示错误。"
         }
       ],
       "legacy_refs": [

@@ -445,6 +445,40 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertNotIn('localStorage.setItem("supportportal_workspace_access_token"', app_source)
         self.assertNotIn('localStorage.setItem("supportportal_workspace_account"', app_source)
 
+    def test_account_fetch_aborts_stalled_request_and_surfaces_timeout(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        helper_start = app_source.index("function authRequestInit")
+        helper_end = app_source.index("\nfunction clearAccountAuth", helper_start)
+        helpers = app_source[helper_start:helper_end]
+        script = (
+            "const accessToken = 'test-token';\n"
+            "function handleAccountAuthFailure() {}\n"
+            f"{helpers}\n"
+            "globalThis.fetch = (_url, options) => new Promise((_resolve, reject) => {\n"
+            "  options.signal.addEventListener('abort', () => {\n"
+            "    const error = new Error('aborted');\n"
+            "    error.name = 'AbortError';\n"
+            "    reject(error);\n"
+            "  }, { once: true });\n"
+            "});\n"
+            "(async () => {\n"
+            "  try {\n"
+            "    await accountFetch('/slow', { timeoutMs: 10 });\n"
+            "    process.exitCode = 1;\n"
+            "  } catch (error) {\n"
+            "    if (error.message !== 'Request timed out after 1s') process.exitCode = 2;\n"
+            "  }\n"
+            "})();\n"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_account_app_contains_filter_state_and_reply_composer(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
