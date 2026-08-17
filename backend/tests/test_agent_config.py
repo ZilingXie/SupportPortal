@@ -78,7 +78,7 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(route_prompts["account-quota-field-extractor-system"]["version"], "account-quota-fields-v1")
         self.assertEqual(
             route_prompts["account-verification-field-extractor-system"]["version"],
-            "fraud-account-fields-v2",
+            "fraud-account-fields-v3",
         )
         self.assertEqual(
             route_prompts["account-suspension-field-extractor-system"]["version"],

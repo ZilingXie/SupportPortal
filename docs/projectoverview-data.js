@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T08:30:00Z",
-  "source_base_commit": "ffe5b0c8cb1bbd7114b44fa8db22b7a1afcd1261",
-  "registry_digest": "3e99bc4923d6edaa65d5e183bf20c39b14bdf2de42fd36cecc9310883942fe9f",
+  "generated_at": "2026-08-17T08:47:50Z",
+  "source_base_commit": "716d475e2d4181ccde2c633c3c20e925a1ba1ed3",
+  "registry_digest": "59107874fa8ff617957fd62ea58c1dd7c1704e51ff4e76531c1d677927939937",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -536,6 +536,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 702,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
           "label": "PR #702"
+        },
+        {
+          "type": "test",
+          "label": "Fraud Account grounding v3 regression coverage",
+          "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
         },
         {
           "type": "pr",
@@ -1503,6 +1508,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 702,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
           "label": "PR #702"
+        },
+        {
+          "type": "test",
+          "label": "Fraud Account grounding v3 regression coverage",
+          "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
         }
       ],
       "source_refs": [

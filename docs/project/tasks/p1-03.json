@@ -40,6 +40,11 @@
       "number": 702,
       "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
       "label": "PR #702"
+    },
+    {
+      "type": "test",
+      "label": "Fraud Account grounding v3 regression coverage",
+      "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
     }
   ],
   "source_refs": [
