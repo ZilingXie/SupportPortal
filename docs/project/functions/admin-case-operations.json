@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "function_id": "admin-case-operations",
-  "phase_id": "phase-2",
+  "phase_id": "phase-1",
   "module_id": "admin-operations",
   "title": "Admin Case 运营控制面",
   "goal": "提供管理员查看、筛选和追踪 Account Case 的能力。",

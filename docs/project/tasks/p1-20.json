@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-20",
+  "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
+  "status": "active",
+  "owner": "zac",
+  "summary": "通过 Zendesk users side-load 补齐评论作者姓名和身份，并在 Account 中派生 is_agent。",
+  "next_action": "将 include=users 的 comment-sync workflow 部署到 n8n，并完成公网 Case 验收。",
+  "acceptance_criteria": [
+    "Account Zendesk comments 保存作者姓名和 author_kind，并派生 is_agent；public customer、public Support Engineer、internal note 和未知作者均有明确展示。",
+    "N8n 完整评论快照按 author_id 合并 Zendesk users，重放保持幂等，无法确认身份时不得静默标记为 Agent。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
+      "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
+    },
+    {
+      "type": "test",
+      "label": "Python, frontend and N8n Code syntax checks",
+      "command": "python3 -m py_compile backend/main.py backend/services/account_zendesk_comments.py backend/repositories/ticket_repository.py; node --check ui/account-ui/app.js"
+    }
+  ],
+  "source_refs": [
+    "docs/integrations/n8n/zendesk_account_comment_sync.md",
+    "docs/feature_list.md"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "created",
+      "summary": "为 Zendesk Account comment sync 作者身份增强建立 Project Task。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p2-20 迁移为 p1-20；迁移到 phase-1 / account-automation / zendesk-delivery。"
+    }
+  ],
+  "legacy_refs": [],
+  "legacy_ids": [
+    "zendesk-account-comment-identity",
+    "p2-20"
+  ],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "zendesk-delivery"
+}

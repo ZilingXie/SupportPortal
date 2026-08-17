@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T07:02:32Z",
-  "source_base_commit": "ab289e1592a38916901ec2845ca49fac26dae2f4",
-  "registry_digest": "54c30adff97a3cb03de9812e22cb861490f0cd58cc3c2460ad605fcb5d034c07",
+  "generated_at": "2026-08-17T07:34:10Z",
+  "source_base_commit": "567a7675d86d6d5f0f9c8b1262a3a3f0bb742950",
+  "registry_digest": "78efa747c77acef38d93954e8f483f3ed9eac60ec4c047b9004f96220f0fcf00",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -34,52 +34,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       7,
       30
     ],
-    "current_phase_id": "phase-2"
+    "current_phase_id": "phase-1"
   },
   "phases": [
     {
       "schema_version": 2,
       "phase_id": "phase-1",
-      "title": "Phase 1：效率提升与工单系统基线",
-      "status": "done",
-      "summary": "历史基线阶段已完成；未完成旧记录已转入 Phase 3。",
-      "target_date": null,
-      "exit_criteria": [
-        "客户入口、工单基础能力和最小交付闭环已建立。"
-      ],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/roadmap/phase1.html"
-      ]
-    },
-    {
-      "schema_version": 2,
-      "phase_id": "phase-2",
-      "title": "Phase 2：确定性 Automation + Controlled Validation",
+      "title": "Phase 1：核心交付闭环",
       "status": "active",
-      "summary": "收口 Account & Billing、路由策略、回复质量和可观测性，逐步扩大可验证自动化范围。",
+      "summary": "当前交付阶段，聚焦 Account Automation、Admin Operations 和 Platform Delivery；这三个 Module 的 Task 属于本阶段完成范围。",
       "target_date": null,
       "exit_criteria": [
-        "Registered automation outcome 的路由、字段、内部处理和客户跟进都有可验证证据。",
-        "Automated coverage、route accuracy、失败原因和人工审核结果可持续观察。",
-        "敏感、低置信或失败路径明确进入 Human Review。"
+        "Account Automation 的路由、执行、人工审核、Zendesk 交付与受控发布任务完成，并有对应 evidence。",
+        "Admin Operations 的管理控制面和运营任务完成，并有对应 evidence。",
+        "Platform Delivery 的项目治理、生产 AI 约束和交付基础任务完成，并有对应 evidence。"
       ],
       "source_refs": [
         "docs/roadmap.html",
+        "docs/roadmap/phase1.html",
         "docs/roadmap/phase2.html",
         "docs/roadmap/meetings.html"
       ]
     },
     {
       "schema_version": 2,
-      "phase_id": "phase-3",
-      "title": "Phase 3：Engineer Workflow + Governed AI Collaboration",
-      "status": "active",
-      "summary": "承接长期 Agent 协作、Engineer Workflow、AI 首次回复和派单交付。",
+      "phase_id": "phase-2",
+      "title": "Phase 2：Client、Knowledge 与 Engineer AI 演进",
+      "status": "planned",
+      "summary": "在 Phase 1 完成后，推进 Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace；当前全部 Task 标记为未开始。",
       "target_date": null,
       "exit_criteria": [
-        "Engineer Case assignment、SLA、审计和 AI 交接边界可验证。",
-        "Agent 自主行为在证据、权限、成本和审计门禁下逐步开放。"
+        "Client Experience 的对话能力和附件/流式交互可验证。",
+        "RAG & Knowledge 的 ingestion、评测、生产平台和范围治理可验证。",
+        "Agent Collaboration 与 Engineer Workspace 的证据、AI intake、派单和交接边界可验证。"
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/roadmap/phase2.html",
+        "docs/roadmap/phase3.html",
+        "docs/roadmap/meetings.html"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "phase_id": "phase-3",
+      "title": "Phase 3：预留阶段",
+      "status": "planned",
+      "summary": "当前没有注册 Task；保留为 Phase 2 之后新增能力的预留阶段。",
+      "target_date": null,
+      "exit_criteria": [
+        "为 Phase 2 之后新增的可独立汇报能力建立 Module、Function 和 Task。"
       ],
       "source_refs": [
         "docs/roadmap.html",
@@ -311,7 +315,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "automation-execution",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "Account Automation 执行闭环",
       "goal": "实现幂等、rerun、Persona 和内部处理的稳定执行链路。",
@@ -411,7 +415,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "controlled-rollout",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "Account Automation 受控发布",
       "goal": "用指标、Replay 和人工审核门禁逐步扩大自动化范围。",
@@ -430,7 +434,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "human-review",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "敏感请求 Human Review",
       "goal": "让失败、低置信和敏感请求进入可解释的人工接管流程。",
@@ -458,7 +462,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "routing-fallback-billing-risk-sniff",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "Billing 风险保护 Gate",
       "goal": "在 Conservative Fallback 前识别高风险 Billing 请求并保留安全边界。",
@@ -486,7 +490,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "routing-quality-validation",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "路由质量验证",
       "goal": "用 Golden Set、负样本和真实 Replay 持续验证路由质量。",
@@ -504,7 +508,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "routing-taxonomy",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "Account 路由分类体系",
       "goal": "统一 Automation、Human Review、classification-only 和 fallback 的路由边界。",
@@ -605,7 +609,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "zendesk-delivery",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "title": "Zendesk 交付与身份",
       "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",
@@ -651,7 +655,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "admin-case-operations",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "admin-operations",
       "title": "Admin Case 运营控制面",
       "goal": "提供管理员查看、筛选和追踪 Account Case 的能力。",
@@ -689,27 +693,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "function_id": "client-conversation-experience",
-      "phase_id": "phase-2",
-      "module_id": "client-experience",
-      "title": "Client 对话体验",
-      "goal": "完善客户侧附件、流式回复和入口体验。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 2,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
       "function_id": "production-ai-governance",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "title": "生产 AI 治理",
       "goal": "明确生产 AI 账号、数据留存和客户数据安全边界。",
@@ -727,7 +712,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "function_id": "project-governance",
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "title": "项目进度治理",
       "goal": "维护 Project Overview、Task 标题和 AI 工作规则的单一事实源。",
@@ -773,6 +758,156 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "function_id": "agent-billing-poc",
+      "phase_id": "phase-2",
+      "module_id": "agent-collaboration",
+      "title": "Agent Billing 验证",
+      "goal": "收口 Billing route、回执和提醒的 Agent 验证闭环。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-evidence-evaluation",
+      "phase_id": "phase-2",
+      "module_id": "agent-collaboration",
+      "title": "Agent Evidence 与 Replay",
+      "goal": "建立真实证据工具、Replay 评测和回归门禁。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-governance",
+      "phase_id": "phase-2",
+      "module_id": "agent-collaboration",
+      "title": "Agent 治理与自主边界",
+      "goal": "在证据、权限、成本和审计门禁下控制 Agent 自主行为。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [
+        "agent-controlled-replan"
+      ],
+      "status": "planned",
+      "task_count": 8,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-workspace-console",
+      "phase_id": "phase-2",
+      "module_id": "agent-collaboration",
+      "title": "Agent Workspace 行动台",
+      "goal": "把 Multi-Agent Run 面板升级为工程师可执行的行动台。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agentrelay-integration",
+      "phase_id": "phase-2",
+      "module_id": "agent-collaboration",
+      "title": "AgentRelay 协作接入",
+      "goal": "将 AgentRelay 多角色协作接入 Support Case 工作流。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "client-conversation-experience",
+      "phase_id": "phase-2",
+      "module_id": "client-experience",
+      "title": "Client 对话体验",
+      "goal": "完善客户侧附件、流式回复和入口体验。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-ai-intake",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "title": "Engineer AI Intake",
+      "goal": "在 Zendesk Intake 和首次回复之间建立 AI eligibility 与交接边界。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [
+        "engineer-case-handoff"
+      ],
+      "status": "planned",
+      "task_count": 3,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-case-delivery",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "title": "Engineer Case 派单交付",
+      "goal": "完成认证、数据库、排班、指标、Slack 和逐步派单。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 7,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
       "function_id": "rag-evaluation",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
@@ -784,10 +919,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "planned",
       "task_count": 3,
       "done_count": 0,
-      "blocked_count": 1
+      "blocked_count": 0
     },
     {
       "schema_version": 2,
@@ -802,7 +937,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "planned",
       "task_count": 4,
       "done_count": 0,
       "blocked_count": 0
@@ -820,7 +955,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "planned",
       "task_count": 2,
       "done_count": 0,
       "blocked_count": 0
@@ -842,175 +977,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "agent-billing-poc",
-      "phase_id": "phase-3",
-      "module_id": "agent-collaboration",
-      "title": "Agent Billing 验证",
-      "goal": "收口 Billing route、回执和提醒的 Agent 验证闭环。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 2,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "agent-controlled-replan",
-      "phase_id": "phase-3",
-      "module_id": "agent-collaboration",
-      "title": "Agent 受控重规划",
-      "goal": "让 Multi-Agent 调查支持可审计的 Targeted Replan。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 1,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "agent-evidence-evaluation",
-      "phase_id": "phase-3",
-      "module_id": "agent-collaboration",
-      "title": "Agent Evidence 与 Replay",
-      "goal": "建立真实证据工具、Replay 评测和回归门禁。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 2,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "agent-governance",
-      "phase_id": "phase-3",
-      "module_id": "agent-collaboration",
-      "title": "Agent 治理与自主边界",
-      "goal": "在证据、权限、成本和审计门禁下控制 Agent 自主行为。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18",
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "active",
-      "task_count": 7,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "agent-workspace-console",
-      "phase_id": "phase-3",
-      "module_id": "agent-collaboration",
-      "title": "Agent Workspace 行动台",
-      "goal": "把 Multi-Agent Run 面板升级为工程师可执行的行动台。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 1,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "agentrelay-integration",
-      "phase_id": "phase-3",
-      "module_id": "agent-collaboration",
-      "title": "AgentRelay 协作接入",
-      "goal": "将 AgentRelay 多角色协作接入 Support Case 工作流。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 1,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "engineer-ai-intake",
-      "phase_id": "phase-3",
-      "module_id": "engineer-workspace",
-      "title": "Engineer AI Intake",
-      "goal": "在 Zendesk Intake 和首次回复之间建立 AI eligibility 与交接边界。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 2,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "engineer-case-delivery",
-      "phase_id": "phase-3",
-      "module_id": "engineer-workspace",
-      "title": "Engineer Case 派单交付",
-      "goal": "完成认证、数据库、排班、指标、Slack 和逐步派单。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "active",
-      "task_count": 7,
-      "done_count": 0,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
-      "function_id": "engineer-case-handoff",
-      "phase_id": "phase-3",
-      "module_id": "engineer-workspace",
-      "title": "Engineer Case 显式交接",
-      "goal": "把无法自动完成的 Account Case 交给工程师并保留状态边界。",
-      "acceptance_criteria": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [],
-      "status": "planned",
-      "task_count": 1,
-      "done_count": 0,
-      "blocked_count": 0
     }
   ],
   "tasks": [
     {
       "schema_version": 2,
-      "task_id": "p2-01",
+      "task_id": "p1-01",
       "title": "建立 Fraud、Account Suspension、Billing 与 Enablement 路由基线",
       "status": "done",
       "owner": "zac",
@@ -1092,7 +1064,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1103,6 +1075,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-01 迁移为 p1-01；迁移到 phase-1 / account-automation / routing-taxonomy。"
         }
       ],
       "legacy_refs": [
@@ -1113,15 +1090,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-01"
+        "TS-01",
+        "p2-01"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-taxonomy"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-02",
+      "task_id": "p1-02",
       "title": "建立 Compliance 与 Security 分类及人工边界",
       "status": "done",
       "owner": "zac",
@@ -1149,7 +1127,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1160,6 +1138,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-02 迁移为 p1-02；迁移到 phase-1 / account-automation / routing-taxonomy。"
         }
       ],
       "legacy_refs": [
@@ -1171,15 +1154,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [
         "routing-security-compliance",
-        "TS-02"
+        "TS-02",
+        "p2-02"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-taxonomy"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-03",
+      "task_id": "p1-03",
       "title": "完成 Fraud 与 Account Suspension 字段契约和人工判断边界",
       "status": "done",
       "owner": "suhird / bdr",
@@ -1225,7 +1209,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1236,6 +1220,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-03 迁移为 p1-03；迁移到 phase-1 / account-automation / routing-taxonomy。"
         }
       ],
       "legacy_refs": [
@@ -1247,15 +1236,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [
         "phase2-fraud-field-contract",
-        "TS-09"
+        "TS-09",
+        "p2-03"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-taxonomy"
     },
     {
-      "legacy_ids": [],
-      "task_id": "p2-04",
+      "legacy_ids": [
+        "p2-04"
+      ],
+      "task_id": "p1-04",
       "title": "实现确定性 Billing 风险保护 Gate",
       "summary": "在 Conservative Fallback 前识别 Billing 风险，避免高风险请求被错误自动化处理。",
       "status": "done",
@@ -1289,17 +1281,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-fallback-billing-risk-sniff。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-04 迁移为 p1-04；迁移到 phase-1 / account-automation / routing-fallback-billing-risk-sniff。"
         }
       ],
       "legacy_refs": [],
       "schema_version": 2,
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-fallback-billing-risk-sniff"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-05",
+      "task_id": "p1-05",
       "title": "监控真实 Zendesk Replay Set 的路由与自动化质量",
       "status": "active",
       "owner": "unassigned",
@@ -1314,7 +1311,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1325,6 +1322,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-05 迁移为 p1-05；迁移到 phase-1 / account-automation / routing-quality-validation。"
         }
       ],
       "legacy_refs": [
@@ -1335,15 +1337,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-monitor-replay-quality"
+        "billing-monitor-replay-quality",
+        "p2-05"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-quality-validation"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-06",
+      "task_id": "p1-06",
       "title": "扩展 Billing 高风险负样本集",
       "status": "planned",
       "owner": "unassigned",
@@ -1358,7 +1361,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1369,6 +1372,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-06 迁移为 p1-06；迁移到 phase-1 / account-automation / routing-quality-validation。"
         }
       ],
       "legacy_refs": [
@@ -1379,15 +1387,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-billing-risky-negatives"
+        "routing-billing-risky-negatives",
+        "p2-06"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-quality-validation"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-07",
+      "task_id": "p1-07",
       "title": "扩展真实 Zendesk Replay Set 覆盖范围",
       "status": "active",
       "owner": "unassigned",
@@ -1402,7 +1411,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1413,6 +1422,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-07 迁移为 p1-07；迁移到 phase-1 / account-automation / routing-quality-validation。"
         }
       ],
       "legacy_refs": [
@@ -1423,15 +1437,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-real-zendesk-replay"
+        "routing-real-zendesk-replay",
+        "p2-07"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-quality-validation"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-08",
+      "task_id": "p1-08",
       "title": "扩展 Billing 路由边界 Golden Set",
       "status": "planned",
       "owner": "unassigned",
@@ -1446,7 +1461,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1457,6 +1472,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-08 迁移为 p1-08；迁移到 phase-1 / account-automation / routing-quality-validation。"
         }
       ],
       "legacy_refs": [
@@ -1467,15 +1487,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-semantic-golden-expand"
+        "routing-semantic-golden-expand",
+        "p2-08"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "routing-quality-validation"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-09",
+      "task_id": "p1-09",
       "title": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
       "status": "planned",
       "owner": "jojo",
@@ -1490,7 +1511,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1501,6 +1522,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-09 迁移为 p1-09；迁移到 phase-1 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [
@@ -1511,15 +1537,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-08"
+        "TS-08",
+        "p2-09"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-10",
+      "task_id": "p1-10",
       "title": "Account full rerun 的恢复、幂等和 fail-fast",
       "status": "done",
       "owner": "Zac",
@@ -1626,19 +1653,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "recovery_contract_completed",
           "summary": "补齐 needs_recovery API/UI 契约、一次性 lease-expiry owner alert、observed reply summary 与 InMemory/PostgreSQL parity；未执行正式 rerun。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-10 迁移为 p1-10；迁移到 phase-1 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "account-rerun-recovery"
+        "account-rerun-recovery",
+        "p2-10"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-11",
+      "task_id": "p1-11",
       "title": "保障 Zendesk Webhook 建单、派单与邮件发送幂等",
       "status": "active",
       "owner": "unassigned",
@@ -1668,7 +1701,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1679,6 +1712,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-11 迁移为 p1-11；迁移到 phase-1 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [
@@ -1689,15 +1727,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-idempotency"
+        "billing-idempotency",
+        "p2-11"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-12",
+      "task_id": "p1-12",
       "title": "Account Automation Persona registry 与 ownership 回复",
       "status": "done",
       "owner": "Zac",
@@ -1726,7 +1765,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1737,19 +1776,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-12 迁移为 p1-12；迁移到 phase-1 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "billing-persona-registry"
+        "billing-persona-registry",
+        "p2-12"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-13",
+      "task_id": "p1-13",
       "title": "配置并验证 Automation 内部处理邮箱",
       "status": "planned",
       "owner": "unassigned",
@@ -1764,7 +1809,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1775,6 +1820,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-13 迁移为 p1-13；迁移到 phase-1 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [
@@ -1785,15 +1835,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-recipient-env"
+        "billing-recipient-env",
+        "p2-13"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-14",
+      "task_id": "p1-14",
       "title": "人工接管 Compliance、Security、法务及其他敏感工单。",
       "status": "planned",
       "owner": "emma / derek",
@@ -1808,7 +1859,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1819,6 +1870,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / human-review。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-14 迁移为 p1-14；迁移到 phase-1 / account-automation / human-review。"
         }
       ],
       "legacy_refs": [
@@ -1829,15 +1885,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-10"
+        "TS-10",
+        "p2-14"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "human-review"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-15",
+      "task_id": "p1-15",
       "title": "在 Account 处理失败后触发告警并进入 Human Review",
       "status": "done",
       "owner": "zac",
@@ -1859,7 +1916,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1870,6 +1927,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / human-review。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-15 迁移为 p1-15；迁移到 phase-1 / account-automation / human-review。"
         }
       ],
       "legacy_refs": [
@@ -1881,15 +1943,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [
         "account-failure-alerts",
-        "TS-05"
+        "TS-05",
+        "p2-15"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "human-review"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-16",
+      "task_id": "p1-16",
       "title": "建立 Billing 人工审核与客户回复工作流",
       "status": "planned",
       "owner": "unassigned",
@@ -1904,7 +1967,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1915,6 +1978,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / human-review。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-16 迁移为 p1-16；迁移到 phase-1 / account-automation / human-review。"
         }
       ],
       "legacy_refs": [
@@ -1925,15 +1993,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-human-review"
+        "billing-human-review",
+        "p2-16"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "human-review"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-17",
+      "task_id": "p1-17",
       "title": "为 Billing Review 建立人工审核与内部待办",
       "status": "planned",
       "owner": "unassigned",
@@ -1948,7 +2017,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1959,6 +2028,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / human-review。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-17 迁移为 p1-17；迁移到 phase-1 / account-automation / human-review。"
         }
       ],
       "legacy_refs": [
@@ -1969,15 +2043,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-billing-review-customer-experience"
+        "routing-billing-review-customer-experience",
+        "p2-17"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "human-review"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-18",
+      "task_id": "p1-18",
       "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
       "status": "active",
       "owner": "zac",
@@ -2034,6 +2109,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "status_reclassified",
           "summary": "按 review 结论改为进行中；internal comment 已完成，external/customer reply 仍待完成。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-18 迁移为 p1-18；迁移到 phase-1 / account-automation / zendesk-delivery。"
         }
       ],
       "legacy_refs": [
@@ -2044,15 +2124,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-03"
+        "TS-03",
+        "p2-18"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-19",
+      "task_id": "p1-19",
       "title": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
       "status": "planned",
       "owner": "zac",
@@ -2067,7 +2148,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2078,6 +2159,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-19 迁移为 p1-19；迁移到 phase-1 / account-automation / zendesk-delivery。"
         }
       ],
       "legacy_refs": [
@@ -2088,15 +2174,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-06"
+        "TS-06",
+        "p2-19"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-20",
+      "task_id": "p1-20",
       "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
       "status": "active",
       "owner": "zac",
@@ -2124,7 +2211,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2135,19 +2222,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-20 迁移为 p1-20；迁移到 phase-1 / account-automation / zendesk-delivery。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "zendesk-account-comment-identity"
+        "zendesk-account-comment-identity",
+        "p2-20"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-21",
+      "task_id": "p1-21",
       "title": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
       "status": "active",
       "owner": "zac / emma / derek",
@@ -2162,7 +2255,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2173,6 +2266,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-21 迁移为 p1-21；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2183,15 +2281,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-11"
+        "TS-11",
+        "p2-21"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-22",
+      "task_id": "p1-22",
       "title": "定义 Account Automation Dashboard 与 Monitor 指标",
       "status": "active",
       "owner": "unassigned",
@@ -2206,7 +2305,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2217,6 +2316,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-22 迁移为 p1-22；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2227,15 +2331,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-dashboard-metrics"
+        "billing-dashboard-metrics",
+        "p2-22"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-23",
+      "task_id": "p1-23",
       "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
       "status": "planned",
       "owner": "zac",
@@ -2250,7 +2355,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2266,6 +2371,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "status_reclassified",
           "summary": "按 review 结论调整为未开始，负责人设为 zac；等待受控试运行证据后再做扩围决策。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-23 迁移为 p1-23；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2276,15 +2386,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-expand"
+        "billing-expand",
+        "p2-23"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-24",
+      "task_id": "p1-24",
       "title": "监控 Account Automation 执行结果与失败原因",
       "status": "active",
       "owner": "unassigned",
@@ -2299,7 +2410,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2310,6 +2421,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-24 迁移为 p1-24；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2320,20 +2436,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-monitor-automation-outcomes"
+        "billing-monitor-automation-outcomes",
+        "p2-24"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-25",
+      "task_id": "p1-25",
       "title": "按 Replay 与指标门禁逐步开放 Account Automation",
       "status": "planned",
       "owner": "unassigned",
-      "summary": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
-      "next_action": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+      "summary": "Phase 1：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+      "next_action": "Phase 1：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
       "acceptance_criteria": [
         "完成 Rollout 维度的交付和验证。"
       ],
@@ -2343,7 +2460,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2354,6 +2471,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-25 迁移为 p1-25；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2364,15 +2486,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-automation-rollout"
+        "routing-automation-rollout",
+        "p2-25"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-26",
+      "task_id": "p1-26",
       "title": "在 Dashboard 展示 Automation Controlled Launch 指标",
       "status": "planned",
       "owner": "unassigned",
@@ -2387,7 +2510,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2398,6 +2521,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-26 迁移为 p1-26；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2408,15 +2536,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-dashboard-metrics"
+        "routing-dashboard-metrics",
+        "p2-26"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-27",
+      "task_id": "p1-27",
       "title": "建立 Automation Rollout 三态 Taxonomy",
       "status": "planned",
       "owner": "unassigned",
@@ -2431,7 +2560,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2442,6 +2571,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-27 迁移为 p1-27；迁移到 phase-1 / account-automation / controlled-rollout。"
         }
       ],
       "legacy_refs": [
@@ -2452,15 +2586,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "routing-rollout-taxonomy"
+        "routing-rollout-taxonomy",
+        "p2-27"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "controlled-rollout"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-28",
+      "task_id": "p1-28",
       "title": "为 Admin Case 提供 Zendesk Ticket 直达链接",
       "status": "done",
       "owner": "zac",
@@ -2494,7 +2629,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2505,6 +2640,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / admin-operations / admin-case-operations。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-28 迁移为 p1-28；迁移到 phase-1 / admin-operations / admin-case-operations。"
         }
       ],
       "legacy_refs": [
@@ -2515,15 +2655,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-07"
+        "TS-07",
+        "p2-28"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-29",
+      "task_id": "p1-29",
       "title": "补齐 Admin Dashboard 的重点客户过滤。",
       "status": "planned",
       "owner": "zac",
@@ -2538,7 +2679,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2549,6 +2690,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / admin-operations / admin-case-operations。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-29 迁移为 p1-29；迁移到 phase-1 / admin-operations / admin-case-operations。"
         }
       ],
       "legacy_refs": [
@@ -2559,15 +2705,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-12"
+        "TS-12",
+        "p2-29"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-30",
+      "task_id": "p1-30",
       "title": "仅展示 Admin Environment Config 名称清单",
       "status": "active",
       "owner": "unassigned",
@@ -2583,7 +2730,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2594,97 +2741,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / admin-operations / admin-case-operations。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-30 迁移为 p1-30；迁移到 phase-1 / admin-operations / admin-case-operations。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "admin-environment-config-inventory"
+        "admin-environment-config-inventory",
+        "p2-30"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-31",
-      "title": "Client 对话支持图片和更多日志附件",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "补齐图片和 txt/log/md 等附件处理。",
-      "next_action": "补齐图片和 txt/log/md 等附件处理。",
-      "acceptance_criteria": [
-        "补齐图片和 txt/log/md 等附件处理。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / client-experience / client-conversation-experience。"
-        }
-      ],
-      "legacy_refs": [],
-      "legacy_ids": [
-        "client-rich-attachments"
-      ],
-      "phase_id": "phase-2",
-      "module_id": "client-experience",
-      "function_id": "client-conversation-experience"
-    },
-    {
-      "schema_version": 2,
-      "task_id": "p2-32",
-      "title": "Client 对话支持流式输出",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "定义流式回复、断线和最终消息一致性。",
-      "next_action": "定义流式回复、断线和最终消息一致性。",
-      "acceptance_criteria": [
-        "定义流式回复、断线和最终消息一致性。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / client-experience / client-conversation-experience。"
-        }
-      ],
-      "legacy_refs": [],
-      "legacy_ids": [
-        "client-streaming-output"
-      ],
-      "phase_id": "phase-2",
-      "module_id": "client-experience",
-      "function_id": "client-conversation-experience"
-    },
-    {
-      "schema_version": 2,
-      "task_id": "p2-33",
+      "task_id": "p1-33",
       "title": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
       "status": "planned",
       "owner": "zac",
@@ -2699,7 +2774,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2710,6 +2785,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / platform-delivery / production-ai-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-33 迁移为 p1-33；迁移到 phase-1 / platform-delivery / production-ai-governance。"
         }
       ],
       "legacy_refs": [
@@ -2720,15 +2800,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "TS-04"
+        "TS-04",
+        "p2-33"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "production-ai-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-34",
+      "task_id": "p1-34",
       "title": "AI 项目维护规则和详细流程分层",
       "status": "done",
       "owner": "Zac",
@@ -2751,7 +2832,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2762,19 +2843,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-34 迁移为 p1-34；迁移到 phase-1 / platform-delivery / project-governance。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "agent-rules"
+        "agent-rules",
+        "p2-34"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "project-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-35",
+      "task_id": "p1-35",
       "title": "建立 SupportPortal Project Overview 单一维护入口",
       "status": "done",
       "owner": "Zac",
@@ -2807,7 +2894,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2828,19 +2915,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-35 迁移为 p1-35；迁移到 phase-1 / platform-delivery / project-governance。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "project-overview"
+        "project-overview",
+        "p2-35"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "project-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p2-36",
+      "task_id": "p1-36",
       "title": "清理 Project Overview 中无法识别的 Task 标题",
       "status": "done",
       "owner": "Zac",
@@ -2886,21 +2979,105 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p2-36 迁移为 p1-36；迁移到 phase-1 / platform-delivery / project-governance。"
         }
       ],
       "legacy_refs": [],
       "legacy_ids": [
-        "project-task-title-cleanup"
+        "project-task-title-cleanup",
+        "p2-36"
       ],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "project-governance"
     },
     {
       "schema_version": 2,
+      "task_id": "p2-31",
+      "title": "Client 对话支持图片和更多日志附件",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "补齐图片和 txt/log/md 等附件处理。",
+      "next_action": "补齐图片和 txt/log/md 等附件处理。",
+      "acceptance_criteria": [
+        "补齐图片和 txt/log/md 等附件处理。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "seeded",
+          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / client-experience / client-conversation-experience。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "client-rich-attachments"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "client-experience",
+      "function_id": "client-conversation-experience"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-32",
+      "title": "Client 对话支持流式输出",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "定义流式回复、断线和最终消息一致性。",
+      "next_action": "定义流式回复、断线和最终消息一致性。",
+      "acceptance_criteria": [
+        "定义流式回复、断线和最终消息一致性。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "seeded",
+          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / client-experience / client-conversation-experience。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "client-streaming-output"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "client-experience",
+      "function_id": "client-conversation-experience"
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-37",
       "title": "将 KG Ingest 后台任务化并联动 RAG 入库",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
       "next_action": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
@@ -2913,7 +3090,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2924,6 +3101,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -2944,7 +3126,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-38",
       "title": "完成 GraphRAG Ingest 模型 Bake-off",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
       "next_action": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
@@ -2957,7 +3139,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -2968,6 +3150,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -2988,7 +3175,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-39",
       "title": "在本地 Neo4j 构建完整官方文档知识图谱",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。",
       "next_action": "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。",
@@ -3001,7 +3188,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3012,6 +3199,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -3045,7 +3237,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3076,7 +3268,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-41",
       "title": "用真实查询评估 RAG 与 RAG+KG 的效果门禁",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
       "next_action": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
@@ -3089,7 +3281,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3100,6 +3292,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / rag-knowledge / rag-evaluation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -3120,7 +3317,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-42",
       "title": "保证 KG 客户答案引用回到官网文档证据",
-      "status": "blocked",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。",
       "next_action": "明确解除 blocker 的验证步骤。",
@@ -3135,7 +3332,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3146,6 +3343,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / rag-knowledge / rag-evaluation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "状态从 blocked 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -3179,7 +3381,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3223,7 +3425,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3254,7 +3456,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-45",
       "title": "固化生产 KG 配置、Secret 与环境变量边界",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。",
       "next_action": "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。",
@@ -3267,7 +3469,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3278,6 +3480,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / rag-knowledge / rag-production-platform。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -3311,7 +3518,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3340,7 +3547,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "task_id": "p3-01",
+      "task_id": "p2-47",
       "title": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
       "status": "planned",
       "owner": "zac / 团队",
@@ -3355,7 +3562,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
       ],
       "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3366,6 +3573,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-billing-poc。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-01 迁移为 p2-47；迁移到 phase-2 / agent-collaboration / agent-billing-poc。"
         }
       ],
       "legacy_refs": [
@@ -3376,15 +3588,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "AG-01"
+        "AG-01",
+        "p3-01"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-billing-poc"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-02",
+      "task_id": "p2-48",
       "title": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
       "status": "planned",
       "owner": "项目团队",
@@ -3399,7 +3612,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
       ],
       "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3410,6 +3623,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-billing-poc。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-02 迁移为 p2-48；迁移到 phase-2 / agent-collaboration / agent-billing-poc。"
         }
       ],
       "legacy_refs": [
@@ -3420,15 +3638,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "AG-04"
+        "AG-04",
+        "p3-02"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-billing-poc"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-03",
+      "task_id": "p2-49",
       "title": "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。",
       "status": "planned",
       "owner": "项目团队",
@@ -3443,7 +3662,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
       ],
       "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3454,6 +3673,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-03 迁移为 p2-49；迁移到 phase-2 / agent-collaboration / agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3464,15 +3688,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "AG-02"
+        "AG-02",
+        "p3-03"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-04",
+      "task_id": "p2-50",
       "title": "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。",
       "status": "planned",
       "owner": "项目团队",
@@ -3487,7 +3712,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
       ],
       "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3498,6 +3723,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-04 迁移为 p2-50；迁移到 phase-2 / agent-collaboration / agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3508,15 +3738,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "AG-03"
+        "AG-03",
+        "p3-04"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-05",
+      "task_id": "p2-51",
       "title": "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。",
       "status": "planned",
       "owner": "项目团队",
@@ -3531,7 +3762,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
       ],
       "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3542,6 +3773,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-05 迁移为 p2-51；迁移到 phase-2 / agent-collaboration / agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3552,17 +3788,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "AG-05"
+        "AG-05",
+        "p3-05"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-06",
+      "task_id": "p2-52",
       "title": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
-      "status": "active",
+      "status": "planned",
       "owner": "项目团队",
       "summary": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
       "next_action": "补齐验收证据并更新状态。",
@@ -3575,7 +3812,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
       ],
       "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3586,6 +3823,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-06 迁移为 p2-52；迁移到 phase-2 / agent-collaboration / agent-governance；状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -3596,15 +3838,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "AG-06"
+        "AG-06",
+        "p3-06"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-07",
+      "task_id": "p2-53",
       "title": "在证据与审计门禁下扩展 Agent-to-Agent 自主调查",
       "status": "planned",
       "owner": "unassigned",
@@ -3619,7 +3862,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3630,6 +3873,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-07 迁移为 p2-53；迁移到 phase-2 / agent-collaboration / agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3640,15 +3888,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-agent-to-agent-governed-autonomy"
+        "ma-agent-to-agent-governed-autonomy",
+        "p3-07"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-08",
+      "task_id": "p2-54",
       "title": "用 Claim-to-Evidence 校验客户回复",
       "status": "planned",
       "owner": "unassigned",
@@ -3663,7 +3912,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3674,6 +3923,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-08 迁移为 p2-54；迁移到 phase-2 / agent-collaboration / agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3684,15 +3938,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-guardrail-claim-evidence"
+        "ma-guardrail-claim-evidence",
+        "p3-08"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-09",
+      "task_id": "p2-55",
       "title": "统一 Route Taxonomy 与 Multi-Agent 生命周期契约",
       "status": "planned",
       "owner": "unassigned",
@@ -3707,7 +3962,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3718,6 +3973,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-09 迁移为 p2-55；迁移到 phase-2 / agent-collaboration / agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3728,15 +3988,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-rollout-taxonomy-contract"
+        "ma-rollout-taxonomy-contract",
+        "p3-09"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-10",
+      "task_id": "p2-56",
       "title": "为 Execute Agent 接入真实证据工具",
       "status": "planned",
       "owner": "unassigned",
@@ -3751,7 +4012,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3762,6 +4023,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-evidence-evaluation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-10 迁移为 p2-56；迁移到 phase-2 / agent-collaboration / agent-evidence-evaluation。"
         }
       ],
       "legacy_refs": [
@@ -3772,15 +4038,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-real-evidence-tools"
+        "ma-real-evidence-tools",
+        "p3-10"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-evidence-evaluation"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-11",
+      "task_id": "p2-57",
       "title": "建立 Engineer AI Replay 评测与回归门禁",
       "status": "planned",
       "owner": "unassigned",
@@ -3795,7 +4062,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3806,6 +4073,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-evidence-evaluation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-11 迁移为 p2-57；迁移到 phase-2 / agent-collaboration / agent-evidence-evaluation。"
         }
       ],
       "legacy_refs": [
@@ -3816,15 +4088,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-replay-runner"
+        "ma-replay-runner",
+        "p3-11"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-evidence-evaluation"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-12",
+      "task_id": "p2-58",
       "title": "为 Multi-Agent 调查恢复受控 Targeted Replan",
       "status": "planned",
       "owner": "unassigned",
@@ -3839,7 +4112,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3850,6 +4123,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-controlled-replan。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-12 迁移为 p2-58；迁移到 phase-2 / agent-collaboration / agent-governance；Function agent-controlled-replan 合并到 agent-governance。"
         }
       ],
       "legacy_refs": [
@@ -3860,15 +4138,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-controlled-replan"
+        "ma-controlled-replan",
+        "p3-12"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
-      "function_id": "agent-controlled-replan"
+      "function_id": "agent-governance"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-13",
+      "task_id": "p2-59",
       "title": "将 AgentRelay 多角色协作接入 Support Case",
       "status": "planned",
       "owner": "unassigned",
@@ -3883,7 +4162,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3894,6 +4173,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agentrelay-integration。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-13 迁移为 p2-59；迁移到 phase-2 / agent-collaboration / agentrelay-integration。"
         }
       ],
       "legacy_refs": [
@@ -3904,15 +4188,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-agentrelay-support-integration"
+        "ma-agentrelay-support-integration",
+        "p3-13"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agentrelay-integration"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-14",
+      "task_id": "p2-60",
       "title": "将 Multi-Agent Run 面板升级为工程师行动台",
       "status": "planned",
       "owner": "unassigned",
@@ -3927,7 +4212,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3938,6 +4223,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / agent-collaboration / agent-workspace-console。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-14 迁移为 p2-60；迁移到 phase-2 / agent-collaboration / agent-workspace-console。"
         }
       ],
       "legacy_refs": [
@@ -3948,20 +4238,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "ma-workspace-action-console"
+        "ma-workspace-action-console",
+        "p3-14"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "agent-collaboration",
       "function_id": "agent-workspace-console"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-15",
+      "task_id": "p2-61",
       "title": "为 Zendesk Intake 增加 AI Eligibility Gate",
       "status": "planned",
       "owner": "unassigned",
-      "summary": "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
-      "next_action": "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
+      "summary": "Phase 2：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
+      "next_action": "Phase 2：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
       "acceptance_criteria": [
         "完成 Eligibility 维度的交付和验证。"
       ],
@@ -3971,7 +4262,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -3982,6 +4273,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-ai-intake。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-15 迁移为 p2-61；迁移到 phase-2 / engineer-workspace / engineer-ai-intake。"
         }
       ],
       "legacy_refs": [
@@ -3992,20 +4288,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-phase3-eligibility"
+        "assign-phase3-eligibility",
+        "p3-15"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-ai-intake"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-16",
+      "task_id": "p2-62",
       "title": "AI 完成首次有效回复后自动转交工程师",
       "status": "planned",
       "owner": "unassigned",
-      "summary": "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
-      "next_action": "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
+      "summary": "Phase 2：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
+      "next_action": "Phase 2：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
       "acceptance_criteria": [
         "完成 First Reply 维度的交付和验证。"
       ],
@@ -4015,7 +4312,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4026,6 +4323,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-ai-intake。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-16 迁移为 p2-62；迁移到 phase-2 / engineer-workspace / engineer-ai-intake。"
         }
       ],
       "legacy_refs": [
@@ -4036,17 +4338,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-phase3-first-reply"
+        "assign-phase3-first-reply",
+        "p3-16"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-ai-intake"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-17",
+      "task_id": "p2-63",
       "title": "加固生产认证 Secret、Session 失效与 RBAC 验证",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
       "next_action": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
@@ -4059,7 +4362,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4070,6 +4373,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-17 迁移为 p2-63；迁移到 phase-2 / engineer-workspace / engineer-case-delivery；状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -4080,15 +4388,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-auth-hardening"
+        "assign-auth-hardening",
+        "p3-17"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-18",
+      "task_id": "p2-64",
       "title": "清理 Legacy Engineer Case 状态、旧 UI 与兼容逻辑",
       "status": "planned",
       "owner": "unassigned",
@@ -4103,7 +4412,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4114,6 +4423,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-18 迁移为 p2-64；迁移到 phase-2 / engineer-workspace / engineer-case-delivery。"
         }
       ],
       "legacy_refs": [
@@ -4124,17 +4438,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-legacy-cleanup"
+        "assign-legacy-cleanup",
+        "p3-18"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-19",
+      "task_id": "p2-65",
       "title": "在真实 PostgreSQL 环境验证派单与审计写入",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。",
       "next_action": "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。",
@@ -4147,7 +4462,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4158,6 +4473,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-19 迁移为 p2-65；迁移到 phase-2 / engineer-workspace / engineer-case-delivery；状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -4168,17 +4488,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-live-postgres"
+        "assign-live-postgres",
+        "p3-19"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-20",
+      "task_id": "p2-66",
       "title": "完善 Engineer 派单、SLA 与排班覆盖指标",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。",
       "next_action": "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。",
@@ -4191,7 +4512,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4202,6 +4523,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-20 迁移为 p2-66；迁移到 phase-2 / engineer-workspace / engineer-case-delivery；状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -4212,20 +4538,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-metrics"
+        "assign-metrics",
+        "p3-20"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-21",
+      "task_id": "p2-67",
       "title": "在 Admin Dashboard 展示并同步 Slack 派单状态",
       "status": "planned",
       "owner": "unassigned",
-      "summary": "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
-      "next_action": "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
+      "summary": "Phase 2：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
+      "next_action": "Phase 2：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
       "acceptance_criteria": [
         "完成 Admin 维度的交付和验证。"
       ],
@@ -4235,7 +4562,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4246,6 +4573,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-21 迁移为 p2-67；迁移到 phase-2 / engineer-workspace / engineer-case-delivery。"
         }
       ],
       "legacy_refs": [
@@ -4256,20 +4588,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-phase3-admin-sync"
+        "assign-phase3-admin-sync",
+        "p3-21"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-22",
+      "task_id": "p2-68",
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "status": "planned",
       "owner": "unassigned",
-      "summary": "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
-      "next_action": "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
+      "summary": "Phase 2：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
+      "next_action": "Phase 2：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
       "acceptance_criteria": [
         "完成 Slack 维度的交付和验证。"
       ],
@@ -4279,7 +4612,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4290,6 +4623,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-22 迁移为 p2-68；迁移到 phase-2 / engineer-workspace / engineer-case-delivery。"
         }
       ],
       "legacy_refs": [
@@ -4300,17 +4638,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-phase3-slack"
+        "assign-phase3-slack",
+        "p3-22"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-23",
+      "task_id": "p2-69",
       "title": "从 10% Engineer Case 试运行逐步切换到全量派单",
-      "status": "active",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
       "next_action": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
@@ -4323,7 +4662,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4334,6 +4673,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-23 迁移为 p2-69；迁移到 phase-2 / engineer-workspace / engineer-case-delivery；状态从 active 调整为 planned（未开始）。"
         }
       ],
       "legacy_refs": [
@@ -4344,15 +4688,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "assign-rollout"
+        "assign-rollout",
+        "p3-23"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
     },
     {
       "schema_version": 2,
-      "task_id": "p3-24",
+      "task_id": "p2-70",
       "title": "设计 Account Human Review 到 Engineer Case 的显式交接",
       "status": "planned",
       "owner": "unassigned",
@@ -4367,7 +4712,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -4378,6 +4723,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-handoff。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Task ID 从 p3-24 迁移为 p2-70；迁移到 phase-2 / engineer-workspace / engineer-ai-intake；Function engineer-case-handoff 合并到 engineer-ai-intake。"
         }
       ],
       "legacy_refs": [
@@ -4388,11 +4738,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "legacy_ids": [
-        "billing-human-review-handoff"
+        "billing-human-review-handoff",
+        "p3-24"
       ],
-      "phase_id": "phase-3",
+      "phase_id": "phase-2",
       "module_id": "engineer-workspace",
-      "function_id": "engineer-case-handoff"
+      "function_id": "engineer-ai-intake"
     }
   ],
   "meetings": [
@@ -4413,18 +4764,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "decisions": [],
       "open_questions": [],
       "task_ids": [
-        "p2-01",
-        "p2-02",
-        "p2-18",
-        "p2-33",
-        "p2-15",
-        "p2-19",
-        "p2-28",
-        "p2-29",
-        "p2-09",
-        "p2-03",
-        "p2-14",
-        "p2-21"
+        "p1-01",
+        "p1-02",
+        "p1-18",
+        "p1-33",
+        "p1-15",
+        "p1-19",
+        "p1-28",
+        "p1-29",
+        "p1-09",
+        "p1-03",
+        "p1-14",
+        "p1-21"
       ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
@@ -4461,12 +4812,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "decisions": [],
       "open_questions": [],
       "task_ids": [
-        "p3-01",
-        "p3-03",
-        "p3-04",
-        "p3-02",
-        "p3-05",
-        "p3-06"
+        "p2-47",
+        "p2-49",
+        "p2-50",
+        "p2-48",
+        "p2-51",
+        "p2-52"
       ],
       "source_refs": [
         "docs/roadmap/meetings.html#agent-system-2026-06-18"
@@ -5112,8 +5463,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "752": {
         "summary": "将 Account AI 消息以幂等 internal comment 写回关联 Zendesk ticket。",
         "task_ids": [
-          "p2-18",
-          "p2-28"
+          "p1-18",
+          "p1-28"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5125,7 +5476,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "751": {
         "summary": "为 Account Persona reply job 增加版本 fence，避免旧 job 覆盖新状态。",
         "task_ids": [
-          "p2-11"
+          "p1-11"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5136,7 +5487,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "750": {
         "summary": "改善 Account Automation 对客户的 ownership 回复，统一由 Persona 生成安全的状态说明。",
         "task_ids": [
-          "p2-12"
+          "p1-12"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5147,7 +5498,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "749": {
         "summary": "补齐 Account Automation 客户 ownership 回复和处理中的反馈节奏。",
         "task_ids": [
-          "p2-12"
+          "p1-12"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5158,7 +5509,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "748": {
         "summary": "修复 Account rerun 邮件 claim 恢复路径，避免重复或丢失内部处理。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5169,7 +5520,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "747": {
         "summary": "修复 Account rerun 客户回复的 scheduled reply 调度。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5180,7 +5531,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "746": {
         "summary": "修复 Account rerun immutable result 的处理和状态边界。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5191,7 +5542,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "745": {
         "summary": "修复 Account rerun 失败降级和容器 OpenAI proxy 配置。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5202,7 +5553,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "744": {
         "summary": "Account 失败在重试耗尽后停止客户回复、进入 Human Review 并告警负责人。",
         "task_ids": [
-          "p2-15"
+          "p1-15"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5214,7 +5565,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "743": {
         "summary": "在 Admin Automated Cases 中增加可直接打开的 Zendesk Source 链接。",
         "task_ids": [
-          "p2-28"
+          "p1-28"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5225,7 +5576,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "742": {
         "summary": "统一 Account rerun revision 时间戳，避免恢复和排序出现不一致。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5236,7 +5587,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "741": {
         "summary": "让 Account rerun preflight 在网络条件变化时保持可验证的失败边界。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5247,7 +5598,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "740": {
         "summary": "允许操作员对每个 Account Case 执行完整 rerun，并保留独立审计。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5258,7 +5609,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "739": {
         "summary": "修复被阻塞 Account rerun 的反馈和可恢复提示。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5269,7 +5620,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "738": {
         "summary": "加固 Account rerun fail-fast recovery 和 Luna routing 选择。",
         "task_ids": [
-          "p2-10"
+          "p1-10"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5280,7 +5631,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "737": {
         "summary": "Admin Source 不再重复展示内部 Account Case ID。",
         "task_ids": [
-          "p2-28"
+          "p1-28"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5291,7 +5642,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "736": {
         "summary": "支持把序列化 JSON 形式的 Account Source 解析成 Zendesk 链接。",
         "task_ids": [
-          "p2-28"
+          "p1-28"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5302,7 +5653,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "735": {
         "summary": "为 Account Case Source 增加 Zendesk 直达链接。",
         "task_ids": [
-          "p2-28"
+          "p1-28"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5313,7 +5664,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "734": {
         "summary": "简化 Agent 热路径规则，并把详细流程转移到可按需读取的文档。",
         "task_ids": [
-          "p2-34"
+          "p1-34"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5324,7 +5675,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "733": {
         "summary": "更新 Meeting 进度页面、导航和 Work Item 展示。",
         "task_ids": [
-          "p2-35"
+          "p1-35"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5335,7 +5686,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "732": {
         "summary": "隔离 Account route validation 的副作用，避免校验行为改变真实状态。",
         "task_ids": [
-          "p2-11"
+          "p1-11"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5357,7 +5708,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "730": {
         "summary": "新增 SupportPortal Meeting archive，集中呈现 Function、结论和 Task。",
         "task_ids": [
-          "p2-35"
+          "p1-35"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5368,7 +5719,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "729": {
         "summary": "增加 Security & Compliance route，并将敏感请求保持在 classification-only / Human Review 边界。",
         "task_ids": [
-          "p2-02"
+          "p1-02"
         ],
         "schema_version": 2,
         "function_ids": [],
@@ -5540,7 +5891,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     }
   ],
   "migration": {
-    "source_count": 74,
+    "source_count": 134,
     "generated_from": [
       "docs/roadmap.html",
       "docs/roadmap/meetings.html",
@@ -5553,280 +5904,280 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/AG-01.json",
         "legacy_id": "AG-01",
         "target_type": "task",
-        "target_id": "p3-01",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-47",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/AG-02.json",
         "legacy_id": "AG-02",
         "target_type": "task",
-        "target_id": "p3-03",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-49",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/AG-03.json",
         "legacy_id": "AG-03",
         "target_type": "task",
-        "target_id": "p3-04",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-50",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/AG-04.json",
         "legacy_id": "AG-04",
         "target_type": "task",
-        "target_id": "p3-02",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-48",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/AG-05.json",
         "legacy_id": "AG-05",
         "target_type": "task",
-        "target_id": "p3-05",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-51",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/AG-06.json",
         "legacy_id": "AG-06",
         "target_type": "task",
-        "target_id": "p3-06",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-52",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/TS-01.json",
         "legacy_id": "TS-01",
         "target_type": "task",
-        "target_id": "p2-01",
+        "target_id": "p1-01",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-02.json",
         "legacy_id": "TS-02",
         "target_type": "task",
-        "target_id": "p2-02",
+        "target_id": "p1-02",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-03.json",
         "legacy_id": "TS-03",
         "target_type": "task",
-        "target_id": "p2-18",
+        "target_id": "p1-18",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-04.json",
         "legacy_id": "TS-04",
         "target_type": "task",
-        "target_id": "p2-33",
+        "target_id": "p1-33",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-05.json",
         "legacy_id": "TS-05",
         "target_type": "task",
-        "target_id": "p2-15",
+        "target_id": "p1-15",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-06.json",
         "legacy_id": "TS-06",
         "target_type": "task",
-        "target_id": "p2-19",
+        "target_id": "p1-19",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-07.json",
         "legacy_id": "TS-07",
         "target_type": "task",
-        "target_id": "p2-28",
+        "target_id": "p1-28",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-08.json",
         "legacy_id": "TS-08",
         "target_type": "task",
-        "target_id": "p2-09",
+        "target_id": "p1-09",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-09.json",
         "legacy_id": "TS-09",
         "target_type": "task",
-        "target_id": "p2-03",
+        "target_id": "p1-03",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-10.json",
         "legacy_id": "TS-10",
         "target_type": "task",
-        "target_id": "p2-14",
+        "target_id": "p1-14",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-11.json",
         "legacy_id": "TS-11",
         "target_type": "task",
-        "target_id": "p2-21",
+        "target_id": "p1-21",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/TS-12.json",
         "legacy_id": "TS-12",
         "target_type": "task",
-        "target_id": "p2-29",
+        "target_id": "p1-29",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/account-failure-alerts.json",
         "legacy_id": "account-failure-alerts",
         "target_type": "task",
-        "target_id": "p2-15",
+        "target_id": "p1-15",
         "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/account-rerun-recovery.json",
         "legacy_id": "account-rerun-recovery",
         "target_type": "task",
-        "target_id": "p2-10",
+        "target_id": "p1-10",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/admin-environment-config-inventory.json",
         "legacy_id": "admin-environment-config-inventory",
         "target_type": "task",
-        "target_id": "p2-30",
+        "target_id": "p1-30",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/agent-rules.json",
         "legacy_id": "agent-rules",
         "target_type": "task",
-        "target_id": "p2-34",
+        "target_id": "p1-34",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/assign-auth-hardening.json",
         "legacy_id": "assign-auth-hardening",
         "target_type": "task",
-        "target_id": "p3-17",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-63",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-legacy-cleanup.json",
         "legacy_id": "assign-legacy-cleanup",
         "target_type": "task",
-        "target_id": "p3-18",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-64",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-live-postgres.json",
         "legacy_id": "assign-live-postgres",
         "target_type": "task",
-        "target_id": "p3-19",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-65",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-metrics.json",
         "legacy_id": "assign-metrics",
         "target_type": "task",
-        "target_id": "p3-20",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-66",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-phase3-admin-sync.json",
         "legacy_id": "assign-phase3-admin-sync",
         "target_type": "task",
-        "target_id": "p3-21",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-67",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-phase3-eligibility.json",
         "legacy_id": "assign-phase3-eligibility",
         "target_type": "task",
-        "target_id": "p3-15",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-61",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-phase3-first-reply.json",
         "legacy_id": "assign-phase3-first-reply",
         "target_type": "task",
-        "target_id": "p3-16",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-62",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-phase3-slack.json",
         "legacy_id": "assign-phase3-slack",
         "target_type": "task",
-        "target_id": "p3-22",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-68",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/assign-rollout.json",
         "legacy_id": "assign-rollout",
         "target_type": "task",
-        "target_id": "p3-23",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-69",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/billing-dashboard-metrics.json",
         "legacy_id": "billing-dashboard-metrics",
         "target_type": "task",
-        "target_id": "p2-22",
+        "target_id": "p1-22",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-expand.json",
         "legacy_id": "billing-expand",
         "target_type": "task",
-        "target_id": "p2-23",
+        "target_id": "p1-23",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-human-review.json",
         "legacy_id": "billing-human-review",
         "target_type": "task",
-        "target_id": "p2-16",
+        "target_id": "p1-16",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-human-review-handoff.json",
         "legacy_id": "billing-human-review-handoff",
         "target_type": "task",
-        "target_id": "p3-24",
+        "target_id": "p2-70",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-idempotency.json",
         "legacy_id": "billing-idempotency",
         "target_type": "task",
-        "target_id": "p2-11",
+        "target_id": "p1-11",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-monitor-automation-outcomes.json",
         "legacy_id": "billing-monitor-automation-outcomes",
         "target_type": "task",
-        "target_id": "p2-24",
+        "target_id": "p1-24",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-monitor-replay-quality.json",
         "legacy_id": "billing-monitor-replay-quality",
         "target_type": "task",
-        "target_id": "p2-05",
+        "target_id": "p1-05",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-persona-registry.json",
         "legacy_id": "billing-persona-registry",
         "target_type": "task",
-        "target_id": "p2-12",
+        "target_id": "p1-12",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/billing-recipient-env.json",
         "legacy_id": "billing-recipient-env",
         "target_type": "task",
-        "target_id": "p2-13",
+        "target_id": "p1-13",
         "disposition": "renamed"
       },
       {
@@ -5910,77 +6261,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/ma-agent-to-agent-governed-autonomy.json",
         "legacy_id": "ma-agent-to-agent-governed-autonomy",
         "target_type": "task",
-        "target_id": "p3-07",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-53",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-agentrelay-support-integration.json",
         "legacy_id": "ma-agentrelay-support-integration",
         "target_type": "task",
-        "target_id": "p3-13",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-59",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-controlled-replan.json",
         "legacy_id": "ma-controlled-replan",
         "target_type": "task",
-        "target_id": "p3-12",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-58",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-guardrail-claim-evidence.json",
         "legacy_id": "ma-guardrail-claim-evidence",
         "target_type": "task",
-        "target_id": "p3-08",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-54",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-real-evidence-tools.json",
         "legacy_id": "ma-real-evidence-tools",
         "target_type": "task",
-        "target_id": "p3-10",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-56",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-replay-runner.json",
         "legacy_id": "ma-replay-runner",
         "target_type": "task",
-        "target_id": "p3-11",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-57",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-rollout-taxonomy-contract.json",
         "legacy_id": "ma-rollout-taxonomy-contract",
         "target_type": "task",
-        "target_id": "p3-09",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-55",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/ma-workspace-action-console.json",
         "legacy_id": "ma-workspace-action-console",
         "target_type": "task",
-        "target_id": "p3-14",
-        "disposition": "moved-to-phase-3"
+        "target_id": "p2-60",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/phase2-fraud-field-contract.json",
         "legacy_id": "phase2-fraud-field-contract",
         "target_type": "task",
-        "target_id": "p2-03",
+        "target_id": "p1-03",
         "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/project-overview.json",
         "legacy_id": "project-overview",
         "target_type": "task",
-        "target_id": "p2-35",
+        "target_id": "p1-35",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/project-task-title-cleanup.json",
         "legacy_id": "project-task-title-cleanup",
         "target_type": "task",
-        "target_id": "p2-36",
+        "target_id": "p1-36",
         "disposition": "renamed"
       },
       {
@@ -5994,28 +6345,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/routing-automation-rollout.json",
         "legacy_id": "routing-automation-rollout",
         "target_type": "task",
-        "target_id": "p2-25",
+        "target_id": "p1-25",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/routing-billing-review-customer-experience.json",
         "legacy_id": "routing-billing-review-customer-experience",
         "target_type": "task",
-        "target_id": "p2-17",
+        "target_id": "p1-17",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/routing-billing-risky-negatives.json",
         "legacy_id": "routing-billing-risky-negatives",
         "target_type": "task",
-        "target_id": "p2-06",
+        "target_id": "p1-06",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/routing-dashboard-metrics.json",
         "legacy_id": "routing-dashboard-metrics",
         "target_type": "task",
-        "target_id": "p2-26",
+        "target_id": "p1-26",
         "disposition": "renamed"
       },
       {
@@ -6029,28 +6380,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/routing-real-zendesk-replay.json",
         "legacy_id": "routing-real-zendesk-replay",
         "target_type": "task",
-        "target_id": "p2-07",
+        "target_id": "p1-07",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/routing-rollout-taxonomy.json",
         "legacy_id": "routing-rollout-taxonomy",
         "target_type": "task",
-        "target_id": "p2-27",
+        "target_id": "p1-27",
         "disposition": "renamed"
       },
       {
         "source_ref": "docs/project/tasks/routing-security-compliance.json",
         "legacy_id": "routing-security-compliance",
         "target_type": "task",
-        "target_id": "p2-02",
+        "target_id": "p1-02",
         "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-semantic-golden-expand.json",
         "legacy_id": "routing-semantic-golden-expand",
         "target_type": "task",
-        "target_id": "p2-08",
+        "target_id": "p1-08",
         "disposition": "renamed"
       },
       {
@@ -6064,170 +6415,590 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/zendesk-account-comment-identity.json",
         "legacy_id": "zendesk-account-comment-identity",
         "target_type": "task",
-        "target_id": "p2-20",
+        "target_id": "p1-20",
         "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-01.json",
+        "legacy_id": "p2-01",
+        "target_type": "task",
+        "target_id": "p1-01",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-02.json",
+        "legacy_id": "p2-02",
+        "target_type": "task",
+        "target_id": "p1-02",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-03.json",
+        "legacy_id": "p2-03",
+        "target_type": "task",
+        "target_id": "p1-03",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-04.json",
+        "legacy_id": "p2-04",
+        "target_type": "task",
+        "target_id": "p1-04",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-05.json",
+        "legacy_id": "p2-05",
+        "target_type": "task",
+        "target_id": "p1-05",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-06.json",
+        "legacy_id": "p2-06",
+        "target_type": "task",
+        "target_id": "p1-06",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-07.json",
+        "legacy_id": "p2-07",
+        "target_type": "task",
+        "target_id": "p1-07",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-08.json",
+        "legacy_id": "p2-08",
+        "target_type": "task",
+        "target_id": "p1-08",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-09.json",
+        "legacy_id": "p2-09",
+        "target_type": "task",
+        "target_id": "p1-09",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-10.json",
+        "legacy_id": "p2-10",
+        "target_type": "task",
+        "target_id": "p1-10",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-11.json",
+        "legacy_id": "p2-11",
+        "target_type": "task",
+        "target_id": "p1-11",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-12.json",
+        "legacy_id": "p2-12",
+        "target_type": "task",
+        "target_id": "p1-12",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-13.json",
+        "legacy_id": "p2-13",
+        "target_type": "task",
+        "target_id": "p1-13",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-14.json",
+        "legacy_id": "p2-14",
+        "target_type": "task",
+        "target_id": "p1-14",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-15.json",
+        "legacy_id": "p2-15",
+        "target_type": "task",
+        "target_id": "p1-15",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-16.json",
+        "legacy_id": "p2-16",
+        "target_type": "task",
+        "target_id": "p1-16",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-17.json",
+        "legacy_id": "p2-17",
+        "target_type": "task",
+        "target_id": "p1-17",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-18.json",
+        "legacy_id": "p2-18",
+        "target_type": "task",
+        "target_id": "p1-18",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-19.json",
+        "legacy_id": "p2-19",
+        "target_type": "task",
+        "target_id": "p1-19",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-20.json",
+        "legacy_id": "p2-20",
+        "target_type": "task",
+        "target_id": "p1-20",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-21.json",
+        "legacy_id": "p2-21",
+        "target_type": "task",
+        "target_id": "p1-21",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-22.json",
+        "legacy_id": "p2-22",
+        "target_type": "task",
+        "target_id": "p1-22",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-23.json",
+        "legacy_id": "p2-23",
+        "target_type": "task",
+        "target_id": "p1-23",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-24.json",
+        "legacy_id": "p2-24",
+        "target_type": "task",
+        "target_id": "p1-24",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-25.json",
+        "legacy_id": "p2-25",
+        "target_type": "task",
+        "target_id": "p1-25",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-26.json",
+        "legacy_id": "p2-26",
+        "target_type": "task",
+        "target_id": "p1-26",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-27.json",
+        "legacy_id": "p2-27",
+        "target_type": "task",
+        "target_id": "p1-27",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-28.json",
+        "legacy_id": "p2-28",
+        "target_type": "task",
+        "target_id": "p1-28",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-29.json",
+        "legacy_id": "p2-29",
+        "target_type": "task",
+        "target_id": "p1-29",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-30.json",
+        "legacy_id": "p2-30",
+        "target_type": "task",
+        "target_id": "p1-30",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-33.json",
+        "legacy_id": "p2-33",
+        "target_type": "task",
+        "target_id": "p1-33",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-34.json",
+        "legacy_id": "p2-34",
+        "target_type": "task",
+        "target_id": "p1-34",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-35.json",
+        "legacy_id": "p2-35",
+        "target_type": "task",
+        "target_id": "p1-35",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-36.json",
+        "legacy_id": "p2-36",
+        "target_type": "task",
+        "target_id": "p1-36",
+        "disposition": "moved-to-phase-1"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-01.json",
+        "legacy_id": "p3-01",
+        "target_type": "task",
+        "target_id": "p2-47",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-02.json",
+        "legacy_id": "p3-02",
+        "target_type": "task",
+        "target_id": "p2-48",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-03.json",
+        "legacy_id": "p3-03",
+        "target_type": "task",
+        "target_id": "p2-49",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-04.json",
+        "legacy_id": "p3-04",
+        "target_type": "task",
+        "target_id": "p2-50",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-05.json",
+        "legacy_id": "p3-05",
+        "target_type": "task",
+        "target_id": "p2-51",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-06.json",
+        "legacy_id": "p3-06",
+        "target_type": "task",
+        "target_id": "p2-52",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-07.json",
+        "legacy_id": "p3-07",
+        "target_type": "task",
+        "target_id": "p2-53",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-08.json",
+        "legacy_id": "p3-08",
+        "target_type": "task",
+        "target_id": "p2-54",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-09.json",
+        "legacy_id": "p3-09",
+        "target_type": "task",
+        "target_id": "p2-55",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-10.json",
+        "legacy_id": "p3-10",
+        "target_type": "task",
+        "target_id": "p2-56",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-11.json",
+        "legacy_id": "p3-11",
+        "target_type": "task",
+        "target_id": "p2-57",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-12.json",
+        "legacy_id": "p3-12",
+        "target_type": "task",
+        "target_id": "p2-58",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-13.json",
+        "legacy_id": "p3-13",
+        "target_type": "task",
+        "target_id": "p2-59",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-14.json",
+        "legacy_id": "p3-14",
+        "target_type": "task",
+        "target_id": "p2-60",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-15.json",
+        "legacy_id": "p3-15",
+        "target_type": "task",
+        "target_id": "p2-61",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-16.json",
+        "legacy_id": "p3-16",
+        "target_type": "task",
+        "target_id": "p2-62",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-17.json",
+        "legacy_id": "p3-17",
+        "target_type": "task",
+        "target_id": "p2-63",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-18.json",
+        "legacy_id": "p3-18",
+        "target_type": "task",
+        "target_id": "p2-64",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-19.json",
+        "legacy_id": "p3-19",
+        "target_type": "task",
+        "target_id": "p2-65",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-20.json",
+        "legacy_id": "p3-20",
+        "target_type": "task",
+        "target_id": "p2-66",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-21.json",
+        "legacy_id": "p3-21",
+        "target_type": "task",
+        "target_id": "p2-67",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-22.json",
+        "legacy_id": "p3-22",
+        "target_type": "task",
+        "target_id": "p2-68",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-23.json",
+        "legacy_id": "p3-23",
+        "target_type": "task",
+        "target_id": "p2-69",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p3-24.json",
+        "legacy_id": "p3-24",
+        "target_type": "task",
+        "target_id": "p2-70",
+        "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/functions/agent-controlled-replan.json",
+        "legacy_id": "agent-controlled-replan",
+        "target_type": "function",
+        "target_id": "agent-governance",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/functions/engineer-case-handoff.json",
+        "legacy_id": "engineer-case-handoff",
+        "target_type": "function",
+        "target_id": "engineer-ai-intake",
+        "disposition": "merged"
       }
     ],
     "aliases": {
       "AG-01": {
         "target_type": "task",
-        "target_id": "p3-01"
+        "target_id": "p2-47"
       },
       "AG-02": {
         "target_type": "task",
-        "target_id": "p3-03"
+        "target_id": "p2-49"
       },
       "AG-03": {
         "target_type": "task",
-        "target_id": "p3-04"
+        "target_id": "p2-50"
       },
       "AG-04": {
         "target_type": "task",
-        "target_id": "p3-02"
+        "target_id": "p2-48"
       },
       "AG-05": {
         "target_type": "task",
-        "target_id": "p3-05"
+        "target_id": "p2-51"
       },
       "AG-06": {
         "target_type": "task",
-        "target_id": "p3-06"
+        "target_id": "p2-52"
       },
       "TS-01": {
         "target_type": "task",
-        "target_id": "p2-01"
+        "target_id": "p1-01"
       },
       "TS-02": {
         "target_type": "task",
-        "target_id": "p2-02"
+        "target_id": "p1-02"
       },
       "TS-03": {
         "target_type": "task",
-        "target_id": "p2-18"
+        "target_id": "p1-18"
       },
       "TS-04": {
         "target_type": "task",
-        "target_id": "p2-33"
+        "target_id": "p1-33"
       },
       "TS-05": {
         "target_type": "task",
-        "target_id": "p2-15"
+        "target_id": "p1-15"
       },
       "TS-06": {
         "target_type": "task",
-        "target_id": "p2-19"
+        "target_id": "p1-19"
       },
       "TS-07": {
         "target_type": "task",
-        "target_id": "p2-28"
+        "target_id": "p1-28"
       },
       "TS-08": {
         "target_type": "task",
-        "target_id": "p2-09"
+        "target_id": "p1-09"
       },
       "TS-09": {
         "target_type": "task",
-        "target_id": "p2-03"
+        "target_id": "p1-03"
       },
       "TS-10": {
         "target_type": "task",
-        "target_id": "p2-14"
+        "target_id": "p1-14"
       },
       "TS-11": {
         "target_type": "task",
-        "target_id": "p2-21"
+        "target_id": "p1-21"
       },
       "TS-12": {
         "target_type": "task",
-        "target_id": "p2-29"
+        "target_id": "p1-29"
       },
       "account-failure-alerts": {
         "target_type": "task",
-        "target_id": "p2-15"
+        "target_id": "p1-15"
       },
       "account-rerun-recovery": {
         "target_type": "task",
-        "target_id": "p2-10"
+        "target_id": "p1-10"
       },
       "admin-environment-config-inventory": {
         "target_type": "task",
-        "target_id": "p2-30"
+        "target_id": "p1-30"
       },
       "agent-rules": {
         "target_type": "task",
-        "target_id": "p2-34"
+        "target_id": "p1-34"
       },
       "assign-auth-hardening": {
         "target_type": "task",
-        "target_id": "p3-17"
+        "target_id": "p2-63"
       },
       "assign-legacy-cleanup": {
         "target_type": "task",
-        "target_id": "p3-18"
+        "target_id": "p2-64"
       },
       "assign-live-postgres": {
         "target_type": "task",
-        "target_id": "p3-19"
+        "target_id": "p2-65"
       },
       "assign-metrics": {
         "target_type": "task",
-        "target_id": "p3-20"
+        "target_id": "p2-66"
       },
       "assign-phase3-admin-sync": {
         "target_type": "task",
-        "target_id": "p3-21"
+        "target_id": "p2-67"
       },
       "assign-phase3-eligibility": {
         "target_type": "task",
-        "target_id": "p3-15"
+        "target_id": "p2-61"
       },
       "assign-phase3-first-reply": {
         "target_type": "task",
-        "target_id": "p3-16"
+        "target_id": "p2-62"
       },
       "assign-phase3-slack": {
         "target_type": "task",
-        "target_id": "p3-22"
+        "target_id": "p2-68"
       },
       "assign-rollout": {
         "target_type": "task",
-        "target_id": "p3-23"
+        "target_id": "p2-69"
       },
       "billing-dashboard-metrics": {
         "target_type": "task",
-        "target_id": "p2-22"
+        "target_id": "p1-22"
       },
       "billing-expand": {
         "target_type": "task",
-        "target_id": "p2-23"
+        "target_id": "p1-23"
       },
       "billing-human-review": {
         "target_type": "task",
-        "target_id": "p2-16"
+        "target_id": "p1-16"
       },
       "billing-human-review-handoff": {
         "target_type": "task",
-        "target_id": "p3-24"
+        "target_id": "p2-70"
       },
       "billing-idempotency": {
         "target_type": "task",
-        "target_id": "p2-11"
+        "target_id": "p1-11"
       },
       "billing-monitor-automation-outcomes": {
         "target_type": "task",
-        "target_id": "p2-24"
+        "target_id": "p1-24"
       },
       "billing-monitor-replay-quality": {
         "target_type": "task",
-        "target_id": "p2-05"
+        "target_id": "p1-05"
       },
       "billing-persona-registry": {
         "target_type": "task",
-        "target_id": "p2-12"
+        "target_id": "p1-12"
       },
       "billing-recipient-env": {
         "target_type": "task",
-        "target_id": "p2-13"
+        "target_id": "p1-13"
       },
       "client-rich-attachments": {
         "target_type": "task",
@@ -6275,47 +7046,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "ma-agent-to-agent-governed-autonomy": {
         "target_type": "task",
-        "target_id": "p3-07"
+        "target_id": "p2-53"
       },
       "ma-agentrelay-support-integration": {
         "target_type": "task",
-        "target_id": "p3-13"
+        "target_id": "p2-59"
       },
       "ma-controlled-replan": {
         "target_type": "task",
-        "target_id": "p3-12"
+        "target_id": "p2-58"
       },
       "ma-guardrail-claim-evidence": {
         "target_type": "task",
-        "target_id": "p3-08"
+        "target_id": "p2-54"
       },
       "ma-real-evidence-tools": {
         "target_type": "task",
-        "target_id": "p3-10"
+        "target_id": "p2-56"
       },
       "ma-replay-runner": {
         "target_type": "task",
-        "target_id": "p3-11"
+        "target_id": "p2-57"
       },
       "ma-rollout-taxonomy-contract": {
         "target_type": "task",
-        "target_id": "p3-09"
+        "target_id": "p2-55"
       },
       "ma-workspace-action-console": {
         "target_type": "task",
-        "target_id": "p3-14"
+        "target_id": "p2-60"
       },
       "phase2-fraud-field-contract": {
         "target_type": "task",
-        "target_id": "p2-03"
+        "target_id": "p1-03"
       },
       "project-overview": {
         "target_type": "task",
-        "target_id": "p2-35"
+        "target_id": "p1-35"
       },
       "project-task-title-cleanup": {
         "target_type": "task",
-        "target_id": "p2-36"
+        "target_id": "p1-36"
       },
       "rag-dedupe": {
         "target_type": "task",
@@ -6323,19 +7094,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "routing-automation-rollout": {
         "target_type": "task",
-        "target_id": "p2-25"
+        "target_id": "p1-25"
       },
       "routing-billing-review-customer-experience": {
         "target_type": "task",
-        "target_id": "p2-17"
+        "target_id": "p1-17"
       },
       "routing-billing-risky-negatives": {
         "target_type": "task",
-        "target_id": "p2-06"
+        "target_id": "p1-06"
       },
       "routing-dashboard-metrics": {
         "target_type": "task",
-        "target_id": "p2-26"
+        "target_id": "p1-26"
       },
       "routing-fallback-billing-risk-sniff": {
         "target_type": "function",
@@ -6343,19 +7114,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "routing-real-zendesk-replay": {
         "target_type": "task",
-        "target_id": "p2-07"
+        "target_id": "p1-07"
       },
       "routing-rollout-taxonomy": {
         "target_type": "task",
-        "target_id": "p2-27"
+        "target_id": "p1-27"
       },
       "routing-security-compliance": {
         "target_type": "task",
-        "target_id": "p2-02"
+        "target_id": "p1-02"
       },
       "routing-semantic-golden-expand": {
         "target_type": "task",
-        "target_id": "p2-08"
+        "target_id": "p1-08"
       },
       "routing-taxonomy": {
         "target_type": "function",
@@ -6363,7 +7134,247 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "zendesk-account-comment-identity": {
         "target_type": "task",
-        "target_id": "p2-20"
+        "target_id": "p1-20"
+      },
+      "p2-01": {
+        "target_type": "task",
+        "target_id": "p1-01"
+      },
+      "p2-02": {
+        "target_type": "task",
+        "target_id": "p1-02"
+      },
+      "p2-03": {
+        "target_type": "task",
+        "target_id": "p1-03"
+      },
+      "p2-04": {
+        "target_type": "task",
+        "target_id": "p1-04"
+      },
+      "p2-05": {
+        "target_type": "task",
+        "target_id": "p1-05"
+      },
+      "p2-06": {
+        "target_type": "task",
+        "target_id": "p1-06"
+      },
+      "p2-07": {
+        "target_type": "task",
+        "target_id": "p1-07"
+      },
+      "p2-08": {
+        "target_type": "task",
+        "target_id": "p1-08"
+      },
+      "p2-09": {
+        "target_type": "task",
+        "target_id": "p1-09"
+      },
+      "p2-10": {
+        "target_type": "task",
+        "target_id": "p1-10"
+      },
+      "p2-11": {
+        "target_type": "task",
+        "target_id": "p1-11"
+      },
+      "p2-12": {
+        "target_type": "task",
+        "target_id": "p1-12"
+      },
+      "p2-13": {
+        "target_type": "task",
+        "target_id": "p1-13"
+      },
+      "p2-14": {
+        "target_type": "task",
+        "target_id": "p1-14"
+      },
+      "p2-15": {
+        "target_type": "task",
+        "target_id": "p1-15"
+      },
+      "p2-16": {
+        "target_type": "task",
+        "target_id": "p1-16"
+      },
+      "p2-17": {
+        "target_type": "task",
+        "target_id": "p1-17"
+      },
+      "p2-18": {
+        "target_type": "task",
+        "target_id": "p1-18"
+      },
+      "p2-19": {
+        "target_type": "task",
+        "target_id": "p1-19"
+      },
+      "p2-20": {
+        "target_type": "task",
+        "target_id": "p1-20"
+      },
+      "p2-21": {
+        "target_type": "task",
+        "target_id": "p1-21"
+      },
+      "p2-22": {
+        "target_type": "task",
+        "target_id": "p1-22"
+      },
+      "p2-23": {
+        "target_type": "task",
+        "target_id": "p1-23"
+      },
+      "p2-24": {
+        "target_type": "task",
+        "target_id": "p1-24"
+      },
+      "p2-25": {
+        "target_type": "task",
+        "target_id": "p1-25"
+      },
+      "p2-26": {
+        "target_type": "task",
+        "target_id": "p1-26"
+      },
+      "p2-27": {
+        "target_type": "task",
+        "target_id": "p1-27"
+      },
+      "p2-28": {
+        "target_type": "task",
+        "target_id": "p1-28"
+      },
+      "p2-29": {
+        "target_type": "task",
+        "target_id": "p1-29"
+      },
+      "p2-30": {
+        "target_type": "task",
+        "target_id": "p1-30"
+      },
+      "p2-33": {
+        "target_type": "task",
+        "target_id": "p1-33"
+      },
+      "p2-34": {
+        "target_type": "task",
+        "target_id": "p1-34"
+      },
+      "p2-35": {
+        "target_type": "task",
+        "target_id": "p1-35"
+      },
+      "p2-36": {
+        "target_type": "task",
+        "target_id": "p1-36"
+      },
+      "p3-01": {
+        "target_type": "task",
+        "target_id": "p2-47"
+      },
+      "p3-02": {
+        "target_type": "task",
+        "target_id": "p2-48"
+      },
+      "p3-03": {
+        "target_type": "task",
+        "target_id": "p2-49"
+      },
+      "p3-04": {
+        "target_type": "task",
+        "target_id": "p2-50"
+      },
+      "p3-05": {
+        "target_type": "task",
+        "target_id": "p2-51"
+      },
+      "p3-06": {
+        "target_type": "task",
+        "target_id": "p2-52"
+      },
+      "p3-07": {
+        "target_type": "task",
+        "target_id": "p2-53"
+      },
+      "p3-08": {
+        "target_type": "task",
+        "target_id": "p2-54"
+      },
+      "p3-09": {
+        "target_type": "task",
+        "target_id": "p2-55"
+      },
+      "p3-10": {
+        "target_type": "task",
+        "target_id": "p2-56"
+      },
+      "p3-11": {
+        "target_type": "task",
+        "target_id": "p2-57"
+      },
+      "p3-12": {
+        "target_type": "task",
+        "target_id": "p2-58"
+      },
+      "p3-13": {
+        "target_type": "task",
+        "target_id": "p2-59"
+      },
+      "p3-14": {
+        "target_type": "task",
+        "target_id": "p2-60"
+      },
+      "p3-15": {
+        "target_type": "task",
+        "target_id": "p2-61"
+      },
+      "p3-16": {
+        "target_type": "task",
+        "target_id": "p2-62"
+      },
+      "p3-17": {
+        "target_type": "task",
+        "target_id": "p2-63"
+      },
+      "p3-18": {
+        "target_type": "task",
+        "target_id": "p2-64"
+      },
+      "p3-19": {
+        "target_type": "task",
+        "target_id": "p2-65"
+      },
+      "p3-20": {
+        "target_type": "task",
+        "target_id": "p2-66"
+      },
+      "p3-21": {
+        "target_type": "task",
+        "target_id": "p2-67"
+      },
+      "p3-22": {
+        "target_type": "task",
+        "target_id": "p2-68"
+      },
+      "p3-23": {
+        "target_type": "task",
+        "target_id": "p2-69"
+      },
+      "p3-24": {
+        "target_type": "task",
+        "target_id": "p2-70"
+      },
+      "agent-controlled-replan": {
+        "target_type": "function",
+        "target_id": "agent-governance"
+      },
+      "engineer-case-handoff": {
+        "target_type": "function",
+        "target_id": "engineer-ai-intake"
       }
     }
   }

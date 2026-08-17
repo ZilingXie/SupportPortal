@@ -270,7 +270,7 @@
         { id: "manual", label: "用户手册" },
         { id: "report", label: "汇报模式" }
       ];
-      const state = { phase: DATA?.project?.current_phase_id || "phase-2", query: "", module: "all", function: "all", reportDays: 7 };
+      const state = { phase: DATA?.project?.current_phase_id || "phase-1", query: "", module: "all", function: "all", reportDays: 7 };
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
       const formatDate = (value) => value ? String(value).slice(0, 10) : "未记录";
       const formatStatus = (status) => statusMeta[status]?.label || status;

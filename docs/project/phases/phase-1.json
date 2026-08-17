@@ -1,15 +1,19 @@
 {
   "schema_version": 2,
   "phase_id": "phase-1",
-  "title": "Phase 1：效率提升与工单系统基线",
-  "status": "done",
-  "summary": "历史基线阶段已完成；未完成旧记录已转入 Phase 3。",
+  "title": "Phase 1：核心交付闭环",
+  "status": "active",
+  "summary": "当前交付阶段，聚焦 Account Automation、Admin Operations 和 Platform Delivery；这三个 Module 的 Task 属于本阶段完成范围。",
   "target_date": null,
   "exit_criteria": [
-    "客户入口、工单基础能力和最小交付闭环已建立。"
+    "Account Automation 的路由、执行、人工审核、Zendesk 交付与受控发布任务完成，并有对应 evidence。",
+    "Admin Operations 的管理控制面和运营任务完成，并有对应 evidence。",
+    "Platform Delivery 的项目治理、生产 AI 约束和交付基础任务完成，并有对应 evidence。"
   ],
   "source_refs": [
     "docs/roadmap.html",
-    "docs/roadmap/phase1.html"
+    "docs/roadmap/phase1.html",
+    "docs/roadmap/phase2.html",
+    "docs/roadmap/meetings.html"
   ]
 }

@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-18",
+  "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
+  "status": "active",
+  "owner": "zac",
+  "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
+  "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
+  "acceptance_criteria": [
+    "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Zendesk internal comment response parser and idempotency tests",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+    },
+    {
+      "type": "test",
+      "label": "Account UI contract tests",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+    },
+    {
+      "type": "test",
+      "label": "Account Zendesk internal comment timeout and regression tests",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+    }
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "internal_comment_response_parser_fixed",
+      "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "internal_comment_spinner_timeout_fixed",
+      "summary": "为 /account Zendesk internal comment 请求增加前端有界超时，确保 Adding... 在请求挂起时清除并显示错误。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "status_reclassified",
+      "summary": "按 review 结论改为进行中；internal comment 已完成，external/customer reply 仍待完成。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p2-18 迁移为 p1-18；迁移到 phase-1 / account-automation / zendesk-delivery。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-03"
+    }
+  ],
+  "legacy_ids": [
+    "TS-03",
+    "p2-18"
+  ],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "zendesk-delivery"
+}

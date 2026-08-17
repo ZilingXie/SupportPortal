@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "function_id": "engineer-ai-intake",
-  "phase_id": "phase-3",
+  "phase_id": "phase-2",
   "module_id": "engineer-workspace",
   "title": "Engineer AI Intake",
   "goal": "在 Zendesk Intake 和首次回复之间建立 AI eligibility 与交接边界。",
@@ -10,5 +10,7 @@
   "source_refs": [
     "docs/roadmap.html#lanes"
   ],
-  "legacy_ids": []
+  "legacy_ids": [
+    "engineer-case-handoff"
+  ]
 }

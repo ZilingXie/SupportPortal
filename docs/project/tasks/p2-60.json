@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-60",
+  "title": "将 Multi-Agent Run 面板升级为工程师行动台",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "低优先级保留：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。",
+  "next_action": "低优先级保留：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。",
+  "acceptance_criteria": [
+    "完成 Low Priority 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-3 / agent-collaboration / agent-workspace-console。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p3-14 迁移为 p2-60；迁移到 phase-2 / agent-collaboration / agent-workspace-console。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "engineer-multi-agent",
+      "item_id": "ma-workspace-action-console"
+    }
+  ],
+  "legacy_ids": [
+    "ma-workspace-action-console",
+    "p3-14"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "agent-collaboration",
+  "function_id": "agent-workspace-console"
+}

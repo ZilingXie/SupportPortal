@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-08",
+  "title": "扩展 Billing 路由边界 Golden Set",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
+  "next_action": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
+  "acceptance_criteria": [
+    "完成 Tests 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane routing-rules 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Task ID 从 p2-08 迁移为 p1-08；迁移到 phase-1 / account-automation / routing-quality-validation。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "routing-rules",
+      "item_id": "routing-semantic-golden-expand"
+    }
+  ],
+  "legacy_ids": [
+    "routing-semantic-golden-expand",
+    "p2-08"
+  ],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "routing-quality-validation"
+}
