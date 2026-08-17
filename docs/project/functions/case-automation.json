@@ -6,7 +6,11 @@
   "title": "Case Automation",
   "goal": "定义并交付可安全扩展的 Account/Billing Case 自动化能力和受控范围。",
   "acceptance_criteria": [],
-  "evidence": [],
+  "evidence": [
+    {"type": "pr", "number": 659, "url": "https://github.com/ZilingXie/SupportPortal/pull/659", "label": "PR #659"},
+    {"type": "pr", "number": 681, "url": "https://github.com/ZilingXie/SupportPortal/pull/681", "label": "PR #681"},
+    {"type": "pr", "number": 657, "url": "https://github.com/ZilingXie/SupportPortal/pull/657", "label": "PR #657"}
+  ],
   "source_refs": [
     "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
     "docs/roadmap.html",

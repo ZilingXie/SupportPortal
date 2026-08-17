@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-48",
+  "title": "建立 Account Route Strategy 管理面",
+  "status": "done",
+  "owner": "zac",
+  "summary": "在 Agent Config 中统一管理 Account 路由策略、Prompt 版本和 Automation Workflow。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "管理员可以查看分层 Router、路由策略和 Automation Workflow。",
+    "Prompt 支持 managed 版本的发布、差异、恢复和历史查看。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 638, "url": "https://github.com/ZilingXie/SupportPortal/pull/638", "label": "PR #638"},
+    {"type": "pr", "number": 645, "url": "https://github.com/ZilingXie/SupportPortal/pull/645", "label": "PR #645"},
+    {"type": "pr", "number": 646, "url": "https://github.com/ZilingXie/SupportPortal/pull/646", "label": "PR #646"},
+    {"type": "pr", "number": 651, "url": "https://github.com/ZilingXie/SupportPortal/pull/651", "label": "PR #651"},
+    {"type": "pr", "number": 689, "url": "https://github.com/ZilingXie/SupportPortal/pull/689", "label": "PR #689"},
+    {"type": "pr", "number": 690, "url": "https://github.com/ZilingXie/SupportPortal/pull/690", "label": "PR #690"}
+  ],
+  "source_refs": ["docs/roadmap.html", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从 Agent Config、Route Strategy 和 Prompt 管理实现补回。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["route-strategy-admin"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "case-route"
+}

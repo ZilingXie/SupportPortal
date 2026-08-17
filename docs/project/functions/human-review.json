@@ -6,7 +6,10 @@
   "title": "Human Review",
   "goal": "为敏感、低置信、失败或需人工确认的 Case 提供可审计的人工审核与接管路径。",
   "acceptance_criteria": [],
-  "evidence": [],
+  "evidence": [
+    {"type": "pr", "number": 526, "url": "https://github.com/ZilingXie/SupportPortal/pull/526", "label": "PR #526"},
+    {"type": "pr", "number": 744, "url": "https://github.com/ZilingXie/SupportPortal/pull/744", "label": "PR #744"}
+  ],
   "source_refs": [
     "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
     "docs/roadmap.html",

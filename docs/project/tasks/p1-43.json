@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-43",
+  "title": "建立 Billing Outlook 回复和 PDF 结果闭环",
+  "status": "done",
+  "owner": "zac",
+  "summary": "通过 Outlook 接收内部处理结果，解析 PDF 附件并生成受控客户跟进。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "Billing 内部请求通过公司 Outlook 发送并可轮询回复。",
+    "回复正文和 PDF 附件可以被解析并用于客户结果更新。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 568, "url": "https://github.com/ZilingXie/SupportPortal/pull/568", "label": "PR #568"},
+    {"type": "pr", "number": 570, "url": "https://github.com/ZilingXie/SupportPortal/pull/570", "label": "PR #570"},
+    {"type": "pr", "number": 572, "url": "https://github.com/ZilingXie/SupportPortal/pull/572", "label": "PR #572"},
+    {"type": "pr", "number": 574, "url": "https://github.com/ZilingXie/SupportPortal/pull/574", "label": "PR #574"},
+    {"type": "pr", "number": 575, "url": "https://github.com/ZilingXie/SupportPortal/pull/575", "label": "PR #575"}
+  ],
+  "source_refs": ["docs/roadmap.html", "docs/roadmap/phase2.html", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从 Billing Outlook、轮询、OCR 和 PDF 转发实现补回。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["billing-outlook-loop"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop"
+}

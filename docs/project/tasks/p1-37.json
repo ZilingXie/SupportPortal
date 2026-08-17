@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-37",
+  "title": "建立 Account Case 接入、历史列表和详情",
+  "status": "done",
+  "owner": "zac",
+  "summary": "提供 Account Case 的创建、持久化、历史列表和详情读取能力。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "Account Case 可以通过入口创建并保存客户消息、来源和路由结果。",
+    "Account 页面可以分页查看历史 Case 并打开详情。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 426, "url": "https://github.com/ZilingXie/SupportPortal/pull/426", "label": "PR #426"},
+    {"type": "pr", "number": 432, "url": "https://github.com/ZilingXie/SupportPortal/pull/432", "label": "PR #432"},
+    {"type": "pr", "number": 571, "url": "https://github.com/ZilingXie/SupportPortal/pull/571", "label": "PR #571"},
+    {"type": "pr", "number": 657, "url": "https://github.com/ZilingXie/SupportPortal/pull/657", "label": "PR #657"}
+  ],
+  "source_refs": ["docs/roadmap.html", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从历史 Account intake、Case history 和 Automated Case 迁移记录补回。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["account-case-intake"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "case-automation"
+}

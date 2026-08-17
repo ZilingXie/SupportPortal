@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-40",
+  "title": "实现 Enablement 自动化和字段采集",
+  "status": "done",
+  "owner": "zac",
+  "summary": "从客户消息提取 Enablement 字段，执行内部处理并生成受控客户更新。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "App ID 和功能名称可以从客户原文提取并保留证据。",
+    "缺失字段最多追问一次，不确定或 grounding 失败时转人工。",
+    "内部处理完成后可以生成对应的客户更新。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 659, "url": "https://github.com/ZilingXie/SupportPortal/pull/659", "label": "PR #659"},
+    {"type": "pr", "number": 670, "url": "https://github.com/ZilingXie/SupportPortal/pull/670", "label": "PR #670"},
+    {"type": "pr", "number": 674, "url": "https://github.com/ZilingXie/SupportPortal/pull/674", "label": "PR #674"},
+    {"type": "pr", "number": 675, "url": "https://github.com/ZilingXie/SupportPortal/pull/675", "label": "PR #675"},
+    {"type": "pr", "number": 676, "url": "https://github.com/ZilingXie/SupportPortal/pull/676", "label": "PR #676"},
+    {"type": "pr", "number": 680, "url": "https://github.com/ZilingXie/SupportPortal/pull/680", "label": "PR #680"},
+    {"type": "pr", "number": 709, "url": "https://github.com/ZilingXie/SupportPortal/pull/709", "label": "PR #709"}
+  ],
+  "source_refs": ["docs/roadmap/phase2.html", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从 Phase 2 Enablement handler、字段提取和回复记录补回。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["enablement-automation"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "case-automation"
+}

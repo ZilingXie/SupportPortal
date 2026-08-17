@@ -6,7 +6,11 @@
   "title": "Automation 执行闭环",
   "goal": "让 Case 自动化执行具备幂等、恢复、监控、失败可见和向人工升级的闭环。",
   "acceptance_criteria": [],
-  "evidence": [],
+  "evidence": [
+    {"type": "pr", "number": 647, "url": "https://github.com/ZilingXie/SupportPortal/pull/647", "label": "PR #647"},
+    {"type": "pr", "number": 740, "url": "https://github.com/ZilingXie/SupportPortal/pull/740", "label": "PR #740"},
+    {"type": "pr", "number": 751, "url": "https://github.com/ZilingXie/SupportPortal/pull/751", "label": "PR #751"}
+  ],
   "source_refs": [
     "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
     "docs/roadmap.html",
