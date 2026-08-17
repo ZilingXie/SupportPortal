@@ -23,6 +23,7 @@ from backend.services.prompts.account_routing import (
     ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION,
     build_account_verification_field_system_prompt,
     build_account_verification_field_user_prompt,
+    build_account_verification_field_verification_user_prompt,
     build_account_verification_follow_up_system_prompt,
     build_account_verification_follow_up_user_prompt,
 )
@@ -67,7 +68,10 @@ class AccountVerificationFieldExtraction:
     reason: str = ""
     field_confidences: dict[str, float] = field(default_factory=dict)
     source_message_ids: dict[str, str] = field(default_factory=dict)
+    source_quotes: dict[str, str] = field(default_factory=dict)
+    grounding_failures: dict[str, list[str]] = field(default_factory=dict)
     grounding_status: str = "not_checked"
+    grounding_reason_code: str | None = None
     sensitive_data_types: list[str] = field(default_factory=list)
     failure_type: str | None = None
     prompt_snapshot: dict[str, str] = field(default_factory=dict)
@@ -84,7 +88,11 @@ class AccountVerificationFieldExtraction:
             "reason": self.reason,
             "field_confidences": dict(self.field_confidences),
             "source_message_ids": dict(self.source_message_ids),
+            "source_quotes": dict(self.source_quotes),
+            "grounding_failures": {key: list(value) for key, value in self.grounding_failures.items()},
             "grounding_status": self.grounding_status,
+            "grounding_reason_code": self.grounding_reason_code,
+            "reason_code": self.grounding_reason_code or self.failure_type,
             "sensitive_data_types": list(self.sensitive_data_types),
             "failure_type": self.failure_type,
             "prompt_version": ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
@@ -184,6 +192,56 @@ def _invoke_json_for_scenario(*, system_prompt: str, user_prompt: str, scenario:
     )
 
 
+def _candidate_grounding_reasons(
+    candidate: dict[str, Any],
+    *,
+    messages: list[dict[str, str]],
+) -> set[str]:
+    # Only provided fields carry evidence that needs grounding. Missing and
+    # ambiguous entries are valid classifier outcomes and may omit source data.
+    if str(candidate.get("status") or "").strip().lower() != "provided":
+        return set()
+    source_id = str(candidate.get("source_message_id") or "").strip()
+    quote = str(candidate.get("source_quote") or "").strip()
+    source_by_id = {item["message_id"]: item["content"] for item in messages}
+    source_text = source_by_id.get(source_id)
+    reasons: set[str] = set()
+    if not source_id or source_text is None:
+        reasons.add("source_message_not_found")
+    if not quote or (source_text is not None and quote not in source_text):
+        reasons.add("quote_mismatch")
+    if _safe_confidence(candidate.get("confidence")) < DEFAULT_FIELD_CONFIDENCE_THRESHOLD:
+        reasons.add("low_confidence")
+    if detect_sensitive_payment_data(str(candidate.get("value") or "")):
+        reasons.add("sensitive_data")
+    if detect_sensitive_payment_data(quote):
+        reasons.add("sensitive_data")
+    return reasons
+
+
+def _repair_source_message_id(candidate: dict[str, Any], messages: list[dict[str, str]]) -> dict[str, Any]:
+    repaired = dict(candidate)
+    quote = str(repaired.get("source_quote") or "").strip()
+    if not quote:
+        return repaired
+    matches = [item["message_id"] for item in messages if quote in item["content"]]
+    if len(matches) == 1:
+        repaired["source_message_id"] = matches[0]
+    return repaired
+
+
+def _grounding_reason_code(reasons: set[str]) -> str | None:
+    for reason in (
+        "source_message_not_found",
+        "quote_mismatch",
+        "low_confidence",
+        "sensitive_data",
+    ):
+        if reason in reasons:
+            return reason
+    return None
+
+
 def extract_account_verification_fields(
     *,
     ticket_subject: str,
@@ -209,6 +267,7 @@ def extract_account_verification_fields(
     snapshot = {
         "system_prompt": system_prompt,
         "user_prompt": "[redacted account verification extraction input]",
+        "verification_status": "not_attempted",
     }
     if sensitive_types:
         return AccountVerificationFieldExtraction(
@@ -216,6 +275,8 @@ def extract_account_verification_fields(
             collected_fields=trusted_fields,
             reason="sensitive payment data was detected in customer-authored content",
             grounding_status="blocked",
+            grounding_reason_code="sensitive_data",
+            grounding_failures={"ticket": ["sensitive_data"]},
             sensitive_data_types=sensitive_types,
             failure_type="sensitive_payment_data",
             prompt_snapshot=snapshot,
@@ -226,6 +287,7 @@ def extract_account_verification_fields(
             collected_fields=trusted_fields,
             reason="no customer-authored messages were available",
             grounding_status="failed",
+            grounding_reason_code="missing_customer_messages",
             failure_type="missing_customer_messages",
             prompt_snapshot=snapshot,
         )
@@ -261,10 +323,88 @@ def extract_account_verification_fields(
 
     raw_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
     by_id = {message["message_id"]: message["content"] for message in redacted_messages}
+    grounding_failures = {
+        group: sorted(_candidate_grounding_reasons(candidate, messages=redacted_messages))
+        for group, candidate in raw_fields.items()
+        if group in ACCOUNT_VERIFICATION_REQUIRED_GROUPS and isinstance(candidate, dict)
+        and _candidate_grounding_reasons(candidate, messages=redacted_messages)
+    }
+    primary_status = str(payload.get("status") or "").strip().lower()
+    should_verify = bool(grounding_failures) or primary_status in {"ambiguous", "uncertain"}
+    if should_verify:
+        verification_prompt = build_account_verification_field_verification_user_prompt(
+            {
+                "ticket_subject": _redact_sensitive_payment_data(ticket_subject),
+                "existing_fields": trusted_fields,
+                "customer_messages": redacted_messages,
+            },
+            payload,
+        )
+        try:
+            verified_payload = (
+                _invoke_json_for_scenario(system_prompt=system_prompt, user_prompt=verification_prompt, scenario=model_scenario)
+                if invoke is _invoke_json
+                else invoke(system_prompt=system_prompt, user_prompt=verification_prompt)
+            )
+        except AccountProcessingFailure:
+            raise
+        except (LlmInvocationError, ValueError, TypeError, json.JSONDecodeError):
+            return AccountVerificationFieldExtraction(
+                status="uncertain", collected_fields=trusted_fields,
+                reason="field verifier invocation failed", grounding_status="failed",
+                failure_type="llm_verification_failed", grounding_reason_code="verification_conflict",
+                grounding_failures={"verifier": ["verification_conflict"]},
+                prompt_snapshot={**snapshot, "verification_status": "failed"},
+            )
+        if not isinstance(verified_payload, dict) or str(verified_payload.get("status") or "").strip().lower() not in {
+            "complete",
+            "missing",
+            "ambiguous",
+            "uncertain",
+        }:
+            return AccountVerificationFieldExtraction(
+                status="uncertain",
+                collected_fields=trusted_fields,
+                reason="field verifier returned an unsupported result",
+                grounding_status="failed",
+                failure_type="verification_failed",
+                grounding_reason_code="verification_conflict",
+                grounding_failures={"verifier": ["verification_conflict"]},
+                prompt_snapshot={**snapshot, "verification_status": "verification_conflict"},
+            )
+        verified_fields = verified_payload.get("fields") if isinstance(verified_payload.get("fields"), dict) else {}
+        repaired_verified = {
+            group: _repair_source_message_id(candidate, redacted_messages) if isinstance(candidate, dict) else candidate
+            for group, candidate in verified_fields.items()
+        }
+        verified_payload = {**verified_payload, "fields": repaired_verified}
+        verified_failures = {
+            group: sorted(_candidate_grounding_reasons(candidate, messages=redacted_messages))
+            for group, candidate in repaired_verified.items()
+            if group in ACCOUNT_VERIFICATION_REQUIRED_GROUPS and isinstance(candidate, dict)
+            and _candidate_grounding_reasons(candidate, messages=redacted_messages)
+        }
+        if verified_failures:
+            first_group = next(iter(verified_failures))
+            reason_code = _grounding_reason_code(set(verified_failures[first_group])) or "verification_conflict"
+            return AccountVerificationFieldExtraction(
+                status="uncertain", collected_fields=trusted_fields,
+                reason=f"{first_group} could not be safely grounded to customer text",
+                grounding_status="failed", failure_type="grounding_failed",
+                grounding_reason_code=reason_code,
+                grounding_failures=verified_failures,
+                prompt_snapshot={**snapshot, "verification_status": reason_code},
+            )
+        payload = verified_payload
+        raw_fields = repaired_verified
+        snapshot["verification_status"] = (
+            "corrected_grounding" if grounding_failures else "verified"
+        )
     collected = dict(trusted_fields)
     ambiguous: list[str] = []
     confidences: dict[str, float] = {}
     source_ids: dict[str, str] = {}
+    source_quotes: dict[str, str] = {}
     for group in ACCOUNT_VERIFICATION_REQUIRED_GROUPS:
         if collected.get(group):
             continue
@@ -295,11 +435,27 @@ def extract_account_verification_fields(
                 reason=f"{group} could not be safely grounded to customer text",
                 grounding_status="failed",
                 failure_type="grounding_failed",
+                grounding_reason_code=(
+                    _grounding_reason_code(
+                        _candidate_grounding_reasons(
+                            candidate, messages=redacted_messages
+                        )
+                    )
+                    or "verification_conflict"
+                ),
+                grounding_failures={
+                    group: sorted(
+                        _candidate_grounding_reasons(
+                            candidate, messages=redacted_messages
+                        )
+                    )
+                },
                 prompt_snapshot=snapshot,
             )
         collected[group] = value
         confidences[group] = confidence
         source_ids[group] = source_id
+        source_quotes[group] = source_quote
 
     payload_ambiguous = payload.get("ambiguous_fields")
     if isinstance(payload_ambiguous, list):
@@ -317,7 +473,9 @@ def extract_account_verification_fields(
             reason=str(payload.get("reason") or "field values require human review").strip(),
             field_confidences=confidences,
             source_message_ids=source_ids,
+            source_quotes=source_quotes,
             grounding_status="passed",
+            grounding_failures={},
             prompt_snapshot=snapshot,
         )
     if str(payload.get("status") or "").strip().lower() == "uncertain":
@@ -329,6 +487,8 @@ def extract_account_verification_fields(
             source_message_ids=source_ids,
             grounding_status="passed",
             failure_type="model_uncertain",
+            grounding_reason_code="low_confidence",
+            grounding_failures={},
             prompt_snapshot=snapshot,
         )
     missing = [group for group in ACCOUNT_VERIFICATION_REQUIRED_GROUPS if not collected.get(group)]
@@ -339,6 +499,7 @@ def extract_account_verification_fields(
         reason=str(payload.get("reason") or "required information groups evaluated").strip(),
         field_confidences=confidences,
         source_message_ids=source_ids,
+        source_quotes=source_quotes,
         grounding_status="passed",
         prompt_snapshot=snapshot,
     )

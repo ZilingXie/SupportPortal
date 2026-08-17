@@ -29,6 +29,196 @@ def _provided(group: str, value: str, quote: str) -> dict[str, object]:
 
 
 class AccountVerificationFieldExtractorTests(unittest.TestCase):
+    def test_explicit_contact_section_wins_over_different_email_signature(self) -> None:
+        message = (
+            "Company information: StarX Technology Solutions Pty Ltd, Australia, 327 Pitt Street, Sydney. "
+            "Contact information: Roy Wang, DevOps Manager, +61 412956557, 327 Pitt Street, Sydney. "
+            "We use Agora RTC for secure one-to-one voice and video calls. "
+            "We have not crossed the free-tier limit and have no payment history.\n"
+            "Kind regards,\nZoe\nProduct Manager"
+        )
+        responses = iter(
+            [
+                {
+                    "status": "ambiguous",
+                    "ambiguous_fields": ["contact_information"],
+                    "reason": "The contact name differs from the signature.",
+                    "fields": {},
+                },
+                {
+                    "status": "complete",
+                    "fields": {
+                        "company_information": _provided(
+                            "company_information",
+                            "StarX Technology Solutions Pty Ltd; Australia; Sydney",
+                            "Company information: StarX Technology Solutions Pty Ltd, Australia, 327 Pitt Street, Sydney",
+                        ),
+                        "contact_information": _provided(
+                            "contact_information",
+                            "Roy Wang; DevOps Manager; +61 412956557; Sydney",
+                            "Contact information: Roy Wang, DevOps Manager, +61 412956557, 327 Pitt Street, Sydney",
+                        ),
+                        "use_case": _provided(
+                            "use_case",
+                            "Secure one-to-one voice and video calls",
+                            "We use Agora RTC for secure one-to-one voice and video calls",
+                        ),
+                        "payment_information": _provided(
+                            "payment_information",
+                            "No payment history; free tier",
+                            "We have not crossed the free-tier limit and have no payment history",
+                        ),
+                    },
+                },
+            ]
+        )
+
+        result = extract_account_verification_fields(
+            ticket_subject="Account suspended - request for review",
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            invoke=lambda **_: next(responses),
+        )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.collected_fields["contact_information"].split(";", 1)[0], "Roy Wang")
+        self.assertEqual(result.prompt_snapshot["verification_status"], "verified")
+
+    def test_verification_repairs_unique_quote_source_message_id(self) -> None:
+        message = (
+            "Company: Example Ltd in Singapore. Contact: Maya Chen, +65 5555 0101. "
+            "We use Agora for live tutoring. No payment has been made yet."
+        )
+        calls = 0
+
+        def invoke(**_: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {
+                    "status": "missing",
+                    "fields": {
+                        "company_information": {
+                            **_provided(
+                                "company_information",
+                                "Example Ltd; Singapore",
+                                "Company: Example Ltd in Singapore",
+                            ),
+                            "source_message_id": "wrong-message",
+                        }
+                    },
+                }
+            return {
+                "status": "complete",
+                "fields": {
+                    "company_information": _provided(
+                        "company_information",
+                        "Example Ltd; Singapore",
+                        "Company: Example Ltd in Singapore",
+                    ),
+                    "contact_information": _provided(
+                        "contact_information",
+                        "Maya Chen; +65 5555 0101",
+                        "Contact: Maya Chen, +65 5555 0101",
+                    ),
+                    "use_case": _provided(
+                        "use_case",
+                        "Live tutoring",
+                        "We use Agora for live tutoring",
+                    ),
+                    "payment_information": _provided(
+                        "payment_information",
+                        "No payment made yet",
+                        "No payment has been made yet",
+                    ),
+                },
+            }
+
+        result = extract_account_verification_fields(
+            ticket_subject="Account verification",
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            invoke=invoke,
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.source_message_ids["company_information"], "m1")
+        self.assertEqual(result.prompt_snapshot["verification_status"], "corrected_grounding")
+
+    def test_invalid_verification_result_fails_closed(self) -> None:
+        calls = 0
+
+        def invoke(**_: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {
+                    "status": "missing",
+                    "fields": {
+                        "company_information": {
+                            **_provided("company_information", "Example Ltd", "Company: Example Ltd"),
+                            "source_message_id": "wrong-message",
+                        }
+                    },
+                }
+            return {}
+
+        result = extract_account_verification_fields(
+            ticket_subject="Account verification",
+            customer_messages=[
+                {
+                    "message_id": "m1",
+                    "role": "customer",
+                    "content": "Company: Example Ltd",
+                }
+            ],
+            invoke=invoke,
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(result.status, "uncertain")
+        self.assertEqual(result.grounding_reason_code, "verification_conflict")
+        self.assertEqual(result.failure_type, "verification_failed")
+
+    def test_explicit_missing_fields_do_not_trigger_verification(self) -> None:
+        calls = 0
+
+        def invoke(**_: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            return {
+                "status": "missing",
+                "fields": {
+                    "company_information": {"status": "missing"},
+                    "contact_information": {"status": "missing"},
+                    "use_case": {"status": "missing"},
+                    "payment_information": {"status": "missing"},
+                },
+                "missing_fields": [
+                    "company_information",
+                    "contact_information",
+                    "use_case",
+                    "payment_information",
+                ],
+            }
+
+        result = extract_account_verification_fields(
+            ticket_subject="Account verification",
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": "Hi"}],
+            invoke=invoke,
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(result.status, "missing")
+        self.assertEqual(
+            result.missing_fields,
+            [
+                "company_information",
+                "contact_information",
+                "use_case",
+                "payment_information",
+            ],
+        )
+
     def test_only_four_information_groups_are_required(self) -> None:
         message = (
             "Company: Example Ltd, registered in Singapore at 1 Main Street. "

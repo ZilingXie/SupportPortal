@@ -28,6 +28,26 @@ For each new entry, record:
 - Verification:
   - Text-level rule checks and `git diff --check`; no container restart.
 
+## 2026-08-17 - Fraud Account field grounding verification
+
+- Area or subsystem: `/account` Fraud Account field extractor and managed Account routing prompts
+- Prompt or model version: `fraud-account-fields-v3`
+- Summary: Added one independent LLM verification pass when Fraud Account field evidence is uncertain or cannot be grounded. A unique exact customer quote may repair an incorrect source message id; unsupported verifier output, conflicting evidence, or unsafe payment data remains Human Review with stable grounding reason codes.
+- Reason: Cases such as `#12800` could be classified as Fraud Account but stop before the internal handoff when the first extraction returned uncertain evidence. The extractor must distinguish a correctable evidence-reference error from a genuinely ungrounded result without using deterministic App ID or field extraction.
+- Affected files or config:
+  - `backend/services/account_verification_field_extractor.py`
+  - `backend/services/prompts/account_routing.py`
+  - `backend/tests/test_account_verification_automation.py`
+  - `backend/tests/test_agent_config.py`
+- Expected behavior change:
+  - Correctable source-message references are repaired only when the quoted customer text matches exactly one customer message.
+  - Verification failure stays `uncertain`/Human Review and records `verification_conflict`, `source_message_not_found`, `quote_mismatch`, `low_confidence`, or `sensitive_data` as applicable.
+  - Missing and ambiguous field objects remain valid outcomes and do not trigger grounding failure solely because they omit evidence.
+  - Field values remain concise summaries; only the source quote must be exact.
+- Verification:
+  - 24 Account Verification/Automation and reroute/state-repair tests passed.
+  - Prompt catalog contract and `git diff --check` passed.
+
 ## 2026-08-14 - Account Automation concise ownership replies
 
 - Area or subsystem: `/account` Automation Persona, Account reply facts, and Account reply poller deployment boundary
