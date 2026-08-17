@@ -12,6 +12,22 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-17 - Documentation-only container verification boundary
+
+- Area or subsystem: Agent workflow and local single-host verification
+- Prompt or model version: Repository agent rules; model configuration unchanged
+- Summary: Documentation-only changes now have an explicit no-rebuild and no-restart rule, including Project Overview files and tests that only validate documentation.
+- Reason: Project Overview files are served by the backend as well as opened directly from the workspace, which made the broad stack-relevant rule easy to misapply to documentation maintenance.
+- Affected files or config:
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `docs/agent_workflow_details.md`
+- Expected behavior change:
+  - Diffs limited to documentation, agent instruction files, and their documentation-only tests use workspace-level verification and never trigger container rebuild or restart.
+  - Mixed diffs determine live-stack verification from runtime changes only.
+- Verification:
+  - Text-level rule checks and `git diff --check`; no container restart.
+
 ## 2026-08-14 - Account Automation concise ownership replies
 
 - Area or subsystem: `/account` Automation Persona, Account reply facts, and Account reply poller deployment boundary
