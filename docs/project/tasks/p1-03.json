@@ -72,6 +72,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 case-automation 合并到 case-route。"
     }
   ],
   "legacy_refs": [
@@ -88,5 +93,5 @@
   ],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "case-automation"
+  "function_id": "case-route"
 }

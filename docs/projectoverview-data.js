@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T09:02:06Z",
-  "source_base_commit": "4d29f3e444424ca4a91d82cb76011dc03bb11eed",
-  "registry_digest": "c24131aed113854e126d40e23e4d67cde23a5006534c8aa132fb1366723f0e4e",
+  "generated_at": "2026-08-17T09:12:36Z",
+  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
+  "registry_digest": "87883545d7b50defae9cd7caa5c184c29cdf987b9e4c80ed1a0056fc9b7fe290",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -488,161 +488,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "function_id": "case-automation",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "title": "Case Automation",
-      "goal": "定义并交付可安全扩展的 Account/Billing Case 自动化能力和受控范围。",
-      "acceptance_criteria": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 659,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
-          "label": "PR #659"
-        },
-        {
-          "type": "pr",
-          "number": 681,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
-          "label": "PR #681"
-        },
-        {
-          "type": "pr",
-          "number": 657,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
-          "label": "PR #657"
-        },
-        {
-          "type": "pr",
-          "number": 683,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/683",
-          "label": "PR #683"
-        },
-        {
-          "type": "pr",
-          "number": 685,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/685",
-          "label": "PR #685"
-        },
-        {
-          "type": "pr",
-          "number": 686,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/686",
-          "label": "PR #686"
-        },
-        {
-          "type": "pr",
-          "number": 687,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/687",
-          "label": "PR #687"
-        },
-        {
-          "type": "pr",
-          "number": 702,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
-          "label": "PR #702"
-        },
-        {
-          "type": "test",
-          "label": "Fraud Account grounding v3 regression coverage",
-          "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
-        },
-        {
-          "type": "pr",
-          "number": 749,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/749",
-          "label": "PR #749"
-        },
-        {
-          "type": "pr",
-          "number": 750,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/750",
-          "label": "PR #750"
-        },
-        {
-          "type": "pr",
-          "number": 426,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/426",
-          "label": "PR #426"
-        },
-        {
-          "type": "pr",
-          "number": 432,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/432",
-          "label": "PR #432"
-        },
-        {
-          "type": "pr",
-          "number": 571,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/571",
-          "label": "PR #571"
-        },
-        {
-          "type": "pr",
-          "number": 670,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
-          "label": "PR #670"
-        },
-        {
-          "type": "pr",
-          "number": 674,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/674",
-          "label": "PR #674"
-        },
-        {
-          "type": "pr",
-          "number": 675,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/675",
-          "label": "PR #675"
-        },
-        {
-          "type": "pr",
-          "number": 676,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/676",
-          "label": "PR #676"
-        },
-        {
-          "type": "pr",
-          "number": 680,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/680",
-          "label": "PR #680"
-        },
-        {
-          "type": "pr",
-          "number": 709,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/709",
-          "label": "PR #709"
-        },
-        {
-          "type": "pr",
-          "number": 568,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
-          "label": "PR #568"
-        },
-        {
-          "type": "pr",
-          "number": 572,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
-          "label": "PR #572"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
-        "docs/roadmap.html",
-        "docs/feature_list.md",
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [
-        "controlled-rollout"
-      ],
-      "status": "done",
-      "task_count": 6,
-      "done_count": 6,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
       "function_id": "case-route",
       "phase_id": "phase-1",
       "module_id": "account-automation",
@@ -735,6 +580,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PR #729"
         },
         {
+          "type": "test",
+          "label": "Fraud Account grounding v3 regression coverage",
+          "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
+        },
+        {
+          "type": "pr",
+          "number": 749,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/749",
+          "label": "PR #749"
+        },
+        {
+          "type": "pr",
+          "number": 750,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/750",
+          "label": "PR #750"
+        },
+        {
+          "type": "pr",
+          "number": 426,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/426",
+          "label": "PR #426"
+        },
+        {
+          "type": "pr",
+          "number": 432,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/432",
+          "label": "PR #432"
+        },
+        {
+          "type": "pr",
+          "number": 571,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/571",
+          "label": "PR #571"
+        },
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        },
+        {
           "type": "pr",
           "number": 665,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/665",
@@ -775,6 +661,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 726,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/726",
           "label": "PR #726"
+        },
+        {
+          "type": "pr",
+          "number": 659,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
+          "label": "PR #659"
+        },
+        {
+          "type": "pr",
+          "number": 670,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
+          "label": "PR #670"
+        },
+        {
+          "type": "pr",
+          "number": 674,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/674",
+          "label": "PR #674"
+        },
+        {
+          "type": "pr",
+          "number": 681,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
+          "label": "PR #681"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 572,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
+          "label": "PR #572"
         }
       ],
       "source_refs": [
@@ -792,11 +714,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "routing-real-zendesk-replay",
         "p2-07",
         "routing-semantic-golden-expand",
-        "p2-08"
+        "p2-08",
+        "controlled-rollout"
       ],
       "status": "active",
-      "task_count": 5,
-      "done_count": 4,
+      "task_count": 11,
+      "done_count": 10,
       "blocked_count": 0
     },
     {
@@ -1586,6 +1509,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1602,7 +1530,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "legacy_ids": [
@@ -1718,7 +1646,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-09",
-      "title": "完成 Billing 与 Detailed Invoice 自动化闭环",
+      "title": "完成 Billing 与 Detailed Invoice 自动化执行闭环",
       "status": "done",
       "owner": "jojo",
       "summary": "Billing 与 Detailed Invoice 已完成路由、内部处理、结果回传和客户更新闭环。",
@@ -2041,6 +1969,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 automation-execution 重新归类到 case-automation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -2050,7 +1983,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3146,6 +3079,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从历史 Account intake、Case history 和 Automated Case 迁移记录补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3154,7 +3092,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3351,6 +3289,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从 Phase 2 Enablement handler、字段提取和回复记录补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3359,7 +3302,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3393,6 +3336,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从历史 Quota automation handler 和内部流转实现补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3401,7 +3349,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3448,6 +3396,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从 Billing Case migration 和 automation foundation 实现补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3456,7 +3409,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -7865,7 +7818,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/functions/controlled-rollout.json",
         "legacy_id": "controlled-rollout",
         "target_type": "function",
-        "target_id": "case-automation",
+        "target_id": "case-route",
         "disposition": "merged"
       },
       {
@@ -8517,7 +8470,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "controlled-rollout": {
         "target_type": "function",
-        "target_id": "case-automation"
+        "target_id": "case-route"
       },
       "routing-quality-validation": {
         "target_type": "function",

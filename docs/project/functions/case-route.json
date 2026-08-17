@@ -41,6 +41,7 @@
     "routing-real-zendesk-replay",
     "p2-07",
     "routing-semantic-golden-expand",
-    "p2-08"
+    "p2-08",
+    "controlled-rollout"
   ]
 }

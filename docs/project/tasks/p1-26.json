@@ -50,7 +50,6 @@
     "p2-26"
   ],
   "phase_id": "phase-1",
-  "module_id": "account-automation",
   "module_id": "admin-operations",
   "function_id": "admin-case-operations"
 }
