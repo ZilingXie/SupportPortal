@@ -1,14 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-<<<<<<< HEAD
-  "generated_at": "2026-08-17T09:12:36Z",
-  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
-  "registry_digest": "87883545d7b50defae9cd7caa5c184c29cdf987b9e4c80ed1a0056fc9b7fe290",
-=======
-  "generated_at": "2026-08-17T09:11:58Z",
-  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
-  "registry_digest": "bfbd557844344f4862e1ea877f2ca88362be8cc35da1b639984c46b8e346241f",
->>>>>>> origin/main
+  "generated_at": "2026-08-17T09:13:45Z",
+  "source_base_commit": "753f32df324bce4429ff7d35f5b3ca4c2d434220",
+  "registry_digest": "eef70e555e03789d436947b196175afd90eb1e94f8a090a52ecb7304777a7668",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -639,15 +633,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PR #571"
         },
         {
-<<<<<<< HEAD
-          "type": "pr",
-          "number": 657,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
-          "label": "PR #657"
-        },
-        {
-=======
->>>>>>> origin/main
           "type": "pr",
           "number": 665,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/665",
@@ -691,15 +676,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
-<<<<<<< HEAD
-          "number": 659,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
-          "label": "PR #659"
-        },
-        {
-          "type": "pr",
-=======
->>>>>>> origin/main
           "number": 670,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
           "label": "PR #670"
@@ -712,15 +688,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
-<<<<<<< HEAD
-          "number": 681,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
-          "label": "PR #681"
-        },
-        {
-          "type": "pr",
-=======
->>>>>>> origin/main
           "number": 568,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
           "label": "PR #568"
@@ -748,8 +715,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "routing-real-zendesk-replay",
         "p2-07",
         "routing-semantic-golden-expand",
-        "p2-08",
-        "controlled-rollout"
+        "p2-08"
       ],
       "status": "active",
       "task_count": 11,
