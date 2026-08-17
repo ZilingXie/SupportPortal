@@ -344,7 +344,8 @@
       }
 
       function bindTriggers(root) {
-        root.querySelectorAll("[data-task-id]").forEach((trigger) => trigger.addEventListener("click", () => showTask(trigger.dataset.taskId)));
+        const nestedTask = root.id === "functionDialog";
+        root.querySelectorAll("[data-task-id]").forEach((trigger) => trigger.addEventListener("click", () => showTask(trigger.dataset.taskId, !nestedTask, nestedTask)));
         root.querySelectorAll("[data-function-id]").forEach((trigger) => trigger.addEventListener("click", () => showFunction(trigger.dataset.functionId)));
       }
 
@@ -430,13 +431,13 @@
         document.querySelectorAll("[data-report-days]").forEach((button) => button.addEventListener("click", () => { state.reportDays = Number(button.dataset.reportDays); renderReport(); }));
       }
 
-      function showTask(taskId, updateHash = true) {
+      function showTask(taskId, updateHash = true, keepFunctionDialog = false) {
         const alias = resolveAlias(taskId);
         if (alias?.target_type === "function") return showFunction(alias.target_id, updateHash);
         const task = taskMap.get(alias?.target_id || taskId);
         if (!task) return;
         if (document.getElementById("meetingDialog").open) document.getElementById("meetingDialog").close();
-        if (document.getElementById("functionDialog").open) document.getElementById("functionDialog").close();
+        if (!keepFunctionDialog && document.getElementById("functionDialog").open) document.getElementById("functionDialog").close();
         state.phase = task.phase_id;
         renderHeader(); renderPhaseSwitch(); renderBoard(); renderFunctions();
         if (updateHash) location.hash = `task-${encodeURIComponent(task.task_id)}`;
@@ -461,7 +462,7 @@
         document.getElementById("functionDialogContent").innerHTML = `<button class="dialog-close" type="button" aria-label="关闭">×</button><div class="section-kicker">Function detail</div><h2 id="functionDialogTitle">${escapeHtml(idLabel(item.function_id))} · ${escapeHtml(item.title)}</h2><div class="chips">${statusChip(item.status)}<span class="chip">${escapeHtml(moduleMap.get(item.module_id)?.title || item.module_id)}</span><span class="chip">${escapeHtml(phaseFor(item)?.title || item.phase_id)}</span><span class="chip">${item.done_count}/${item.task_count} Task</span></div><p class="section-copy">${escapeHtml(item.goal || "暂无能力目标")}</p><h3>关联 Task</h3><div class="meeting-task-list">${children.map((task) => `<button class="meeting-task-button" type="button" data-task-id="${escapeHtml(task.task_id)}"><span class="task-id">${escapeHtml(idLabel(task.task_id))}</span><span class="meeting-task-title">${escapeHtml(task.title)}</span>${statusChip(task.status)}</button>`).join("") || `<div class="empty">暂无关联 Task。</div>`}</div><h3>Evidence</h3><ul class="edge-list">${evidenceMarkup(item.evidence) || "<li>暂无证据。</li>"}</ul><p class="freshness">来源：${(item.source_refs || []).map(sourceMarkup).join(" · ")}</p>`;
         dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
         bindTriggers(dialog);
-        if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+        if (typeof dialog.showModal === "function") { if (!dialog.open) dialog.showModal(); } else dialog.setAttribute("open", "");
       }
 
       function showMeeting(meetingId) {

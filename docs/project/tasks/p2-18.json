@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task_id": "p2-18",
   "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-  "status": "planned",
+  "status": "active",
   "owner": "zac",
   "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
   "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
@@ -52,6 +52,11 @@
       "at": "2026-08-17",
       "event": "internal_comment_spinner_timeout_fixed",
       "summary": "为 /account Zendesk internal comment 请求增加前端有界超时，确保 Adding... 在请求挂起时清除并显示错误。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "status_reclassified",
+      "summary": "按 review 结论改为进行中；internal comment 已完成，external/customer reply 仍待完成。"
     }
   ],
   "legacy_refs": [
