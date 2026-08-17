@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
   "task_id": "p1-01",
-  "title": "建立 Fraud、Account Suspension、Billing 与 Enablement 路由基线",
+  "title": "建立 Account Automation 分层路由基线",
   "status": "done",
   "owner": "zac",
-  "summary": "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。",
+  "summary": "建立 Fraud、Account Suspension、Billing / Invoice 与 Enablement 的分层分类、路由和人工边界。",
   "next_action": "",
   "acceptance_criteria": [
-    "当前路由、分类、字段处理和 reroute 测试已覆盖四类路径。"
+    "当前路由、分类、字段处理和 reroute 测试已覆盖 Account Automation 的主要路径。"
   ],
   "blockers": [],
   "evidence": [

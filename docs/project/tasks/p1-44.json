@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-44",
+  "title": "实现一次追问和持久化延迟回复",
+  "status": "done",
+  "owner": "zac",
+  "summary": "对缺失字段进行有界追问，并以持久化 scheduled job 发送延迟客户回复。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "同一规范化字段在一个 Ticket 内最多追问一次。",
+    "自动化回复使用持久化调度、幂等 claim 和新消息取消机制。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 530, "url": "https://github.com/ZilingXie/SupportPortal/pull/530", "label": "PR #530"},
+    {"type": "pr", "number": 647, "url": "https://github.com/ZilingXie/SupportPortal/pull/647", "label": "PR #647"}
+  ],
+  "source_refs": ["docs/roadmap.html", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从 Account 标准流程和 delayed reply 实现补回。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["account-delayed-reply"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop"
+}

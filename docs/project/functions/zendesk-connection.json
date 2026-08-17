@@ -6,7 +6,10 @@
   "title": "Zendesk Connection",
   "goal": "确保 Zendesk 的建单、派单、评论写回和身份信息可可靠连接与展示。",
   "acceptance_criteria": [],
-  "evidence": [],
+  "evidence": [
+    {"type": "pr", "number": 649, "url": "https://github.com/ZilingXie/SupportPortal/pull/649", "label": "PR #649"},
+    {"type": "pr", "number": 754, "url": "https://github.com/ZilingXie/SupportPortal/pull/754", "label": "PR #754"}
+  ],
   "source_refs": [
     "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
     "docs/integrations/n8n/zendesk_account_comment_sync.md",

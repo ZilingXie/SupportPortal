@@ -973,6 +973,90 @@
       "target_type": "function",
       "target_id": "zendesk-connection",
       "disposition": "merged"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-37.json",
+      "legacy_id": "account-case-intake",
+      "target_type": "task",
+      "target_id": "p1-37",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-38.json",
+      "legacy_id": "account-route-review",
+      "target_type": "task",
+      "target_id": "p1-38",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-39.json",
+      "legacy_id": "account-route-filters",
+      "target_type": "task",
+      "target_id": "p1-39",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-40.json",
+      "legacy_id": "enablement-automation",
+      "target_type": "task",
+      "target_id": "p1-40",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-41.json",
+      "legacy_id": "quota-automation",
+      "target_type": "task",
+      "target_id": "p1-41",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-42.json",
+      "legacy_id": "billing-automation-foundation",
+      "target_type": "task",
+      "target_id": "p1-42",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-43.json",
+      "legacy_id": "billing-outlook-loop",
+      "target_type": "task",
+      "target_id": "p1-43",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-44.json",
+      "legacy_id": "account-delayed-reply",
+      "target_type": "task",
+      "target_id": "p1-44",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-45.json",
+      "legacy_id": "registered-automation-execution",
+      "target_type": "task",
+      "target_id": "p1-45",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-46.json",
+      "legacy_id": "account-ticket-identity",
+      "target_type": "task",
+      "target_id": "p1-46",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-47.json",
+      "legacy_id": "account-comment-sync",
+      "target_type": "task",
+      "target_id": "p1-47",
+      "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-48.json",
+      "legacy_id": "route-strategy-admin",
+      "target_type": "task",
+      "target_id": "p1-48",
+      "disposition": "backfilled"
     }
   ]
 }

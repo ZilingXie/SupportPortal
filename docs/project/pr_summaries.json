@@ -1,6 +1,19 @@
 {
   "schema_version": 2,
   "summaries": {
+    "426": {"summary": "建立 Account Case 接入入口。", "task_ids": ["p1-37"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-case-intake"]},
+    "515": {"summary": "支持 Account 路由纠正。", "task_ids": ["p1-38"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-route-review"]},
+    "526": {"summary": "增加 Account 路由审核状态和筛选。", "task_ids": ["p1-38"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-route-review"]},
+    "665": {"summary": "增加 Account 路由标签筛选。", "task_ids": ["p1-39"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-route-filters"]},
+    "659": {"summary": "增加 Enablement Automation handler。", "task_ids": ["p1-40"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["enablement-automation"]},
+    "681": {"summary": "增加 Account Quota 自动化。", "task_ids": ["p1-41"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["quota-automation"]},
+    "657": {"summary": "将 Billing Case 迁移到 Automated Case。", "task_ids": ["p1-42"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["billing-automation-foundation"]},
+    "568": {"summary": "通过 Outlook Graph 发送 Billing 内部自动化邮件。", "task_ids": ["p1-43"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["billing-outlook-loop"]},
+    "530": {"summary": "限制 Account 缺失字段重复追问。", "task_ids": ["p1-44"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-delayed-reply"]},
+    "661": {"summary": "建立分层 Account route pipeline。", "task_ids": ["p1-45"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["registered-automation-execution"]},
+    "649": {"summary": "使用 Zendesk external ID 作为 Account Ticket ID。", "task_ids": ["p1-46"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-ticket-identity"]},
+    "754": {"summary": "同步 Zendesk Account 评论快照。", "task_ids": ["p1-47"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["account-comment-sync"]},
+    "638": {"summary": "增加 Account Automation 管理控制能力。", "task_ids": ["p1-48"], "schema_version": 2, "function_ids": [], "legacy_task_ids": ["route-strategy-admin"]},
     "752": {
       "summary": "将 Account AI 消息以幂等 internal comment 写回关联 Zendesk ticket。",
       "task_ids": [

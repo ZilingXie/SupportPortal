@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-45",
+  "title": "隔离注册 Automation 执行与回复幂等",
+  "status": "done",
+  "owner": "zac",
+  "summary": "只对注册的 Automation handler 执行内部动作和客户回复，并保护回复调度的幂等边界。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "未注册路径不会误触发 Automation handler 或客户回复。",
+    "重复 webhook、回复 worker 和 Persona job 不会重复发送结果。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 661, "url": "https://github.com/ZilingXie/SupportPortal/pull/661", "label": "PR #661"},
+    {"type": "pr", "number": 671, "url": "https://github.com/ZilingXie/SupportPortal/pull/671", "label": "PR #671"},
+    {"type": "pr", "number": 672, "url": "https://github.com/ZilingXie/SupportPortal/pull/672", "label": "PR #672"},
+    {"type": "pr", "number": 705, "url": "https://github.com/ZilingXie/SupportPortal/pull/705", "label": "PR #705"},
+    {"type": "pr", "number": 710, "url": "https://github.com/ZilingXie/SupportPortal/pull/710", "label": "PR #710"},
+    {"type": "pr", "number": 725, "url": "https://github.com/ZilingXie/SupportPortal/pull/725", "label": "PR #725"}
+  ],
+  "source_refs": ["docs/roadmap.html", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从 layered route pipeline、handler binding 和回复生命周期实现补回。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["registered-automation-execution"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop"
+}

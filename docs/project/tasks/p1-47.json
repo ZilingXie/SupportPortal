@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-47",
+  "title": "建立 Zendesk Account 评论快照同步",
+  "status": "done",
+  "owner": "zac",
+  "summary": "将 Zendesk public/internal comments 幂等同步到 Account 的独立评论 projection。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "评论快照可独立读取并与 Account Case 详情关联。",
+    "重复同步不会重复写入，历史评论不会被 Account rerun 删除。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "pr", "number": 754, "url": "https://github.com/ZilingXie/SupportPortal/pull/754", "label": "PR #754"}
+  ],
+  "source_refs": ["docs/integrations/n8n/zendesk_account_comment_sync.md", "docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [{"at": "2026-08-17", "event": "backfilled", "summary": "从 Zendesk Account comment sync 实现补回；作者身份增强仍由 p1-20 跟踪。"}],
+  "legacy_refs": [],
+  "legacy_ids": ["account-comment-sync"],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "zendesk-connection"
+}

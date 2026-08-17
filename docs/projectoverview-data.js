@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T07:58:20Z",
-  "source_base_commit": "fdfcf10634f76bf4d43a1a1b7f4d1d3635e10f3e",
-  "registry_digest": "97ae664e8039cbcac4682468d136f815081feb012edb5c5638ad02128f724fb9",
+  "generated_at": "2026-08-17T08:30:00Z",
+  "source_base_commit": "ffe5b0c8cb1bbd7114b44fa8db22b7a1afcd1261",
+  "registry_digest": "3e99bc4923d6edaa65d5e183bf20c39b14bdf2de42fd36cecc9310883942fe9f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -323,6 +323,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "pr",
+          "number": 647,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/647",
+          "label": "PR #647"
+        },
+        {
+          "type": "pr",
+          "number": 740,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/740",
+          "label": "PR #740"
+        },
+        {
+          "type": "pr",
+          "number": 751,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/751",
+          "label": "PR #751"
+        },
+        {
+          "type": "pr",
           "number": 738,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/738",
           "label": "PR #738"
@@ -332,12 +350,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 739,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/739",
           "label": "PR #739"
-        },
-        {
-          "type": "pr",
-          "number": 740,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/740",
-          "label": "PR #740"
         },
         {
           "type": "pr",
@@ -377,15 +389,81 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
-          "number": 751,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/751",
-          "label": "PR #751"
-        },
-        {
-          "type": "pr",
           "number": 732,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/732",
           "label": "PR #732"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 570,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/570",
+          "label": "PR #570"
+        },
+        {
+          "type": "pr",
+          "number": 572,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
+          "label": "PR #572"
+        },
+        {
+          "type": "pr",
+          "number": 574,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/574",
+          "label": "PR #574"
+        },
+        {
+          "type": "pr",
+          "number": 575,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/575",
+          "label": "PR #575"
+        },
+        {
+          "type": "pr",
+          "number": 530,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/530",
+          "label": "PR #530"
+        },
+        {
+          "type": "pr",
+          "number": 661,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/661",
+          "label": "PR #661"
+        },
+        {
+          "type": "pr",
+          "number": 671,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/671",
+          "label": "PR #671"
+        },
+        {
+          "type": "pr",
+          "number": 672,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/672",
+          "label": "PR #672"
+        },
+        {
+          "type": "pr",
+          "number": 705,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/705",
+          "label": "PR #705"
+        },
+        {
+          "type": "pr",
+          "number": 710,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/710",
+          "label": "PR #710"
+        },
+        {
+          "type": "pr",
+          "number": 725,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/725",
+          "label": "PR #725"
         }
       ],
       "source_refs": [
@@ -398,8 +476,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 7,
-      "done_count": 1,
+      "task_count": 12,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -413,6 +491,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "pr",
+          "number": 659,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
+          "label": "PR #659"
+        },
+        {
+          "type": "pr",
+          "number": 681,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
+          "label": "PR #681"
+        },
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        },
+        {
+          "type": "pr",
+          "number": 683,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/683",
+          "label": "PR #683"
+        },
+        {
+          "type": "pr",
+          "number": 685,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/685",
+          "label": "PR #685"
+        },
+        {
+          "type": "pr",
+          "number": 686,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/686",
+          "label": "PR #686"
+        },
+        {
+          "type": "pr",
+          "number": 687,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/687",
+          "label": "PR #687"
+        },
+        {
+          "type": "pr",
+          "number": 702,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
+          "label": "PR #702"
+        },
+        {
+          "type": "pr",
           "number": 749,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/749",
           "label": "PR #749"
@@ -422,6 +548,72 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 750,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/750",
           "label": "PR #750"
+        },
+        {
+          "type": "pr",
+          "number": 426,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/426",
+          "label": "PR #426"
+        },
+        {
+          "type": "pr",
+          "number": 432,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/432",
+          "label": "PR #432"
+        },
+        {
+          "type": "pr",
+          "number": 571,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/571",
+          "label": "PR #571"
+        },
+        {
+          "type": "pr",
+          "number": 670,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
+          "label": "PR #670"
+        },
+        {
+          "type": "pr",
+          "number": 674,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/674",
+          "label": "PR #674"
+        },
+        {
+          "type": "pr",
+          "number": 675,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/675",
+          "label": "PR #675"
+        },
+        {
+          "type": "pr",
+          "number": 676,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/676",
+          "label": "PR #676"
+        },
+        {
+          "type": "pr",
+          "number": 680,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/680",
+          "label": "PR #680"
+        },
+        {
+          "type": "pr",
+          "number": 709,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/709",
+          "label": "PR #709"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 572,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
+          "label": "PR #572"
         }
       ],
       "source_refs": [
@@ -434,8 +626,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "controlled-rollout"
       ],
       "status": "active",
-      "task_count": 5,
-      "done_count": 1,
+      "task_count": 7,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -530,6 +722,84 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 729,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/729",
           "label": "PR #729"
+        },
+        {
+          "type": "pr",
+          "number": 665,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/665",
+          "label": "PR #665"
+        },
+        {
+          "type": "pr",
+          "number": 666,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/666",
+          "label": "PR #666"
+        },
+        {
+          "type": "pr",
+          "number": 679,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/679",
+          "label": "PR #679"
+        },
+        {
+          "type": "pr",
+          "number": 713,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/713",
+          "label": "PR #713"
+        },
+        {
+          "type": "pr",
+          "number": 717,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/717",
+          "label": "PR #717"
+        },
+        {
+          "type": "pr",
+          "number": 720,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/720",
+          "label": "PR #720"
+        },
+        {
+          "type": "pr",
+          "number": 726,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/726",
+          "label": "PR #726"
+        },
+        {
+          "type": "pr",
+          "number": 638,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/638",
+          "label": "PR #638"
+        },
+        {
+          "type": "pr",
+          "number": 645,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/645",
+          "label": "PR #645"
+        },
+        {
+          "type": "pr",
+          "number": 646,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/646",
+          "label": "PR #646"
+        },
+        {
+          "type": "pr",
+          "number": 651,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/651",
+          "label": "PR #651"
+        },
+        {
+          "type": "pr",
+          "number": 689,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/689",
+          "label": "PR #689"
+        },
+        {
+          "type": "pr",
+          "number": 690,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/690",
+          "label": "PR #690"
         }
       ],
       "source_refs": [
@@ -544,8 +814,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "routing-quality-validation"
       ],
       "status": "active",
-      "task_count": 8,
-      "done_count": 4,
+      "task_count": 9,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -559,9 +829,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "pr",
+          "number": 526,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/526",
+          "label": "PR #526"
+        },
+        {
+          "type": "pr",
           "number": 744,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
           "label": "PR #744"
+        },
+        {
+          "type": "pr",
+          "number": 515,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/515",
+          "label": "PR #515"
         }
       ],
       "source_refs": [
@@ -572,8 +854,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 4,
-      "done_count": 1,
+      "task_count": 6,
+      "done_count": 2,
       "blocked_count": 0
     },
     {
@@ -585,6 +867,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "goal": "确保 Zendesk 的建单、派单、评论写回和身份信息可可靠连接与展示。",
       "acceptance_criteria": [],
       "evidence": [
+        {
+          "type": "pr",
+          "number": 649,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/649",
+          "label": "PR #649"
+        },
+        {
+          "type": "pr",
+          "number": 754,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/754",
+          "label": "PR #754"
+        },
         {
           "type": "test",
           "label": "Zendesk internal comment response parser and idempotency tests",
@@ -609,6 +903,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Python, frontend and N8n Code syntax checks",
           "command": "python3 -m py_compile backend/main.py backend/services/account_zendesk_comments.py backend/repositories/ticket_repository.py; node --check ui/account-ui/app.js"
+        },
+        {
+          "type": "pr",
+          "number": 481,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/481",
+          "label": "PR #481"
+        },
+        {
+          "type": "pr",
+          "number": 492,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/492",
+          "label": "PR #492"
+        },
+        {
+          "type": "pr",
+          "number": 663,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/663",
+          "label": "PR #663"
+        },
+        {
+          "type": "pr",
+          "number": 703,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/703",
+          "label": "PR #703"
         }
       ],
       "source_refs": [
@@ -620,8 +938,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 3,
-      "done_count": 0,
+      "task_count": 5,
+      "done_count": 2,
       "blocked_count": 0
     },
     {
@@ -955,13 +1273,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-01",
-      "title": "建立 Fraud、Account Suspension、Billing 与 Enablement 路由基线",
+      "title": "建立 Account Automation 分层路由基线",
       "status": "done",
       "owner": "zac",
-      "summary": "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。",
+      "summary": "建立 Fraud、Account Suspension、Billing / Invoice 与 Enablement 的分层分类、路由和人工边界。",
       "next_action": "",
       "acceptance_criteria": [
-        "当前路由、分类、字段处理和 reroute 测试已覆盖四类路径。"
+        "当前路由、分类、字段处理和 reroute 测试已覆盖 Account Automation 的主要路径。"
       ],
       "blockers": [],
       "evidence": [
@@ -1228,7 +1546,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-route"
+      "function_id": "case-automation"
     },
     {
       "legacy_ids": [
@@ -2343,7 +2661,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
+      "function_id": "human-review"
     },
     {
       "schema_version": 2,
@@ -2458,7 +2776,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2568,7 +2886,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2678,7 +2996,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -3081,6 +3399,735 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "project-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-37",
+      "title": "建立 Account Case 接入、历史列表和详情",
+      "status": "done",
+      "owner": "zac",
+      "summary": "提供 Account Case 的创建、持久化、历史列表和详情读取能力。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Account Case 可以通过入口创建并保存客户消息、来源和路由结果。",
+        "Account 页面可以分页查看历史 Case 并打开详情。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 426,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/426",
+          "label": "PR #426"
+        },
+        {
+          "type": "pr",
+          "number": 432,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/432",
+          "label": "PR #432"
+        },
+        {
+          "type": "pr",
+          "number": 571,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/571",
+          "label": "PR #571"
+        },
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从历史 Account intake、Case history 和 Automated Case 迁移记录补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-case-intake"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-automation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-38",
+      "title": "建立 Account 路由纠正与人工复核闭环",
+      "status": "done",
+      "owner": "zac",
+      "summary": "支持人工纠正路由、标记 pass/review，并按 review 状态筛选 Account Case。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "管理员可以纠正完整路由元组并保留审计记录。",
+        "管理员可以将 Case 标记为 reviewed 或恢复为 pending，并按状态筛选。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 515,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/515",
+          "label": "PR #515"
+        },
+        {
+          "type": "pr",
+          "number": 526,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/526",
+          "label": "PR #526"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从历史 route correction 和 route review 实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-route-review"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "human-review"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-39",
+      "title": "建立 Account 路由筛选、计数和精准定位",
+      "status": "done",
+      "owner": "zac",
+      "summary": "按路由和状态查看 Account Case，并支持稳定计数、分页和 Ticket 精准打开。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Account 列表按 route group/leaf 返回一致的筛选结果和计数。",
+        "管理员可以使用 Ticket ID 精准打开 Case。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 665,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/665",
+          "label": "PR #665"
+        },
+        {
+          "type": "pr",
+          "number": 666,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/666",
+          "label": "PR #666"
+        },
+        {
+          "type": "pr",
+          "number": 679,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/679",
+          "label": "PR #679"
+        },
+        {
+          "type": "pr",
+          "number": 713,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/713",
+          "label": "PR #713"
+        },
+        {
+          "type": "pr",
+          "number": 717,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/717",
+          "label": "PR #717"
+        },
+        {
+          "type": "pr",
+          "number": 720,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/720",
+          "label": "PR #720"
+        },
+        {
+          "type": "pr",
+          "number": 726,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/726",
+          "label": "PR #726"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从历史 Account route filter、count 和 exact search 实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-route-filters"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-route"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-40",
+      "title": "实现 Enablement 自动化和字段采集",
+      "status": "done",
+      "owner": "zac",
+      "summary": "从客户消息提取 Enablement 字段，执行内部处理并生成受控客户更新。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "App ID 和功能名称可以从客户原文提取并保留证据。",
+        "缺失字段最多追问一次，不确定或 grounding 失败时转人工。",
+        "内部处理完成后可以生成对应的客户更新。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 659,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
+          "label": "PR #659"
+        },
+        {
+          "type": "pr",
+          "number": 670,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
+          "label": "PR #670"
+        },
+        {
+          "type": "pr",
+          "number": 674,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/674",
+          "label": "PR #674"
+        },
+        {
+          "type": "pr",
+          "number": 675,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/675",
+          "label": "PR #675"
+        },
+        {
+          "type": "pr",
+          "number": 676,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/676",
+          "label": "PR #676"
+        },
+        {
+          "type": "pr",
+          "number": 680,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/680",
+          "label": "PR #680"
+        },
+        {
+          "type": "pr",
+          "number": 709,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/709",
+          "label": "PR #709"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/phase2.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Phase 2 Enablement handler、字段提取和回复记录补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "enablement-automation"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-automation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-41",
+      "title": "实现 Quota 自动化和内部流转",
+      "status": "done",
+      "owner": "zac",
+      "summary": "处理配额审核、并发提升和 Big Event 容量报备，并将结构化信息交给内部团队。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Quota Case 可以提取产品、App ID、目标容量和活动信息。",
+        "缺失字段最多追问一次，随后使用已有信息完成内部流转。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 681,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
+          "label": "PR #681"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/phase2.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从历史 Quota automation handler 和内部流转实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "quota-automation"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-automation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-42",
+      "title": "建立 Billing 自动化基础处理能力",
+      "status": "done",
+      "owner": "zac",
+      "summary": "将 Billing Case 迁移到 Automated Case，并建立内部请求与结果处理的基础能力。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Billing Case 可以进入统一 Automated Case 路径。",
+        "内部处理请求和结果可以被系统保存并用于后续客户更新。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 572,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
+          "label": "PR #572"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/roadmap/phase2.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Billing Case migration 和 automation foundation 实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "billing-automation-foundation"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-automation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-43",
+      "title": "建立 Billing Outlook 回复和 PDF 结果闭环",
+      "status": "done",
+      "owner": "zac",
+      "summary": "通过 Outlook 接收内部处理结果，解析 PDF 附件并生成受控客户跟进。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Billing 内部请求通过公司 Outlook 发送并可轮询回复。",
+        "回复正文和 PDF 附件可以被解析并用于客户结果更新。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 570,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/570",
+          "label": "PR #570"
+        },
+        {
+          "type": "pr",
+          "number": 572,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
+          "label": "PR #572"
+        },
+        {
+          "type": "pr",
+          "number": 574,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/574",
+          "label": "PR #574"
+        },
+        {
+          "type": "pr",
+          "number": 575,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/575",
+          "label": "PR #575"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/roadmap/phase2.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Billing Outlook、轮询、OCR 和 PDF 转发实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "billing-outlook-loop"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-44",
+      "title": "实现一次追问和持久化延迟回复",
+      "status": "done",
+      "owner": "zac",
+      "summary": "对缺失字段进行有界追问，并以持久化 scheduled job 发送延迟客户回复。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "同一规范化字段在一个 Ticket 内最多追问一次。",
+        "自动化回复使用持久化调度、幂等 claim 和新消息取消机制。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 530,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/530",
+          "label": "PR #530"
+        },
+        {
+          "type": "pr",
+          "number": 647,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/647",
+          "label": "PR #647"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Account 标准流程和 delayed reply 实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-delayed-reply"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-45",
+      "title": "隔离注册 Automation 执行与回复幂等",
+      "status": "done",
+      "owner": "zac",
+      "summary": "只对注册的 Automation handler 执行内部动作和客户回复，并保护回复调度的幂等边界。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "未注册路径不会误触发 Automation handler 或客户回复。",
+        "重复 webhook、回复 worker 和 Persona job 不会重复发送结果。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 661,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/661",
+          "label": "PR #661"
+        },
+        {
+          "type": "pr",
+          "number": 671,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/671",
+          "label": "PR #671"
+        },
+        {
+          "type": "pr",
+          "number": 672,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/672",
+          "label": "PR #672"
+        },
+        {
+          "type": "pr",
+          "number": 705,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/705",
+          "label": "PR #705"
+        },
+        {
+          "type": "pr",
+          "number": 710,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/710",
+          "label": "PR #710"
+        },
+        {
+          "type": "pr",
+          "number": 725,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/725",
+          "label": "PR #725"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 layered route pipeline、handler binding 和回复生命周期实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "registered-automation-execution"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-46",
+      "title": "统一 Zendesk Ticket 身份和 Account 来源",
+      "status": "done",
+      "owner": "zac",
+      "summary": "优先使用 Zendesk external ID 或来源 Ticket number，统一 Account 列表与详情中的 canonical Ticket ID。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "重复 webhook 使用同一 Zendesk Ticket 身份，不重复建单。",
+        "列表、详情和来源链接展示一致的 Ticket number。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 481,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/481",
+          "label": "PR #481"
+        },
+        {
+          "type": "pr",
+          "number": 492,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/492",
+          "label": "PR #492"
+        },
+        {
+          "type": "pr",
+          "number": 649,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/649",
+          "label": "PR #649"
+        },
+        {
+          "type": "pr",
+          "number": 663,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/663",
+          "label": "PR #663"
+        },
+        {
+          "type": "pr",
+          "number": 703,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/703",
+          "label": "PR #703"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Zendesk external ID、Ticket number 和 Account identity 实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-ticket-identity"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-47",
+      "title": "建立 Zendesk Account 评论快照同步",
+      "status": "done",
+      "owner": "zac",
+      "summary": "将 Zendesk public/internal comments 幂等同步到 Account 的独立评论 projection。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "评论快照可独立读取并与 Account Case 详情关联。",
+        "重复同步不会重复写入，历史评论不会被 Account rerun 删除。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 754,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/754",
+          "label": "PR #754"
+        }
+      ],
+      "source_refs": [
+        "docs/integrations/n8n/zendesk_account_comment_sync.md",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Zendesk Account comment sync 实现补回；作者身份增强仍由 p1-20 跟踪。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-comment-sync"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-48",
+      "title": "建立 Account Route Strategy 管理面",
+      "status": "done",
+      "owner": "zac",
+      "summary": "在 Agent Config 中统一管理 Account 路由策略、Prompt 版本和 Automation Workflow。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "管理员可以查看分层 Router、路由策略和 Automation Workflow。",
+        "Prompt 支持 managed 版本的发布、差异、恢复和历史查看。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 638,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/638",
+          "label": "PR #638"
+        },
+        {
+          "type": "pr",
+          "number": 645,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/645",
+          "label": "PR #645"
+        },
+        {
+          "type": "pr",
+          "number": 646,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/646",
+          "label": "PR #646"
+        },
+        {
+          "type": "pr",
+          "number": 651,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/651",
+          "label": "PR #651"
+        },
+        {
+          "type": "pr",
+          "number": 689,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/689",
+          "label": "PR #689"
+        },
+        {
+          "type": "pr",
+          "number": 690,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/690",
+          "label": "PR #690"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "backfilled",
+          "summary": "从 Agent Config、Route Strategy 和 Prompt 管理实现补回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "route-strategy-admin"
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -5547,6 +6594,149 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
   "pr_summaries": {
     "schema_version": 2,
     "summaries": {
+      "426": {
+        "summary": "建立 Account Case 接入入口。",
+        "task_ids": [
+          "p1-37"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-case-intake"
+        ]
+      },
+      "515": {
+        "summary": "支持 Account 路由纠正。",
+        "task_ids": [
+          "p1-38"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-route-review"
+        ]
+      },
+      "526": {
+        "summary": "增加 Account 路由审核状态和筛选。",
+        "task_ids": [
+          "p1-38"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-route-review"
+        ]
+      },
+      "665": {
+        "summary": "增加 Account 路由标签筛选。",
+        "task_ids": [
+          "p1-39"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-route-filters"
+        ]
+      },
+      "659": {
+        "summary": "增加 Enablement Automation handler。",
+        "task_ids": [
+          "p1-40"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "enablement-automation"
+        ]
+      },
+      "681": {
+        "summary": "增加 Account Quota 自动化。",
+        "task_ids": [
+          "p1-41"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "quota-automation"
+        ]
+      },
+      "657": {
+        "summary": "将 Billing Case 迁移到 Automated Case。",
+        "task_ids": [
+          "p1-42"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "billing-automation-foundation"
+        ]
+      },
+      "568": {
+        "summary": "通过 Outlook Graph 发送 Billing 内部自动化邮件。",
+        "task_ids": [
+          "p1-43"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "billing-outlook-loop"
+        ]
+      },
+      "530": {
+        "summary": "限制 Account 缺失字段重复追问。",
+        "task_ids": [
+          "p1-44"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-delayed-reply"
+        ]
+      },
+      "661": {
+        "summary": "建立分层 Account route pipeline。",
+        "task_ids": [
+          "p1-45"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "registered-automation-execution"
+        ]
+      },
+      "649": {
+        "summary": "使用 Zendesk external ID 作为 Account Ticket ID。",
+        "task_ids": [
+          "p1-46"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-ticket-identity"
+        ]
+      },
+      "754": {
+        "summary": "同步 Zendesk Account 评论快照。",
+        "task_ids": [
+          "p1-47"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "account-comment-sync"
+        ]
+      },
+      "638": {
+        "summary": "增加 Account Automation 管理控制能力。",
+        "task_ids": [
+          "p1-48"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
+          "route-strategy-admin"
+        ]
+      },
       "752": {
         "summary": "将 Account AI 消息以幂等 internal comment 写回关联 Zendesk ticket。",
         "task_ids": [
@@ -5978,7 +7168,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     }
   ],
   "migration": {
-    "source_count": 138,
+    "source_count": 150,
     "generated_from": [
       "docs/roadmap.html",
       "docs/roadmap/meetings.html",
@@ -6952,6 +8142,90 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_type": "function",
         "target_id": "zendesk-connection",
         "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-37.json",
+        "legacy_id": "account-case-intake",
+        "target_type": "task",
+        "target_id": "p1-37",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-38.json",
+        "legacy_id": "account-route-review",
+        "target_type": "task",
+        "target_id": "p1-38",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-39.json",
+        "legacy_id": "account-route-filters",
+        "target_type": "task",
+        "target_id": "p1-39",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-40.json",
+        "legacy_id": "enablement-automation",
+        "target_type": "task",
+        "target_id": "p1-40",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-41.json",
+        "legacy_id": "quota-automation",
+        "target_type": "task",
+        "target_id": "p1-41",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-42.json",
+        "legacy_id": "billing-automation-foundation",
+        "target_type": "task",
+        "target_id": "p1-42",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-43.json",
+        "legacy_id": "billing-outlook-loop",
+        "target_type": "task",
+        "target_id": "p1-43",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-44.json",
+        "legacy_id": "account-delayed-reply",
+        "target_type": "task",
+        "target_id": "p1-44",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-45.json",
+        "legacy_id": "registered-automation-execution",
+        "target_type": "task",
+        "target_id": "p1-45",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-46.json",
+        "legacy_id": "account-ticket-identity",
+        "target_type": "task",
+        "target_id": "p1-46",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-47.json",
+        "legacy_id": "account-comment-sync",
+        "target_type": "task",
+        "target_id": "p1-47",
+        "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-48.json",
+        "legacy_id": "route-strategy-admin",
+        "target_type": "task",
+        "target_id": "p1-48",
+        "disposition": "backfilled"
       }
     ],
     "aliases": {
@@ -7506,6 +8780,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "zendesk-delivery": {
         "target_type": "function",
         "target_id": "zendesk-connection"
+      },
+      "account-case-intake": {
+        "target_type": "task",
+        "target_id": "p1-37"
+      },
+      "account-route-review": {
+        "target_type": "task",
+        "target_id": "p1-38"
+      },
+      "account-route-filters": {
+        "target_type": "task",
+        "target_id": "p1-39"
+      },
+      "enablement-automation": {
+        "target_type": "task",
+        "target_id": "p1-40"
+      },
+      "quota-automation": {
+        "target_type": "task",
+        "target_id": "p1-41"
+      },
+      "billing-automation-foundation": {
+        "target_type": "task",
+        "target_id": "p1-42"
+      },
+      "billing-outlook-loop": {
+        "target_type": "task",
+        "target_id": "p1-43"
+      },
+      "account-delayed-reply": {
+        "target_type": "task",
+        "target_id": "p1-44"
+      },
+      "registered-automation-execution": {
+        "target_type": "task",
+        "target_id": "p1-45"
+      },
+      "account-ticket-identity": {
+        "target_type": "task",
+        "target_id": "p1-46"
+      },
+      "account-comment-sync": {
+        "target_type": "task",
+        "target_id": "p1-47"
+      },
+      "route-strategy-admin": {
+        "target_type": "task",
+        "target_id": "p1-48"
       }
     }
   }
