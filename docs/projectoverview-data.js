@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T06:09:18Z",
-  "source_base_commit": "8099043e7cfe17ed1f34ab2d6d79f83d0ac16d1f",
-  "registry_digest": "7047e8457f0790170524850bce4699e39e175215dfdd88ac34655877ac161e17",
+  "generated_at": "2026-08-17T06:20:55Z",
+  "source_base_commit": "15a81af30b8241916fa985097e38ecc3f8d8150f",
+  "registry_digest": "03b625607b006f2c09369b23202fb28f8eb5e308c8d536fc7c5e9beb48339abf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -611,6 +611,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",
       "acceptance_criteria": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk internal comment response parser and idempotency tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
         {
           "type": "test",
           "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
@@ -1948,17 +1958,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "planned",
       "owner": "zac",
       "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "next_action": "补齐验收证据并更新状态。",
+      "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
       "acceptance_criteria": [
         "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk internal comment response parser and idempotency tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        }
+      ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1969,6 +1990,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "internal_comment_response_parser_fixed",
+          "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
         }
       ],
       "legacy_refs": [

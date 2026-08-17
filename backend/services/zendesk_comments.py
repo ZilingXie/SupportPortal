@@ -55,22 +55,14 @@ def _basic_auth_header() -> str:
     return "Basic " + base64.b64encode(decoded.encode("utf-8")).decode("ascii")
 
 
-def _comment_id(payload: dict[str, Any]) -> str | None:
-    ticket = payload.get("ticket") if isinstance(payload.get("ticket"), dict) else {}
-    comment = ticket.get("comment") if isinstance(ticket.get("comment"), dict) else {}
-    top_level_comment = payload.get("comment") if isinstance(payload.get("comment"), dict) else {}
-    direct = comment.get("id") or top_level_comment.get("id")
-    if direct is not None and str(direct).strip():
-        return str(direct).strip()
-    audit = ticket.get("audit") if isinstance(ticket.get("audit"), dict) else {}
+def _comment_event(payload: dict[str, Any]) -> dict[str, Any] | None:
+    audit = payload.get("audit") if isinstance(payload.get("audit"), dict) else {}
     events = audit.get("events") if isinstance(audit.get("events"), list) else []
     for event in reversed(events):
         if not isinstance(event, dict):
             continue
-        event_comment = event.get("comment") if isinstance(event.get("comment"), dict) else {}
-        value = event_comment.get("id") or event.get("id")
-        if value is not None and str(value).strip():
-            return str(value).strip()
+        if str(event.get("type") or "").strip().lower() == "comment":
+            return event
     return None
 
 
@@ -126,8 +118,9 @@ def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
 
-    ticket = payload.get("ticket") if isinstance(payload.get("ticket"), dict) else {}
-    comment = ticket.get("comment") if isinstance(ticket.get("comment"), dict) else None
+    comment = _comment_event(payload)
     if not isinstance(comment, dict) or comment.get("public") is not False:
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_comment_visibility_unverified")
-    return ZendeskCommentResult(comment_id=_comment_id(payload), status_code=status_code)
+    comment_id = comment.get("id")
+    normalized_comment_id = str(comment_id).strip() if comment_id is not None else None
+    return ZendeskCommentResult(comment_id=normalized_comment_id or None, status_code=status_code)

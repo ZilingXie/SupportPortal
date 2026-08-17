@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.workspace_auth import WorkspacePrincipal
-from backend.services.zendesk_comments import ZendeskCommentResult
+from backend.services.zendesk_comments import ZendeskCommentError, ZendeskCommentResult
 
 
 class AccountZendeskCommentApiTests(unittest.TestCase):
@@ -118,6 +118,38 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
             f"/api/account/cases/AC-12807/messages/{customer_message['message_id']}/zendesk-internal-comment"
         )
         self.assertEqual(response.status_code, 400, response.text)
+
+    def test_outcome_unknown_is_not_retried_automatically(self) -> None:
+        detail = self.client.get("/api/account/cases/AC-12807")
+        message = next(item for item in detail.json()["messages"] if item["role"] == "assistant")
+        message_id = message["message_id"]
+
+        with patch(
+            "backend.main.add_internal_comment",
+            side_effect=ZendeskCommentError(
+                "outcome_unknown",
+                error_code="zendesk_comment_visibility_unverified",
+            ),
+        ) as add_comment:
+            first = self.client.post(
+                f"/api/account/cases/AC-12807/messages/{message_id}/zendesk-internal-comment"
+            )
+            second = self.client.post(
+                f"/api/account/cases/AC-12807/messages/{message_id}/zendesk-internal-comment"
+            )
+
+        self.assertEqual(first.status_code, 409, first.text)
+        self.assertEqual(second.status_code, 409, second.text)
+        self.assertIn("result is unknown", first.text)
+        add_comment.assert_called_once_with(ticket_id="12807", body=self.marker)
+
+        saved_detail = self.repository.get_account_case_details(["AC-12807"])["AC-12807"]
+        saved_message = next(
+            item for item in saved_detail["ticket"]["messages"] if item.get("message_id") == message_id
+        )
+        failure = saved_message["meta"]["zendesk_internal_comment"]
+        self.assertEqual(failure["status"], "outcome_unknown")
+        self.assertEqual(failure["error_code"], "zendesk_comment_visibility_unverified")
 
 
 if __name__ == "__main__":
