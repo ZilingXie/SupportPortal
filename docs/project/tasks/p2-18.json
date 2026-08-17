@@ -20,6 +20,11 @@
       "type": "test",
       "label": "Account UI contract tests",
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+    },
+    {
+      "type": "test",
+      "label": "Account Zendesk internal comment timeout and regression tests",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
     }
   ],
   "source_refs": [
@@ -42,6 +47,11 @@
       "at": "2026-08-17",
       "event": "internal_comment_response_parser_fixed",
       "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "internal_comment_spinner_timeout_fixed",
+      "summary": "为 /account Zendesk internal comment 请求增加前端有界超时，确保 Adding... 在请求挂起时清除并显示错误。"
     }
   ],
   "legacy_refs": [
