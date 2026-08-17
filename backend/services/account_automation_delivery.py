@@ -150,6 +150,19 @@ def _delivery_key(payload: dict[str, Any]) -> str:
     return _clean(payload.get("delivery_key"))
 
 
+def is_rerun_owned_delivery(payload: dict[str, Any] | None) -> bool:
+    """Return whether a delivery belongs exclusively to an Account rerun.
+
+    Rerun delivery keys are fenced from the legacy retry poller.  Only the
+    rerun coordinator or an explicit Resume job may advance them.
+    """
+
+    key = _delivery_key(payload if isinstance(payload, dict) else {})
+    if ":rerun:" not in key:
+        return False
+    return bool(_clean(key.rsplit(":rerun:", 1)[-1]))
+
+
 def ensure_account_delivery_key(
     payload: dict[str, Any] | None,
     *,

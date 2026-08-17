@@ -63,6 +63,7 @@ from backend.services.account_automation_reconciliation import (
 from backend.services.account_automation_delivery import (
     deliver_account_internal_email,
     ensure_account_delivery_key,
+    is_rerun_owned_delivery,
 )
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
@@ -1151,6 +1152,12 @@ def _queue_enablement_submission_confirmation(
         if isinstance(account_case.get("internal_email_payload"), dict)
         else {}
     )
+    if is_rerun_owned_delivery(payload):
+        LOGGER.info(
+            "Skipping legacy Enablement confirmation for rerun-owned delivery %s",
+            str(payload.get("delivery_key") or "").split(":rerun:", 1)[0],
+        )
+        return False
     ticket_id = str(account_case.get("client_ticket_id") or "").strip()
     delivery_key = str(payload.get("delivery_key") or "").strip()
     if not ticket_id or not delivery_key:
@@ -1262,6 +1269,18 @@ def _queue_enablement_submission_confirmation(
 
 
 def _send_claimed_enablement_delivery(account_case: dict[str, Any]) -> dict[str, Any]:
+    existing_payload = (
+        dict(account_case.get("internal_email_payload"))
+        if isinstance(account_case.get("internal_email_payload"), dict)
+        else {}
+    )
+    if is_rerun_owned_delivery(existing_payload):
+        return {
+            "status": "skipped",
+            "reason": "rerun_owned_delivery",
+            "claimed": False,
+            "delivery_state": "known_not_sent",
+        }
     account_case_id = str(
         account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
     ).strip()
@@ -1385,7 +1404,13 @@ def _send_claimed_enablement_delivery(account_case: dict[str, Any]) -> dict[str,
 
 
 def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, int]:
-    counts = {"examined": 0, "sent": 0, "retried": 0, "confirmations": 0}
+    counts = {
+        "examined": 0,
+        "sent": 0,
+        "retried": 0,
+        "confirmations": 0,
+        "rerun_owned_skipped": 0,
+    }
     cases = ticket_repository.list_billing_tickets(limit=max(1, limit))
     for account_case in cases:
         if str(account_case.get("automation_handler") or "").strip() != "enablement":
@@ -1397,6 +1422,9 @@ def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, 
             if isinstance(account_case.get("internal_email_payload"), dict)
             else {}
         )
+        if is_rerun_owned_delivery(payload):
+            counts["rerun_owned_skipped"] = int(counts.get("rerun_owned_skipped") or 0) + 1
+            continue
         status = str(account_case.get("internal_email_send_status") or "").strip()
         if status == "sent":
             if payload.get("delivery_key") and not bool(payload.get("customer_confirmation_queued")):
@@ -1424,7 +1452,7 @@ def _run_enablement_delivery_retry_poller(interval_seconds: float) -> None:
     while not SHUTTING_DOWN:
         try:
             counts = retry_enablement_internal_deliveries_once()
-            if counts["examined"] or counts["confirmations"]:
+            if counts["examined"] or counts["confirmations"] or counts["rerun_owned_skipped"]:
                 LOGGER.info("Enablement delivery retry result: %s", counts)
         except Exception:
             LOGGER.exception("Enablement delivery retry poller failed")

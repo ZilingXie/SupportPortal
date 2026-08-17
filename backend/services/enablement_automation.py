@@ -271,7 +271,14 @@ def build_enablement_automation_result_from_fields(
 
 def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict[str, str]:
     payload = dict(email_payload or {})
-    to_address = _clean_text(os.getenv(ENABLEMENT_INTERNAL_EMAIL_ENV))
+    # Rerun payloads persist the resolved destination before Commit.  Legacy
+    # intake payloads without the marker retain their historical env lookup.
+    persisted_source = _clean_text(payload.get("recipient_resolution_source"))
+    to_address = (
+        _clean_text(payload.get("to"))
+        if persisted_source in {"environment", "persisted_payload"}
+        else _clean_text(os.getenv(ENABLEMENT_INTERNAL_EMAIL_ENV))
+    )
     subject = _clean_text(payload.get("subject"))
     body = str(payload.get("body") or "").strip()
     body_html = str(payload.get("body_html") or "").strip()

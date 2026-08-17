@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T06:30:12Z",
-  "source_base_commit": "51b302a4949f611df142437a881732e6728951e3",
-  "registry_digest": "7b7c676b0b90ebaf79ef9a59b17b2f22b7bf94adc27e653f2e7065cb67387655",
+  "generated_at": "2026-08-17T06:56:01Z",
+  "source_base_commit": "43395cb5e95e9888fb65d6317588181673ebb8a1",
+  "registry_digest": "7543129a5719fe80c3873fcedeeb0cb400bb2058fada182ba6207090e72ba912",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1523,10 +1523,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Account full rerun 的恢复、幂等和 fail-fast",
       "status": "done",
       "owner": "Zac",
-      "summary": "Rerun 具备冻结、preflight、恢复和结果边界。",
+      "summary": "Rerun 具备冻结、preflight、恢复和结果边界；失败后禁止继续投递，并将 lease 过期公开为 needs_recovery。",
       "next_action": "",
       "acceptance_criteria": [
-        "Rerun 具备冻结、preflight、恢复和结果边界。"
+        "Rerun 具备冻结、preflight、恢复和结果边界。",
+        "Rerun Commit 前固定内部邮件收件人，缺失时零写入并只发送 job-level owner alert。",
+        "terminal failed rerun 的 delivery key 被 legacy worker 跳过，不发送内部邮件或客户回复。",
+        "Resume 继续使用持久化收件人和已有 delivery/reply checkpoint，不重复投递。",
+        "execution lease 过期只进入 needs_recovery，公开稳定原因、一次性 owner alert 和只读 reply 状态汇总，不自动恢复。"
       ],
       "blockers": [],
       "evidence": [
@@ -1596,7 +1600,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
+      "updated_at": "2026-08-17",
       "history": [
         {
           "at": "2026-08-16",
@@ -1604,9 +1608,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
         },
         {
+          "at": "2026-08-16",
+          "event": "side_effect_fence_started",
+          "summary": "修复 AC-12806 类 rerun 失败后 legacy Enablement poller 继续发送邮件和客户回复的问题。"
+        },
+        {
+          "at": "2026-08-16",
+          "event": "side_effect_fence_completed",
+          "summary": "Rerun 在 Commit 前固定收件人，legacy poller 跳过 rerun-owned delivery，恢复保留已发送投递证据；定向回归测试通过。"
+        },
+        {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "迁移到 phase-2 / account-automation / automation-execution。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "recovery_contract_completed",
+          "summary": "补齐 needs_recovery API/UI 契约、一次性 lease-expiry owner alert、observed reply summary 与 InMemory/PostgreSQL parity；未执行正式 rerun。"
         }
       ],
       "legacy_refs": [],

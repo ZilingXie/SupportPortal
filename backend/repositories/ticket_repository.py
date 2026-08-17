@@ -343,6 +343,38 @@ _ACCOUNT_REROUTE_STATUSES = _ACCOUNT_REROUTE_ACTIVE_STATUSES | _ACCOUNT_REROUTE_
 _ACCOUNT_REROUTE_DISPATCH_STATUSES = {"queued", "leased", "completed", "needs_recovery"}
 
 
+def _mark_account_reroute_needs_recovery(
+    job: dict[str, Any],
+    *,
+    recovered_at: str,
+) -> dict[str, Any]:
+    """Build the stable public contract for an expired execution lease."""
+
+    updated = copy.deepcopy(job)
+    updated.update(
+        {
+            "status": "needs_recovery",
+            "dispatch_status": "needs_recovery",
+            "lease_token": None,
+            "lease_expires_at": None,
+            "phase": "Recovery required",
+            "recovery_reason": "execution_lease_expired",
+            "stop_reason": "execution_lease_expired",
+            "failed_stage": "execution_lease",
+            "failed_reason_code": "account_rerun_execution_lease_expired",
+            "failed_case_id": None,
+            "updated_at": recovered_at,
+            "completed_at": recovered_at,
+            "recovery_alert_status": "pending",
+        }
+    )
+    updated.setdefault(
+        "stop_error",
+        "Account rerun execution lease expired before the job completed.",
+    )
+    return updated
+
+
 def _account_rerun_payload_is_active(payload: dict[str, Any], *, active_after: str) -> bool:
     if str(payload.get("status") or "") not in {"queued", "running"}:
         return False
@@ -1957,6 +1989,21 @@ class TicketRepository(Protocol):
         *,
         lease_token: str,
         lease_expires_at: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def claim_account_reroute_recovery_alert(
+        self,
+        job_id: str,
+        *,
+        claimed_at: str,
+    ) -> dict[str, Any]: ...
+
+    def record_account_reroute_recovery_alert(
+        self,
+        job_id: str,
+        *,
+        alert_status: str,
+        recorded_at: str,
     ) -> dict[str, Any]: ...
 
     def claim_automation_reply(
@@ -4979,17 +5026,13 @@ class InMemoryTicketRepository:
                     else None
                 )
                 if expires_at is None or expires_at <= claimed_time:
-                    job.update(
-                        status="needs_recovery",
-                        dispatch_status="needs_recovery",
-                        lease_token=None,
-                        lease_expires_at=None,
-                        recovery_reason="execution_lease_expired",
-                        updated_at=claimed_at,
-                        completed_at=claimed_at,
+                    recovered = _mark_account_reroute_needs_recovery(
+                        job,
+                        recovered_at=claimed_at,
                     )
-                    job["result"] = copy.deepcopy(job)
-                    return {"status": "needs_recovery", "job": copy.deepcopy(job)}
+                    recovered["result"] = copy.deepcopy(recovered)
+                    self._account_reroute_jobs[normalized_job_id] = recovered
+                    return {"status": "needs_recovery", "job": copy.deepcopy(recovered)}
                 return {"status": "in_progress", "job": copy.deepcopy(job)}
             if str(job.get("dispatch_status") or "") != "queued":
                 return {"status": "terminal", "job": copy.deepcopy(job)}
@@ -5051,6 +5094,66 @@ class InMemoryTicketRepository:
                 saved["result"] = copy.deepcopy(current.get("result") or {})
             self._account_reroute_jobs[job_id] = saved
             return copy.deepcopy(saved)
+
+    def claim_account_reroute_recovery_alert(
+        self,
+        job_id: str,
+        *,
+        claimed_at: str,
+    ) -> dict[str, Any]:
+        normalized_job_id = str(job_id or "").strip()
+        normalized_claimed_at = str(claimed_at or "").strip()
+        if not normalized_job_id or not normalized_claimed_at:
+            raise ValueError("job_id and claimed_at are required")
+        with self._assignment_lock:
+            job = self._account_reroute_jobs.get(normalized_job_id)
+            if job is None:
+                return {"status": "not_found", "job": None}
+            if str(job.get("status") or "") != "needs_recovery":
+                return {"status": "not_recovery", "job": copy.deepcopy(job)}
+            current_alert_status = str(job.get("recovery_alert_status") or "").strip().lower()
+            if current_alert_status not in {"", "pending"}:
+                return {
+                    "status": "already_claimed",
+                    "alert_status": current_alert_status,
+                    "job": copy.deepcopy(job),
+                }
+            claimed = copy.deepcopy(job)
+            claimed.update(
+                recovery_alert_status="sending",
+                recovery_alert_claimed_at=normalized_claimed_at,
+                updated_at=normalized_claimed_at,
+            )
+            self._account_reroute_jobs[normalized_job_id] = claimed
+            return {"status": "claimed", "job": copy.deepcopy(claimed)}
+
+    def record_account_reroute_recovery_alert(
+        self,
+        job_id: str,
+        *,
+        alert_status: str,
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        normalized_job_id = str(job_id or "").strip()
+        normalized_status = str(alert_status or "failed").strip().lower() or "failed"
+        normalized_recorded_at = str(recorded_at or "").strip()
+        if not normalized_job_id or not normalized_recorded_at:
+            raise ValueError("job_id and recorded_at are required")
+        with self._assignment_lock:
+            job = self._account_reroute_jobs.get(normalized_job_id)
+            if job is None:
+                return {"status": "not_found", "job": None}
+            if str(job.get("status") or "") != "needs_recovery":
+                return {"status": "not_recovery", "job": copy.deepcopy(job)}
+            recorded = copy.deepcopy(job)
+            recorded.update(
+                recovery_alert_status=normalized_status,
+                alert_status=normalized_status,
+                recovery_alert_recorded_at=normalized_recorded_at,
+                updated_at=normalized_recorded_at,
+            )
+            self._account_reroute_jobs[normalized_job_id] = recorded
+            return {"status": "recorded", "job": copy.deepcopy(recorded)}
 
     def release_account_reroute_job_execution(
         self,
@@ -11109,15 +11212,11 @@ class PostgresTicketRepository:
                     current_expiry = row[10]
                     if current_expiry is not None and current_expiry > claimed_time:
                         return {"status": "in_progress", "job": current}
-                    current.update(
-                        status="needs_recovery",
-                        dispatch_status="needs_recovery",
-                        lease_token=None,
-                        lease_expires_at=None,
-                        recovery_reason="execution_lease_expired",
-                        updated_at=claimed_at,
-                        completed_at=claimed_at,
+                    current = _mark_account_reroute_needs_recovery(
+                        current,
+                        recovered_at=claimed_at,
                     )
+                    current["result"] = copy.deepcopy(current)
                     cur.execute(
                         sql.SQL(
                             "UPDATE {} SET status='needs_recovery',payload=%s,result=%s,"
@@ -11223,6 +11322,118 @@ class PostgresTicketRepository:
                 return _account_reroute_job_from_row(row)
 
         return self._run_with_connection_retry("update_account_reroute_job", _operation)
+
+    def claim_account_reroute_recovery_alert(
+        self,
+        job_id: str,
+        *,
+        claimed_at: str,
+    ) -> dict[str, Any]:
+        normalized_job_id = str(job_id or "").strip()
+        normalized_claimed_at = str(claimed_at or "").strip()
+        if not normalized_job_id or not normalized_claimed_at:
+            raise ValueError("job_id and claimed_at are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (normalized_job_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return {"status": "not_found", "job": None}
+                current = _account_reroute_job_from_row(row)
+                if str(current.get("status") or "") != "needs_recovery":
+                    return {"status": "not_recovery", "job": current}
+                current_alert_status = str(current.get("recovery_alert_status") or "").strip().lower()
+                if current_alert_status not in {"", "pending"}:
+                    return {
+                        "status": "already_claimed",
+                        "alert_status": current_alert_status,
+                        "job": current,
+                    }
+                claimed = copy.deepcopy(current)
+                claimed.update(
+                    recovery_alert_status="sending",
+                    recovery_alert_claimed_at=normalized_claimed_at,
+                    updated_at=normalized_claimed_at,
+                )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET payload=%s,result=%s,updated_at=%s WHERE job_id=%s"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (
+                        Json(claimed),
+                        Json(claimed),
+                        normalized_claimed_at,
+                        normalized_job_id,
+                    ),
+                )
+                return {"status": "claimed", "job": claimed}
+
+        return self._run_with_connection_retry(
+            "claim_account_reroute_recovery_alert",
+            _operation,
+        )
+
+    def record_account_reroute_recovery_alert(
+        self,
+        job_id: str,
+        *,
+        alert_status: str,
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        normalized_job_id = str(job_id or "").strip()
+        normalized_status = str(alert_status or "failed").strip().lower() or "failed"
+        normalized_recorded_at = str(recorded_at or "").strip()
+        if not normalized_job_id or not normalized_recorded_at:
+            raise ValueError("job_id and recorded_at are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,request_scope,account_case_id,idempotency_scope,idempotency_key,"
+                        "status,payload,result,dispatch_status,lease_token,lease_expires_at,"
+                        "created_at,updated_at,started_at,completed_at FROM {} WHERE job_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (normalized_job_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return {"status": "not_found", "job": None}
+                current = _account_reroute_job_from_row(row)
+                if str(current.get("status") or "") != "needs_recovery":
+                    return {"status": "not_recovery", "job": current}
+                recorded = copy.deepcopy(current)
+                recorded.update(
+                    recovery_alert_status=normalized_status,
+                    alert_status=normalized_status,
+                    recovery_alert_recorded_at=normalized_recorded_at,
+                    updated_at=normalized_recorded_at,
+                )
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET payload=%s,result=%s,updated_at=%s WHERE job_id=%s"
+                    ).format(self._table("support_account_reroute_jobs")),
+                    (
+                        Json(recorded),
+                        Json(recorded),
+                        normalized_recorded_at,
+                        normalized_job_id,
+                    ),
+                )
+                return {"status": "recorded", "job": recorded}
+
+        return self._run_with_connection_retry(
+            "record_account_reroute_recovery_alert",
+            _operation,
+        )
 
     def release_account_reroute_job_execution(
         self,

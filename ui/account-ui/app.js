@@ -2267,9 +2267,20 @@ function renderRerouteStatus() {
   }
   const failed = Number(job.failed || 0);
   const recovered = Number(job.recovered || 0);
-  const replyJobsPublished = Number(job.reply_jobs_published || 0);
-  const replyJobsCancelled = Number(job.reply_jobs_cancelled || 0);
-  const statusLabel = String(job.status || "") === "failed"
+  const observedReplySummary = job.reply_job_summary?.source === "observed"
+    && job.reply_job_summary?.available !== false
+    ? job.reply_job_summary
+    : null;
+  const replyJobsPublished = Number(
+    observedReplySummary?.published ?? job.reply_jobs_published ?? 0,
+  );
+  const replyJobsCancelled = Number(
+    observedReplySummary?.cancelled ?? job.reply_jobs_cancelled ?? 0,
+  );
+  const isRecoveryRequired = String(job.status || "") === "needs_recovery";
+  const statusLabel = isRecoveryRequired
+    ? "Interrupted"
+    : String(job.status || "") === "failed"
     && ["preflight_failed", "preflight_degraded"].includes(String(job.stop_reason || ""))
     ? "Preflight failed"
     : String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors"
@@ -2282,7 +2293,9 @@ function renderRerouteStatus() {
   const remaining = Number(job.remaining || 0);
   const stopDetails = failedCase
     ? `Stopped at Case ${failedCase}${failedStage ? ` during ${failedStage}` : ""}`
-    : failedStage ? `Stopped during ${failedStage}` : "";
+    : isRecoveryRequired
+      ? "The rerun stopped because its execution lease expired."
+      : failedStage ? `Stopped during ${failedStage}` : "";
   const stopError = String(job.stop_error || job.error || "").trim();
   const preflightChecks = job.preflight?.checks && typeof job.preflight.checks === "object"
     ? Object.entries(job.preflight.checks)
@@ -2293,19 +2306,23 @@ function renderRerouteStatus() {
     : stopError;
   const alertStatus = String(job.alert_status || "").trim();
   const failedReasonCode = String(job.failed_reason_code || "").trim();
+  const recoveryReason = String(job.recovery_reason || "").trim();
   const resumeButton = Boolean(
     !isActiveRerouteJob(job)
-    && (String(job.status || "") === "failed" || String(job.status || "") === "completed_with_errors")
+    && (String(job.status || "") === "failed"
+      || String(job.status || "") === "completed_with_errors"
+      || isRecoveryRequired)
     && (remaining > 0 || failedCase)
   )
-    ? `<button class="primary-button primary-button--small" type="button" data-action="resume-reroute" ${state.isStartingReroute ? "disabled" : ""}>Resume rerun</button>`
+    ? `<button class="primary-button primary-button--small" type="button" data-action="resume-reroute" ${state.isStartingReroute ? "disabled" : ""}>${isRecoveryRequired ? "Resume remaining cases" : "Resume rerun"}</button>`
     : "";
   return `
-      <div class="reroute-status ${failed || job.status === "failed" || job.status === "completed_with_errors" ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
+      <div class="reroute-status ${failed || job.status === "failed" || job.status === "completed_with_errors" || isRecoveryRequired ? "reroute-status--error" : "reroute-status--done"}" role="status" aria-live="polite">
       <strong>${escapeHtml(statusLabel)}</strong>
       ${stopDetails ? `<span>${escapeHtml(stopDetails)}</span>` : ""}
       ${failureReason ? `<span>${escapeHtml(failureReason)}</span>` : ""}
       ${failedReasonCode ? `<span>Reason: ${escapeHtml(failedReasonCode)}</span>` : ""}
+      ${isRecoveryRequired && recoveryReason && recoveryReason !== failedReasonCode ? `<span>Recovery reason: ${escapeHtml(recoveryReason)}</span>` : ""}
       ${alertStatus ? `<span>Alert: ${escapeHtml(alertStatus)}</span>` : ""}
       <span>${Number(job.succeeded || 0)} succeeded${failed ? `, ${failed} failed` : ""}; ${remaining} unprocessed${recovered ? `, ${recovered} recovered` : ""}; ${Number(job.changed || 0)} changed; ${Number(job.emails_sent || 0)} emails sent; ${Number(job.replies_scheduled || 0)} customer replies scheduled; ${replyJobsPublished} published${replyJobsCancelled ? `, ${replyJobsCancelled} cancelled` : ""}; ${Number(job.replies_deleted || 0)} old replies deleted; ${Number(job.reply_jobs_deleted || 0)} old reply jobs deleted; ${Number(job.persona_assignments_deleted || 0)} Persona assignments reset</span>
       ${resumeButton}

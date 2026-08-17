@@ -123,7 +123,10 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
     async def test_dispatch_once_recovers_a_queued_job_when_background_tasks_were_discarded(self) -> None:
         job = await self._enqueue_single(BackgroundTasks())
 
-        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+        with (
+            patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker,
+            patch.object(main, "_notify_account_rerun_failure", new=AsyncMock(return_value="sent")) as alert,
+        ):
             await main._dispatch_pending_account_reroute_jobs_once()
 
         worker.assert_awaited_once()
@@ -189,7 +192,10 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(claim["status"], "acquired")
 
-        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+        with (
+            patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker,
+            patch.object(main, "_notify_account_rerun_failure", new=AsyncMock(return_value="sent")) as alert,
+        ):
             await main._dispatch_pending_account_reroute_jobs_once()
 
         worker.assert_not_awaited()
@@ -198,6 +204,9 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovered["status"], "needs_recovery")
         self.assertEqual(recovered["dispatch_status"], "needs_recovery")
         self.assertIsNone(recovered["lease_token"])
+        self.assertEqual(recovered["alert_status"], "sent")
+        self.assertEqual(recovered["recovery_alert_status"], "sent")
+        alert.assert_awaited_once()
 
         second = await main._enqueue_account_rerun_job(BackgroundTasks())
         self.assertNotEqual(second["job_id"], first["job_id"])
@@ -219,7 +228,10 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replay["job_id"], job["job_id"])
         self.assertEqual(replay["status"], "running")
         self.assertEqual(len(replay_tasks.tasks), 1)
-        with patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker:
+        with (
+            patch.object(main, "_run_account_full_reroute_job", AsyncMock()) as worker,
+            patch.object(main, "_notify_account_rerun_failure", new=AsyncMock(return_value="sent")) as alert,
+        ):
             await replay_tasks()
 
         worker.assert_not_awaited()
@@ -228,6 +240,49 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovered["status"], "needs_recovery")
         self.assertEqual(recovered["dispatch_status"], "needs_recovery")
         self.assertIsNone(recovered["lease_token"])
+        self.assertEqual(recovered["alert_status"], "sent")
+        alert.assert_awaited_once()
+
+    async def test_recovery_alert_is_claimed_once_for_concurrent_dispatchers(self) -> None:
+        first = await self._enqueue_single(BackgroundTasks())
+        old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        claim = self.repository.claim_account_reroute_job_execution(
+            str(first["job_id"]),
+            owner_token="expired-owner",
+            claimed_at=old_time.isoformat(),
+            lease_expires_at=(old_time + timedelta(minutes=30)).isoformat(),
+        )
+        self.assertEqual(claim["status"], "acquired")
+
+        with patch.object(main, "_notify_account_rerun_failure", new=AsyncMock(return_value="sent")) as alert:
+            await asyncio.gather(
+                main._claim_and_run_account_reroute_job(str(first["job_id"])),
+                main._claim_and_run_account_reroute_job(str(first["job_id"])),
+            )
+
+        alert.assert_awaited_once()
+        recovered = self.repository.get_account_reroute_job(str(first["job_id"]))
+        assert recovered is not None
+        self.assertEqual(recovered["recovery_alert_status"], "sent")
+
+    def test_public_recovery_contract_does_not_write_historical_job(self) -> None:
+        historical = {
+            "job_id": "legacy-recovery",
+            "status": "needs_recovery",
+            "recovery_reason": "execution_lease_expired",
+            "processed": 44,
+            "succeeded": 44,
+            "remaining": 135,
+            "reply_job_ids": [],
+        }
+        original = dict(historical)
+        public = main._public_account_reroute_job(historical)
+        self.assertEqual(public["phase"], "Recovery required")
+        self.assertEqual(public["failed_stage"], "execution_lease")
+        self.assertEqual(public["failed_reason_code"], "account_rerun_execution_lease_expired")
+        self.assertEqual(public["alert_status"], "unknown")
+        self.assertEqual(public["reply_job_summary"]["source"], "observed")
+        self.assertEqual(historical, original)
 
     async def test_api_job_shape_hides_dispatch_and_idempotency_metadata(self) -> None:
         job = await self._enqueue_single(BackgroundTasks())
@@ -359,6 +414,12 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             reply_checkpoint = self.repository.get_latest_account_reply_job(ticket_id)
             assert reply_checkpoint is not None
             self.assertEqual(reply_checkpoint["payload"]["rerun_job_id"], queued["job_id"])
+            stored_case = self.repository.get_account_case(case_id)
+            assert stored_case is not None
+            self.assertIn(
+                f":rerun:{queued['job_id']}",
+                str((stored_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
+            )
 
             stop_event.clear()
             await main._claim_and_run_account_reroute_job(
