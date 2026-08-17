@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p1-20",
   "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "通过 Zendesk users side-load 补齐评论作者姓名和身份，并在 Account 中派生 is_agent。",
-  "next_action": "将 include=users 的 comment-sync workflow 部署到 n8n，并完成公网 Case 验收。",
+  "next_action": "",
   "acceptance_criteria": [
     "Account Zendesk comments 保存作者姓名和 author_kind，并派生 is_agent；public customer、public Support Engineer、internal note 和未知作者均有明确展示。",
     "N8n 完整评论快照按 author_id 合并 Zendesk users，重放保持幂等，无法确认身份时不得静默标记为 Agent。"

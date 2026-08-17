@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T08:47:50Z",
-  "source_base_commit": "716d475e2d4181ccde2c633c3c20e925a1ba1ed3",
-  "registry_digest": "59107874fa8ff617957fd62ea58c1dd7c1704e51ff4e76531c1d677927939937",
+  "generated_at": "2026-08-17T09:02:06Z",
+  "source_base_commit": "4d29f3e444424ca4a91d82cb76011dc03bb11eed",
+  "registry_digest": "c24131aed113854e126d40e23e4d67cde23a5006534c8aa132fb1366723f0e4e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -341,6 +341,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 575,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/575",
+          "label": "PR #575"
+        },
+        {
+          "type": "pr",
           "number": 738,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/738",
           "label": "PR #738"
@@ -395,12 +413,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
-          "number": 568,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
-          "label": "PR #568"
-        },
-        {
-          "type": "pr",
           "number": 570,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/570",
           "label": "PR #570"
@@ -416,12 +428,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 574,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/574",
           "label": "PR #574"
-        },
-        {
-          "type": "pr",
-          "number": 575,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/575",
-          "label": "PR #575"
         },
         {
           "type": "pr",
@@ -476,8 +482,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 12,
-      "done_count": 4,
+      "task_count": 8,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -630,8 +636,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [
         "controlled-rollout"
       ],
-      "status": "active",
-      "task_count": 7,
+      "status": "done",
+      "task_count": 6,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -769,42 +775,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 726,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/726",
           "label": "PR #726"
-        },
-        {
-          "type": "pr",
-          "number": 638,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/638",
-          "label": "PR #638"
-        },
-        {
-          "type": "pr",
-          "number": 645,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/645",
-          "label": "PR #645"
-        },
-        {
-          "type": "pr",
-          "number": 646,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/646",
-          "label": "PR #646"
-        },
-        {
-          "type": "pr",
-          "number": 651,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/651",
-          "label": "PR #651"
-        },
-        {
-          "type": "pr",
-          "number": 689,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/689",
-          "label": "PR #689"
-        },
-        {
-          "type": "pr",
-          "number": 690,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/690",
-          "label": "PR #690"
         }
       ],
       "source_refs": [
@@ -816,11 +786,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [
         "routing-taxonomy",
         "routing-fallback-billing-risk-sniff",
-        "routing-quality-validation"
+        "routing-quality-validation",
+        "routing-billing-risky-negatives",
+        "p2-06",
+        "routing-real-zendesk-replay",
+        "p2-07",
+        "routing-semantic-golden-expand",
+        "p2-08"
       ],
       "status": "active",
-      "task_count": 9,
-      "done_count": 5,
+      "task_count": 5,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -857,9 +833,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md",
         "docs/roadmap.html#lanes"
       ],
-      "legacy_ids": [],
+      "legacy_ids": [
+        "billing-human-review",
+        "p2-16"
+      ],
       "status": "active",
-      "task_count": 6,
+      "task_count": 5,
       "done_count": 2,
       "blocked_count": 0
     },
@@ -883,6 +862,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 754,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/754",
           "label": "PR #754"
+        },
+        {
+          "type": "pr",
+          "number": 752,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/752",
+          "label": "PR #752"
         },
         {
           "type": "test",
@@ -944,7 +929,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 5,
-      "done_count": 2,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -973,6 +958,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 737,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/737",
           "label": "PR #737"
+        },
+        {
+          "type": "pr",
+          "number": 638,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/638",
+          "label": "PR #638"
+        },
+        {
+          "type": "pr",
+          "number": 645,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/645",
+          "label": "PR #645"
+        },
+        {
+          "type": "pr",
+          "number": 646,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/646",
+          "label": "PR #646"
+        },
+        {
+          "type": "pr",
+          "number": 651,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/651",
+          "label": "PR #651"
+        },
+        {
+          "type": "pr",
+          "number": 689,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/689",
+          "label": "PR #689"
+        },
+        {
+          "type": "pr",
+          "number": 690,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/690",
+          "label": "PR #690"
         }
       ],
       "source_refs": [
@@ -982,8 +1003,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 3,
-      "done_count": 1,
+      "task_count": 6,
+      "done_count": 2,
       "blocked_count": 0
     },
     {
@@ -1049,6 +1070,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "done",
       "task_count": 3,
       "done_count": 3,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "account-controlled-rollout",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Account Automation 受控扩围",
+      "goal": "根据真实运行质量和业务决策，安全扩大 Account Automation 的处理范围。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes",
+        "docs/roadmap/phase2.html",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [
+        "routing-automation-rollout",
+        "routing-rollout-taxonomy",
+        "p2-25",
+        "p2-27"
+      ],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
       "blocked_count": 0
     },
     {
@@ -1671,182 +1717,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "task_id": "p1-06",
-      "title": "扩展 Billing 高风险负样本集",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。",
-      "next_action": "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。",
-      "acceptance_criteria": [
-        "完成 Safety 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-06 迁移为 p1-06；迁移到 phase-1 / account-automation / routing-quality-validation。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-billing-risky-negatives"
-        }
-      ],
-      "legacy_ids": [
-        "routing-billing-risky-negatives",
-        "p2-06"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "case-route"
-    },
-    {
-      "schema_version": 2,
-      "task_id": "p1-07",
-      "title": "扩展真实 Zendesk Replay Set 覆盖范围",
-      "status": "active",
-      "owner": "unassigned",
-      "summary": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
-      "next_action": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
-      "acceptance_criteria": [
-        "完成 Monitor 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-07 迁移为 p1-07；迁移到 phase-1 / account-automation / routing-quality-validation。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-real-zendesk-replay"
-        }
-      ],
-      "legacy_ids": [
-        "routing-real-zendesk-replay",
-        "p2-07"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "case-route"
-    },
-    {
-      "schema_version": 2,
-      "task_id": "p1-08",
-      "title": "扩展 Billing 路由边界 Golden Set",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
-      "next_action": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
-      "acceptance_criteria": [
-        "完成 Tests 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-08 迁移为 p1-08；迁移到 phase-1 / account-automation / routing-quality-validation。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Function 从 routing-quality-validation 重新归类到 case-route。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-semantic-golden-expand"
-        }
-      ],
-      "legacy_ids": [
-        "routing-semantic-golden-expand",
-        "p2-08"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "case-route"
-    },
-    {
-      "schema_version": 2,
       "task_id": "p1-09",
-      "title": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
-      "status": "planned",
+      "title": "完成 Billing 与 Detailed Invoice 自动化闭环",
+      "status": "done",
       "owner": "jojo",
-      "summary": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
-      "next_action": "补齐验收证据并更新状态。",
+      "summary": "Billing 与 Detailed Invoice 已完成路由、内部处理、结果回传和客户更新闭环。",
+      "next_action": "",
       "acceptance_criteria": [
-        "Billing 路由、内部通知、客户回复和关单结果与预期一致。"
+        "Billing 路由、内部通知、客户回复和结果处理已完成验证。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 575,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/575",
+          "label": "PR #575"
+        }
+      ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
@@ -1887,7 +1787,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -2210,10 +2110,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-14",
-      "title": "人工接管 Compliance、Security、法务及其他敏感工单。",
+      "title": "Manager 接管 Compliance、Security、法务及其他敏感工单",
       "status": "planned",
       "owner": "emma / derek",
-      "summary": "人工接管 Compliance、Security、法务及其他敏感工单。",
+      "summary": "由 Manager 接管 Compliance、Security、法务及其他敏感工单，保持统一人工口径。",
       "next_action": "补齐验收证据并更新状态。",
       "acceptance_criteria": [
         "客户侧不泄露内部信息，Case 保持统一人工口径。"
@@ -2317,56 +2217,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "task_id": "p1-16",
-      "title": "建立 Billing 人工审核与客户回复工作流",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
-      "next_action": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
-      "acceptance_criteria": [
-        "完成 Review 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / human-review。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-16 迁移为 p1-16；迁移到 phase-1 / account-automation / human-review。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-human-review"
-        }
-      ],
-      "legacy_ids": [
-        "billing-human-review",
-        "p2-16"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "human-review"
-    },
-    {
-      "schema_version": 2,
       "task_id": "p1-17",
       "title": "为 Billing Review 建立人工审核与内部待办",
       "status": "planned",
@@ -2418,16 +2268,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-18",
-      "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "status": "active",
+      "title": "完成 AI 回复写回 Zendesk：internal comment，已完成",
+      "status": "done",
       "owner": "zac",
-      "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
+      "summary": "Account AI 消息已支持幂等写回 Zendesk internal comment。",
+      "next_action": "",
       "acceptance_criteria": [
-        "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
+        "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "pr",
+          "number": 752,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/752",
+          "label": "PR #752"
+        },
         {
           "type": "test",
           "label": "Zendesk internal comment response parser and idempotency tests",
@@ -2505,10 +2361,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-19",
       "title": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
-      "status": "planned",
+      "status": "active",
       "owner": "zac",
-      "summary": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
-      "next_action": "补齐验收证据并更新状态。",
+      "summary": "当前使用 ai-support-agent@agora.io 作为 Account Automation 发送身份，后续可评估是否创建专用账号。",
+      "next_action": "确认 ai-support-agent@agora.io 的显示名称、权限和端到端发送结果，并评估新专用账号需求。",
       "acceptance_criteria": [
         "完成发送身份的端到端测试，不使用个人账号。"
       ],
@@ -2560,10 +2416,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-20",
       "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "通过 Zendesk users side-load 补齐评论作者姓名和身份，并在 Account 中派生 is_agent。",
-      "next_action": "将 include=users 的 comment-sync workflow 部署到 n8n，并完成公网 Case 验收。",
+      "next_action": "",
       "acceptance_criteria": [
         "Account Zendesk comments 保存作者姓名和 author_kind，并派生 is_agent；public customer、public Support Engineer、internal note 和未知作者均有明确展示。",
         "N8n 完整评论快照按 author_id 合并 Zendesk users，重放保持幂等，无法确认身份时不得静默标记为 Agent。"
@@ -2676,7 +2532,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-22",
-      "title": "定义 Account Automation Dashboard 与 Monitor 指标",
+      "title": "定义 Admin Dashboard 与 Automation Monitor 指标",
       "status": "active",
       "owner": "unassigned",
       "summary": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
@@ -2725,68 +2581,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "p2-22"
       ],
       "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
-    },
-    {
-      "schema_version": 2,
-      "task_id": "p1-23",
-      "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
-      "status": "planned",
-      "owner": "zac",
-      "summary": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
-      "next_action": "开始受控试运行质量验证，形成 Billing 自动化扩围的决策依据。",
-      "acceptance_criteria": [
-        "完成 Decision 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "status_reclassified",
-          "summary": "按 review 结论调整为未开始，负责人设为 zac；等待受控试运行证据后再做扩围决策。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-23 迁移为 p1-23；迁移到 phase-1 / account-automation / controlled-rollout。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-expand"
-        }
-      ],
-      "legacy_ids": [
-        "billing-expand",
-        "p2-23"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
@@ -2845,63 +2641,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "task_id": "p1-25",
-      "title": "按 Replay 与指标门禁逐步开放 Account Automation",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "Phase 1：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
-      "next_action": "Phase 1：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
-      "acceptance_criteria": [
-        "完成 Rollout 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-25 迁移为 p1-25；迁移到 phase-1 / account-automation / controlled-rollout。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-automation-rollout"
-        }
-      ],
-      "legacy_ids": [
-        "routing-automation-rollout",
-        "p2-25"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
-    },
-    {
-      "schema_version": 2,
       "task_id": "p1-26",
-      "title": "在 Dashboard 展示 Automation Controlled Launch 指标",
+      "title": "在 Admin Dashboard 展示 Automation Controlled Launch 指标",
       "status": "planned",
       "owner": "unassigned",
       "summary": "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。",
@@ -2950,63 +2691,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "p2-26"
       ],
       "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
-    },
-    {
-      "schema_version": 2,
-      "task_id": "p1-27",
-      "title": "建立 Automation Rollout 三态 Taxonomy",
-      "status": "planned",
-      "owner": "unassigned",
-      "summary": "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。",
-      "next_action": "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。",
-      "acceptance_criteria": [
-        "完成 Contract 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Task ID 从 p2-27 迁移为 p1-27；迁移到 phase-1 / account-automation / controlled-rollout。"
-        },
-        {
-          "at": "2026-08-17",
-          "event": "reclassified",
-          "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-rollout-taxonomy"
-        }
-      ],
-      "legacy_ids": [
-        "routing-rollout-taxonomy",
-        "p2-27"
-      ],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
@@ -4070,7 +3756,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-48",
-      "title": "建立 Account Route Strategy 管理面",
+      "title": "建立 Admin Route Strategy 管理面",
       "status": "done",
       "owner": "zac",
       "summary": "在 Agent Config 中统一管理 Account 路由策略、Prompt 版本和 Automation Workflow。",
@@ -4136,8 +3822,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "route-strategy-admin"
       ],
       "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "case-route"
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
@@ -5888,6 +5574,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-ai-intake"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-71",
+      "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
+      "status": "planned",
+      "owner": "zac",
+      "summary": "根据受控试运行的 route accuracy、automation coverage、失败原因和人工复盘结果，决定是否扩大 Billing 自动化范围。",
+      "next_action": "完成受控试运行并形成 Billing 自动化扩围决策记录。",
+      "acceptance_criteria": [
+        "完成受控试运行质量复盘并记录扩围决策。",
+        "扩围决策明确覆盖范围、风险边界和回退条件。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes",
+        "docs/roadmap/phase2.html"
+      ],
+      "created_at": "2026-08-18",
+      "updated_at": "2026-08-18",
+      "history": [
+        {
+          "at": "2026-08-18",
+          "event": "moved-to-phase-2",
+          "summary": "从 p1-23 迁移到 Phase 2 的 Account Automation 受控扩围 Function。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-expand"
+        }
+      ],
+      "legacy_ids": [
+        "billing-expand",
+        "p1-23",
+        "p2-23"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-controlled-rollout"
     }
   ],
   "meetings": [
@@ -7178,7 +6907,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     }
   ],
   "migration": {
-    "source_count": 150,
+    "source_count": 151,
     "generated_from": [
       "docs/roadmap.html",
       "docs/roadmap/meetings.html",
@@ -7415,15 +7144,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/billing-expand.json",
         "legacy_id": "billing-expand",
         "target_type": "task",
-        "target_id": "p1-23",
-        "disposition": "renamed"
+        "target_id": "p2-71",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/billing-human-review.json",
         "legacy_id": "billing-human-review",
-        "target_type": "task",
-        "target_id": "p1-16",
-        "disposition": "renamed"
+        "target_type": "function",
+        "target_id": "human-review",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/billing-human-review-handoff.json",
@@ -7631,9 +7360,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/routing-automation-rollout.json",
         "legacy_id": "routing-automation-rollout",
-        "target_type": "task",
-        "target_id": "p1-25",
-        "disposition": "renamed"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-billing-review-customer-experience.json",
@@ -7645,9 +7374,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/routing-billing-risky-negatives.json",
         "legacy_id": "routing-billing-risky-negatives",
-        "target_type": "task",
-        "target_id": "p1-06",
-        "disposition": "renamed"
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-dashboard-metrics.json",
@@ -7666,16 +7395,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/routing-real-zendesk-replay.json",
         "legacy_id": "routing-real-zendesk-replay",
-        "target_type": "task",
-        "target_id": "p1-07",
-        "disposition": "renamed"
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-rollout-taxonomy.json",
         "legacy_id": "routing-rollout-taxonomy",
-        "target_type": "task",
-        "target_id": "p1-27",
-        "disposition": "renamed"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-security-compliance.json",
@@ -7687,9 +7416,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/routing-semantic-golden-expand.json",
         "legacy_id": "routing-semantic-golden-expand",
-        "target_type": "task",
-        "target_id": "p1-08",
-        "disposition": "renamed"
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/routing-taxonomy.json",
@@ -7743,23 +7472,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/p2-06.json",
         "legacy_id": "p2-06",
-        "target_type": "task",
-        "target_id": "p1-06",
-        "disposition": "moved-to-phase-1"
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/p2-07.json",
         "legacy_id": "p2-07",
-        "target_type": "task",
-        "target_id": "p1-07",
-        "disposition": "moved-to-phase-1"
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/p2-08.json",
         "legacy_id": "p2-08",
-        "target_type": "task",
-        "target_id": "p1-08",
-        "disposition": "moved-to-phase-1"
+        "target_type": "function",
+        "target_id": "case-route",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/p2-09.json",
@@ -7813,9 +7542,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/p2-16.json",
         "legacy_id": "p2-16",
-        "target_type": "task",
-        "target_id": "p1-16",
-        "disposition": "moved-to-phase-1"
+        "target_type": "function",
+        "target_id": "human-review",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/p2-17.json",
@@ -7863,8 +7592,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/tasks/p2-23.json",
         "legacy_id": "p2-23",
         "target_type": "task",
-        "target_id": "p1-23",
-        "disposition": "moved-to-phase-1"
+        "target_id": "p2-71",
+        "disposition": "moved-to-phase-2"
       },
       {
         "source_ref": "docs/project/tasks/p2-24.json",
@@ -7876,9 +7605,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/p2-25.json",
         "legacy_id": "p2-25",
-        "target_type": "task",
-        "target_id": "p1-25",
-        "disposition": "moved-to-phase-1"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/p2-26.json",
@@ -7890,9 +7619,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       {
         "source_ref": "docs/project/tasks/p2-27.json",
         "legacy_id": "p2-27",
-        "target_type": "task",
-        "target_id": "p1-27",
-        "disposition": "moved-to-phase-1"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout",
+        "disposition": "merged"
       },
       {
         "source_ref": "docs/project/tasks/p2-28.json",
@@ -8236,6 +7965,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_type": "task",
         "target_id": "p1-48",
         "disposition": "backfilled"
+      },
+      {
+        "source_ref": "docs/project/tasks/p1-23.json",
+        "legacy_id": "p1-23",
+        "target_type": "function",
+        "target_id": "account-controlled-rollout",
+        "disposition": "moved-to-phase-2"
       }
     ],
     "aliases": {
@@ -8369,11 +8105,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "billing-expand": {
         "target_type": "task",
-        "target_id": "p1-23"
+        "target_id": "p2-71"
       },
       "billing-human-review": {
-        "target_type": "task",
-        "target_id": "p1-16"
+        "target_type": "function",
+        "target_id": "human-review"
       },
       "billing-human-review-handoff": {
         "target_type": "task",
@@ -8492,16 +8228,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_id": "p2-40"
       },
       "routing-automation-rollout": {
-        "target_type": "task",
-        "target_id": "p1-25"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout"
       },
       "routing-billing-review-customer-experience": {
         "target_type": "task",
         "target_id": "p1-17"
       },
       "routing-billing-risky-negatives": {
-        "target_type": "task",
-        "target_id": "p1-06"
+        "target_type": "function",
+        "target_id": "case-route"
       },
       "routing-dashboard-metrics": {
         "target_type": "task",
@@ -8512,20 +8248,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_id": "case-route"
       },
       "routing-real-zendesk-replay": {
-        "target_type": "task",
-        "target_id": "p1-07"
+        "target_type": "function",
+        "target_id": "case-route"
       },
       "routing-rollout-taxonomy": {
-        "target_type": "task",
-        "target_id": "p1-27"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout"
       },
       "routing-security-compliance": {
         "target_type": "task",
         "target_id": "p1-02"
       },
       "routing-semantic-golden-expand": {
-        "target_type": "task",
-        "target_id": "p1-08"
+        "target_type": "function",
+        "target_id": "case-route"
       },
       "routing-taxonomy": {
         "target_type": "function",
@@ -8556,16 +8292,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_id": "p1-05"
       },
       "p2-06": {
-        "target_type": "task",
-        "target_id": "p1-06"
+        "target_type": "function",
+        "target_id": "case-route"
       },
       "p2-07": {
-        "target_type": "task",
-        "target_id": "p1-07"
+        "target_type": "function",
+        "target_id": "case-route"
       },
       "p2-08": {
-        "target_type": "task",
-        "target_id": "p1-08"
+        "target_type": "function",
+        "target_id": "case-route"
       },
       "p2-09": {
         "target_type": "task",
@@ -8596,8 +8332,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_id": "p1-15"
       },
       "p2-16": {
-        "target_type": "task",
-        "target_id": "p1-16"
+        "target_type": "function",
+        "target_id": "human-review"
       },
       "p2-17": {
         "target_type": "task",
@@ -8625,23 +8361,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "p2-23": {
         "target_type": "task",
-        "target_id": "p1-23"
+        "target_id": "p2-71"
       },
       "p2-24": {
         "target_type": "task",
         "target_id": "p1-24"
       },
       "p2-25": {
-        "target_type": "task",
-        "target_id": "p1-25"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout"
       },
       "p2-26": {
         "target_type": "task",
         "target_id": "p1-26"
       },
       "p2-27": {
-        "target_type": "task",
-        "target_id": "p1-27"
+        "target_type": "function",
+        "target_id": "account-controlled-rollout"
       },
       "p2-28": {
         "target_type": "task",
@@ -8838,6 +8574,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "route-strategy-admin": {
         "target_type": "task",
         "target_id": "p1-48"
+      },
+      "p1-23": {
+        "target_type": "function",
+        "target_id": "account-controlled-rollout"
       }
     }
   }

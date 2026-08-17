@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "function_id": "account-controlled-rollout",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "Account Automation 受控扩围",
+  "goal": "根据真实运行质量和业务决策，安全扩大 Account Automation 的处理范围。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes",
+    "docs/roadmap/phase2.html",
+    "docs/feature_list.md"
+  ],
+  "legacy_ids": [
+    "routing-automation-rollout",
+    "routing-rollout-taxonomy",
+    "p2-25",
+    "p2-27"
+  ]
+}

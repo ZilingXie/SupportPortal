@@ -16,5 +16,8 @@
     "docs/feature_list.md",
     "docs/roadmap.html#lanes"
   ],
-  "legacy_ids": []
+  "legacy_ids": [
+    "billing-human-review",
+    "p2-16"
+  ]
 }

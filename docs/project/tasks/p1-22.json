@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "task_id": "p1-22",
-  "title": "定义 Account Automation Dashboard 与 Monitor 指标",
+  "title": "定义 Admin Dashboard 与 Automation Monitor 指标",
   "status": "active",
   "owner": "unassigned",
   "summary": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
@@ -51,5 +51,6 @@
   ],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "automation-execution-loop"
+  "module_id": "admin-operations",
+  "function_id": "admin-case-operations"
 }

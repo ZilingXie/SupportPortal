@@ -1,16 +1,22 @@
 {
   "schema_version": 2,
   "task_id": "p1-18",
-  "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-  "status": "active",
+  "title": "完成 AI 回复写回 Zendesk：internal comment，已完成",
+  "status": "done",
   "owner": "zac",
-  "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-  "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
+  "summary": "Account AI 消息已支持幂等写回 Zendesk internal comment。",
+  "next_action": "",
   "acceptance_criteria": [
-    "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
+    "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。"
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "pr",
+      "number": 752,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/752",
+      "label": "PR #752"
+    },
     {
       "type": "test",
       "label": "Zendesk internal comment response parser and idempotency tests",

@@ -236,15 +236,15 @@
       "source_ref": "docs/project/tasks/billing-expand.json",
       "legacy_id": "billing-expand",
       "target_type": "task",
-      "target_id": "p1-23",
-      "disposition": "renamed"
+      "target_id": "p2-71",
+      "disposition": "moved-to-phase-2"
     },
     {
       "source_ref": "docs/project/tasks/billing-human-review.json",
       "legacy_id": "billing-human-review",
-      "target_type": "task",
-      "target_id": "p1-16",
-      "disposition": "renamed"
+      "target_type": "function",
+      "target_id": "human-review",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/billing-human-review-handoff.json",
@@ -452,9 +452,9 @@
     {
       "source_ref": "docs/project/tasks/routing-automation-rollout.json",
       "legacy_id": "routing-automation-rollout",
-      "target_type": "task",
-      "target_id": "p1-25",
-      "disposition": "renamed"
+      "target_type": "function",
+      "target_id": "account-controlled-rollout",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/routing-billing-review-customer-experience.json",
@@ -466,9 +466,9 @@
     {
       "source_ref": "docs/project/tasks/routing-billing-risky-negatives.json",
       "legacy_id": "routing-billing-risky-negatives",
-      "target_type": "task",
-      "target_id": "p1-06",
-      "disposition": "renamed"
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/routing-dashboard-metrics.json",
@@ -487,16 +487,16 @@
     {
       "source_ref": "docs/project/tasks/routing-real-zendesk-replay.json",
       "legacy_id": "routing-real-zendesk-replay",
-      "target_type": "task",
-      "target_id": "p1-07",
-      "disposition": "renamed"
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/routing-rollout-taxonomy.json",
       "legacy_id": "routing-rollout-taxonomy",
-      "target_type": "task",
-      "target_id": "p1-27",
-      "disposition": "renamed"
+      "target_type": "function",
+      "target_id": "account-controlled-rollout",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/routing-security-compliance.json",
@@ -508,9 +508,9 @@
     {
       "source_ref": "docs/project/tasks/routing-semantic-golden-expand.json",
       "legacy_id": "routing-semantic-golden-expand",
-      "target_type": "task",
-      "target_id": "p1-08",
-      "disposition": "renamed"
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/routing-taxonomy.json",
@@ -564,23 +564,23 @@
     {
       "source_ref": "docs/project/tasks/p2-06.json",
       "legacy_id": "p2-06",
-      "target_type": "task",
-      "target_id": "p1-06",
-      "disposition": "moved-to-phase-1"
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/p2-07.json",
       "legacy_id": "p2-07",
-      "target_type": "task",
-      "target_id": "p1-07",
-      "disposition": "moved-to-phase-1"
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/p2-08.json",
       "legacy_id": "p2-08",
-      "target_type": "task",
-      "target_id": "p1-08",
-      "disposition": "moved-to-phase-1"
+      "target_type": "function",
+      "target_id": "case-route",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/p2-09.json",
@@ -634,9 +634,9 @@
     {
       "source_ref": "docs/project/tasks/p2-16.json",
       "legacy_id": "p2-16",
-      "target_type": "task",
-      "target_id": "p1-16",
-      "disposition": "moved-to-phase-1"
+      "target_type": "function",
+      "target_id": "human-review",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/p2-17.json",
@@ -684,8 +684,8 @@
       "source_ref": "docs/project/tasks/p2-23.json",
       "legacy_id": "p2-23",
       "target_type": "task",
-      "target_id": "p1-23",
-      "disposition": "moved-to-phase-1"
+      "target_id": "p2-71",
+      "disposition": "moved-to-phase-2"
     },
     {
       "source_ref": "docs/project/tasks/p2-24.json",
@@ -697,9 +697,9 @@
     {
       "source_ref": "docs/project/tasks/p2-25.json",
       "legacy_id": "p2-25",
-      "target_type": "task",
-      "target_id": "p1-25",
-      "disposition": "moved-to-phase-1"
+      "target_type": "function",
+      "target_id": "account-controlled-rollout",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/p2-26.json",
@@ -711,9 +711,9 @@
     {
       "source_ref": "docs/project/tasks/p2-27.json",
       "legacy_id": "p2-27",
-      "target_type": "task",
-      "target_id": "p1-27",
-      "disposition": "moved-to-phase-1"
+      "target_type": "function",
+      "target_id": "account-controlled-rollout",
+      "disposition": "merged"
     },
     {
       "source_ref": "docs/project/tasks/p2-28.json",
@@ -1057,6 +1057,13 @@
       "target_type": "task",
       "target_id": "p1-48",
       "disposition": "backfilled"
+    },
+    {
+      "source_ref": "docs/project/tasks/p1-23.json",
+      "legacy_id": "p1-23",
+      "target_type": "function",
+      "target_id": "account-controlled-rollout",
+      "disposition": "moved-to-phase-2"
     }
   ]
 }
