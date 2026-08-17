@@ -435,6 +435,7 @@
         if (alias?.target_type === "function") return showFunction(alias.target_id, updateHash);
         const task = taskMap.get(alias?.target_id || taskId);
         if (!task) return;
+        if (document.getElementById("meetingDialog").open) document.getElementById("meetingDialog").close();
         if (document.getElementById("functionDialog").open) document.getElementById("functionDialog").close();
         state.phase = task.phase_id;
         renderHeader(); renderPhaseSwitch(); renderBoard(); renderFunctions();
@@ -450,6 +451,7 @@
         const alias = resolveAlias(functionId);
         const item = functionMap.get(alias?.target_id || functionId);
         if (!item) return;
+        if (document.getElementById("meetingDialog").open) document.getElementById("meetingDialog").close();
         if (document.getElementById("taskDialog").open) document.getElementById("taskDialog").close();
         state.phase = item.phase_id;
         renderHeader(); renderPhaseSwitch(); renderBoard(); renderFunctions();

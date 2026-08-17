@@ -29,6 +29,7 @@ const ACCOUNT_ACCESS_TOKEN_KEY = "supportportal_account_workspace_access_token";
 const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
 
 const PAGE_SIZE = 10;
+const DEFAULT_FETCH_TIMEOUT_MS = 25_000;
 const SUMMARY_FRESH_MS = 30_000;
 const DETAIL_FRESH_MS = 60_000;
 const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
@@ -220,7 +221,45 @@ function authRequestInit(options = {}) {
 }
 
 async function accountFetch(url, options = {}) {
-  const response = await fetch(url, authRequestInit(options));
+  const requestOptions = { ...options };
+  const timeoutMsCandidate = Number(requestOptions.timeoutMs);
+  const timeoutMs =
+    Number.isFinite(timeoutMsCandidate) && timeoutMsCandidate > 0
+      ? timeoutMsCandidate
+      : DEFAULT_FETCH_TIMEOUT_MS;
+  delete requestOptions.timeoutMs;
+
+  const timeoutController = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
+  const externalSignal = requestOptions.signal;
+  const abortFromExternal = () => timeoutController.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      timeoutController.abort();
+    } else if (typeof externalSignal.addEventListener === "function") {
+      externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+    }
+  }
+
+  requestOptions.signal = timeoutController.signal;
+  let response;
+  try {
+    response = await fetch(url, authRequestInit(requestOptions));
+  } catch (error) {
+    if (error?.name === "AbortError" && timedOut) {
+      throw new Error(`Request timed out after ${Math.ceil(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (externalSignal && typeof externalSignal.removeEventListener === "function") {
+      externalSignal.removeEventListener("abort", abortFromExternal);
+    }
+  }
   handleAccountAuthFailure(response);
   return response;
 }
@@ -2163,11 +2202,10 @@ async function addMessageAsZendeskInternalComment(messageId) {
   state.zendeskCommentErrorMessageId = "";
   render();
   try {
-    const response = await fetch(
+    const response = await accountFetch(
       `/api/account/cases/${encodeURIComponent(caseId)}/messages/${encodeURIComponent(normalizedMessageId)}/zendesk-internal-comment`,
-      authRequestInit({ method: "POST", cache: "no-store" }),
+      { method: "POST", cache: "no-store" },
     );
-    if (handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
     if (!response.ok) {
       throw new Error(responseErrorMessage(payload, "Could not add the AI message as an internal comment."));
