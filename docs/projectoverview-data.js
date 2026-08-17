@@ -1,15 +1,14 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
-  "schema_version": 1,
-  "generated_at": "2026-08-17T05:54:34Z",
-  "source_base_commit": "8099043e7cfe17ed1f34ab2d6d79f83d0ac16d1f",
-  "registry_digest": "4b0a6d59d3f4512a22f63efde727a9283e7639adbb02b22756f0e25443221868",
+  "schema_version": 2,
+  "generated_at": "2026-08-17T06:20:55Z",
+  "source_base_commit": "15a81af30b8241916fa985097e38ecc3f8d8150f",
+  "registry_digest": "03b625607b006f2c09369b23202fb28f8eb5e308c8d536fc7c5e9beb48339abf",
   "project": {
-    "schema_version": 1,
+    "schema_version": 2,
     "project_id": "supportportal",
     "title": "SupportPortal",
     "status": "active",
     "goal": "建设一个可追踪、可审计、以 AI 辅助为核心的客户支持工单系统；让客户入口、自动化、工程师处理和验证证据形成同一条闭环。",
-    "current_milestone_id": "phase-2-controlled-validation",
     "owner": "Zac",
     "maintainers": [
       "Zac",
@@ -18,6 +17,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     "repository_url": "https://github.com/ZilingXie/SupportPortal",
     "source_policy": {
       "progress": "docs/project/tasks/*.json",
+      "hierarchy": "docs/project/phases/*.json + docs/project/modules/*.json + docs/project/functions/*.json",
       "meetings": "docs/project/meetings/*.json",
       "capabilities": "docs/feature_list.md",
       "pr_facts": "docs/project/generated/pr-index.json",
@@ -33,54 +33,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     "report_windows_days": [
       7,
       30
-    ]
+    ],
+    "current_phase_id": "phase-2"
   },
-  "milestones": [
+  "phases": [
     {
-      "schema_version": 1,
-      "milestone_id": "long-term-agent-collaboration",
-      "title": "长期：Engineer multi-agent + governed agent-to-agent",
-      "status": "planned",
-      "summary": "在真实 evidence tools、权限审计、replay gate 和成本门禁达标后，逐步扩大 AgentRelay 协作和自主调查边界。",
+      "schema_version": 2,
+      "phase_id": "phase-1",
+      "title": "Phase 1：效率提升与工单系统基线",
+      "status": "done",
+      "summary": "历史基线阶段已完成；未完成旧记录已转入 Phase 3。",
       "target_date": null,
       "exit_criteria": [
-        "Evidence provenance、权限和 customer-safe 边界可审计",
-        "Replay、成本、并发和 retry 门禁可验证",
-        "自主协作不会绕过 Engineer approve、Guardrail 或关闭审计"
+        "客户入口、工单基础能力和最小交付闭环已建立。"
       ],
       "source_refs": [
         "docs/roadmap.html",
-        "docs/roadmap/meetings.html"
+        "docs/roadmap/phase1.html"
       ]
     },
     {
-      "schema_version": 1,
-      "milestone_id": "phase-1",
-      "title": "Phase 1：效率提升与工单系统基线",
-      "status": "done",
-      "summary": "客户入口、内部工单、Guardrail、Dashboard 和 AgentRelay communication foundation 已形成基线。",
-      "target_date": null,
-      "exit_criteria": [
-        "Zendesk 转发和内部工单链路可用",
-        "客户回复发送前存在 Guardrail 或人工确认",
-        "Dashboard 能展示 Case、SLA 和审核结果"
-      ],
-      "source_refs": [
-        "docs/roadmap/phase1.html",
-        "docs/roadmap.html"
-      ]
-    },
-    {
-      "schema_version": 1,
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "phase_id": "phase-2",
       "title": "Phase 2：确定性 Automation + Controlled Validation",
       "status": "active",
-      "summary": "收口 Account & Billing、Backend Operation、路由策略、回复质量和可观测性，逐步扩大可验证的自动化范围。",
+      "summary": "收口 Account & Billing、路由策略、回复质量和可观测性，逐步扩大可验证自动化范围。",
       "target_date": null,
       "exit_criteria": [
-        "Registered automation outcome 的路由、字段、内部处理和客户跟进都有可验证证据",
-        "Automated coverage、route accuracy、失败原因和人工审核结果可持续观察",
-        "敏感、低置信或失败路径明确进入 Human Review，不以 fallback 伪装成功"
+        "Registered automation outcome 的路由、字段、内部处理和客户跟进都有可验证证据。",
+        "Automated coverage、route accuracy、失败原因和人工审核结果可持续观察。",
+        "敏感、低置信或失败路径明确进入 Human Review。"
       ],
       "source_refs": [
         "docs/roadmap.html",
@@ -89,27 +71,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ]
     },
     {
-      "schema_version": 1,
-      "milestone_id": "phase-3-engineer-workflow",
-      "title": "Phase 3：AI First Response + Slack Engineer Workflow",
-      "status": "planned",
-      "summary": "AI 完成首次有效回复和必要信息收集后，把 Case 交给工程师，由 Guardrail、Round Robin、Admin 和 Slack 组成受控处理链路。",
+      "schema_version": 2,
+      "phase_id": "phase-3",
+      "title": "Phase 3：Engineer Workflow + Governed AI Collaboration",
+      "status": "active",
+      "summary": "承接长期 Agent 协作、Engineer Workflow、AI 首次回复和派单交付。",
       "target_date": null,
       "exit_criteria": [
-        "AI eligibility gate、首次回复和 Engineer Case 交接边界明确",
-        "Slack 投递、Admin reassign 和 Round Robin 经过真实权限验证",
-        "后续客户回复仍经过 Guardrail 并保留审计"
+        "Engineer Case assignment、SLA、审计和 AI 交接边界可验证。",
+        "Agent 自主行为在证据、权限、成本和审计门禁下逐步开放。"
       ],
       "source_refs": [
+        "docs/roadmap.html",
         "docs/roadmap/phase3.html",
         "docs/roadmap/meetings.html"
       ]
     }
   ],
-  "topics": [
+  "modules": [
     {
-      "schema_version": 1,
-      "topic_id": "account-automation",
+      "schema_version": 2,
       "title": "Account Automation",
       "goal": "让稳定的 Account 与 Billing 请求进入可解释、可暂停、可人工接管的自动化闭环。",
       "surfaces": [
@@ -135,11 +116,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html",
         "docs/roadmap/phase2.html",
         "docs/feature_list.md"
-      ]
+      ],
+      "module_id": "account-automation"
     },
     {
-      "schema_version": 1,
-      "topic_id": "admin-operations",
+      "schema_version": 2,
       "title": "Admin Operations",
       "goal": "提供账号、排班、派单、SLA、Agent 配置、Automation 和运营指标的控制面。",
       "surfaces": [
@@ -168,11 +149,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html",
         "docs/roadmap/phase2.html",
         "docs/feature_list.md"
-      ]
+      ],
+      "module_id": "admin-operations"
     },
     {
-      "schema_version": 1,
-      "topic_id": "agent-collaboration",
+      "schema_version": 2,
       "title": "Agent Collaboration",
       "goal": "在证据、权限、成本和审计边界成熟后，扩展 Engineer multi-agent 与 AgentRelay 协作。",
       "surfaces": [],
@@ -197,11 +178,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html",
         "docs/roadmap/meetings.html",
         "docs/feature_list.md"
-      ]
+      ],
+      "module_id": "agent-collaboration"
     },
     {
-      "schema_version": 1,
-      "topic_id": "client-experience",
+      "schema_version": 2,
       "title": "Client Experience",
       "goal": "保留客户熟悉的 Zendesk/Client 入口，同时把路由、澄清、证据和升级边界做成可观察的体验。",
       "surfaces": [
@@ -226,11 +207,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "source_refs": [
         "docs/roadmap.html",
         "docs/feature_list.md"
-      ]
+      ],
+      "module_id": "client-experience"
     },
     {
-      "schema_version": 1,
-      "topic_id": "engineer-workspace",
+      "schema_version": 2,
       "title": "Engineer Workspace",
       "goal": "让 Engineer 处理 Case 时拥有明确的 assignment、SLA、证据、审核、回复和关闭边界。",
       "surfaces": [
@@ -260,11 +241,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html",
         "docs/roadmap/phase3.html",
         "docs/feature_list.md"
-      ]
+      ],
+      "module_id": "engineer-workspace"
     },
     {
-      "schema_version": 1,
-      "topic_id": "platform-delivery",
+      "schema_version": 2,
       "title": "Platform Delivery",
       "goal": "保持认证、数据库、部署、可靠性和开发工作流可验证，避免产品进度脱离真实运行证据。",
       "surfaces": [
@@ -291,11 +272,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "AGENTS.md",
         "docs/agent_workflow_details.md",
         "docs/roadmap/phase2.html"
-      ]
+      ],
+      "module_id": "platform-delivery"
     },
     {
-      "schema_version": 1,
-      "topic_id": "rag-knowledge",
+      "schema_version": 2,
       "title": "RAG & Knowledge",
       "goal": "让官网知识、Engineer 知识、检索评测和 KG 辅助信号各司其职，并保留可回溯引用。",
       "surfaces": [
@@ -322,241 +303,711 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap.html",
         "docs/feature_list.md",
         "docs/rag_change_log.md"
-      ]
+      ],
+      "module_id": "rag-knowledge"
+    }
+  ],
+  "functions": [
+    {
+      "schema_version": 2,
+      "function_id": "automation-execution",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Account Automation 执行闭环",
+      "goal": "实现幂等、rerun、Persona 和内部处理的稳定执行链路。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 738,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/738",
+          "label": "PR #738"
+        },
+        {
+          "type": "pr",
+          "number": 739,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/739",
+          "label": "PR #739"
+        },
+        {
+          "type": "pr",
+          "number": 740,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/740",
+          "label": "PR #740"
+        },
+        {
+          "type": "pr",
+          "number": 741,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/741",
+          "label": "PR #741"
+        },
+        {
+          "type": "pr",
+          "number": 742,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/742",
+          "label": "PR #742"
+        },
+        {
+          "type": "pr",
+          "number": 745,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/745",
+          "label": "PR #745"
+        },
+        {
+          "type": "pr",
+          "number": 746,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/746",
+          "label": "PR #746"
+        },
+        {
+          "type": "pr",
+          "number": 747,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/747",
+          "label": "PR #747"
+        },
+        {
+          "type": "pr",
+          "number": 748,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/748",
+          "label": "PR #748"
+        },
+        {
+          "type": "pr",
+          "number": 751,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/751",
+          "label": "PR #751"
+        },
+        {
+          "type": "pr",
+          "number": 732,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/732",
+          "label": "PR #732"
+        },
+        {
+          "type": "pr",
+          "number": 749,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/749",
+          "label": "PR #749"
+        },
+        {
+          "type": "pr",
+          "number": 750,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/750",
+          "label": "PR #750"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html",
+        "docs/feature_list.md",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 5,
+      "done_count": 2,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "controlled-rollout",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Account Automation 受控发布",
+      "goal": "用指标、Replay 和人工审核门禁逐步扩大自动化范围。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 7,
+      "done_count": 0,
+      "blocked_count": 1
+    },
+    {
+      "schema_version": 2,
+      "function_id": "human-review",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "敏感请求 Human Review",
+      "goal": "让失败、低置信和敏感请求进入可解释的人工接管流程。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 744,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
+          "label": "PR #744"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html",
+        "docs/feature_list.md",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 4,
+      "done_count": 1,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "routing-fallback-billing-risk-sniff",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Billing 风险保护 Gate",
+      "goal": "在 Conservative Fallback 前识别高风险 Billing 请求并保留安全边界。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 520,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
+          "label": "PR #520"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [
+        "routing-fallback-billing-risk-sniff"
+      ],
+      "status": "done",
+      "task_count": 1,
+      "done_count": 1,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "routing-quality-validation",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "路由质量验证",
+      "goal": "用 Golden Set、负样本和真实 Replay 持续验证路由质量。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 4,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "routing-taxonomy",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Account 路由分类体系",
+      "goal": "统一 Automation、Human Review、classification-only 和 fallback 的路由边界。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 728,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/728",
+          "label": "PR #728"
+        },
+        {
+          "type": "pr",
+          "number": 731,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
+          "label": "PR #731"
+        },
+        {
+          "type": "pr",
+          "number": 675,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/675",
+          "label": "PR #675"
+        },
+        {
+          "type": "pr",
+          "number": 676,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/676",
+          "label": "PR #676"
+        },
+        {
+          "type": "pr",
+          "number": 680,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/680",
+          "label": "PR #680"
+        },
+        {
+          "type": "pr",
+          "number": 683,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/683",
+          "label": "PR #683"
+        },
+        {
+          "type": "pr",
+          "number": 685,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/685",
+          "label": "PR #685"
+        },
+        {
+          "type": "pr",
+          "number": 686,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/686",
+          "label": "PR #686"
+        },
+        {
+          "type": "pr",
+          "number": 687,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/687",
+          "label": "PR #687"
+        },
+        {
+          "type": "pr",
+          "number": 702,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
+          "label": "PR #702"
+        },
+        {
+          "type": "pr",
+          "number": 709,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/709",
+          "label": "PR #709"
+        },
+        {
+          "type": "pr",
+          "number": 719,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/719",
+          "label": "PR #719"
+        },
+        {
+          "type": "pr",
+          "number": 729,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/729",
+          "label": "PR #729"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [
+        "routing-taxonomy"
+      ],
+      "status": "done",
+      "task_count": 3,
+      "done_count": 3,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "zendesk-delivery",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Zendesk 交付与身份",
+      "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk internal comment response parser and idempotency tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
+          "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
+        },
+        {
+          "type": "test",
+          "label": "Python, frontend and N8n Code syntax checks",
+          "command": "python3 -m py_compile backend/main.py backend/services/account_zendesk_comments.py backend/repositories/ticket_repository.py; node --check ui/account-ui/app.js"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/integrations/n8n/zendesk_account_comment_sync.md",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 3,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "admin-case-operations",
+      "phase_id": "phase-2",
+      "module_id": "admin-operations",
+      "title": "Admin Case 运营控制面",
+      "goal": "提供管理员查看、筛选和追踪 Account Case 的能力。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 735,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/735",
+          "label": "PR #735"
+        },
+        {
+          "type": "pr",
+          "number": 736,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/736",
+          "label": "PR #736"
+        },
+        {
+          "type": "pr",
+          "number": 737,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/737",
+          "label": "PR #737"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 3,
+      "done_count": 1,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "client-conversation-experience",
+      "phase_id": "phase-2",
+      "module_id": "client-experience",
+      "title": "Client 对话体验",
+      "goal": "完善客户侧附件、流式回复和入口体验。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "production-ai-governance",
+      "phase_id": "phase-2",
+      "module_id": "platform-delivery",
+      "title": "生产 AI 治理",
+      "goal": "明确生产 AI 账号、数据留存和客户数据安全边界。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "project-governance",
+      "phase_id": "phase-2",
+      "module_id": "platform-delivery",
+      "title": "项目进度治理",
+      "goal": "维护 Project Overview、Task 标题和 AI 工作规则的单一事实源。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 734,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/734",
+          "label": "PR #734"
+        },
+        {
+          "type": "test",
+          "label": "Project Overview registry and route contract tests",
+          "command": "python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract backend.tests.test_dashboard_routes"
+        },
+        {
+          "type": "test",
+          "label": "Desktop and 390x844 browser verification for board, meetings, functions and handbook"
+        },
+        {
+          "type": "test",
+          "label": "Project Overview registry title and route contract tests",
+          "command": "python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract backend.tests.test_dashboard_routes"
+        },
+        {
+          "type": "test",
+          "label": "Desktop and 390x844 browser verification for renamed Task cards"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md",
+        "docs/projectoverview.html",
+        "backend/tests/test_project_overview_contract.py",
+        "docs/project/tasks"
+      ],
+      "legacy_ids": [],
+      "status": "done",
+      "task_count": 3,
+      "done_count": 3,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "rag-evaluation",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "RAG/KG 效果评测",
+      "goal": "用真实查询、引用和灰度门禁验证知识增强效果。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 3,
+      "done_count": 0,
+      "blocked_count": 1
+    },
+    {
+      "schema_version": 2,
+      "function_id": "rag-ingestion-pipeline",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "RAG/KG 入库流水线",
+      "goal": "建立文档去重、图谱构建、模型选择和异步入库链路。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 4,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "rag-production-platform",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "KG 生产平台",
+      "goal": "确定生产图数据库、配置、Secret 和环境边界。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "rag-scope-governance",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "RAG/KG 使用边界",
+      "goal": "明确 Client AI 和 Engineer AI 的知识使用范围。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-billing-poc",
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "title": "Agent Billing 验证",
+      "goal": "收口 Billing route、回执和提醒的 Agent 验证闭环。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-controlled-replan",
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "title": "Agent 受控重规划",
+      "goal": "让 Multi-Agent 调查支持可审计的 Targeted Replan。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-evidence-evaluation",
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "title": "Agent Evidence 与 Replay",
+      "goal": "建立真实证据工具、Replay 评测和回归门禁。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-governance",
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "title": "Agent 治理与自主边界",
+      "goal": "在证据、权限、成本和审计门禁下控制 Agent 自主行为。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18",
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 7,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agent-workspace-console",
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "title": "Agent Workspace 行动台",
+      "goal": "把 Multi-Agent Run 面板升级为工程师可执行的行动台。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "agentrelay-integration",
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "title": "AgentRelay 协作接入",
+      "goal": "将 AgentRelay 多角色协作接入 Support Case 工作流。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-ai-intake",
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "title": "Engineer AI Intake",
+      "goal": "在 Zendesk Intake 和首次回复之间建立 AI eligibility 与交接边界。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 2,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-case-delivery",
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "title": "Engineer Case 派单交付",
+      "goal": "完成认证、数据库、排班、指标、Slack 和逐步派单。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 7,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-case-handoff",
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "title": "Engineer Case 显式交接",
+      "goal": "把无法自动完成的 Account Case 交给工程师并保留状态边界。",
+      "acceptance_criteria": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
     }
   ],
   "tasks": [
     {
-      "schema_version": 1,
-      "task_id": "AG-01",
-      "title": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "phase-1",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "zac / 团队",
-      "summary": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "用真实 Zendesk Case 验证 route、内部请求、回执、关单和指标。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "agent-system-2026-06-18",
-          "item_id": "AG-01"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "AG-02",
-      "title": "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "phase-1",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "项目团队",
-      "summary": "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "为三类 Case 建立统一处理和升级契约。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "agent-system-2026-06-18",
-          "item_id": "AG-02"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "AG-03",
-      "title": "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "phase-1",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "项目团队",
-      "summary": "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "抽样检查客户回复、内部日志、权限和历史留存。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "agent-system-2026-06-18",
-          "item_id": "AG-03"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "AG-04",
-      "title": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "phase-1",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "项目团队",
-      "summary": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "覆盖已回复、超时和内部任务无法完成三条路径。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "agent-system-2026-06-18",
-          "item_id": "AG-04"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "AG-05",
-      "title": "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "phase-1",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "项目团队",
-      "summary": "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "比较边界覆盖、效果、token 成本、权限和可审计性。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "agent-system-2026-06-18",
-          "item_id": "AG-05"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "AG-06",
-      "title": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "phase-1",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "项目团队",
-      "summary": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "Roadmap 和 Meeting 页面均不把通信基础误写成自主闭环。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "created_at": "2026-06-18",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "agent-system-2026-06-18",
-          "item_id": "AG-06"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-01",
-      "title": "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-01",
+      "title": "建立 Fraud、Account Suspension、Billing 与 Enablement 路由基线",
       "status": "done",
-      "priority": "unclassified",
       "owner": "zac",
       "summary": "调整 Fraud、Account Suspension、Billing / Invoice、Enablement 的路由和后续动作。",
       "next_action": "",
@@ -642,6 +1093,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
         }
       ],
       "legacy_refs": [
@@ -650,17 +1106,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "meeting_id": "ticketing-system-2026-08-10",
           "item_id": "TS-01"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "TS-01"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-taxonomy"
     },
     {
-      "schema_version": 1,
-      "task_id": "TS-02",
-      "title": "新增并完善 Compliance / Security 分类。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-02",
+      "title": "建立 Compliance 与 Security 分类及人工边界",
       "status": "done",
-      "priority": "unclassified",
       "owner": "zac",
       "summary": "新增并完善 Compliance / Security 分类。",
       "next_action": "",
@@ -692,6 +1150,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
         }
       ],
       "legacy_refs": [
@@ -700,41 +1163,64 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "meeting_id": "ticketing-system-2026-08-10",
           "item_id": "TS-02"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "routing-security-compliance",
+        "TS-02"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-taxonomy"
     },
     {
-      "schema_version": 1,
-      "task_id": "TS-03",
-      "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
-      "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
+      "schema_version": 2,
+      "task_id": "p2-03",
+      "title": "完成 Fraud 与 Account Suspension 字段契约和人工判断边界",
+      "status": "done",
+      "owner": "suhird / bdr",
+      "summary": "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。",
+      "next_action": "",
       "acceptance_criteria": [
-        "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
+        "覆盖 Fraud、余额、套餐限制等停用原因，并能转 Support 介入。"
       ],
       "blockers": [],
       "evidence": [
         {
-          "type": "test",
-          "label": "Zendesk internal comment response parser and idempotency tests",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+          "type": "pr",
+          "number": 683,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/683",
+          "label": "PR #683"
         },
         {
-          "type": "test",
-          "label": "Account UI contract tests",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+          "type": "pr",
+          "number": 685,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/685",
+          "label": "PR #685"
+        },
+        {
+          "type": "pr",
+          "number": 686,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/686",
+          "label": "PR #686"
+        },
+        {
+          "type": "pr",
+          "number": 687,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/687",
+          "label": "PR #687"
+        },
+        {
+          "type": "pr",
+          "number": 702,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
+          "label": "PR #702"
         }
       ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-17",
+      "updated_at": "2026-08-16",
       "history": [
         {
           "at": "2026-08-16",
@@ -743,194 +1229,250 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "at": "2026-08-17",
-          "event": "internal_comment_response_parser_fixed",
-          "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
         }
       ],
       "legacy_refs": [
         {
           "source": "docs/roadmap/meetings.html",
           "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-03"
+          "item_id": "TS-09"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "phase2-fraud-field-contract",
+        "TS-09"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-taxonomy"
     },
     {
-      "schema_version": 1,
-      "task_id": "TS-04",
-      "title": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "已与 Brent Guo 确认使用 OpenAI 官方 API key；官方政策默认不用于训练，但默认 abuse monitoring logs 可能保留最长 30 天，当前项目组织/项目级 retention control 与 ZDR 资格仍需核实。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-04"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-05",
-      "title": "增加 AI 故障告警和人工接管机制。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "review",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "增加 AI 故障告警和人工接管机制。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-05"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-06",
-      "title": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "完成发送身份的端到端测试，不使用个人账号。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-06"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-07",
-      "title": "在 Admin Dashboard 中增加 Zendesk Ticket 直达链接。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "legacy_ids": [],
+      "task_id": "p2-04",
+      "title": "实现确定性 Billing 风险保护 Gate",
+      "summary": "在 Conservative Fallback 前识别 Billing 风险，避免高风险请求被错误自动化处理。",
       "status": "done",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "在 Admin Dashboard 中增加 Zendesk Ticket 直达链接。",
+      "owner": "Zac",
       "next_action": "",
       "acceptance_criteria": [
-        "Automated Cases 的 Source 复用 /account 规则，支持对象、普通 URL 和 JSON 字符串形式的 Zendesk Source，并渲染为可点击的 zen#\u003cticket_id> 链接；Source 列不重复显示内部 Account Case ID。"
+        "Billing 风险 Gate 在语义测试中可验证，并将高风险路径保留给人工处理。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "pr",
-          "number": 735,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/735",
-          "label": "PR #735"
-        },
-        {
-          "type": "pr",
-          "number": 736,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/736",
-          "label": "PR #736"
-        },
-        {
-          "type": "pr",
-          "number": 737,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/737",
-          "label": "PR #737"
+          "number": 520,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
+          "label": "PR #520"
         }
       ],
       "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+        "docs/roadmap.html",
+        "docs/feature_list.md"
       ],
-      "created_at": "2026-08-10",
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "created",
+          "summary": "从已完成的 Billing 风险 Gate Function 拆出可验收 Task。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-fallback-billing-risk-sniff。"
+        }
+      ],
+      "legacy_refs": [],
+      "schema_version": 2,
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-fallback-billing-risk-sniff"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-05",
+      "title": "监控真实 Zendesk Replay Set 的路由与自动化质量",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。",
+      "next_action": "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。",
+      "acceptance_criteria": [
+        "完成 Monitor 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
       "updated_at": "2026-08-16",
       "history": [
         {
           "at": "2026-08-16",
           "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+          "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
         }
       ],
       "legacy_refs": [
         {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-07"
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-monitor-replay-quality"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "billing-monitor-replay-quality"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-quality-validation"
     },
     {
-      "schema_version": 1,
-      "task_id": "TS-08",
-      "title": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-06",
+      "title": "扩展 Billing 高风险负样本集",
       "status": "planned",
-      "priority": "unclassified",
+      "owner": "unassigned",
+      "summary": "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。",
+      "next_action": "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。",
+      "acceptance_criteria": [
+        "完成 Safety 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-billing-risky-negatives"
+        }
+      ],
+      "legacy_ids": [
+        "routing-billing-risky-negatives"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-quality-validation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-07",
+      "title": "扩展真实 Zendesk Replay Set 覆盖范围",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
+      "next_action": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
+      "acceptance_criteria": [
+        "完成 Monitor 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-real-zendesk-replay"
+        }
+      ],
+      "legacy_ids": [
+        "routing-real-zendesk-replay"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-quality-validation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-08",
+      "title": "扩展 Billing 路由边界 Golden Set",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
+      "next_action": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
+      "acceptance_criteria": [
+        "完成 Tests 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / routing-quality-validation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-semantic-golden-expand"
+        }
+      ],
+      "legacy_ids": [
+        "routing-semantic-golden-expand"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "routing-quality-validation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-09",
+      "title": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
+      "status": "planned",
       "owner": "jojo",
       "summary": "承接 Billing 和 Detailed Invoice 工单并完成端到端验证。",
       "next_action": "补齐验收证据并更新状态。",
@@ -949,6 +1491,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [
@@ -957,204 +1504,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "meeting_id": "ticketing-system-2026-08-10",
           "item_id": "TS-08"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "TS-08"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "automation-execution"
     },
     {
-      "schema_version": 1,
-      "task_id": "TS-09",
-      "title": "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "suhird / bdr",
-      "summary": "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "覆盖 Fraud、余额、套餐限制等停用原因，并能转 Support 介入。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-09"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-10",
-      "title": "人工接管 Compliance、Security、法务及其他敏感工单。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "emma / derek",
-      "summary": "人工接管 Compliance、Security、法务及其他敏感工单。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "客户侧不泄露内部信息，Case 保持统一人工口径。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-10"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-11",
-      "title": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "zac / emma / derek",
-      "summary": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "连续两天记录分类、回复、内部转交、关单和异常结果。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-11"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "TS-12",
-      "title": "补齐 Admin Dashboard 的重点客户过滤。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "补齐 Admin Dashboard 的重点客户过滤。",
-      "next_action": "补齐验收证据并更新状态。",
-      "acceptance_criteria": [
-        "需要明确并接入 Tag、CID、Requester Email 等重点客户数据来源和过滤路径。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "created_at": "2026-08-10",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap/meetings.html",
-          "meeting_id": "ticketing-system-2026-08-10",
-          "item_id": "TS-12"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "account-failure-alerts",
-      "title": "Account 失败后的 Human Review 和负责人告警",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "done",
-      "priority": "unclassified",
-      "owner": "Zac",
-      "summary": "重试耗尽后停止客户回复并发送脱敏故障告警。",
-      "next_action": "",
-      "acceptance_criteria": [
-        "重试耗尽后停止客户回复并发送脱敏故障告警。"
-      ],
-      "blockers": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 744,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
-          "label": "PR #744"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
-        }
-      ],
-      "legacy_refs": []
-    },
-    {
-      "schema_version": 1,
-      "task_id": "account-rerun-recovery",
+      "schema_version": 2,
+      "task_id": "p2-10",
       "title": "Account full rerun 的恢复、幂等和 fail-fast",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "done",
-      "priority": "unclassified",
       "owner": "Zac",
       "summary": "Rerun 具备冻结、preflight、恢复和结果边界。",
       "next_action": "",
@@ -1235,573 +1597,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / automation-execution。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "account-rerun-recovery"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "automation-execution"
     },
     {
-      "schema_version": 1,
-      "task_id": "admin-environment-config-inventory",
-      "title": "仅展示 Admin Environment Config 名称清单",
-      "topic_id": "admin-operations",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "只展示合法配置名，不返回 value 或 value-derived metadata。",
-      "next_action": "只展示合法配置名，不返回 value 或 value-derived metadata。",
-      "acceptance_criteria": [
-        "只展示合法配置名，不返回 value 或 value-derived metadata。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
-        }
-      ],
-      "legacy_refs": []
-    },
-    {
-      "schema_version": 1,
-      "task_id": "agent-rules",
-      "title": "AI 项目维护规则和详细流程分层",
-      "topic_id": "platform-delivery",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "done",
-      "priority": "unclassified",
-      "owner": "Zac",
-      "summary": "热路径规则和按需读取的工作流细节已分离。",
-      "next_action": "",
-      "acceptance_criteria": [
-        "热路径规则和按需读取的工作流细节已分离。"
-      ],
-      "blockers": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 734,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/734",
-          "label": "PR #734"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
-        }
-      ],
-      "legacy_refs": []
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-auth-hardening",
-      "title": "加固生产认证 Secret、Session 失效与 RBAC 验证",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "active",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
-      "next_action": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
-      "acceptance_criteria": [
-        "完成 Security 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-auth-hardening"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-legacy-cleanup",
-      "title": "清理 Legacy Engineer Case 状态、旧 UI 与兼容逻辑",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。",
-      "next_action": "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。",
-      "acceptance_criteria": [
-        "完成 Cleanup 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-legacy-cleanup"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-live-postgres",
-      "title": "在真实 PostgreSQL 环境验证派单与审计写入",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "active",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。",
-      "next_action": "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。",
-      "acceptance_criteria": [
-        "完成 Reliability 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-live-postgres"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-metrics",
-      "title": "完善 Engineer 派单、SLA 与排班覆盖指标",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "active",
-      "priority": "P2",
-      "owner": "unassigned",
-      "summary": "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。",
-      "next_action": "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。",
-      "acceptance_criteria": [
-        "完成 Metrics 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-metrics"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-phase3-admin-sync",
-      "title": "在 Admin Dashboard 展示并同步 Slack 派单状态",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
-      "next_action": "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
-      "acceptance_criteria": [
-        "完成 Admin 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-phase3-admin-sync"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-phase3-eligibility",
-      "title": "为 Zendesk Intake 增加 AI Eligibility Gate",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
-      "next_action": "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
-      "acceptance_criteria": [
-        "完成 Eligibility 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-phase3-eligibility"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-phase3-first-reply",
-      "title": "AI 完成首次有效回复后自动转交工程师",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
-      "next_action": "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
-      "acceptance_criteria": [
-        "完成 First Reply 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-phase3-first-reply"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-phase3-slack",
-      "title": "通过 Slack 向工程师送达 Round Robin 派单",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
-      "next_action": "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
-      "acceptance_criteria": [
-        "完成 Slack 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-phase3-slack"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "assign-rollout",
-      "title": "从 10% Engineer Case 试运行逐步切换到全量派单",
-      "topic_id": "engineer-workspace",
-      "related_topic_ids": [],
-      "milestone_id": "phase-3-engineer-workflow",
-      "status": "active",
-      "priority": "P1",
-      "owner": "unassigned",
-      "summary": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
-      "next_action": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
-      "acceptance_criteria": [
-        "完成 Rollout 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane assignment-ui 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "assignment-ui",
-          "item_id": "assign-rollout"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-dashboard-metrics",
-      "title": "定义 Account Automation Dashboard 与 Monitor 指标",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
-      "next_action": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
-      "acceptance_criteria": [
-        "完成 Metrics 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-dashboard-metrics"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-expand",
-      "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "blocked",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
-      "next_action": "明确解除 blocker 的验证步骤。",
-      "acceptance_criteria": [
-        "完成 Decision 维度的交付和验证。"
-      ],
-      "blockers": [
-        "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。"
-      ],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-expand"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-human-review",
-      "title": "建立 Billing 人工审核与客户回复工作流",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
-      "next_action": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
-      "acceptance_criteria": [
-        "完成 Review 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-human-review"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-human-review-handoff",
-      "title": "设计 Account Human Review 到 Engineer Case 的显式交接",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
-      "next_action": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
-      "acceptance_criteria": [
-        "完成 Later 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-human-review-handoff"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-idempotency",
+      "schema_version": 2,
+      "task_id": "p2-11",
       "title": "保障 Zendesk Webhook 建单、派单与邮件发送幂等",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "active",
-      "priority": "unclassified",
       "owner": "unassigned",
       "summary": "验证 Zendesk/external ID 幂等与异常恢复，确保重复 webhook 不重复建单、派单或发送内部邮件。",
       "next_action": "验证 Zendesk/external ID 幂等与异常恢复，确保重复 webhook 不重复建单、派单或发送内部邮件。",
@@ -1835,6 +1650,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [
@@ -1843,91 +1663,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "lane_id": "billing-routing",
           "item_id": "billing-idempotency"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "billing-idempotency"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "automation-execution"
     },
     {
-      "schema_version": 1,
-      "task_id": "billing-monitor-automation-outcomes",
-      "title": "监控 Account Automation 执行结果与失败原因",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。",
-      "next_action": "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。",
-      "acceptance_criteria": [
-        "完成 Monitor 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-monitor-automation-outcomes"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-monitor-replay-quality",
-      "title": "监控真实 Zendesk Replay Set 的路由与自动化质量",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。",
-      "next_action": "Monitor real Zendesk replay set：持续看 invoice request、account suspension、company verification、非 billing、billing risky negative set 和 Not automated case 的 route_accuracy、automation_coverage、not_automated_reason 与 response_latency。",
-      "acceptance_criteria": [
-        "完成 Monitor 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane billing-routing 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "billing-routing",
-          "item_id": "billing-monitor-replay-quality"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "billing-persona-registry",
+      "schema_version": 2,
+      "task_id": "p2-12",
       "title": "Account Automation Persona registry 与 ownership 回复",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "done",
-      "priority": "unclassified",
       "owner": "Zac",
       "summary": "Persona preset、版本固定和客户 ownership 回复已交付。",
       "next_action": "",
@@ -1960,19 +1708,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / automation-execution。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "billing-persona-registry"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "automation-execution"
     },
     {
-      "schema_version": 1,
-      "task_id": "billing-recipient-env",
+      "schema_version": 2,
+      "task_id": "p2-13",
       "title": "配置并验证 Automation 内部处理邮箱",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "planned",
-      "priority": "P2",
       "owner": "unassigned",
       "summary": "P2：正式测试前完成 action-specific 内部邮箱 env 配置与部署校验。",
       "next_action": "P2：正式测试前完成 action-specific 内部邮箱 env 配置与部署校验。",
@@ -1991,6 +1746,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / automation-execution。"
         }
       ],
       "legacy_refs": [
@@ -1999,17 +1759,814 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "lane_id": "billing-routing",
           "item_id": "billing-recipient-env"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "billing-recipient-env"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "automation-execution"
     },
     {
-      "schema_version": 1,
-      "task_id": "client-rich-attachments",
-      "title": "Client 对话支持图片和更多日志附件",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-14",
+      "title": "人工接管 Compliance、Security、法务及其他敏感工单。",
       "status": "planned",
-      "priority": "unclassified",
+      "owner": "emma / derek",
+      "summary": "人工接管 Compliance、Security、法务及其他敏感工单。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "客户侧不泄露内部信息，Case 保持统一人工口径。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / human-review。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-10"
+        }
+      ],
+      "legacy_ids": [
+        "TS-10"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "human-review"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-15",
+      "title": "在 Account 处理失败后触发告警并进入 Human Review",
+      "status": "done",
+      "owner": "zac",
+      "summary": "增加 AI 故障告警和人工接管机制。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 744,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
+          "label": "PR #744"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / human-review。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-05"
+        }
+      ],
+      "legacy_ids": [
+        "account-failure-alerts",
+        "TS-05"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "human-review"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-16",
+      "title": "建立 Billing 人工审核与客户回复工作流",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
+      "next_action": "建立人工审核模式：先审核 route 与 automation 状态，再验证 engineer reply 通过/拒绝、revise/override 和 customer-facing reply 延迟发送。",
+      "acceptance_criteria": [
+        "完成 Review 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / human-review。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-human-review"
+        }
+      ],
+      "legacy_ids": [
+        "billing-human-review"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "human-review"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-17",
+      "title": "为 Billing Review 建立人工审核与内部待办",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。",
+      "next_action": "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。",
+      "acceptance_criteria": [
+        "完成 Customer Experience 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / human-review。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-billing-review-customer-experience"
+        }
+      ],
+      "legacy_ids": [
+        "routing-billing-review-customer-experience"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "human-review"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-18",
+      "title": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
+      "status": "planned",
+      "owner": "zac",
+      "summary": "完成 AI 回复写回 Zendesk：internal comment 阶段已完成，external/customer reply 仍未完成。",
+      "next_action": "扩展 external/customer reply 写回并完成发送身份验收。",
+      "acceptance_criteria": [
+        "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果；external/customer reply 的真实写回与发送身份验收仍待完成。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk internal comment response parser and idempotency tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "internal_comment_response_parser_fixed",
+          "summary": "修正 Zendesk Update Ticket 顶层 audit.events Comment 解析，并保留 outcome_unknown 幂等保护。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-03"
+        }
+      ],
+      "legacy_ids": [
+        "TS-03"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "zendesk-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-19",
+      "title": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
+      "status": "planned",
+      "owner": "zac",
+      "summary": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "完成发送身份的端到端测试，不使用个人账号。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-06"
+        }
+      ],
+      "legacy_ids": [
+        "TS-06"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "zendesk-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-20",
+      "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
+      "status": "active",
+      "owner": "zac",
+      "summary": "通过 Zendesk users side-load 补齐评论作者姓名和身份，并在 Account 中派生 is_agent。",
+      "next_action": "将 include=users 的 comment-sync workflow 部署到 n8n，并完成公网 Case 验收。",
+      "acceptance_criteria": [
+        "Account Zendesk comments 保存作者姓名和 author_kind，并派生 is_agent；public customer、public Support Engineer、internal note 和未知作者均有明确展示。",
+        "N8n 完整评论快照按 author_id 合并 Zendesk users，重放保持幂等，无法确认身份时不得静默标记为 Agent。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
+          "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
+        },
+        {
+          "type": "test",
+          "label": "Python, frontend and N8n Code syntax checks",
+          "command": "python3 -m py_compile backend/main.py backend/services/account_zendesk_comments.py backend/repositories/ticket_repository.py; node --check ui/account-ui/app.js"
+        }
+      ],
+      "source_refs": [
+        "docs/integrations/n8n/zendesk_account_comment_sync.md",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "created",
+          "summary": "为 Zendesk Account comment sync 作者身份增强建立 Project Task。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / zendesk-delivery。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "zendesk-account-comment-identity"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "zendesk-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-21",
+      "title": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
+      "status": "active",
+      "owner": "zac / emma / derek",
+      "summary": "受控试运行期间每天复盘前一天 AI 处理的全部 Case。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "连续两天记录分类、回复、内部转交、关单和异常结果。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-11"
+        }
+      ],
+      "legacy_ids": [
+        "TS-11"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-22",
+      "title": "定义 Account Automation Dashboard 与 Monitor 指标",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
+      "next_action": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、approve/reject rate、SLA risk 和 internal_email_send_status。",
+      "acceptance_criteria": [
+        "完成 Metrics 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-dashboard-metrics"
+        }
+      ],
+      "legacy_ids": [
+        "billing-dashboard-metrics"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-23",
+      "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
+      "status": "blocked",
+      "owner": "unassigned",
+      "summary": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
+      "next_action": "明确解除 blocker 的验证步骤。",
+      "acceptance_criteria": [
+        "完成 Decision 维度的交付和验证。"
+      ],
+      "blockers": [
+        "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。"
+      ],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-expand"
+        }
+      ],
+      "legacy_ids": [
+        "billing-expand"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-24",
+      "title": "监控 Account Automation 执行结果与失败原因",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。",
+      "next_action": "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。",
+      "acceptance_criteria": [
+        "完成 Monitor 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-monitor-automation-outcomes"
+        }
+      ],
+      "legacy_ids": [
+        "billing-monitor-automation-outcomes"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-25",
+      "title": "按 Replay 与指标门禁逐步开放 Account Automation",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+      "next_action": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+      "acceptance_criteria": [
+        "完成 Rollout 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-automation-rollout"
+        }
+      ],
+      "legacy_ids": [
+        "routing-automation-rollout"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-26",
+      "title": "在 Dashboard 展示 Automation Controlled Launch 指标",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。",
+      "next_action": "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。",
+      "acceptance_criteria": [
+        "完成 Metrics 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-dashboard-metrics"
+        }
+      ],
+      "legacy_ids": [
+        "routing-dashboard-metrics"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-27",
+      "title": "建立 Automation Rollout 三态 Taxonomy",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。",
+      "next_action": "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。",
+      "acceptance_criteria": [
+        "完成 Contract 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane routing-rules 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "routing-rules",
+          "item_id": "routing-rollout-taxonomy"
+        }
+      ],
+      "legacy_ids": [
+        "routing-rollout-taxonomy"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "controlled-rollout"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-28",
+      "title": "为 Admin Case 提供 Zendesk Ticket 直达链接",
+      "status": "done",
+      "owner": "zac",
+      "summary": "在 Admin Dashboard 中增加 Zendesk Ticket 直达链接。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Automated Cases 的 Source 复用 /account 规则，支持对象、普通 URL 和 JSON 字符串形式的 Zendesk Source，并渲染为可点击的 zen#\u003cticket_id> 链接；Source 列不重复显示内部 Account Case ID。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "pr",
+          "number": 735,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/735",
+          "label": "PR #735"
+        },
+        {
+          "type": "pr",
+          "number": 736,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/736",
+          "label": "PR #736"
+        },
+        {
+          "type": "pr",
+          "number": 737,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/737",
+          "label": "PR #737"
+        }
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / admin-operations / admin-case-operations。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-07"
+        }
+      ],
+      "legacy_ids": [
+        "TS-07"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-29",
+      "title": "补齐 Admin Dashboard 的重点客户过滤。",
+      "status": "planned",
+      "owner": "zac",
+      "summary": "补齐 Admin Dashboard 的重点客户过滤。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "需要明确并接入 Tag、CID、Requester Email 等重点客户数据来源和过滤路径。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "created_at": "2026-08-10",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / admin-operations / admin-case-operations。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-12"
+        }
+      ],
+      "legacy_ids": [
+        "TS-12"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-30",
+      "title": "仅展示 Admin Environment Config 名称清单",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "只展示合法配置名，不返回 value 或 value-derived metadata。",
+      "next_action": "只展示合法配置名，不返回 value 或 value-derived metadata。",
+      "acceptance_criteria": [
+        "只展示合法配置名，不返回 value 或 value-derived metadata。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "seeded",
+          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / admin-operations / admin-case-operations。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [
+        "admin-environment-config-inventory"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-31",
+      "title": "Client 对话支持图片和更多日志附件",
+      "status": "planned",
       "owner": "unassigned",
       "summary": "补齐图片和 txt/log/md 等附件处理。",
       "next_action": "补齐图片和 txt/log/md 等附件处理。",
@@ -2029,19 +2586,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / client-experience / client-conversation-experience。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "client-rich-attachments"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "client-experience",
+      "function_id": "client-conversation-experience"
     },
     {
-      "schema_version": 1,
-      "task_id": "client-streaming-output",
+      "schema_version": 2,
+      "task_id": "p2-32",
       "title": "Client 对话支持流式输出",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "planned",
-      "priority": "unclassified",
       "owner": "unassigned",
       "summary": "定义流式回复、断线和最终消息一致性。",
       "next_action": "定义流式回复、断线和最终消息一致性。",
@@ -2061,658 +2625,85 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / client-experience / client-conversation-experience。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "client-streaming-output"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "client-experience",
+      "function_id": "client-conversation-experience"
     },
     {
-      "schema_version": 1,
-      "task_id": "kg-async-ingest",
-      "title": "将 KG Ingest 后台任务化并联动 RAG 入库",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "P1",
-      "owner": "unassigned",
-      "summary": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
-      "next_action": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
-      "acceptance_criteria": [
-        "完成 Reliability 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-async-ingest"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-benchmark-ab",
-      "title": "用真实查询评估 RAG 与 RAG+KG 的效果门禁",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
-      "next_action": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
-      "acceptance_criteria": [
-        "完成 Evaluation 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-benchmark-ab"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-citations",
-      "title": "保证 KG 客户答案引用回到官网文档证据",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "blocked",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。",
-      "next_action": "明确解除 blocker 的验证步骤。",
-      "acceptance_criteria": [
-        "完成 Safety 维度的交付和验证。"
-      ],
-      "blockers": [
-        "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。"
-      ],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-citations"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-engineer-vs-client",
-      "title": "定义 Client AI 与 Engineer AI 的 KG 使用边界",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-33",
+      "title": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
       "status": "planned",
-      "priority": "P1",
-      "owner": "unassigned",
-      "summary": "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。",
-      "next_action": "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。",
+      "owner": "zac",
+      "summary": "确认生产 AI API 账号、数据留存和客户数据安全要求。",
+      "next_action": "补齐验收证据并更新状态。",
       "acceptance_criteria": [
-        "完成 Access Policy 维度的交付和验证。"
+        "已与 Brent Guo 确认使用 OpenAI 官方 API key；官方政策默认不用于训练，但默认 abuse monitoring logs 可能保留最长 30 天，当前项目组织/项目级 retention control 与 ZDR 资格仍需核实。"
       ],
       "blockers": [],
       "evidence": [],
       "source_refs": [
-        "docs/roadmap.html#lanes"
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
-      "created_at": "2026-08-16",
+      "created_at": "2026-08-10",
       "updated_at": "2026-08-16",
       "history": [
         {
           "at": "2026-08-16",
           "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+          "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / platform-delivery / production-ai-governance。"
         }
       ],
       "legacy_refs": [
         {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-engineer-vs-client"
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "ticketing-system-2026-08-10",
+          "item_id": "TS-04"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "TS-04"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "platform-delivery",
+      "function_id": "production-ai-governance"
     },
     {
-      "schema_version": 1,
-      "task_id": "kg-graph-db",
-      "title": "评估 AWS Neptune 作为生产图数据库",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "P1",
-      "owner": "unassigned",
-      "summary": "P1：基于 sandbox 结果再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选，不阻塞本地 benchmark。",
-      "next_action": "P1：基于 sandbox 结果再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选，不阻塞本地 benchmark。",
+      "schema_version": 2,
+      "task_id": "p2-34",
+      "title": "AI 项目维护规则和详细流程分层",
+      "status": "done",
+      "owner": "Zac",
+      "summary": "热路径规则和按需读取的工作流细节已分离。",
+      "next_action": "",
       "acceptance_criteria": [
-        "完成 Infrastructure 维度的交付和验证。"
+        "热路径规则和按需读取的工作流细节已分离。"
       ],
       "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
+      "evidence": [
         {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+          "type": "pr",
+          "number": 734,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/734",
+          "label": "PR #734"
         }
       ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-graph-db"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-grey-gate",
-      "title": "建立 KG Shadow 与小流量灰度门禁",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。",
-      "next_action": "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。",
-      "acceptance_criteria": [
-        "完成 Rollout 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-grey-gate"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-ingest-model-bakeoff",
-      "title": "完成 GraphRAG Ingest 模型 Bake-off",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
-      "next_action": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
-      "acceptance_criteria": [
-        "完成 Model Eval 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-ingest-model-bakeoff"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-model-config",
-      "title": "固化生产 KG 配置、Secret 与环境变量边界",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "P1",
-      "owner": "unassigned",
-      "summary": "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。",
-      "next_action": "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。",
-      "acceptance_criteria": [
-        "完成 Config 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-model-config"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "kg-offline-graph-build",
-      "title": "在本地 Neo4j 构建完整官方文档知识图谱",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。",
-      "next_action": "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。",
-      "acceptance_criteria": [
-        "完成 Ingest 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "rag-vs-kg",
-          "item_id": "kg-offline-graph-build"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-agent-to-agent-governed-autonomy",
-      "title": "在证据与审计门禁下扩展 Agent-to-Agent 自主调查",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "长期方向：在真实证据工具、replay gate、权限审计和成本门禁达标后，扩大 governed agent-to-agent 自主调查；接入前固定 endpoint/forum/hub 协作和审计协议。",
-      "next_action": "长期方向：在真实证据工具、replay gate、权限审计和成本门禁达标后，扩大 governed agent-to-agent 自主调查；接入前固定 endpoint/forum/hub 协作和审计协议。",
-      "acceptance_criteria": [
-        "完成 Long Term 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-agent-to-agent-governed-autonomy"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-agentrelay-support-integration",
-      "title": "将 AgentRelay 多角色协作接入 Support Case",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：把 AgentRelay communication foundation 接入 SupportPortal 真实 case：Support Agent 创建 task，Billing / Log / R&D / Data Agent 返回 artifact，结果投递回原始 case thread，并进入 guardrail / final approve。",
-      "next_action": "低优先级保留：把 AgentRelay communication foundation 接入 SupportPortal 真实 case：Support Agent 创建 task，Billing / Log / R&D / Data Agent 返回 artifact，结果投递回原始 case thread，并进入 guardrail / final approve。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-agentrelay-support-integration"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-controlled-replan",
-      "title": "为 Multi-Agent 调查恢复受控 Targeted Replan",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：恢复受控 targeted replan：replan_required 只触发缺失证据相关 task，限制 retry / time / token / tool budget，记录每轮 delta，避免整轮盲刷或无限循环。",
-      "next_action": "低优先级保留：恢复受控 targeted replan：replan_required 只触发缺失证据相关 task，限制 retry / time / token / tool budget，记录每轮 delta，避免整轮盲刷或无限循环。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-controlled-replan"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-guardrail-claim-evidence",
-      "title": "用 Claim-to-Evidence 校验客户回复",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。",
-      "next_action": "低优先级保留：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-guardrail-claim-evidence"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-real-evidence-tools",
-      "title": "为 Execute Agent 接入真实证据工具",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：把 Execute Agent 的 allowlisted subagents 接到真实 evidence tools：Case Memory search、internal RAG、official RAG fallback、日志/diagnostic 查询；每个 task result 必须带 provenance、access_mode 和 customer_safe 标记。",
-      "next_action": "低优先级保留：把 Execute Agent 的 allowlisted subagents 接到真实 evidence tools：Case Memory search、internal RAG、official RAG fallback、日志/diagnostic 查询；每个 task result 必须带 provenance、access_mode 和 customer_safe 标记。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-real-evidence-tools"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-replay-runner",
-      "title": "建立 Engineer AI Replay 评测与回归门禁",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量，并跟踪 review_decision、guardrail_block_reason、final_approve_latency、reopen/negative feedback。",
-      "next_action": "低优先级保留：replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量，并跟踪 review_decision、guardrail_block_reason、final_approve_latency、reopen/negative feedback。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-replay-runner"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-rollout-taxonomy-contract",
-      "title": "统一 Route Taxonomy 与 Multi-Agent 生命周期契约",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：打通 route taxonomy 与 multi-agent 生命周期，让 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 成为统一 contract 和 dashboard 维度。",
-      "next_action": "低优先级保留：打通 route taxonomy 与 multi-agent 生命周期，让 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 成为统一 contract 和 dashboard 维度。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-rollout-taxonomy-contract"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "ma-workspace-action-console",
-      "title": "将 Multi-Agent Run 面板升级为工程师行动台",
-      "topic_id": "agent-collaboration",
-      "related_topic_ids": [],
-      "milestone_id": "long-term-agent-collaboration",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "低优先级保留：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。",
-      "next_action": "低优先级保留：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。",
-      "acceptance_criteria": [
-        "完成 Low Priority 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "engineer-multi-agent",
-          "item_id": "ma-workspace-action-console"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "phase2-fraud-field-contract",
-      "title": "明确 Fraud 与 Account Suspension 的字段边界",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "Suhird",
-      "summary": "确定 required/optional 字段，避免缺失字段造成无限追问。",
-      "next_action": "确定 required/optional 字段，避免缺失字段造成无限追问。",
-      "acceptance_criteria": [
-        "确定 required/optional 字段，避免缺失字段造成无限追问。"
-      ],
-      "blockers": [],
-      "evidence": [],
       "source_refs": [
         "docs/roadmap.html",
         "docs/feature_list.md"
@@ -2724,19 +2715,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "seeded",
           "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "agent-rules"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "platform-delivery",
+      "function_id": "project-governance"
     },
     {
-      "schema_version": 1,
-      "task_id": "project-overview",
+      "schema_version": 2,
+      "task_id": "p2-35",
       "title": "建立 SupportPortal Project Overview 单一维护入口",
-      "topic_id": "platform-delivery",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "done",
-      "priority": "unclassified",
       "owner": "Zac",
       "summary": "建立 Project Overview 单一维护入口，并优化任务、会议、功能模块和用户手册的展示与跳转。",
       "next_action": "",
@@ -2744,7 +2742,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "项目资料侧栏移除后，Project Overview 在桌面和移动端均使用完整内容宽度。",
         "任务看板卡片只显示 canonical Task ID 和完整标题，长标题不会越过卡片边界。",
         "会议记录以单行卡片展示，点击后弹窗列出带完整标题的全部关联 Task，并可跳转到对应 Task。",
-        "功能模块使用统一用户可见命名和单列布局，同时保留 topics、topic_id 和原有 hash 深链。",
+        "功能模块按 Module 分组，Function 使用统一用户可见命名和单列布局，同时保留旧 hash 深链。",
         "用户手册展开后的已完成能力数量与标题统计一致。",
         "file URL、正式静态路由、旧 Roadmap URL 和 Project Overview 数据校验保持可用。"
       ],
@@ -2757,7 +2755,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "Desktop and 390x844 browser verification for board, meetings, topics and handbook"
+          "label": "Desktop and 390x844 browser verification for board, meetings, functions and handbook"
         }
       ],
       "source_refs": [
@@ -2783,19 +2781,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "completed",
           "summary": "完成 Project Overview 展示优化，并通过桌面、移动端、数据生成器和路由契约验证。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "project-overview"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "platform-delivery",
+      "function_id": "project-governance"
     },
     {
-      "schema_version": 1,
-      "task_id": "project-task-title-cleanup",
+      "schema_version": 2,
+      "task_id": "p2-36",
       "title": "清理 Project Overview 中无法识别的 Task 标题",
-      "topic_id": "platform-delivery",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "done",
-      "priority": "unclassified",
       "owner": "Zac",
       "summary": "将只显示管理标签、模糊短语或整段说明的 Task 标题改为可独立理解和汇报的功能名称。",
       "next_action": "",
@@ -2834,19 +2839,158 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "completed",
           "summary": "完成 46 个模糊 Task 标题清理，并补充 registry 契约和浏览器验证。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / platform-delivery / project-governance。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [],
+      "legacy_ids": [
+        "project-task-title-cleanup"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "platform-delivery",
+      "function_id": "project-governance"
     },
     {
-      "schema_version": 1,
-      "task_id": "rag-dedupe",
+      "schema_version": 2,
+      "task_id": "p2-37",
+      "title": "将 KG Ingest 后台任务化并联动 RAG 入库",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
+      "next_action": "P1：离线 KG ingest 已具备 chunk hash/schema hash/upsert state 与失败 chunk 不标记成功的基础；后台任务化、RAG 入库联动和 chunk hash → KG node version 失效路径仍待后续阶段。",
+      "acceptance_criteria": [
+        "完成 Reliability 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-async-ingest"
+        }
+      ],
+      "legacy_ids": [
+        "kg-async-ingest"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-ingestion-pipeline"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-38",
+      "title": "完成 GraphRAG Ingest 模型 Bake-off",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
+      "next_action": "P0：用 100 个分层 official-doc chunks 跑 GraphRAG ingest 模型 bake-off：gpt-5.5 / gpt-5.4-mini / gpt-5.4-nano / deepseek-v4-pro / deepseek-v4-flash，按 schema pass、provenance、实体关系质量、unsupported fact、延迟和实际 token 成本选全量建图模型。",
+      "acceptance_criteria": [
+        "完成 Model Eval 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-ingest-model-bakeoff"
+        }
+      ],
+      "legacy_ids": [
+        "kg-ingest-model-bakeoff"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-ingestion-pipeline"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-39",
+      "title": "在本地 Neo4j 构建完整官方文档知识图谱",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。",
+      "next_action": "P0：离线 KG ingest readiness report 与 official-doc chunk export CLI 已实现；模型 bake-off 通过后，在本地 Neo4j 用选定模型 ingest 全量真实 official-doc chunks 并观察 RAG+KG 在线效果。",
+      "acceptance_criteria": [
+        "完成 Ingest 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-offline-graph-build"
+        }
+      ],
+      "legacy_ids": [
+        "kg-offline-graph-build"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-ingestion-pipeline"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-40",
       "title": "建立 RAG 文档去重、主题归并与冲突审查",
-      "topic_id": "rag-knowledge",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
       "status": "planned",
-      "priority": "P1",
       "owner": "unassigned",
       "summary": "P1：推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review，保证 KG 派生来源稳定。",
       "next_action": "P1：推进 RAG 文档 exact dedupe、near-duplicate clustering、canonical topic 和 conflict review，保证 KG 派生来源稳定。",
@@ -2865,6 +3009,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-16",
           "event": "migrated",
           "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-ingestion-pipeline。"
         }
       ],
       "legacy_refs": [
@@ -2873,20 +3022,112 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "lane_id": "rag-vs-kg",
           "item_id": "rag-dedupe"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "rag-dedupe"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-ingestion-pipeline"
     },
     {
-      "schema_version": 1,
-      "task_id": "routing-automation-rollout",
-      "title": "按 Replay 与指标门禁逐步开放 Account Automation",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
+      "schema_version": 2,
+      "task_id": "p2-41",
+      "title": "用真实查询评估 RAG 与 RAG+KG 的效果门禁",
+      "status": "active",
       "owner": "unassigned",
-      "summary": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
-      "next_action": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+      "summary": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
+      "next_action": "P0：rag_benchmark 已支持 rag_vs_rag_plus_kg 模式和 gate report；100 chunk bake-off 只负责建图模型选择，生产 shadow/灰度仍建议补 50–100 个真实 query 后再开。",
+      "acceptance_criteria": [
+        "完成 Evaluation 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-evaluation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-benchmark-ab"
+        }
+      ],
+      "legacy_ids": [
+        "kg-benchmark-ab"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-evaluation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-42",
+      "title": "保证 KG 客户答案引用回到官网文档证据",
+      "status": "blocked",
+      "owner": "unassigned",
+      "summary": "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。",
+      "next_action": "明确解除 blocker 的验证步骤。",
+      "acceptance_criteria": [
+        "完成 Safety 维度的交付和验证。"
+      ],
+      "blockers": [
+        "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。"
+      ],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-evaluation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-citations"
+        }
+      ],
+      "legacy_ids": [
+        "kg-citations"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-evaluation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-43",
+      "title": "建立 KG Shadow 与小流量灰度门禁",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。",
+      "next_action": "P0：生产 flag 暂不开；本地试用效果可先人工观察，进入 shadow/小流量前仍需 telemetry 审计、回滚开关和基准数据。",
       "acceptance_criteria": [
         "完成 Rollout 维度的交付和验证。"
       ],
@@ -2901,31 +3142,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-16",
           "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-evaluation。"
         }
       ],
       "legacy_refs": [
         {
           "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-automation-rollout"
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-grey-gate"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "kg-grey-gate"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-evaluation"
     },
     {
-      "schema_version": 1,
-      "task_id": "routing-billing-review-customer-experience",
-      "title": "为 Billing Review 建立人工审核与内部待办",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-44",
+      "title": "评估 AWS Neptune 作为生产图数据库",
       "status": "planned",
-      "priority": "P0",
       "owner": "unassigned",
-      "summary": "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。",
-      "next_action": "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。",
+      "summary": "P1：基于 sandbox 结果再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选，不阻塞本地 benchmark。",
+      "next_action": "P1：基于 sandbox 结果再比较 AWS Neptune Database/Serverless；Neptune Analytics 仅作为后续离线分析候选，不阻塞本地 benchmark。",
       "acceptance_criteria": [
-        "完成 Customer Experience 维度的交付和验证。"
+        "完成 Infrastructure 维度的交付和验证。"
       ],
       "blockers": [],
       "evidence": [],
@@ -2938,31 +3186,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-16",
           "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-production-platform。"
         }
       ],
       "legacy_refs": [
         {
           "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-billing-review-customer-experience"
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-graph-db"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "kg-graph-db"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-production-platform"
     },
     {
-      "schema_version": 1,
-      "task_id": "routing-billing-risky-negatives",
-      "title": "扩展 Billing 高风险负样本集",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
+      "schema_version": 2,
+      "task_id": "p2-45",
+      "title": "固化生产 KG 配置、Secret 与环境变量边界",
+      "status": "active",
       "owner": "unassigned",
-      "summary": "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。",
-      "next_action": "补 billing risky negative set：refund/dispute/legal/compensation/source-code-sensitive 等风险信号必须进入 billing_review 或人工。",
+      "summary": "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。",
+      "next_action": "P1：离线 CLI 已支持显式 GraphRAG config、schema、state-dir 与 dry-run；后续仍需把生产 KG_* 环境变量边界、secret 管理和 .env 复用策略固化。",
       "acceptance_criteria": [
-        "完成 Safety 维度的交付和验证。"
+        "完成 Config 维度的交付和验证。"
       ],
       "blockers": [],
       "evidence": [],
@@ -2975,29 +3230,916 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-16",
           "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-production-platform。"
         }
       ],
       "legacy_refs": [
         {
           "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-billing-risky-negatives"
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-model-config"
         }
-      ]
+      ],
+      "legacy_ids": [
+        "kg-model-config"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-production-platform"
     },
     {
-      "schema_version": 1,
-      "task_id": "routing-dashboard-metrics",
-      "title": "在 Dashboard 展示 Automation Controlled Launch 指标",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
+      "schema_version": 2,
+      "task_id": "p2-46",
+      "title": "定义 Client AI 与 Engineer AI 的 KG 使用边界",
       "status": "planned",
-      "priority": "P1",
       "owner": "unassigned",
-      "summary": "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。",
-      "next_action": "P1：把 route_accuracy、automation_coverage、fallback_rate、correction_rate、not_automated_reason、response_latency 接到 dashboard，支持 10% 到 100% Controlled Launch 判断。",
+      "summary": "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。",
+      "next_action": "P1：明确 KG 在 Client AI / Engineer AI 的差异化使用：Client AI 永远 RAG 优先 + KG 仅辅助；Engineer AI 调查路径可允许 KG 主入口做多跳查询，但仍需带原文回链。",
+      "acceptance_criteria": [
+        "完成 Access Policy 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane rag-vs-kg 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-2 / rag-knowledge / rag-scope-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "rag-vs-kg",
+          "item_id": "kg-engineer-vs-client"
+        }
+      ],
+      "legacy_ids": [
+        "kg-engineer-vs-client"
+      ],
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-scope-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-01",
+      "title": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
+      "status": "planned",
+      "owner": "zac / 团队",
+      "summary": "收口 billing route 验证、邮件回执和 Dashboard 三项 POC。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "用真实 Zendesk Case 验证 route、内部请求、回执、关单和指标。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "created_at": "2026-06-18",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-billing-poc。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "agent-system-2026-06-18",
+          "item_id": "AG-01"
+        }
+      ],
+      "legacy_ids": [
+        "AG-01"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-billing-poc"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-02",
+      "title": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
+      "status": "planned",
+      "owner": "项目团队",
+      "summary": "验证邮件回执轮询、SLA 提醒和未回复 fallback。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "覆盖已回复、超时和内部任务无法完成三条路径。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "created_at": "2026-06-18",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-billing-poc。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "agent-system-2026-06-18",
+          "item_id": "AG-04"
+        }
+      ],
+      "legacy_ids": [
+        "AG-04"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-billing-poc"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-03",
+      "title": "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。",
+      "status": "planned",
+      "owner": "项目团队",
+      "summary": "确定 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 的边界。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "为三类 Case 建立统一处理和升级契约。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "created_at": "2026-06-18",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "agent-system-2026-06-18",
+          "item_id": "AG-02"
+        }
+      ],
+      "legacy_ids": [
+        "AG-02"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-04",
+      "title": "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。",
+      "status": "planned",
+      "owner": "项目团队",
+      "summary": "建立 customer-facing 与 internal-facing 的敏感信息隔离和审计边界。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "抽样检查客户回复、内部日志、权限和历史留存。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "created_at": "2026-06-18",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "agent-system-2026-06-18",
+          "item_id": "AG-03"
+        }
+      ],
+      "legacy_ids": [
+        "AG-03"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-05",
+      "title": "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。",
+      "status": "planned",
+      "owner": "项目团队",
+      "summary": "用少量真实 Case 对比保守 workflow、成熟 agent 框架和研发 agent 接入方式。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "比较边界覆盖、效果、token 成本、权限和可审计性。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "created_at": "2026-06-18",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "agent-system-2026-06-18",
+          "item_id": "AG-05"
+        }
+      ],
+      "legacy_ids": [
+        "AG-05"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-06",
+      "title": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
+      "status": "active",
+      "owner": "项目团队",
+      "summary": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
+      "next_action": "补齐验收证据并更新状态。",
+      "acceptance_criteria": [
+        "Roadmap 和 Meeting 页面均不把通信基础误写成自主闭环。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "created_at": "2026-06-18",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap/meetings.html",
+          "meeting_id": "agent-system-2026-06-18",
+          "item_id": "AG-06"
+        }
+      ],
+      "legacy_ids": [
+        "AG-06"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-07",
+      "title": "在证据与审计门禁下扩展 Agent-to-Agent 自主调查",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "长期方向：在真实证据工具、replay gate、权限审计和成本门禁达标后，扩大 governed agent-to-agent 自主调查；接入前固定 endpoint/forum/hub 协作和审计协议。",
+      "next_action": "长期方向：在真实证据工具、replay gate、权限审计和成本门禁达标后，扩大 governed agent-to-agent 自主调查；接入前固定 endpoint/forum/hub 协作和审计协议。",
+      "acceptance_criteria": [
+        "完成 Long Term 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-agent-to-agent-governed-autonomy"
+        }
+      ],
+      "legacy_ids": [
+        "ma-agent-to-agent-governed-autonomy"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-08",
+      "title": "用 Claim-to-Evidence 校验客户回复",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。",
+      "next_action": "低优先级保留：强化 Guardrail final 为 claim-to-evidence check：客户回复中的关键结论、步骤、限制和版本条件必须映射到 evidence ref；内部来源只能参与推理，不能直接进入 customer-facing reply。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-guardrail-claim-evidence"
+        }
+      ],
+      "legacy_ids": [
+        "ma-guardrail-claim-evidence"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-09",
+      "title": "统一 Route Taxonomy 与 Multi-Agent 生命周期契约",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：打通 route taxonomy 与 multi-agent 生命周期，让 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 成为统一 contract 和 dashboard 维度。",
+      "next_action": "低优先级保留：打通 route taxonomy 与 multi-agent 生命周期，让 fully_automated、ai_draft_human_approve、unable_to_resolve_handoff 成为统一 contract 和 dashboard 维度。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-rollout-taxonomy-contract"
+        }
+      ],
+      "legacy_ids": [
+        "ma-rollout-taxonomy-contract"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-10",
+      "title": "为 Execute Agent 接入真实证据工具",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：把 Execute Agent 的 allowlisted subagents 接到真实 evidence tools：Case Memory search、internal RAG、official RAG fallback、日志/diagnostic 查询；每个 task result 必须带 provenance、access_mode 和 customer_safe 标记。",
+      "next_action": "低优先级保留：把 Execute Agent 的 allowlisted subagents 接到真实 evidence tools：Case Memory search、internal RAG、official RAG fallback、日志/diagnostic 查询；每个 task result 必须带 provenance、access_mode 和 customer_safe 标记。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-evidence-evaluation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-real-evidence-tools"
+        }
+      ],
+      "legacy_ids": [
+        "ma-real-evidence-tools"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-evidence-evaluation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-11",
+      "title": "建立 Engineer AI Replay 评测与回归门禁",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量，并跟踪 review_decision、guardrail_block_reason、final_approve_latency、reopen/negative feedback。",
+      "next_action": "低优先级保留：replay runner / metrics dashboard / regression gate：基于 replay eval dataset 自动重放并评估 Engineer AI 回复质量，并跟踪 review_decision、guardrail_block_reason、final_approve_latency、reopen/negative feedback。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-evidence-evaluation。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-replay-runner"
+        }
+      ],
+      "legacy_ids": [
+        "ma-replay-runner"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-evidence-evaluation"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-12",
+      "title": "为 Multi-Agent 调查恢复受控 Targeted Replan",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：恢复受控 targeted replan：replan_required 只触发缺失证据相关 task，限制 retry / time / token / tool budget，记录每轮 delta，避免整轮盲刷或无限循环。",
+      "next_action": "低优先级保留：恢复受控 targeted replan：replan_required 只触发缺失证据相关 task，限制 retry / time / token / tool budget，记录每轮 delta，避免整轮盲刷或无限循环。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-controlled-replan。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-controlled-replan"
+        }
+      ],
+      "legacy_ids": [
+        "ma-controlled-replan"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-controlled-replan"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-13",
+      "title": "将 AgentRelay 多角色协作接入 Support Case",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：把 AgentRelay communication foundation 接入 SupportPortal 真实 case：Support Agent 创建 task，Billing / Log / R&D / Data Agent 返回 artifact，结果投递回原始 case thread，并进入 guardrail / final approve。",
+      "next_action": "低优先级保留：把 AgentRelay communication foundation 接入 SupportPortal 真实 case：Support Agent 创建 task，Billing / Log / R&D / Data Agent 返回 artifact，结果投递回原始 case thread，并进入 guardrail / final approve。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agentrelay-integration。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-agentrelay-support-integration"
+        }
+      ],
+      "legacy_ids": [
+        "ma-agentrelay-support-integration"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agentrelay-integration"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-14",
+      "title": "将 Multi-Agent Run 面板升级为工程师行动台",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "低优先级保留：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。",
+      "next_action": "低优先级保留：把 Multi-Agent Run 面板升级为工程师行动台：展示 blocker、缺失信息、证据强度、建议下一问、是否可安全回复，而不仅是只读状态。",
+      "acceptance_criteria": [
+        "完成 Low Priority 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane engineer-multi-agent 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / agent-collaboration / agent-workspace-console。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "engineer-multi-agent",
+          "item_id": "ma-workspace-action-console"
+        }
+      ],
+      "legacy_ids": [
+        "ma-workspace-action-console"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "agent-collaboration",
+      "function_id": "agent-workspace-console"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-15",
+      "title": "为 Zendesk Intake 增加 AI Eligibility Gate",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
+      "next_action": "Phase 3：为 Zendesk intake 增加 AI eligibility gate，大客户、明显生气或高风险客户暂不进入 AI 处理。",
+      "acceptance_criteria": [
+        "完成 Eligibility 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-ai-intake。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-phase3-eligibility"
+        }
+      ],
+      "legacy_ids": [
+        "assign-phase3-eligibility"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-ai-intake"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-16",
+      "title": "AI 完成首次有效回复后自动转交工程师",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
+      "next_action": "Phase 3：AI 只完成首次有效回复和必要信息收集，随后将 case assign 给工程师。",
+      "acceptance_criteria": [
+        "完成 First Reply 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-ai-intake。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-phase3-first-reply"
+        }
+      ],
+      "legacy_ids": [
+        "assign-phase3-first-reply"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-ai-intake"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-17",
+      "title": "加固生产认证 Secret、Session 失效与 RBAC 验证",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
+      "next_action": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
+      "acceptance_criteria": [
+        "完成 Security 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-auth-hardening"
+        }
+      ],
+      "legacy_ids": [
+        "assign-auth-hardening"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-18",
+      "title": "清理 Legacy Engineer Case 状态、旧 UI 与兼容逻辑",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。",
+      "next_action": "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。",
+      "acceptance_criteria": [
+        "完成 Cleanup 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-legacy-cleanup"
+        }
+      ],
+      "legacy_ids": [
+        "assign-legacy-cleanup"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-19",
+      "title": "在真实 PostgreSQL 环境验证派单与审计写入",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。",
+      "next_action": "P0：在真实 PostgreSQL/compose 环境验证 schema migration、账号 upsert、原子派单、SLA reassign 和 audit 写入。",
+      "acceptance_criteria": [
+        "完成 Reliability 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-live-postgres"
+        }
+      ],
+      "legacy_ids": [
+        "assign-live-postgres"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-20",
+      "title": "完善 Engineer 派单、SLA 与排班覆盖指标",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。",
+      "next_action": "P2：完善 first assignment、resolution、overdue、dispatch failure、SLA/schedule reassign 与 schedule coverage 指标。",
       "acceptance_criteria": [
         "完成 Metrics 维度的交付和验证。"
       ],
@@ -3012,297 +4154,208 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-16",
           "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-dashboard-metrics"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "routing-fallback-billing-risk-sniff",
-      "title": "在 Conservative Fallback 前识别 Billing 风险",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "P0",
-      "owner": "unassigned",
-      "summary": "P0：conservative fallback 前增加 billing-risk sniff；LLM 缺凭证、超时或低置信时，invoice wrong/refund/dispute/legal/restore access 不应默认进入 agora_technical/RAG。",
-      "next_action": "P0：conservative fallback 前增加 billing-risk sniff；LLM 缺凭证、超时或低置信时，invoice wrong/refund/dispute/legal/restore access 不应默认进入 agora_technical/RAG。",
-      "acceptance_criteria": [
-        "完成 Safety 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-fallback-billing-risk-sniff"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "routing-real-zendesk-replay",
-      "title": "扩展真实 Zendesk Replay Set 覆盖范围",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
-      "next_action": "维护并扩展 real Zendesk replay monitor：在已接入的 billing replay set 上继续覆盖 invoice request、account suspension、company verification、非 billing、technical handoff 与 billing risky negative set。",
-      "acceptance_criteria": [
-        "完成 Monitor 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-real-zendesk-replay"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "routing-rollout-taxonomy",
-      "title": "建立 Automation Rollout 三态 Taxonomy",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。",
-      "next_action": "新增 rollout taxonomy：fully_automated、ai_draft_human_approve、unable_to_resolve_handoff，路由输出要能映射到三类 case。",
-      "acceptance_criteria": [
-        "完成 Contract 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-rollout-taxonomy"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "routing-security-compliance",
-      "title": "将 Security & Compliance 保持为仅分类人工处理",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "done",
-      "priority": "unclassified",
-      "owner": "Zac",
-      "summary": "敏感请求保持分类和人工边界，不自动生成客户回复。",
-      "next_action": "",
-      "acceptance_criteria": [
-        "敏感请求保持分类和人工边界，不自动生成客户回复。"
-      ],
-      "blockers": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 729,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/729",
-          "label": "PR #729"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
-        }
-      ],
-      "legacy_refs": []
-    },
-    {
-      "schema_version": 1,
-      "task_id": "routing-semantic-golden-expand",
-      "title": "扩展 Billing 路由边界 Golden Set",
-      "topic_id": "client-experience",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "planned",
-      "priority": "unclassified",
-      "owner": "unassigned",
-      "summary": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
-      "next_action": "扩展 golden set：billing terms change、pricing inquiry、plan upgrade、multi-account 等边界 case。",
-      "acceptance_criteria": [
-        "完成 Tests 维度的交付和验证。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "docs/roadmap.html#lanes"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
-        {
-          "at": "2026-08-16",
-          "event": "migrated",
-          "summary": "从 Roadmap lane routing-rules 迁移。"
-        }
-      ],
-      "legacy_refs": [
-        {
-          "source": "docs/roadmap.html",
-          "lane_id": "routing-rules",
-          "item_id": "routing-semantic-golden-expand"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "task_id": "routing-taxonomy",
-      "title": "统一 Account Route Taxonomy 与 Filter Membership",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "Zac",
-      "summary": "区分 registered Automation、Human Review 和诊断 fallback。",
-      "next_action": "区分 registered Automation、Human Review 和诊断 fallback。",
-      "acceptance_criteria": [
-        "区分 registered Automation、Human Review 和诊断 fallback。"
-      ],
-      "blockers": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 728,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/728",
-          "label": "PR #728"
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
         },
         {
-          "type": "pr",
-          "number": 731,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
-          "label": "PR #731"
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
         }
       ],
-      "source_refs": [
-        "docs/roadmap.html",
-        "docs/feature_list.md"
-      ],
-      "created_at": "2026-08-16",
-      "updated_at": "2026-08-16",
-      "history": [
+      "legacy_refs": [
         {
-          "at": "2026-08-16",
-          "event": "seeded",
-          "summary": "从 Roadmap、Meeting、PR 或 Feature List 汇总。"
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-metrics"
         }
       ],
-      "legacy_refs": []
+      "legacy_ids": [
+        "assign-metrics"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
     },
     {
-      "schema_version": 1,
-      "task_id": "zendesk-account-comment-identity",
-      "title": "补齐 Zendesk Account 评论作者身份与 Support Engineer/Customer 展示。",
-      "topic_id": "account-automation",
-      "related_topic_ids": [],
-      "milestone_id": "phase-2-controlled-validation",
-      "status": "active",
-      "priority": "unclassified",
-      "owner": "zac",
-      "summary": "通过 Zendesk users side-load 补齐评论作者姓名和身份，并在 Account 中派生 is_agent。",
-      "next_action": "将 include=users 的 comment-sync workflow 部署到 n8n，并完成公网 Case 验收。",
+      "schema_version": 2,
+      "task_id": "p3-21",
+      "title": "在 Admin Dashboard 展示并同步 Slack 派单状态",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
+      "next_action": "Phase 3：Admin Dashboard 补充 Slack 送达状态，并把 Admin-only reassign 结果同步到 Slack。",
       "acceptance_criteria": [
-        "Account Zendesk comments 保存作者姓名和 author_kind，并派生 is_agent；public customer、public Support Engineer、internal note 和未知作者均有明确展示。",
-        "N8n 完整评论快照按 author_id 合并 Zendesk users，重放保持幂等，无法确认身份时不得静默标记为 Agent。"
+        "完成 Admin 维度的交付和验证。"
       ],
       "blockers": [],
-      "evidence": [
-        {
-          "type": "test",
-          "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
-          "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
-        },
-        {
-          "type": "test",
-          "label": "Python, frontend and N8n Code syntax checks",
-          "command": "python3 -m py_compile backend/main.py backend/services/account_zendesk_comments.py backend/repositories/ticket_repository.py; node --check ui/account-ui/app.js"
-        }
-      ],
+      "evidence": [],
       "source_refs": [
-        "docs/integrations/n8n/zendesk_account_comment_sync.md",
-        "docs/feature_list.md"
+        "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
       "updated_at": "2026-08-16",
       "history": [
         {
           "at": "2026-08-16",
-          "event": "created",
-          "summary": "为 Zendesk Account comment sync 作者身份增强建立 Project Task。"
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
         }
       ],
-      "legacy_refs": []
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-phase3-admin-sync"
+        }
+      ],
+      "legacy_ids": [
+        "assign-phase3-admin-sync"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-22",
+      "title": "通过 Slack 向工程师送达 Round Robin 派单",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
+      "next_action": "Phase 3：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
+      "acceptance_criteria": [
+        "完成 Slack 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-phase3-slack"
+        }
+      ],
+      "legacy_ids": [
+        "assign-phase3-slack"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-23",
+      "title": "从 10% Engineer Case 试运行逐步切换到全量派单",
+      "status": "active",
+      "owner": "unassigned",
+      "summary": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
+      "next_action": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
+      "acceptance_criteria": [
+        "完成 Rollout 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane assignment-ui 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "assignment-ui",
+          "item_id": "assign-rollout"
+        }
+      ],
+      "legacy_ids": [
+        "assign-rollout"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p3-24",
+      "title": "设计 Account Human Review 到 Engineer Case 的显式交接",
+      "status": "planned",
+      "owner": "unassigned",
+      "summary": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
+      "next_action": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
+      "acceptance_criteria": [
+        "完成 Later 维度的交付和验证。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "docs/roadmap.html#lanes"
+      ],
+      "created_at": "2026-08-16",
+      "updated_at": "2026-08-16",
+      "history": [
+        {
+          "at": "2026-08-16",
+          "event": "migrated",
+          "summary": "从 Roadmap lane billing-routing 迁移。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-handoff。"
+        }
+      ],
+      "legacy_refs": [
+        {
+          "source": "docs/roadmap.html",
+          "lane_id": "billing-routing",
+          "item_id": "billing-human-review-handoff"
+        }
+      ],
+      "legacy_ids": [
+        "billing-human-review-handoff"
+      ],
+      "phase_id": "phase-3",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-handoff"
     }
   ],
   "meetings": [
     {
-      "schema_version": 1,
+      "schema_version": 2,
       "meeting_id": "ticketing-system-2026-08-10",
       "date": "2026-08-10",
       "title": "Ticketing System 第一阶段对齐会",
@@ -3318,6 +4371,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "decisions": [],
       "open_questions": [],
       "task_ids": [
+        "p2-01",
+        "p2-02",
+        "p2-18",
+        "p2-33",
+        "p2-15",
+        "p2-19",
+        "p2-28",
+        "p2-29",
+        "p2-09",
+        "p2-03",
+        "p2-14",
+        "p2-21"
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+      ],
+      "legacy_anchor": "./roadmap/meetings.html#ticketing-system-2026-08-10",
+      "function_ids": [],
+      "legacy_task_ids": [
         "TS-01",
         "TS-02",
         "TS-03",
@@ -3330,14 +4402,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "TS-09",
         "TS-10",
         "TS-11"
-      ],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-      ],
-      "legacy_anchor": "./roadmap/meetings.html#ticketing-system-2026-08-10"
+      ]
     },
     {
-      "schema_version": 1,
+      "schema_version": 2,
       "meeting_id": "agent-system-2026-06-18",
       "date": "2026-06-18",
       "title": "AI Agent 工单系统落地对齐会",
@@ -3351,17 +4419,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "decisions": [],
       "open_questions": [],
       "task_ids": [
+        "p3-01",
+        "p3-03",
+        "p3-04",
+        "p3-02",
+        "p3-05",
+        "p3-06"
+      ],
+      "source_refs": [
+        "docs/roadmap/meetings.html#agent-system-2026-06-18"
+      ],
+      "legacy_anchor": "./roadmap/meetings.html#agent-system-2026-06-18",
+      "function_ids": [],
+      "legacy_task_ids": [
         "AG-01",
         "AG-02",
         "AG-03",
         "AG-04",
         "AG-05",
         "AG-06"
-      ],
-      "source_refs": [
-        "docs/roadmap/meetings.html#agent-system-2026-06-18"
-      ],
-      "legacy_anchor": "./roadmap/meetings.html#agent-system-2026-06-18"
+      ]
     }
   ],
   "manual": {
@@ -3460,7 +4537,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     ]
   },
   "system_map": {
-    "schema_version": 1,
+    "schema_version": 2,
     "layers": [
       "surface",
       "api",
@@ -3474,117 +4551,117 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "id": "client-surface",
         "label": "/client",
         "layer": "surface",
-        "topic_ids": [
+        "path": "ui/client-ui",
+        "module_ids": [
           "client-experience"
-        ],
-        "path": "ui/client-ui"
+        ]
       },
       {
         "id": "account-surface",
         "label": "/account",
         "layer": "surface",
-        "topic_ids": [
+        "path": "ui/account-ui",
+        "module_ids": [
           "account-automation"
-        ],
-        "path": "ui/account-ui"
+        ]
       },
       {
         "id": "workspace-surface",
         "label": "/workspace",
         "layer": "surface",
-        "topic_ids": [
+        "path": "ui/workspace-ui",
+        "module_ids": [
           "engineer-workspace"
-        ],
-        "path": "ui/workspace-ui"
+        ]
       },
       {
         "id": "admin-surface",
         "label": "/workspace/admin",
         "layer": "surface",
-        "topic_ids": [
+        "path": "ui/workspace-ui/admin",
+        "module_ids": [
           "admin-operations"
-        ],
-        "path": "ui/workspace-ui/admin"
+        ]
       },
       {
         "id": "rag-surface",
         "label": "/dashboard/rag",
         "layer": "surface",
-        "topic_ids": [
+        "path": "ui/dashboard-ui/rag",
+        "module_ids": [
           "rag-knowledge"
-        ],
-        "path": "ui/dashboard-ui/rag"
+        ]
       },
       {
         "id": "support-api",
         "label": "FastAPI routes",
         "layer": "api",
-        "topic_ids": [
+        "path": "backend/main.py",
+        "module_ids": [
           "client-experience",
           "account-automation",
           "engineer-workspace",
           "admin-operations"
-        ],
-        "path": "backend/main.py"
+        ]
       },
       {
         "id": "router-services",
         "label": "Routing / intake",
         "layer": "service",
-        "topic_ids": [
+        "path": "backend/services/support_router.py",
+        "module_ids": [
           "client-experience",
           "account-automation"
-        ],
-        "path": "backend/services/support_router.py"
+        ]
       },
       {
         "id": "engineer-services",
         "label": "Engineer / Guardrail",
         "layer": "service",
-        "topic_ids": [
+        "path": "backend/services",
+        "module_ids": [
           "engineer-workspace",
           "agent-collaboration"
-        ],
-        "path": "backend/services"
+        ]
       },
       {
         "id": "rag-services",
         "label": "RAG / KG runtime",
         "layer": "service",
-        "topic_ids": [
+        "path": "backend/services/kg_runtime.py",
+        "module_ids": [
           "rag-knowledge"
-        ],
-        "path": "backend/services/kg_runtime.py"
+        ]
       },
       {
         "id": "postgres",
         "label": "PostgreSQL repositories",
         "layer": "data",
-        "topic_ids": [
+        "path": "backend/repositories",
+        "module_ids": [
           "platform-delivery",
           "account-automation",
           "engineer-workspace"
-        ],
-        "path": "backend/repositories"
+        ]
       },
       {
         "id": "zendesk",
         "label": "Zendesk",
         "layer": "external",
-        "topic_ids": [
+        "path": null,
+        "module_ids": [
           "client-experience",
           "account-automation"
-        ],
-        "path": null
+        ]
       },
       {
         "id": "tests",
         "label": "Contract and unit tests",
         "layer": "test",
-        "topic_ids": [
+        "path": "backend/tests",
+        "module_ids": [
           "platform-delivery"
-        ],
-        "path": "backend/tests"
+        ]
       }
     ],
     "edges": [
@@ -3988,11 +5065,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     ]
   },
   "pr_summaries": {
-    "schema_version": 1,
+    "schema_version": 2,
     "summaries": {
       "752": {
         "summary": "将 Account AI 消息以幂等 internal comment 写回关联 Zendesk ticket。",
         "task_ids": [
+          "p2-18",
+          "p2-28"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "TS-03",
           "TS-07"
         ]
@@ -4000,48 +5083,88 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "751": {
         "summary": "为 Account Persona reply job 增加版本 fence，避免旧 job 覆盖新状态。",
         "task_ids": [
+          "p2-11"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "billing-idempotency"
         ]
       },
       "750": {
         "summary": "改善 Account Automation 对客户的 ownership 回复，统一由 Persona 生成安全的状态说明。",
         "task_ids": [
+          "p2-12"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "billing-persona-registry"
         ]
       },
       "749": {
         "summary": "补齐 Account Automation 客户 ownership 回复和处理中的反馈节奏。",
         "task_ids": [
+          "p2-12"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "billing-persona-registry"
         ]
       },
       "748": {
         "summary": "修复 Account rerun 邮件 claim 恢复路径，避免重复或丢失内部处理。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "747": {
         "summary": "修复 Account rerun 客户回复的 scheduled reply 调度。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "746": {
         "summary": "修复 Account rerun immutable result 的处理和状态边界。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "745": {
         "summary": "修复 Account rerun 失败降级和容器 OpenAI proxy 配置。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "744": {
         "summary": "Account 失败在重试耗尽后停止客户回复、进入 Human Review 并告警负责人。",
         "task_ids": [
+          "p2-15"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "TS-05",
           "account-failure-alerts"
         ]
@@ -4049,96 +5172,176 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "743": {
         "summary": "在 Admin Automated Cases 中增加可直接打开的 Zendesk Source 链接。",
         "task_ids": [
+          "p2-28"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "TS-07"
         ]
       },
       "742": {
         "summary": "统一 Account rerun revision 时间戳，避免恢复和排序出现不一致。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "741": {
         "summary": "让 Account rerun preflight 在网络条件变化时保持可验证的失败边界。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "740": {
         "summary": "允许操作员对每个 Account Case 执行完整 rerun，并保留独立审计。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "739": {
         "summary": "修复被阻塞 Account rerun 的反馈和可恢复提示。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "738": {
         "summary": "加固 Account rerun fail-fast recovery 和 Luna routing 选择。",
         "task_ids": [
+          "p2-10"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "account-rerun-recovery"
         ]
       },
       "737": {
         "summary": "Admin Source 不再重复展示内部 Account Case ID。",
         "task_ids": [
+          "p2-28"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "TS-07"
         ]
       },
       "736": {
         "summary": "支持把序列化 JSON 形式的 Account Source 解析成 Zendesk 链接。",
         "task_ids": [
+          "p2-28"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "TS-07"
         ]
       },
       "735": {
         "summary": "为 Account Case Source 增加 Zendesk 直达链接。",
         "task_ids": [
+          "p2-28"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "TS-07"
         ]
       },
       "734": {
         "summary": "简化 Agent 热路径规则，并把详细流程转移到可按需读取的文档。",
         "task_ids": [
+          "p2-34"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "agent-rules"
         ]
       },
       "733": {
         "summary": "更新 Meeting 进度页面、导航和 Work Item 展示。",
         "task_ids": [
+          "p2-35"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "project-overview"
         ]
       },
       "732": {
         "summary": "隔离 Account route validation 的副作用，避免校验行为改变真实状态。",
         "task_ids": [
+          "p2-11"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "billing-idempotency"
         ]
       },
       "731": {
         "summary": "加固 Account route taxonomy 和 filter membership，区分 Automation、Human Review 和 fallback。",
-        "task_ids": [
+        "task_ids": [],
+        "schema_version": 2,
+        "function_ids": [
+          "routing-taxonomy"
+        ],
+        "legacy_task_ids": [
           "routing-taxonomy"
         ]
       },
       "730": {
-        "summary": "新增 SupportPortal Meeting archive，集中呈现 Topic、结论和 Work Item。",
+        "summary": "新增 SupportPortal Meeting archive，集中呈现 Function、结论和 Task。",
         "task_ids": [
+          "p2-35"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "project-overview"
         ]
       },
       "729": {
         "summary": "增加 Security & Compliance route，并将敏感请求保持在 classification-only / Human Review 边界。",
         "task_ids": [
+          "p2-02"
+        ],
+        "schema_version": 2,
+        "function_ids": [],
+        "legacy_task_ids": [
           "routing-security-compliance"
         ]
       },
       "728": {
         "summary": "增加 Backend Operation filter 和 Automated labels，统一显示 Enablement、Quota 等路径。",
-        "task_ids": [
+        "task_ids": [],
+        "schema_version": 2,
+        "function_ids": [
+          "routing-taxonomy"
+        ],
+        "legacy_task_ids": [
           "routing-taxonomy"
         ]
       }
@@ -4295,13 +5498,831 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     }
   ],
   "migration": {
-    "source_count": 73,
+    "source_count": 74,
     "generated_from": [
       "docs/roadmap.html",
       "docs/roadmap/meetings.html",
       "docs/roadmap/phase2.html",
       "docs/roadmap/phase3.html",
       "docs/feature_list.md"
-    ]
+    ],
+    "records": [
+      {
+        "source_ref": "docs/project/tasks/AG-01.json",
+        "legacy_id": "AG-01",
+        "target_type": "task",
+        "target_id": "p3-01",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/AG-02.json",
+        "legacy_id": "AG-02",
+        "target_type": "task",
+        "target_id": "p3-03",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/AG-03.json",
+        "legacy_id": "AG-03",
+        "target_type": "task",
+        "target_id": "p3-04",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/AG-04.json",
+        "legacy_id": "AG-04",
+        "target_type": "task",
+        "target_id": "p3-02",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/AG-05.json",
+        "legacy_id": "AG-05",
+        "target_type": "task",
+        "target_id": "p3-05",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/AG-06.json",
+        "legacy_id": "AG-06",
+        "target_type": "task",
+        "target_id": "p3-06",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-01.json",
+        "legacy_id": "TS-01",
+        "target_type": "task",
+        "target_id": "p2-01",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-02.json",
+        "legacy_id": "TS-02",
+        "target_type": "task",
+        "target_id": "p2-02",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-03.json",
+        "legacy_id": "TS-03",
+        "target_type": "task",
+        "target_id": "p2-18",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-04.json",
+        "legacy_id": "TS-04",
+        "target_type": "task",
+        "target_id": "p2-33",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-05.json",
+        "legacy_id": "TS-05",
+        "target_type": "task",
+        "target_id": "p2-15",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-06.json",
+        "legacy_id": "TS-06",
+        "target_type": "task",
+        "target_id": "p2-19",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-07.json",
+        "legacy_id": "TS-07",
+        "target_type": "task",
+        "target_id": "p2-28",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-08.json",
+        "legacy_id": "TS-08",
+        "target_type": "task",
+        "target_id": "p2-09",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-09.json",
+        "legacy_id": "TS-09",
+        "target_type": "task",
+        "target_id": "p2-03",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-10.json",
+        "legacy_id": "TS-10",
+        "target_type": "task",
+        "target_id": "p2-14",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-11.json",
+        "legacy_id": "TS-11",
+        "target_type": "task",
+        "target_id": "p2-21",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/TS-12.json",
+        "legacy_id": "TS-12",
+        "target_type": "task",
+        "target_id": "p2-29",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/account-failure-alerts.json",
+        "legacy_id": "account-failure-alerts",
+        "target_type": "task",
+        "target_id": "p2-15",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/tasks/account-rerun-recovery.json",
+        "legacy_id": "account-rerun-recovery",
+        "target_type": "task",
+        "target_id": "p2-10",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/admin-environment-config-inventory.json",
+        "legacy_id": "admin-environment-config-inventory",
+        "target_type": "task",
+        "target_id": "p2-30",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/agent-rules.json",
+        "legacy_id": "agent-rules",
+        "target_type": "task",
+        "target_id": "p2-34",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-auth-hardening.json",
+        "legacy_id": "assign-auth-hardening",
+        "target_type": "task",
+        "target_id": "p3-17",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-legacy-cleanup.json",
+        "legacy_id": "assign-legacy-cleanup",
+        "target_type": "task",
+        "target_id": "p3-18",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-live-postgres.json",
+        "legacy_id": "assign-live-postgres",
+        "target_type": "task",
+        "target_id": "p3-19",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-metrics.json",
+        "legacy_id": "assign-metrics",
+        "target_type": "task",
+        "target_id": "p3-20",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-phase3-admin-sync.json",
+        "legacy_id": "assign-phase3-admin-sync",
+        "target_type": "task",
+        "target_id": "p3-21",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-phase3-eligibility.json",
+        "legacy_id": "assign-phase3-eligibility",
+        "target_type": "task",
+        "target_id": "p3-15",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-phase3-first-reply.json",
+        "legacy_id": "assign-phase3-first-reply",
+        "target_type": "task",
+        "target_id": "p3-16",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-phase3-slack.json",
+        "legacy_id": "assign-phase3-slack",
+        "target_type": "task",
+        "target_id": "p3-22",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/assign-rollout.json",
+        "legacy_id": "assign-rollout",
+        "target_type": "task",
+        "target_id": "p3-23",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-dashboard-metrics.json",
+        "legacy_id": "billing-dashboard-metrics",
+        "target_type": "task",
+        "target_id": "p2-22",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-expand.json",
+        "legacy_id": "billing-expand",
+        "target_type": "task",
+        "target_id": "p2-23",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-human-review.json",
+        "legacy_id": "billing-human-review",
+        "target_type": "task",
+        "target_id": "p2-16",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-human-review-handoff.json",
+        "legacy_id": "billing-human-review-handoff",
+        "target_type": "task",
+        "target_id": "p3-24",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-idempotency.json",
+        "legacy_id": "billing-idempotency",
+        "target_type": "task",
+        "target_id": "p2-11",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-monitor-automation-outcomes.json",
+        "legacy_id": "billing-monitor-automation-outcomes",
+        "target_type": "task",
+        "target_id": "p2-24",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-monitor-replay-quality.json",
+        "legacy_id": "billing-monitor-replay-quality",
+        "target_type": "task",
+        "target_id": "p2-05",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-persona-registry.json",
+        "legacy_id": "billing-persona-registry",
+        "target_type": "task",
+        "target_id": "p2-12",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/billing-recipient-env.json",
+        "legacy_id": "billing-recipient-env",
+        "target_type": "task",
+        "target_id": "p2-13",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/client-rich-attachments.json",
+        "legacy_id": "client-rich-attachments",
+        "target_type": "task",
+        "target_id": "p2-31",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/client-streaming-output.json",
+        "legacy_id": "client-streaming-output",
+        "target_type": "task",
+        "target_id": "p2-32",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-async-ingest.json",
+        "legacy_id": "kg-async-ingest",
+        "target_type": "task",
+        "target_id": "p2-37",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-benchmark-ab.json",
+        "legacy_id": "kg-benchmark-ab",
+        "target_type": "task",
+        "target_id": "p2-41",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-citations.json",
+        "legacy_id": "kg-citations",
+        "target_type": "task",
+        "target_id": "p2-42",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-engineer-vs-client.json",
+        "legacy_id": "kg-engineer-vs-client",
+        "target_type": "task",
+        "target_id": "p2-46",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-graph-db.json",
+        "legacy_id": "kg-graph-db",
+        "target_type": "task",
+        "target_id": "p2-44",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-grey-gate.json",
+        "legacy_id": "kg-grey-gate",
+        "target_type": "task",
+        "target_id": "p2-43",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-ingest-model-bakeoff.json",
+        "legacy_id": "kg-ingest-model-bakeoff",
+        "target_type": "task",
+        "target_id": "p2-38",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-model-config.json",
+        "legacy_id": "kg-model-config",
+        "target_type": "task",
+        "target_id": "p2-45",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/kg-offline-graph-build.json",
+        "legacy_id": "kg-offline-graph-build",
+        "target_type": "task",
+        "target_id": "p2-39",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-agent-to-agent-governed-autonomy.json",
+        "legacy_id": "ma-agent-to-agent-governed-autonomy",
+        "target_type": "task",
+        "target_id": "p3-07",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-agentrelay-support-integration.json",
+        "legacy_id": "ma-agentrelay-support-integration",
+        "target_type": "task",
+        "target_id": "p3-13",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-controlled-replan.json",
+        "legacy_id": "ma-controlled-replan",
+        "target_type": "task",
+        "target_id": "p3-12",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-guardrail-claim-evidence.json",
+        "legacy_id": "ma-guardrail-claim-evidence",
+        "target_type": "task",
+        "target_id": "p3-08",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-real-evidence-tools.json",
+        "legacy_id": "ma-real-evidence-tools",
+        "target_type": "task",
+        "target_id": "p3-10",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-replay-runner.json",
+        "legacy_id": "ma-replay-runner",
+        "target_type": "task",
+        "target_id": "p3-11",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-rollout-taxonomy-contract.json",
+        "legacy_id": "ma-rollout-taxonomy-contract",
+        "target_type": "task",
+        "target_id": "p3-09",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/ma-workspace-action-console.json",
+        "legacy_id": "ma-workspace-action-console",
+        "target_type": "task",
+        "target_id": "p3-14",
+        "disposition": "moved-to-phase-3"
+      },
+      {
+        "source_ref": "docs/project/tasks/phase2-fraud-field-contract.json",
+        "legacy_id": "phase2-fraud-field-contract",
+        "target_type": "task",
+        "target_id": "p2-03",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/tasks/project-overview.json",
+        "legacy_id": "project-overview",
+        "target_type": "task",
+        "target_id": "p2-35",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/project-task-title-cleanup.json",
+        "legacy_id": "project-task-title-cleanup",
+        "target_type": "task",
+        "target_id": "p2-36",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/rag-dedupe.json",
+        "legacy_id": "rag-dedupe",
+        "target_type": "task",
+        "target_id": "p2-40",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-automation-rollout.json",
+        "legacy_id": "routing-automation-rollout",
+        "target_type": "task",
+        "target_id": "p2-25",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-billing-review-customer-experience.json",
+        "legacy_id": "routing-billing-review-customer-experience",
+        "target_type": "task",
+        "target_id": "p2-17",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-billing-risky-negatives.json",
+        "legacy_id": "routing-billing-risky-negatives",
+        "target_type": "task",
+        "target_id": "p2-06",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-dashboard-metrics.json",
+        "legacy_id": "routing-dashboard-metrics",
+        "target_type": "task",
+        "target_id": "p2-26",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-fallback-billing-risk-sniff.json",
+        "legacy_id": "routing-fallback-billing-risk-sniff",
+        "target_type": "function",
+        "target_id": "routing-fallback-billing-risk-sniff",
+        "disposition": "promoted"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-real-zendesk-replay.json",
+        "legacy_id": "routing-real-zendesk-replay",
+        "target_type": "task",
+        "target_id": "p2-07",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-rollout-taxonomy.json",
+        "legacy_id": "routing-rollout-taxonomy",
+        "target_type": "task",
+        "target_id": "p2-27",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-security-compliance.json",
+        "legacy_id": "routing-security-compliance",
+        "target_type": "task",
+        "target_id": "p2-02",
+        "disposition": "merged"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-semantic-golden-expand.json",
+        "legacy_id": "routing-semantic-golden-expand",
+        "target_type": "task",
+        "target_id": "p2-08",
+        "disposition": "renamed"
+      },
+      {
+        "source_ref": "docs/project/tasks/routing-taxonomy.json",
+        "legacy_id": "routing-taxonomy",
+        "target_type": "function",
+        "target_id": "routing-taxonomy",
+        "disposition": "promoted"
+      },
+      {
+        "source_ref": "docs/project/tasks/zendesk-account-comment-identity.json",
+        "legacy_id": "zendesk-account-comment-identity",
+        "target_type": "task",
+        "target_id": "p2-20",
+        "disposition": "renamed"
+      }
+    ],
+    "aliases": {
+      "AG-01": {
+        "target_type": "task",
+        "target_id": "p3-01"
+      },
+      "AG-02": {
+        "target_type": "task",
+        "target_id": "p3-03"
+      },
+      "AG-03": {
+        "target_type": "task",
+        "target_id": "p3-04"
+      },
+      "AG-04": {
+        "target_type": "task",
+        "target_id": "p3-02"
+      },
+      "AG-05": {
+        "target_type": "task",
+        "target_id": "p3-05"
+      },
+      "AG-06": {
+        "target_type": "task",
+        "target_id": "p3-06"
+      },
+      "TS-01": {
+        "target_type": "task",
+        "target_id": "p2-01"
+      },
+      "TS-02": {
+        "target_type": "task",
+        "target_id": "p2-02"
+      },
+      "TS-03": {
+        "target_type": "task",
+        "target_id": "p2-18"
+      },
+      "TS-04": {
+        "target_type": "task",
+        "target_id": "p2-33"
+      },
+      "TS-05": {
+        "target_type": "task",
+        "target_id": "p2-15"
+      },
+      "TS-06": {
+        "target_type": "task",
+        "target_id": "p2-19"
+      },
+      "TS-07": {
+        "target_type": "task",
+        "target_id": "p2-28"
+      },
+      "TS-08": {
+        "target_type": "task",
+        "target_id": "p2-09"
+      },
+      "TS-09": {
+        "target_type": "task",
+        "target_id": "p2-03"
+      },
+      "TS-10": {
+        "target_type": "task",
+        "target_id": "p2-14"
+      },
+      "TS-11": {
+        "target_type": "task",
+        "target_id": "p2-21"
+      },
+      "TS-12": {
+        "target_type": "task",
+        "target_id": "p2-29"
+      },
+      "account-failure-alerts": {
+        "target_type": "task",
+        "target_id": "p2-15"
+      },
+      "account-rerun-recovery": {
+        "target_type": "task",
+        "target_id": "p2-10"
+      },
+      "admin-environment-config-inventory": {
+        "target_type": "task",
+        "target_id": "p2-30"
+      },
+      "agent-rules": {
+        "target_type": "task",
+        "target_id": "p2-34"
+      },
+      "assign-auth-hardening": {
+        "target_type": "task",
+        "target_id": "p3-17"
+      },
+      "assign-legacy-cleanup": {
+        "target_type": "task",
+        "target_id": "p3-18"
+      },
+      "assign-live-postgres": {
+        "target_type": "task",
+        "target_id": "p3-19"
+      },
+      "assign-metrics": {
+        "target_type": "task",
+        "target_id": "p3-20"
+      },
+      "assign-phase3-admin-sync": {
+        "target_type": "task",
+        "target_id": "p3-21"
+      },
+      "assign-phase3-eligibility": {
+        "target_type": "task",
+        "target_id": "p3-15"
+      },
+      "assign-phase3-first-reply": {
+        "target_type": "task",
+        "target_id": "p3-16"
+      },
+      "assign-phase3-slack": {
+        "target_type": "task",
+        "target_id": "p3-22"
+      },
+      "assign-rollout": {
+        "target_type": "task",
+        "target_id": "p3-23"
+      },
+      "billing-dashboard-metrics": {
+        "target_type": "task",
+        "target_id": "p2-22"
+      },
+      "billing-expand": {
+        "target_type": "task",
+        "target_id": "p2-23"
+      },
+      "billing-human-review": {
+        "target_type": "task",
+        "target_id": "p2-16"
+      },
+      "billing-human-review-handoff": {
+        "target_type": "task",
+        "target_id": "p3-24"
+      },
+      "billing-idempotency": {
+        "target_type": "task",
+        "target_id": "p2-11"
+      },
+      "billing-monitor-automation-outcomes": {
+        "target_type": "task",
+        "target_id": "p2-24"
+      },
+      "billing-monitor-replay-quality": {
+        "target_type": "task",
+        "target_id": "p2-05"
+      },
+      "billing-persona-registry": {
+        "target_type": "task",
+        "target_id": "p2-12"
+      },
+      "billing-recipient-env": {
+        "target_type": "task",
+        "target_id": "p2-13"
+      },
+      "client-rich-attachments": {
+        "target_type": "task",
+        "target_id": "p2-31"
+      },
+      "client-streaming-output": {
+        "target_type": "task",
+        "target_id": "p2-32"
+      },
+      "kg-async-ingest": {
+        "target_type": "task",
+        "target_id": "p2-37"
+      },
+      "kg-benchmark-ab": {
+        "target_type": "task",
+        "target_id": "p2-41"
+      },
+      "kg-citations": {
+        "target_type": "task",
+        "target_id": "p2-42"
+      },
+      "kg-engineer-vs-client": {
+        "target_type": "task",
+        "target_id": "p2-46"
+      },
+      "kg-graph-db": {
+        "target_type": "task",
+        "target_id": "p2-44"
+      },
+      "kg-grey-gate": {
+        "target_type": "task",
+        "target_id": "p2-43"
+      },
+      "kg-ingest-model-bakeoff": {
+        "target_type": "task",
+        "target_id": "p2-38"
+      },
+      "kg-model-config": {
+        "target_type": "task",
+        "target_id": "p2-45"
+      },
+      "kg-offline-graph-build": {
+        "target_type": "task",
+        "target_id": "p2-39"
+      },
+      "ma-agent-to-agent-governed-autonomy": {
+        "target_type": "task",
+        "target_id": "p3-07"
+      },
+      "ma-agentrelay-support-integration": {
+        "target_type": "task",
+        "target_id": "p3-13"
+      },
+      "ma-controlled-replan": {
+        "target_type": "task",
+        "target_id": "p3-12"
+      },
+      "ma-guardrail-claim-evidence": {
+        "target_type": "task",
+        "target_id": "p3-08"
+      },
+      "ma-real-evidence-tools": {
+        "target_type": "task",
+        "target_id": "p3-10"
+      },
+      "ma-replay-runner": {
+        "target_type": "task",
+        "target_id": "p3-11"
+      },
+      "ma-rollout-taxonomy-contract": {
+        "target_type": "task",
+        "target_id": "p3-09"
+      },
+      "ma-workspace-action-console": {
+        "target_type": "task",
+        "target_id": "p3-14"
+      },
+      "phase2-fraud-field-contract": {
+        "target_type": "task",
+        "target_id": "p2-03"
+      },
+      "project-overview": {
+        "target_type": "task",
+        "target_id": "p2-35"
+      },
+      "project-task-title-cleanup": {
+        "target_type": "task",
+        "target_id": "p2-36"
+      },
+      "rag-dedupe": {
+        "target_type": "task",
+        "target_id": "p2-40"
+      },
+      "routing-automation-rollout": {
+        "target_type": "task",
+        "target_id": "p2-25"
+      },
+      "routing-billing-review-customer-experience": {
+        "target_type": "task",
+        "target_id": "p2-17"
+      },
+      "routing-billing-risky-negatives": {
+        "target_type": "task",
+        "target_id": "p2-06"
+      },
+      "routing-dashboard-metrics": {
+        "target_type": "task",
+        "target_id": "p2-26"
+      },
+      "routing-fallback-billing-risk-sniff": {
+        "target_type": "function",
+        "target_id": "routing-fallback-billing-risk-sniff"
+      },
+      "routing-real-zendesk-replay": {
+        "target_type": "task",
+        "target_id": "p2-07"
+      },
+      "routing-rollout-taxonomy": {
+        "target_type": "task",
+        "target_id": "p2-27"
+      },
+      "routing-security-compliance": {
+        "target_type": "task",
+        "target_id": "p2-02"
+      },
+      "routing-semantic-golden-expand": {
+        "target_type": "task",
+        "target_id": "p2-08"
+      },
+      "routing-taxonomy": {
+        "target_type": "function",
+        "target_id": "routing-taxonomy"
+      },
+      "zendesk-account-comment-identity": {
+        "target_type": "task",
+        "target_id": "p2-20"
+      }
+    }
   }
-};
+}

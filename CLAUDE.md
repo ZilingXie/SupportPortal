@@ -6,7 +6,8 @@ Claude Code follows the repository authority and workflow in `AGENTS.md`. `REASO
 1. `AGENTS.md` is the short hot-path rule file; this file mirrors it for Claude Code.
 2. Read `docs/agent_workflow_details.md` only for workflow edge cases, worker handoff, stack verification, Project Overview/feature-list maintenance, RAG/prompt/model changes, or local single-host changes.
 3. `docs/agent.md` is a legacy UI redirect. The UI source of truth is `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
-4. `docs/project/tasks/*.json` is the canonical project-progress registry. `docs/projectoverview-data.js` is a generated view consumed by `docs/projectoverview.html`; `docs/roadmap.html` and its phase/meeting pages are historical references, not the current progress source.
+4. `docs/project/phases/*.json`, `docs/project/modules/*.json`, `docs/project/functions/*.json`, and `docs/project/tasks/*.json` are the canonical project-progress registry. `docs/projectoverview-data.js` is a generated view consumed by `docs/projectoverview.html`; `docs/roadmap.html` and its phase/meeting pages are historical references, not the current progress source.
+5. Project Overview is the single source for整体落地进度；历史 Roadmap 页面只保留兼容入口。
 
 ## Working Rules
 1. Do not add fixed startup scans. Use required skills and AgentMemory only when the task triggers them. Prefer CodeGraph for structural code questions and `rg` for docs, literals, config, logs, and rules.
@@ -16,9 +17,9 @@ Claude Code follows the repository authority and workflow in `AGENTS.md`. `REASO
 5. Keep `.worktrees/`, `.superpowers/`, `.DS_Store`, and unrelated changes out of commits. Stop and ask before acting when ownership or workspace state is ambiguous.
 
 ## Project Progress Registry
-1. For every `功能类/修复类` change that changes runtime behavior, a user-visible flow, an API contract, a data model, configuration, or a business result, search for the existing `task_id` before implementation; create one under `docs/project/tasks/` when none exists.
-2. Maintain the same Task throughout the work: update its `status`, `next_action`, and `evidence`; `done` requires evidence and `blocked` requires the blocker to be recorded.
-3. After changing a Task or another Project Overview source record, run `python3 scripts/generate_project_overview.py --write`, then run `python3 scripts/generate_project_overview.py --check` before committing. The write command regenerates `docs/projectoverview-data.js`; never edit that generated file by hand.
+1. For every `功能类/修复类` change that changes runtime behavior, a user-visible flow, an API contract, a data model, configuration, or a business result, find the owning Function and existing `task_id` before implementation; create a Function only for a separately reportable capability, and create a Task under `docs/project/tasks/` when none exists.
+2. Maintain the same Task throughout the work: update its `status`, `next_action`, and `evidence`; `done` requires evidence and `blocked` requires the blocker to be recorded. Task IDs use `pN-xx`; a Phase move requires a new ID plus a preserved alias in `docs/project/migration_manifest.json`.
+3. After changing a Phase, Module, Function, Task, Meeting, PR summary, or another Project Overview source record, run `python3 scripts/generate_project_overview.py --write`, then run `python3 scripts/generate_project_overview.py --check` before committing. The write command regenerates `docs/projectoverview-data.js`; never edit that generated file by hand. Function status is derived from its child Tasks.
 4. Pure documentation, tests, instructions/rules, comments, refactors, developer-only scripts, and operations-only changes do not require a Task or Project Overview regeneration unless they also change tracked progress or runtime/user-visible behavior.
 5. If it is unclear whether a change is functional or whether it needs a Task, stop and ask before implementation instead of silently skipping the registry update.
 

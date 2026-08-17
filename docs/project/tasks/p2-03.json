@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-03",
+  "title": "完成 Fraud 与 Account Suspension 字段契约和人工判断边界",
+  "status": "done",
+  "owner": "suhird / bdr",
+  "summary": "承接 Account Suspension 和 Fraud 类工单，确认人工判断边界。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "覆盖 Fraud、余额、套餐限制等停用原因，并能转 Support 介入。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "pr",
+      "number": 683,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/683",
+      "label": "PR #683"
+    },
+    {
+      "type": "pr",
+      "number": 685,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/685",
+      "label": "PR #685"
+    },
+    {
+      "type": "pr",
+      "number": 686,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/686",
+      "label": "PR #686"
+    },
+    {
+      "type": "pr",
+      "number": 687,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/687",
+      "label": "PR #687"
+    },
+    {
+      "type": "pr",
+      "number": 702,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
+      "label": "PR #702"
+    }
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "created_at": "2026-08-10",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting ticketing-system-2026-08-10 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / routing-taxonomy。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "ticketing-system-2026-08-10",
+      "item_id": "TS-09"
+    }
+  ],
+  "legacy_ids": [
+    "phase2-fraud-field-contract",
+    "TS-09"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "routing-taxonomy"
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "phase_id": "phase-3",
+  "title": "Phase 3：Engineer Workflow + Governed AI Collaboration",
+  "status": "active",
+  "summary": "承接长期 Agent 协作、Engineer Workflow、AI 首次回复和派单交付。",
+  "target_date": null,
+  "exit_criteria": [
+    "Engineer Case assignment、SLA、审计和 AI 交接边界可验证。",
+    "Agent 自主行为在证据、权限、成本和审计门禁下逐步开放。"
+  ],
+  "source_refs": [
+    "docs/roadmap.html",
+    "docs/roadmap/phase3.html",
+    "docs/roadmap/meetings.html"
+  ]
+}

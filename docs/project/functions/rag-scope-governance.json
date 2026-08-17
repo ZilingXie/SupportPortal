@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "rag-scope-governance",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "RAG/KG 使用边界",
+  "goal": "明确 Client AI 和 Engineer AI 的知识使用范围。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

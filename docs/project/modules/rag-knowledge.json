@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "title": "RAG & Knowledge",
+  "goal": "让官网知识、Engineer 知识、检索评测和 KG 辅助信号各司其职，并保留可回溯引用。",
+  "surfaces": [
+    "/dashboard/rag"
+  ],
+  "components": {
+    "ui": [
+      "ui/dashboard-ui/rag"
+    ],
+    "api": [
+      "/api/rag/*",
+      "/api/dashboard/rag/*"
+    ],
+    "services": [
+      "backend/services/rag_*",
+      "backend/services/kg_*"
+    ],
+    "tests": [
+      "backend/tests/test_rag_*",
+      "backend/tests/test_kg_*"
+    ]
+  },
+  "source_refs": [
+    "docs/roadmap.html",
+    "docs/feature_list.md",
+    "docs/rag_change_log.md"
+  ],
+  "module_id": "rag-knowledge"
+}

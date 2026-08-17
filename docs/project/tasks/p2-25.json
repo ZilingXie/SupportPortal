@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-25",
+  "title": "按 Replay 与指标门禁逐步开放 Account Automation",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+  "next_action": "Phase 2：当 real Zendesk replay set 和 dashboard 指标达标时，逐步开放 Fraud Account、Detailed Invoice、Enablement 和 Quota 的 limited automation。",
+  "acceptance_criteria": [
+    "完成 Rollout 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane routing-rules 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / controlled-rollout。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "routing-rules",
+      "item_id": "routing-automation-rollout"
+    }
+  ],
+  "legacy_ids": [
+    "routing-automation-rollout"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "controlled-rollout"
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p3-06",
+  "title": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
+  "status": "active",
+  "owner": "项目团队",
+  "summary": "在真实 evidence tools、replay gate、权限审计和成本门禁达标前保持 AgentRelay 自主调查为长期计划。",
+  "next_action": "补齐验收证据并更新状态。",
+  "acceptance_criteria": [
+    "Roadmap 和 Meeting 页面均不把通信基础误写成自主闭环。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18"
+  ],
+  "created_at": "2026-06-18",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Meeting agent-system-2026-06-18 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-3 / agent-collaboration / agent-governance。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap/meetings.html",
+      "meeting_id": "agent-system-2026-06-18",
+      "item_id": "AG-06"
+    }
+  ],
+  "legacy_ids": [
+    "AG-06"
+  ],
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "function_id": "agent-governance"
+}

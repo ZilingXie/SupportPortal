@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "rag-ingestion-pipeline",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "RAG/KG 入库流水线",
+  "goal": "建立文档去重、图谱构建、模型选择和异步入库链路。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

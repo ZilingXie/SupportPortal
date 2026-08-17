@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p3-17",
+  "title": "加固生产认证 Secret、Session 失效与 RBAC 验证",
+  "status": "active",
+  "owner": "unassigned",
+  "summary": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
+  "next_action": "P0：完成生产 secret 配置、401 session 失效处理与 RBAC 负向验证。",
+  "acceptance_criteria": [
+    "完成 Security 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane assignment-ui 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-3 / engineer-workspace / engineer-case-delivery。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "assignment-ui",
+      "item_id": "assign-auth-hardening"
+    }
+  ],
+  "legacy_ids": [
+    "assign-auth-hardening"
+  ],
+  "phase_id": "phase-3",
+  "module_id": "engineer-workspace",
+  "function_id": "engineer-case-delivery"
+}
