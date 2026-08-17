@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-metrics",
-  "title": "P2",
+  "title": "完善 Engineer 派单、SLA 与排班覆盖指标",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",

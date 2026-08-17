@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "routing-rollout-taxonomy",
-  "title": "新增 rollout taxonomy",
+  "title": "建立 Automation Rollout 三态 Taxonomy",
   "topic_id": "client-experience",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

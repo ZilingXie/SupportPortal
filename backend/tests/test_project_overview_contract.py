@@ -33,6 +33,11 @@ class ProjectOverviewContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(task_ids), 60)
         for path in task_paths:
             task = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotRegex(
+                task["title"].strip(),
+                r"(?i)^(?:p\d+|phase\s+\d+|长期方向|低优先级保留)$",
+                str(path),
+            )
             self.assertIn(task["status"], {"planned", "active", "review", "blocked", "done"})
             self.assertIn(task["topic_id"], topic_ids)
             self.assertIn(task["milestone_id"], milestone_ids)

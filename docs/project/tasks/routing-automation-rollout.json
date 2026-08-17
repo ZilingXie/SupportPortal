@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "routing-automation-rollout",
-  "title": "Phase 2",
+  "title": "按 Replay 与指标门禁逐步开放 Account Automation",
   "topic_id": "client-experience",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

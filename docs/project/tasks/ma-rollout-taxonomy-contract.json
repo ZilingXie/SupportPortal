@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "ma-rollout-taxonomy-contract",
-  "title": "低优先级保留",
+  "title": "统一 Route Taxonomy 与 Multi-Agent 生命周期契约",
   "topic_id": "agent-collaboration",
   "related_topic_ids": [],
   "milestone_id": "long-term-agent-collaboration",

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-ingest-model-bakeoff",
-  "title": "P0",
+  "title": "完成 GraphRAG Ingest 模型 Bake-off",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

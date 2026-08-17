@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 1,
-  "generated_at": "2026-08-16T14:11:45Z",
-  "source_base_commit": "ad6aa1d3909a8760dc443afeb22c2ce41fced494",
-  "registry_digest": "420e053839f6c2de693afa5b5ac5dae73c2a7c8e3e6efc5c2a384118a02a0b98",
+  "generated_at": "2026-08-17T02:41:24Z",
+  "source_base_commit": "998a42488dab8e8b3ecdf24696c28068eca66442",
+  "registry_digest": "37b03447425f28ae96e5248af4e0ccb358b6301d15590aa1967fc4842dd6a6e0",
   "project": {
     "schema_version": 1,
     "project_id": "supportportal",
@@ -1226,7 +1226,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "admin-environment-config-inventory",
-      "title": "Admin Environment Config names-only inventory",
+      "title": "仅展示 Admin Environment Config 名称清单",
       "topic_id": "admin-operations",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1297,7 +1297,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-auth-hardening",
-      "title": "P0",
+      "title": "加固生产认证 Secret、Session 失效与 RBAC 验证",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1334,7 +1334,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-legacy-cleanup",
-      "title": "9/1 后清理 legacy Engineer Case status、旧 UI 与历史兼容逻辑；清理前保持 `/api/engineer/*` active contract。",
+      "title": "清理 Legacy Engineer Case 状态、旧 UI 与兼容逻辑",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1371,7 +1371,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-live-postgres",
-      "title": "P0",
+      "title": "在真实 PostgreSQL 环境验证派单与审计写入",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1408,7 +1408,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-metrics",
-      "title": "P2",
+      "title": "完善 Engineer 派单、SLA 与排班覆盖指标",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1445,7 +1445,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-phase3-admin-sync",
-      "title": "Phase 3",
+      "title": "在 Admin Dashboard 展示并同步 Slack 派单状态",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1482,7 +1482,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-phase3-eligibility",
-      "title": "Phase 3",
+      "title": "为 Zendesk Intake 增加 AI Eligibility Gate",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1519,7 +1519,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-phase3-first-reply",
-      "title": "Phase 3",
+      "title": "AI 完成首次有效回复后自动转交工程师",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1556,7 +1556,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-phase3-slack",
-      "title": "Phase 3",
+      "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1593,7 +1593,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "assign-rollout",
-      "title": "P1",
+      "title": "从 10% Engineer Case 试运行逐步切换到全量派单",
       "topic_id": "engineer-workspace",
       "related_topic_ids": [],
       "milestone_id": "phase-3-engineer-workflow",
@@ -1630,7 +1630,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-dashboard-metrics",
-      "title": "Dashboard / monitor 指标固定为 route_accuracy、automation_coverage、not_automated_reason、response_latency、a",
+      "title": "定义 Account Automation Dashboard 与 Monitor 指标",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1667,7 +1667,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-expand",
-      "title": "是否扩展到更多 billing 小类取决于试运行质量，目前保持收口。",
+      "title": "依据试运行质量决定是否扩展 Billing 自动化范围",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1706,7 +1706,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-human-review",
-      "title": "建立人工审核模式",
+      "title": "建立 Billing 人工审核与客户回复工作流",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1743,7 +1743,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-human-review-handoff",
-      "title": "后续单独设计 Account Human Review 到 Engineer Case 的显式交接；当前只记录 Human Review 标签，不复用旧的第 10 单 rollout。",
+      "title": "设计 Account Human Review 到 Engineer Case 的显式交接",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1780,7 +1780,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-idempotency",
-      "title": "验证 Zendesk/external ID 幂等与异常恢复，确保重复 webhook 不重复建单、派单或发送内部邮件。",
+      "title": "保障 Zendesk Webhook 建单、派单与邮件发送幂等",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1832,7 +1832,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-monitor-automation-outcomes",
-      "title": "Monitor automated case 执行结果",
+      "title": "监控 Account Automation 执行结果与失败原因",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1869,7 +1869,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-monitor-replay-quality",
-      "title": "Monitor real Zendesk replay set",
+      "title": "监控真实 Zendesk Replay Set 的路由与自动化质量",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -1951,7 +1951,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "billing-recipient-env",
-      "title": "P2",
+      "title": "配置并验证 Automation 内部处理邮箱",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2052,7 +2052,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-async-ingest",
-      "title": "P1",
+      "title": "将 KG Ingest 后台任务化并联动 RAG 入库",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2089,7 +2089,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-benchmark-ab",
-      "title": "P0",
+      "title": "用真实查询评估 RAG 与 RAG+KG 的效果门禁",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2126,7 +2126,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-citations",
-      "title": "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。",
+      "title": "保证 KG 客户答案引用回到官网文档证据",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2165,7 +2165,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-engineer-vs-client",
-      "title": "P1",
+      "title": "定义 Client AI 与 Engineer AI 的 KG 使用边界",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2202,7 +2202,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-graph-db",
-      "title": "P1",
+      "title": "评估 AWS Neptune 作为生产图数据库",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2239,7 +2239,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-grey-gate",
-      "title": "P0",
+      "title": "建立 KG Shadow 与小流量灰度门禁",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2276,7 +2276,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-ingest-model-bakeoff",
-      "title": "P0",
+      "title": "完成 GraphRAG Ingest 模型 Bake-off",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2313,7 +2313,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-model-config",
-      "title": "P1",
+      "title": "固化生产 KG 配置、Secret 与环境变量边界",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2350,7 +2350,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "kg-offline-graph-build",
-      "title": "P0",
+      "title": "在本地 Neo4j 构建完整官方文档知识图谱",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2387,7 +2387,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-agent-to-agent-governed-autonomy",
-      "title": "长期方向",
+      "title": "在证据与审计门禁下扩展 Agent-to-Agent 自主调查",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2424,7 +2424,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-agentrelay-support-integration",
-      "title": "低优先级保留",
+      "title": "将 AgentRelay 多角色协作接入 Support Case",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2461,7 +2461,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-controlled-replan",
-      "title": "低优先级保留",
+      "title": "为 Multi-Agent 调查恢复受控 Targeted Replan",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2498,7 +2498,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-guardrail-claim-evidence",
-      "title": "低优先级保留",
+      "title": "用 Claim-to-Evidence 校验客户回复",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2535,7 +2535,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-real-evidence-tools",
-      "title": "低优先级保留",
+      "title": "为 Execute Agent 接入真实证据工具",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2572,7 +2572,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-replay-runner",
-      "title": "低优先级保留",
+      "title": "建立 Engineer AI Replay 评测与回归门禁",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2609,7 +2609,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-rollout-taxonomy-contract",
-      "title": "低优先级保留",
+      "title": "统一 Route Taxonomy 与 Multi-Agent 生命周期契约",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2646,7 +2646,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "ma-workspace-action-console",
-      "title": "低优先级保留",
+      "title": "将 Multi-Agent Run 面板升级为工程师行动台",
       "topic_id": "agent-collaboration",
       "related_topic_ids": [],
       "milestone_id": "long-term-agent-collaboration",
@@ -2773,8 +2773,59 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 1,
+      "task_id": "project-task-title-cleanup",
+      "title": "清理 Project Overview 中无法识别的 Task 标题",
+      "topic_id": "platform-delivery",
+      "related_topic_ids": [],
+      "milestone_id": "phase-2-controlled-validation",
+      "status": "done",
+      "priority": "unclassified",
+      "owner": "Zac",
+      "summary": "将只显示管理标签、模糊短语或整段说明的 Task 标题改为可独立理解和汇报的功能名称。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "原先仅显示 P0/P1/P2、Phase、长期方向或低优先级保留的 Task 标题均改为具体功能名称。",
+        "其他模糊、截断或整段说明式标题也改为简洁的交付名称。",
+        "重命名不改变 Task ID、状态、优先级、里程碑、负责人或工作范围。",
+        "Project Overview 数据校验和桌面、移动端任务看板验收通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Project Overview registry title and route contract tests",
+          "command": "python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract backend.tests.test_dashboard_routes"
+        },
+        {
+          "type": "test",
+          "label": "Desktop and 390x844 browser verification for renamed Task cards"
+        }
+      ],
+      "source_refs": [
+        "docs/project/tasks",
+        "docs/projectoverview.html",
+        "backend/tests/test_project_overview_contract.py"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "created",
+          "summary": "为 Project Overview Task 标题可读性清理建立独立任务记录。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "completed",
+          "summary": "完成 46 个模糊 Task 标题清理，并补充 registry 契约和浏览器验证。"
+        }
+      ],
+      "legacy_refs": []
+    },
+    {
+      "schema_version": 1,
       "task_id": "rag-dedupe",
-      "title": "P1",
+      "title": "建立 RAG 文档去重、主题归并与冲突审查",
       "topic_id": "rag-knowledge",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2811,7 +2862,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-automation-rollout",
-      "title": "Phase 2",
+      "title": "按 Replay 与指标门禁逐步开放 Account Automation",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2848,7 +2899,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-billing-review-customer-experience",
-      "title": "P0",
+      "title": "为 Billing Review 建立人工审核与内部待办",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2885,7 +2936,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-billing-risky-negatives",
-      "title": "补 billing risky negative set",
+      "title": "扩展 Billing 高风险负样本集",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2922,7 +2973,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-dashboard-metrics",
-      "title": "P1",
+      "title": "在 Dashboard 展示 Automation Controlled Launch 指标",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2959,7 +3010,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-fallback-billing-risk-sniff",
-      "title": "P0",
+      "title": "在 Conservative Fallback 前识别 Billing 风险",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -2996,7 +3047,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-real-zendesk-replay",
-      "title": "维护并扩展 real Zendesk replay monitor",
+      "title": "扩展真实 Zendesk Replay Set 覆盖范围",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -3033,7 +3084,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-rollout-taxonomy",
-      "title": "新增 rollout taxonomy",
+      "title": "建立 Automation Rollout 三态 Taxonomy",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -3070,7 +3121,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-security-compliance",
-      "title": "Security & Compliance classification-only route",
+      "title": "将 Security & Compliance 保持为仅分类人工处理",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -3109,7 +3160,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-semantic-golden-expand",
-      "title": "扩展 golden set",
+      "title": "扩展 Billing 路由边界 Golden Set",
       "topic_id": "client-experience",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",
@@ -3146,7 +3197,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 1,
       "task_id": "routing-taxonomy",
-      "title": "Account route taxonomy 和 filter membership",
+      "title": "统一 Account Route Taxonomy 与 Filter Membership",
       "topic_id": "account-automation",
       "related_topic_ids": [],
       "milestone_id": "phase-2-controlled-validation",

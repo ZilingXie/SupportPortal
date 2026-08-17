@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-auth-hardening",
-  "title": "P0",
+  "title": "加固生产认证 Secret、Session 失效与 RBAC 验证",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",

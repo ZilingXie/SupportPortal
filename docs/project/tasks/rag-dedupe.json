@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "rag-dedupe",
-  "title": "P1",
+  "title": "建立 RAG 文档去重、主题归并与冲突审查",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

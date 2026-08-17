@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "routing-security-compliance",
-  "title": "Security & Compliance classification-only route",
+  "title": "将 Security & Compliance 保持为仅分类人工处理",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

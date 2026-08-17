@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-idempotency",
-  "title": "验证 Zendesk/external ID 幂等与异常恢复，确保重复 webhook 不重复建单、派单或发送内部邮件。",
+  "title": "保障 Zendesk Webhook 建单、派单与邮件发送幂等",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

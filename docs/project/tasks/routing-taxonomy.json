@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "routing-taxonomy",
-  "title": "Account route taxonomy 和 filter membership",
+  "title": "统一 Account Route Taxonomy 与 Filter Membership",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

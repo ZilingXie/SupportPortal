@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-citations",
-  "title": "KG 不能替代 RAG/Postgres source of truth；客户可见答案引用必须回到官网文档 chunk/citation。",
+  "title": "保证 KG 客户答案引用回到官网文档证据",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

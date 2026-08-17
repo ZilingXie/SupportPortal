@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-grey-gate",
-  "title": "P0",
+  "title": "建立 KG Shadow 与小流量灰度门禁",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

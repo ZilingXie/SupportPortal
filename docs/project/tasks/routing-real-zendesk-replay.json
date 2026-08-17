@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "routing-real-zendesk-replay",
-  "title": "维护并扩展 real Zendesk replay monitor",
+  "title": "扩展真实 Zendesk Replay Set 覆盖范围",
   "topic_id": "client-experience",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

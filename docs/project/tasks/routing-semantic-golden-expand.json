@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "routing-semantic-golden-expand",
-  "title": "扩展 golden set",
+  "title": "扩展 Billing 路由边界 Golden Set",
   "topic_id": "client-experience",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "billing-monitor-automation-outcomes",
-  "title": "Monitor automated case 执行结果",
+  "title": "监控 Account Automation 执行结果与失败原因",
   "topic_id": "account-automation",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

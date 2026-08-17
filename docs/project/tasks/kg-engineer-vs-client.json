@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "kg-engineer-vs-client",
-  "title": "P1",
+  "title": "定义 Client AI 与 Engineer AI 的 KG 使用边界",
   "topic_id": "rag-knowledge",
   "related_topic_ids": [],
   "milestone_id": "phase-2-controlled-validation",

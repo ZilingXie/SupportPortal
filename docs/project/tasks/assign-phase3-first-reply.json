@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "assign-phase3-first-reply",
-  "title": "Phase 3",
+  "title": "AI 完成首次有效回复后自动转交工程师",
   "topic_id": "engineer-workspace",
   "related_topic_ids": [],
   "milestone_id": "phase-3-engineer-workflow",
