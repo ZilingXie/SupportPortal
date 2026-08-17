@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T09:02:06Z",
-  "source_base_commit": "4d29f3e444424ca4a91d82cb76011dc03bb11eed",
-  "registry_digest": "c24131aed113854e126d40e23e4d67cde23a5006534c8aa132fb1366723f0e4e",
+  "generated_at": "2026-08-17T09:36:07Z",
+  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
+  "registry_digest": "19a934c9cbd5d4d1f5a190a95075f8a936c2b8f1c589b025bb35888f90378340",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -917,6 +917,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 703,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/703",
           "label": "PR #703"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk AI assignment service and Account API tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI assignment contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk assignment regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Feature list and Project Overview validation",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
         }
       ],
       "source_refs": [
@@ -928,8 +948,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 5,
-      "done_count": 4,
+      "task_count": 6,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -3824,6 +3844,65 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-49",
+      "title": "支持 Account Case 一键派给 Zendesk AI Agent",
+      "status": "done",
+      "owner": "zac",
+      "summary": "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Account Case 详情提供 Assign to AI 操作，只有 Admin 可以执行。",
+        "派单只更新 Zendesk assignee_id，保留 ticket 原 group、status 和 comments。",
+        "目标用户由服务端配置并校验为 active Agent；Zendesk 拒绝或结果未知时明确提示。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk AI assignment service and Account API tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI assignment contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk assignment regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Feature list and Project Overview validation",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
+        }
+      ],
+      "source_refs": [
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "implemented",
+          "summary": "增加 Account Admin Assign to AI 操作，保持 Zendesk ticket 原 group 只更新 assignee。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "verified",
+          "summary": "44 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
     },
     {
       "schema_version": 2,
@@ -6780,6 +6859,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口可查看 Account Case 历史和详情。",
         "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
+        "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
@@ -6853,6 +6933,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "对话支持上传 txt/log/err 日志附件。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
+        "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",

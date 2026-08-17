@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-49",
+  "title": "支持 Account Case 一键派给 Zendesk AI Agent",
+  "status": "done",
+  "owner": "zac",
+  "summary": "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "Account Case 详情提供 Assign to AI 操作，只有 Admin 可以执行。",
+    "派单只更新 Zendesk assignee_id，保留 ticket 原 group、status 和 comments。",
+    "目标用户由服务端配置并校验为 active Agent；Zendesk 拒绝或结果未知时明确提示。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Zendesk AI assignment service and Account API tests",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+    },
+    {
+      "type": "test",
+      "label": "Account UI assignment contract tests",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+    },
+    {
+      "type": "test",
+      "label": "Account Zendesk assignment regression suite",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_ui_contract -q"
+    },
+    {
+      "type": "test",
+      "label": "Feature list and Project Overview validation",
+      "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
+    }
+  ],
+  "source_refs": ["docs/feature_list.md"],
+  "created_at": "2026-08-17",
+  "updated_at": "2026-08-17",
+  "history": [
+    {
+      "at": "2026-08-17",
+      "event": "implemented",
+      "summary": "增加 Account Admin Assign to AI 操作，保持 Zendesk ticket 原 group 只更新 assignee。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "verified",
+      "summary": "44 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+    }
+  ],
+  "legacy_refs": [],
+  "legacy_ids": [],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "zendesk-connection"
+}

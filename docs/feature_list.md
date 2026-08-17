@@ -32,6 +32,7 @@
 - Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。
 - Account 入口可查看 Account Case 历史和详情。
 - Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。
+- Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
 - Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
@@ -103,6 +104,7 @@
 - 对话支持上传 txt/log/err 日志附件。
 - Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。
 - Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。
+- Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。

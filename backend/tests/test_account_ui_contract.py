@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260817-account-rerun-recovery-fence-1", html)
+        self.assertIn("20260817-account-assign-to-ai-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -452,6 +452,24 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("message_id", main_source)
         self.assertNotIn('localStorage.setItem("supportportal_workspace_access_token"', app_source)
         self.assertNotIn('localStorage.setItem("supportportal_workspace_account"', app_source)
+
+    def test_account_app_contains_zendesk_ai_assignment_action(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+        for marker in (
+            "Assign to AI",
+            "Assigning...",
+            "Assigned to AI",
+            "assignAccountCaseToAi",
+            "zendeskAssignmentPendingCaseId",
+            "zendeskAssignmentErrorCaseId",
+            "zendesk-ai-assignment",
+            "No Zendesk ticket linked",
+            "finally",
+        ):
+            self.assertIn(marker, app_source)
+        self.assertIn("zendesk-assignment-action", styles)
+        self.assertIn("zendesk-assignment-button", styles)
 
     def test_account_fetch_aborts_stalled_request_and_surfaces_timeout(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
