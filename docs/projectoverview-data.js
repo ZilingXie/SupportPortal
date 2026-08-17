@@ -1,8 +1,14 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
+<<<<<<< HEAD
   "generated_at": "2026-08-17T09:12:36Z",
   "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
   "registry_digest": "87883545d7b50defae9cd7caa5c184c29cdf987b9e4c80ed1a0056fc9b7fe290",
+=======
+  "generated_at": "2026-08-17T09:11:58Z",
+  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
+  "registry_digest": "bfbd557844344f4862e1ea877f2ca88362be8cc35da1b639984c46b8e346241f",
+>>>>>>> origin/main
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -515,6 +521,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
+          "number": 659,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
+          "label": "PR #659"
+        },
+        {
+          "type": "pr",
+          "number": 681,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
+          "label": "PR #681"
+        },
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
+        },
+        {
+          "type": "pr",
           "number": 675,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/675",
           "label": "PR #675"
@@ -615,12 +639,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PR #571"
         },
         {
+<<<<<<< HEAD
           "type": "pr",
           "number": 657,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
           "label": "PR #657"
         },
         {
+=======
+>>>>>>> origin/main
           "type": "pr",
           "number": 665,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/665",
@@ -664,12 +691,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
+<<<<<<< HEAD
           "number": 659,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
           "label": "PR #659"
         },
         {
           "type": "pr",
+=======
+>>>>>>> origin/main
           "number": 670,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
           "label": "PR #670"
@@ -682,12 +712,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "pr",
+<<<<<<< HEAD
           "number": 681,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
           "label": "PR #681"
         },
         {
           "type": "pr",
+=======
+>>>>>>> origin/main
           "number": 568,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
           "label": "PR #568"
@@ -709,6 +742,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "routing-taxonomy",
         "routing-fallback-billing-risk-sniff",
         "routing-quality-validation",
+        "controlled-rollout",
         "routing-billing-risky-negatives",
         "p2-06",
         "routing-real-zendesk-replay",

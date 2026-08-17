@@ -24,6 +24,24 @@
       "number": 520,
       "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
       "label": "PR #520"
+    },
+    {
+      "type": "pr",
+      "number": 659,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
+      "label": "PR #659"
+    },
+    {
+      "type": "pr",
+      "number": 681,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
+      "label": "PR #681"
+    },
+    {
+      "type": "pr",
+      "number": 657,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+      "label": "PR #657"
     }
   ],
   "source_refs": [
@@ -36,6 +54,7 @@
     "routing-taxonomy",
     "routing-fallback-billing-risk-sniff",
     "routing-quality-validation",
+    "controlled-rollout",
     "routing-billing-risky-negatives",
     "p2-06",
     "routing-real-zendesk-replay",
