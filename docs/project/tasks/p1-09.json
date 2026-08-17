@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "task_id": "p1-09",
-  "title": "完成 Billing 与 Detailed Invoice 自动化闭环",
+  "title": "完成 Billing 与 Detailed Invoice 自动化执行闭环",
   "status": "done",
   "owner": "jojo",
   "summary": "Billing 与 Detailed Invoice 已完成路由、内部处理、结果回传和客户更新闭环。",

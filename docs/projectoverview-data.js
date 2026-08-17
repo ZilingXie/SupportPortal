@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T09:11:58Z",
-  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
-  "registry_digest": "bfbd557844344f4862e1ea877f2ca88362be8cc35da1b639984c46b8e346241f",
+  "generated_at": "2026-08-17T09:13:45Z",
+  "source_base_commit": "753f32df324bce4429ff7d35f5b3ca4c2d434220",
+  "registry_digest": "eef70e555e03789d436947b196175afd90eb1e94f8a090a52ecb7304777a7668",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1509,6 +1509,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1641,7 +1646,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-09",
-      "title": "完成 Billing 与 Detailed Invoice 自动化闭环",
+      "title": "完成 Billing 与 Detailed Invoice 自动化执行闭环",
       "status": "done",
       "owner": "jojo",
       "summary": "Billing 与 Detailed Invoice 已完成路由、内部处理、结果回传和客户更新闭环。",
@@ -1964,6 +1969,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 automation-execution 重新归类到 case-automation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3069,6 +3079,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从历史 Account intake、Case history 和 Automated Case 迁移记录补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3274,6 +3289,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从 Phase 2 Enablement handler、字段提取和回复记录补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3316,6 +3336,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从历史 Quota automation handler 和内部流转实现补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3371,6 +3396,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从 Billing Case migration 和 automation foundation 实现补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],

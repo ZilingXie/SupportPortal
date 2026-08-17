@@ -50,6 +50,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Function 从 automation-execution 重新归类到 case-automation。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 case-automation 合并到 case-route。"
     }
   ],
   "legacy_refs": [],
