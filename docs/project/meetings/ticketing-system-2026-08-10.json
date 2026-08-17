@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "meeting_id": "ticketing-system-2026-08-10",
   "date": "2026-08-10",
   "title": "Ticketing System 第一阶段对齐会",
@@ -15,6 +15,25 @@
   "decisions": [],
   "open_questions": [],
   "task_ids": [
+    "p2-01",
+    "p2-02",
+    "p2-18",
+    "p2-33",
+    "p2-15",
+    "p2-19",
+    "p2-28",
+    "p2-29",
+    "p2-09",
+    "p2-03",
+    "p2-14",
+    "p2-21"
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+  ],
+  "legacy_anchor": "./roadmap/meetings.html#ticketing-system-2026-08-10",
+  "function_ids": [],
+  "legacy_task_ids": [
     "TS-01",
     "TS-02",
     "TS-03",
@@ -27,9 +46,5 @@
     "TS-09",
     "TS-10",
     "TS-11"
-  ],
-  "source_refs": [
-    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
-  ],
-  "legacy_anchor": "./roadmap/meetings.html#ticketing-system-2026-08-10"
+  ]
 }

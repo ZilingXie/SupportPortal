@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "rag-evaluation",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "RAG/KG 效果评测",
+  "goal": "用真实查询、引用和灰度门禁验证知识增强效果。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

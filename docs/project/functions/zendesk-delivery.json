@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "function_id": "zendesk-delivery",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "Zendesk 交付与身份",
+  "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+    "docs/integrations/n8n/zendesk_account_comment_sync.md",
+    "docs/feature_list.md"
+  ],
+  "legacy_ids": []
+}

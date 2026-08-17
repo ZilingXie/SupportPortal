@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "agentrelay-integration",
+  "phase_id": "phase-3",
+  "module_id": "agent-collaboration",
+  "title": "AgentRelay 协作接入",
+  "goal": "将 AgentRelay 多角色协作接入 Support Case 工作流。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

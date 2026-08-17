@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "function_id": "automation-execution",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "Account Automation 执行闭环",
+  "goal": "实现幂等、rerun、Persona 和内部处理的稳定执行链路。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+    "docs/roadmap.html",
+    "docs/feature_list.md",
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

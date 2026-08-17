@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "function_id": "client-conversation-experience",
+  "phase_id": "phase-2",
+  "module_id": "client-experience",
+  "title": "Client 对话体验",
+  "goal": "完善客户侧附件、流式回复和入口体验。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html",
+    "docs/feature_list.md"
+  ],
+  "legacy_ids": []
+}

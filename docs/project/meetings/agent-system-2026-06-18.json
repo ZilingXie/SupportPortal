@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "meeting_id": "agent-system-2026-06-18",
   "date": "2026-06-18",
   "title": "AI Agent 工单系统落地对齐会",
@@ -13,15 +13,24 @@
   "decisions": [],
   "open_questions": [],
   "task_ids": [
+    "p3-01",
+    "p3-03",
+    "p3-04",
+    "p3-02",
+    "p3-05",
+    "p3-06"
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#agent-system-2026-06-18"
+  ],
+  "legacy_anchor": "./roadmap/meetings.html#agent-system-2026-06-18",
+  "function_ids": [],
+  "legacy_task_ids": [
     "AG-01",
     "AG-02",
     "AG-03",
     "AG-04",
     "AG-05",
     "AG-06"
-  ],
-  "source_refs": [
-    "docs/roadmap/meetings.html#agent-system-2026-06-18"
-  ],
-  "legacy_anchor": "./roadmap/meetings.html#agent-system-2026-06-18"
+  ]
 }

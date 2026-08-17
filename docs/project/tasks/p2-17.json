@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-17",
+  "title": "为 Billing Review 建立人工审核与内部待办",
+  "status": "planned",
+  "owner": "unassigned",
+  "summary": "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。",
+  "next_action": "P0：billing_review 客户回复改为人工审核确认，并创建内部待办/queue；不要复用 non_agora refusal copy。",
+  "acceptance_criteria": [
+    "完成 Customer Experience 维度的交付和验证。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "created_at": "2026-08-16",
+  "updated_at": "2026-08-16",
+  "history": [
+    {
+      "at": "2026-08-16",
+      "event": "migrated",
+      "summary": "从 Roadmap lane routing-rules 迁移。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "迁移到 phase-2 / account-automation / human-review。"
+    }
+  ],
+  "legacy_refs": [
+    {
+      "source": "docs/roadmap.html",
+      "lane_id": "routing-rules",
+      "item_id": "routing-billing-review-customer-experience"
+    }
+  ],
+  "legacy_ids": [
+    "routing-billing-review-customer-experience"
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "human-review"
+}

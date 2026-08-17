@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "function_id": "rag-production-platform",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "KG 生产平台",
+  "goal": "确定生产图数据库、配置、Secret 和环境边界。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/roadmap.html#lanes"
+  ],
+  "legacy_ids": []
+}

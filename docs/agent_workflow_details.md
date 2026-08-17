@@ -114,9 +114,9 @@ The completed-implementation review and finalization process lives in the projec
 3. Each entry must include the date, area or subsystem, prompt or model version, summary, reason, affected files or config, expected behavior change, and verification evidence.
 
 ## Project Progress Registry Maintenance
-1. `docs/project/tasks/*.json` is the canonical state for project Tasks. Board, Topic, Meeting, activity, and report sections in Project Overview are generated views; `docs/projectoverview-data.js` must not be edited by hand.
-2. Any `功能类/修复类` change that changes runtime behavior, a user-visible flow, an API contract, a data model, configuration, or a business result must use one Task. Find the existing `task_id` first; create a Task when none exists, then update its `status`, `next_action`, and `evidence` throughout the work.
-3. After changing a Task or another Project Overview source record, run `python3 scripts/generate_project_overview.py --write` and then `python3 scripts/generate_project_overview.py --check` before committing. If the change is ambiguous, stop and ask before implementation.
+1. `docs/project/phases/*.json`, `docs/project/modules/*.json`, `docs/project/functions/*.json`, and `docs/project/tasks/*.json` are the canonical state for project progress. Board, Function, Meeting, activity, and report sections in Project Overview are generated views; `docs/projectoverview-data.js` must not be edited by hand.
+2. Any `功能类/修复类` change that changes runtime behavior, a user-visible flow, an API contract, a data model, configuration, or a business result must use one Task under an owning Function. Find the existing Function and `task_id` first; create a Function only for a separately reportable capability, then update the Task's `status`, `next_action`, and `evidence` throughout the work.
+3. After changing a Phase, Module, Function, Task, Meeting, PR summary, or another Project Overview source record, run `python3 scripts/generate_project_overview.py --write` and then `python3 scripts/generate_project_overview.py --check` before committing. Function status is derived from child Tasks; Phase moves require a new `pN-xx` ID and a migration alias. If the change is ambiguous, stop and ask before implementation.
 4. Pure documentation, tests, instructions/rules, comments, refactors, developer-only scripts, and operations-only changes are exempt unless they also change tracked progress or runtime/user-visible behavior.
 
 ## Feature List Maintenance

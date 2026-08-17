@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "function_id": "routing-taxonomy",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "Account 路由分类体系",
+  "goal": "统一 Automation、Human Review、classification-only 和 fallback 的路由边界。",
+  "acceptance_criteria": [],
+  "evidence": [
+    {
+      "type": "pr",
+      "number": 728,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/728",
+      "label": "PR #728"
+    },
+    {
+      "type": "pr",
+      "number": 731,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
+      "label": "PR #731"
+    }
+  ],
+  "source_refs": [
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+    "docs/roadmap.html",
+    "docs/feature_list.md"
+  ],
+  "legacy_ids": [
+    "routing-taxonomy"
+  ]
+}
