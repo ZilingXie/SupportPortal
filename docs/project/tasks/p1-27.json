@@ -31,6 +31,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p2-27 迁移为 p1-27；迁移到 phase-1 / account-automation / controlled-rollout。"
+    },
+    {
+      "at": "2026-08-17",
+      "event": "reclassified",
+      "summary": "Function 从 controlled-rollout 重新归类到 case-automation。"
     }
   ],
   "legacy_refs": [
@@ -46,5 +51,5 @@
   ],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "controlled-rollout"
+  "function_id": "case-automation"
 }

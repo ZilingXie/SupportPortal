@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "function_id": "zendesk-delivery",
+  "function_id": "zendesk-connection",
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "title": "Zendesk 交付与身份",
-  "goal": "保证内部处理、客户回复和评论身份在 Zendesk 中可追踪。",
+  "title": "Zendesk Connection",
+  "goal": "确保 Zendesk 的建单、派单、评论写回和身份信息可可靠连接与展示。",
   "acceptance_criteria": [],
   "evidence": [],
   "source_refs": [
@@ -12,5 +12,7 @@
     "docs/integrations/n8n/zendesk_account_comment_sync.md",
     "docs/feature_list.md"
   ],
-  "legacy_ids": []
+  "legacy_ids": [
+    "zendesk-delivery"
+  ]
 }

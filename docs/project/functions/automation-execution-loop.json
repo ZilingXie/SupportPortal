@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "function_id": "automation-execution",
+  "function_id": "automation-execution-loop",
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "title": "Account Automation 执行闭环",
-  "goal": "实现幂等、rerun、Persona 和内部处理的稳定执行链路。",
+  "title": "Automation 执行闭环",
+  "goal": "让 Case 自动化执行具备幂等、恢复、监控、失败可见和向人工升级的闭环。",
   "acceptance_criteria": [],
   "evidence": [],
   "source_refs": [
@@ -13,5 +13,7 @@
     "docs/feature_list.md",
     "docs/roadmap.html#lanes"
   ],
-  "legacy_ids": []
+  "legacy_ids": [
+    "automation-execution"
+  ]
 }
