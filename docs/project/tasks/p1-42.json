@@ -24,5 +24,5 @@
   "legacy_ids": ["billing-automation-foundation"],
   "phase_id": "phase-1",
   "module_id": "account-automation",
-  "function_id": "case-automation"
+  "function_id": "case-route"
 }
