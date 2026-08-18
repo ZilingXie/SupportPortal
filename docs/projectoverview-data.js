@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T13:23:10Z",
-  "source_base_commit": "0396c66bc1d3f192df4615e79d8e4499c14df551",
-  "registry_digest": "d395da6617d92aa74d2ba61e690fa88da0167a1f014f3b93c81c5905fbe5aec9",
+  "generated_at": "2026-08-18T13:45:45Z",
+  "source_base_commit": "902f3b5146b1acb4e5885541081fe10760b14bc7",
+  "registry_digest": "baf0f0c88646ee9c235643d7a78cd970b10aa29996bb4dcc9acba5bb7d599e52",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -484,6 +484,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 725,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/725",
           "label": "PR #725"
+        },
+        {
+          "type": "test",
+          "label": "Task worktree and direct-to-main repository policy preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Task worktree and branch are correct; root main is clean at 902f3b5; repository policy verification passed."
+        },
+        {
+          "type": "document",
+          "label": "karpathy-guidelines read before runtime edits",
+          "command": "Read /Users/xieziling/.codex/skills/karpathy-guidelines/SKILL.md",
+          "result": "Complete skill read; runtime implementation must remain surgical, explicit, fail-loud, and test-driven."
         }
       ],
       "source_refs": [
@@ -496,7 +508,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -3998,6 +4010,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-50",
+      "title": "统一 Account Automation 客户回复与 Rerun 契约",
+      "status": "active",
+      "owner": "zac",
+      "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
+      "next_action": "完成 Stage 1：实现 canonical reply intent、Persona v9、签名清理和发布前校验。",
+      "acceptance_criteria": [
+        "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
+        "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
+        "enablement 客户提交确认包含最长 24 小时激活时间和 Monday-Friday 变更窗口；只有真实内部回复明确表示已启用后才通知客户并关闭，否定回复不关闭。",
+        "所有 AI 客户回复不包含尾部签名；签名清理不能误删正文中的普通 best 或 regards。",
+        "Intake、full rerun 和 reply-only recovery 使用同一 canonical reply intent 和关闭判定；intent 冲突、旧 Fraud 关闭契约或无效回复 fail closed 或进入 Human Review。",
+        "未通过最终 content/intent 校验的回复不会调用 publish_account_reply，也不会创建 production Zendesk delivery intent。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Task worktree and direct-to-main repository policy preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Task worktree and branch are correct; root main is clean at 902f3b5; repository policy verification passed."
+        },
+        {
+          "type": "document",
+          "label": "karpathy-guidelines read before runtime edits",
+          "command": "Read /Users/xieziling/.codex/skills/karpathy-guidelines/SKILL.md",
+          "result": "Complete skill read; runtime implementation must remain surgical, explicit, fail-loud, and test-driven."
+        }
+      ],
+      "source_refs": [
+        "docs/superpowers/plans/2026-08-18-account-automation-reply-contracts.md",
+        "docs/feature_list.md",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-08-18",
+      "updated_at": "2026-08-18",
+      "history": [
+        {
+          "at": "2026-08-18",
+          "event": "started",
+          "summary": "创建任务并完成 Stage 0 工作区、仓库策略和实现前置规则检查；尚未声明运行时完成。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
