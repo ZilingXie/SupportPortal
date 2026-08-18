@@ -1,0 +1,92 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-72",
+  "title": "加固 single-host 启动健康门禁和部署互斥",
+  "status": "active",
+  "owner": "zac",
+  "summary": "降低 single-host 重启期间的并发启动、误回滚和不完整健康检查风险。",
+  "next_action": "将 Ticket、Asset/Event 和 Knowledge schema bootstrap 收敛到一次性初始化流程，并让 API、RAG 和 workers 仅执行 runtime schema 校验。",
+  "acceptance_criteria": [
+    "部署重启使用全局互斥锁，并能回收已退出进程留下的 stale lock。",
+    "旧 deployment 容器未完全退出时拒绝启动第二套 stack。",
+    "Core 服务先通过严格 health 后才启动 workers，回滚复用相同阶段顺序。",
+    "remote DB 模式的 health 必须确认 PostgreSQL storage、Knowledge storage、RAG 和 Prompt runtime 均可用。",
+    "提供可显式执行的一次性 schema bootstrap 工具，并在 PostgreSQL 集成验证完成后再切换 runtime-only 启动。"
+  ],
+  "blockers": [
+    "生产默认切换仍需在受控窗口执行 RUNTIME_SCHEMA_MODE=check，并完成 canonical image provenance 与 live health 验收。"
+  ],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Single-host restart reliability regression coverage",
+      "command": "python3 -m unittest backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rebuilds_with_current_main_build_metadata backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_health_failure_restores_previous_image backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_same_tag_failure_restores_previous_image_id backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rejects_remote_health_missing_contract backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rejects_active_deploy_lock",
+      "details": "覆盖 core-first/worker-second 启动、严格 remote health、回滚阶段顺序、活动部署锁和 stale lock 隔离。"
+    },
+    {
+      "type": "test",
+      "label": "Workflow and shell validation",
+      "command": "python3 -m unittest backend.tests.test_workflow_scripts.WorkflowScriptTests && bash -n scripts/workflow/restart_single_host_stack.sh"
+    },
+    {
+      "type": "test",
+      "label": "Bootstrap CLI and Compose profile contract",
+      "command": "python3 -m unittest backend.tests.test_single_host_compose && python3 -m unittest backend.tests.test_runtime_bootstrap",
+      "details": "验证 runtime_bootstrap profile、串行 repository 初始化、异常清理和 check-only 不调用 DDL。当地环境缺少 psycopg 时 CLI 测试会跳过。"
+    },
+    {
+      "type": "test",
+      "label": "Runtime schema preflight wiring",
+      "command": "python3 -m py_compile backend/services/runtime_schema.py backend/services/prompt_runtime.py backend/main.py backend/rag_api.py backend/rag_worker.py backend/worker.py && git diff --check",
+      "details": "验证 RUNTIME_SCHEMA_MODE=check 的只读门禁、四个运行入口的 DDL 跳过分支、RAG telemetry 运行时准备和默认 bootstrap 模式兼容。"
+    },
+    {
+      "type": "test",
+      "label": "Isolated PostgreSQL bootstrap and runtime preflight",
+      "command": "podman run --rm --network host -e TICKET_DB_DSN=postgresql://supportportal:supportportal@127.0.0.1:25432/supportportal -e PGVECTOR_DSN=postgresql://supportportal:supportportal@127.0.0.1:25432/supportportal python -m backend.scripts.runtime_bootstrap bootstrap && python -m backend.scripts.runtime_bootstrap check-only",
+      "details": "真实 pgvector/pg16 验证了四个 repository 串行 bootstrap、Prompt catalog sync、只读 check-only、缺失 vector 表 fail-closed，以及两个并发 bootstrap 的幂等与 advisory-lock 串行化。"
+    }
+  ],
+  "source_refs": [
+    "docs/project/modules/platform-delivery.json",
+    "scripts/workflow/restart_single_host_stack.sh",
+    "backend/tests/test_workflow_scripts.py",
+    "backend/scripts/runtime_bootstrap.py",
+    "backend/services/runtime_schema.py",
+    "backend/main.py",
+    "backend/rag_api.py",
+    "backend/rag_worker.py",
+    "backend/worker.py",
+    "deployment/docker-compose.single-host.yml",
+    "deployment/docker-compose.single-host.local-db.yml"
+  ],
+  "created_at": "2026-08-18",
+  "updated_at": "2026-08-18",
+  "history": [
+    {
+      "at": "2026-08-18",
+      "event": "created",
+      "summary": "建立 single-host 启动可靠性任务，先实施部署止血和严格健康门禁。"
+    },
+    {
+      "at": "2026-08-18",
+      "event": "implementation_started",
+      "summary": "完成部署互斥、stale lock 回收、旧容器退出门禁、core-first 启动、严格 health 和脱敏诊断。"
+    },
+    {
+      "at": "2026-08-18",
+      "event": "bootstrap_tool_added",
+      "summary": "新增显式 runtime_bootstrap CLI 和 bootstrap Compose profile；默认 API、RAG、worker 启动路径尚未切换为 runtime-only，等待 PostgreSQL 集成验证。"
+    },
+    {
+      "at": "2026-08-18",
+      "event": "runtime_check_integrated",
+      "summary": "完成共享 runtime schema preflight 和 RUNTIME_SCHEMA_MODE=check 接入，并在隔离 pgvector/pg16 上验证 bootstrap、check-only、负向门禁和并发幂等；默认 bootstrap 仍保持兼容。"
+    }
+  ],
+  "legacy_refs": [],
+  "legacy_ids": [],
+  "phase_id": "phase-1",
+  "module_id": "platform-delivery",
+  "function_id": "project-governance"
+}

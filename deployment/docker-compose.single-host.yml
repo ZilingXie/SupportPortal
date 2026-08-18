@@ -41,6 +41,7 @@ services:
       PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
       PROMPT_RUNTIME_SERVICE: api
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}
       HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}
@@ -164,6 +165,7 @@ services:
       PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
       PROMPT_RUNTIME_SERVICE: rag_api
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
@@ -262,6 +264,7 @@ services:
       PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
       PROMPT_RUNTIME_SERVICE: rag_worker
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
@@ -344,6 +347,7 @@ services:
       APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
       APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
     depends_on:
@@ -368,6 +372,7 @@ services:
       PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
       PROMPT_RUNTIME_SERVICE: worker_query
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}
       HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}
@@ -440,6 +445,7 @@ services:
       PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
       PROMPT_RUNTIME_SERVICE: worker_aux
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}
       HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}
@@ -524,6 +530,33 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+
+  runtime_bootstrap:
+    profiles: ["bootstrap"]
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      args:
+        APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+    env_file:
+      - ../.env
+    command: ["python", "-m", "backend.scripts.runtime_bootstrap", "bootstrap"]
+    environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
+      TICKET_DB_MIGRATION_DSN: ${TICKET_DB_MIGRATION_DSN:-}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      PGVECTOR_DSN: ${PGVECTOR_DSN:?PGVECTOR_DSN is required}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks_bge_m3_1024}
+      PGVECTOR_DIM: ${PGVECTOR_DIM:-1024}
+      KNOWLEDGE_BM25_BACKFILL_ON_INIT: ${KNOWLEDGE_BM25_BACKFILL_ON_INIT:-true}
+      KNOWLEDGE_BM25_BACKFILL_ON_STARTUP: ${KNOWLEDGE_BM25_BACKFILL_ON_STARTUP:-false}
 
 volumes:
   redis_data:

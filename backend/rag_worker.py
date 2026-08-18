@@ -17,6 +17,7 @@ from backend.services.event_bus import SyncRedisEventBus
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
 from backend.services.knowledge_monitoring import build_knowledge_event_payload
 from backend.services.prompt_runtime import initialize_prompt_runtime_from_environment
+from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
 from backend.services.task_queue import SyncRedisTaskQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -193,33 +194,7 @@ def _process_benchmark_session(task: dict[str, Any]) -> None:
     )
 
 
-def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-    _install_signal_handlers()
-
-    try:
-        initialize_prompt_runtime_from_environment(service_name="rag_worker")
-    except Exception as exc:
-        LOGGER.error("RAG worker failed to initialize Prompt Release: %s", exc)
-        return 1
-
-    try:
-        event_repository.initialize()
-        LOGGER.info("RAG worker event repository initialized: %s", event_repository.storage_mode())
-    except Exception as exc:
-        LOGGER.error("RAG worker failed to initialize event repository: %s", exc)
-        return 1
-
-    try:
-        knowledge_repository.initialize()
-        LOGGER.info("RAG worker knowledge repository initialized: %s", knowledge_repository.storage_mode())
-    except Exception as exc:
-        LOGGER.error("RAG worker failed to initialize knowledge repository: %s", exc)
-        return 1
-
+def _run_runtime_loop() -> int:
     bus = SyncRedisEventBus()
     LOGGER.info("RAG worker started. waiting for tasks...")
 
@@ -247,6 +222,45 @@ def main() -> int:
     bus.close()
     LOGGER.info("RAG worker stopped.")
     return 0
+
+
+def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    _install_signal_handlers()
+    if runtime_schema_check_enabled():
+        try:
+            check_runtime_schema()
+            initialize_prompt_runtime_from_environment(service_name="rag_worker")
+            LOGGER.info("Runtime schema preflight passed; skipped RAG worker DDL bootstrap.")
+        except Exception as exc:
+            LOGGER.error("RAG worker runtime schema preflight failed: %s", exc)
+            return 1
+        return _run_runtime_loop()
+
+    try:
+        initialize_prompt_runtime_from_environment(service_name="rag_worker")
+    except Exception as exc:
+        LOGGER.error("RAG worker failed to initialize Prompt Release: %s", exc)
+        return 1
+
+    try:
+        event_repository.initialize()
+        LOGGER.info("RAG worker event repository initialized: %s", event_repository.storage_mode())
+    except Exception as exc:
+        LOGGER.error("RAG worker failed to initialize event repository: %s", exc)
+        return 1
+
+    try:
+        knowledge_repository.initialize()
+        LOGGER.info("RAG worker knowledge repository initialized: %s", knowledge_repository.storage_mode())
+    except Exception as exc:
+        LOGGER.error("RAG worker failed to initialize knowledge repository: %s", exc)
+        return 1
+
+    return _run_runtime_loop()
 
 
 if __name__ == "__main__":

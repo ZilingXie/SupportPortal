@@ -110,6 +110,7 @@ from backend.services.client_ticket_agent_runtime import (
 )
 from backend.services.product_selection import resolve_support_product_context
 from backend.services.prompt_runtime import initialize_prompt_runtime
+from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
 from backend.services.rag_executor import build_worker_rag_executor
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -3301,7 +3302,10 @@ def run_worker() -> int:
     worker_started_at = now_iso()
 
     try:
-        ticket_repository.initialize()
+        if runtime_schema_check_enabled():
+            check_runtime_schema()
+        else:
+            ticket_repository.initialize()
         initialize_prompt_runtime(
             ticket_repository,
             service_name=str(os.getenv("PROMPT_RUNTIME_SERVICE") or "worker"),

@@ -39,6 +39,7 @@ from backend.services.knowledge_monitoring import (
 )
 from backend.services.llm_profiles import parse_provider_model_reference
 from backend.services.prompt_runtime import initialize_prompt_runtime_from_environment, prompt_runtime_info
+from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
 from backend.services.rag_benchmark_readiness import (
     build_local_benchmark_readiness_report,
     format_local_benchmark_readiness_failures,
@@ -1052,6 +1053,12 @@ async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[s
 @app.on_event("startup")
 def startup_event() -> None:
     global event_repository
+    if runtime_schema_check_enabled():
+        check_runtime_schema()
+        initialize_prompt_runtime_from_environment(service_name="rag_api")
+        _ensure_rag_query_telemetry_runtime()
+        LOGGER.info("Runtime schema preflight passed; skipped RAG startup DDL bootstrap.")
+        return
     initialize_prompt_runtime_from_environment(service_name="rag_api")
     _ensure_rag_query_telemetry_runtime()
     try:

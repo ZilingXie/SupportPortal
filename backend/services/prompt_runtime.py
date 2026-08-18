@@ -127,7 +127,10 @@ def initialize_prompt_runtime_from_environment(*, service_name: str) -> PromptRu
 
     repository = create_ticket_repository()
     try:
-        repository.initialize()
+        from backend.services.runtime_schema import runtime_schema_check_enabled
+
+        if not runtime_schema_check_enabled():
+            repository.initialize()
         return initialize_prompt_runtime(repository, service_name=service_name)
     finally:
         close = getattr(repository, "close", None)
