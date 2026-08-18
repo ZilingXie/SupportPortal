@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T14:58:31Z",
-  "source_base_commit": "341a99cdad7f1a793a940a6eb3f19e61a3d0a91f",
-  "registry_digest": "b328944f33820d50b68b8cc1594497e3fcddccc7130ee2719025c0056caba11e",
+  "generated_at": "2026-08-18T15:07:31Z",
+  "source_base_commit": "7f157626a9cc955546033f7d3ece631b730860aa",
+  "registry_digest": "8204a4d58066c67c76d9532ea7c9dcad2623d7852153a343dcb4227f84231c20",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -496,6 +496,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "karpathy-guidelines read before runtime edits",
           "command": "Read /Users/xieziling/.codex/skills/karpathy-guidelines/SKILL.md",
           "result": "Complete skill read; runtime implementation must remain surgical, explicit, fail-loud, and test-driven."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation integrated targeted suite",
+          "command": "python -m unittest backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery",
+          "result": "368 tests passed; normal Intake, full rerun, reply-only recovery, Persona v9 contracts, Worker publication gates, the three active Automation flows, and legacy Suspension full-rerun migration are green."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation static and registry checks",
+          "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
         }
       ],
       "source_refs": [
@@ -509,7 +521,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 9,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -4015,10 +4027,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-50",
       "title": "统一 Account Automation 客户回复与 Rerun 契约",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "完成 Stage 1：实现 canonical reply intent、Persona v9、签名清理和发布前校验。",
+      "next_action": "进入 Stage 5：创建单一 implementation PR，合并后重启官方栈，并在 Stage 6 执行一次 full rerun 和三 Case live validation。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
@@ -4040,6 +4052,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "karpathy-guidelines read before runtime edits",
           "command": "Read /Users/xieziling/.codex/skills/karpathy-guidelines/SKILL.md",
           "result": "Complete skill read; runtime implementation must remain surgical, explicit, fail-loud, and test-driven."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation integrated targeted suite",
+          "command": "python -m unittest backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery",
+          "result": "368 tests passed; normal Intake, full rerun, reply-only recovery, Persona v9 contracts, Worker publication gates, the three active Automation flows, and legacy Suspension full-rerun migration are green."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation static and registry checks",
+          "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
         }
       ],
       "source_refs": [

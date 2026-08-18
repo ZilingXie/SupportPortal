@@ -32,7 +32,7 @@
       "type": "test",
       "label": "Account Automation integrated targeted suite",
       "command": "python -m unittest backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery",
-      "result": "367 tests passed; normal Intake, full rerun, reply-only recovery, Persona v9 contracts, Worker publication gates, and the three active Automation flows are green."
+      "result": "368 tests passed; normal Intake, full rerun, reply-only recovery, Persona v9 contracts, Worker publication gates, the three active Automation flows, and legacy Suspension full-rerun migration are green."
     },
     {
       "type": "test",
