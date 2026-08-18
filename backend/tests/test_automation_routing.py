@@ -26,25 +26,28 @@ class AutomationRoutingTests(unittest.TestCase):
             ),
         )
 
-    def test_registered_billing_subcategories_share_automation_category(self) -> None:
-        for subcategory in (
-            "account_verification",
-            "fraud_account",
-            "detailed_invoice",
-        ):
+    def test_only_active_billing_subcategory_receives_automation_metadata(self) -> None:
+        self.assertEqual(
+            automation_metadata(
+                route_family="automated",
+                execution_action="fraud_account",
+            ),
+            {
+                "category": "automation",
+                "subcategory": "fraud_account",
+                "route_status": "automated",
+                "automation_handler": "billing",
+            },
+        )
+        for subcategory in ("account_verification", "detailed_invoice"):
             with self.subTest(subcategory=subcategory):
-                self.assertEqual(
-                    automation_metadata(
-                        route_family="automated",
-                        execution_action=subcategory,
-                    ),
-                    {
-                        "category": "automation",
-                        "subcategory": subcategory,
-                        "route_status": "automated",
-                        "automation_handler": "billing",
-                    },
+                metadata = automation_metadata(
+                    route_family="automated",
+                    execution_action=subcategory,
                 )
+                self.assertEqual(metadata["subcategory"], subcategory)
+                self.assertEqual(metadata["route_status"], "not_automated")
+                self.assertIsNone(metadata["automation_handler"])
 
         self.assertEqual(
             AUTOMATION_HANDLER_REGISTRY["billing"],
@@ -63,16 +66,13 @@ class AutomationRoutingTests(unittest.TestCase):
         )
         self.assertEqual(AUTOMATION_HANDLER_REGISTRY["enablement"], frozenset({"enablement"}))
 
-    def test_quota_uses_its_own_handler(self) -> None:
-        self.assertEqual(
-            automation_metadata(route_family="automated", execution_action="quota"),
-            {
-                "category": "automation",
-                "subcategory": "quota",
-                "route_status": "automated",
-                "automation_handler": "quota",
-            },
+    def test_quota_remains_registered_but_not_active(self) -> None:
+        metadata = automation_metadata(
+            route_family="automated", execution_action="quota"
         )
+        self.assertEqual(metadata["subcategory"], "quota")
+        self.assertEqual(metadata["route_status"], "not_automated")
+        self.assertIsNone(metadata["automation_handler"])
         self.assertEqual(AUTOMATION_HANDLER_REGISTRY["quota"], frozenset({"quota"}))
 
     def test_legacy_account_suspension_uses_its_own_handler(self) -> None:
@@ -89,14 +89,14 @@ class AutomationRoutingTests(unittest.TestCase):
             },
         )
 
-    def test_legacy_billing_route_is_normalized(self) -> None:
+    def test_legacy_billing_route_keeps_disabled_invoice_non_automated(self) -> None:
         metadata = automation_metadata(
             route_family="billing_automation",
             execution_action="detailed_invoice",
         )
 
-        self.assertEqual(metadata["route_status"], "automated")
-        self.assertEqual(metadata["category"], "automation")
+        self.assertEqual(metadata["route_status"], "not_automated")
+        self.assertIsNone(metadata["category"])
 
     def test_unknown_subcategory_fails_closed(self) -> None:
         self.assertFalse(

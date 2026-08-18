@@ -31,7 +31,7 @@ def _attempt(payload: dict[str, object]) -> AccountRouteStageAttempt:
 
 
 class AccountRoutePipelineTests(unittest.TestCase):
-    def test_detailed_invoice_is_account_billing_automation(self) -> None:
+    def test_detailed_invoice_is_recognized_but_requires_human_review(self) -> None:
         attempts = [
             _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
             _attempt({
@@ -59,10 +59,11 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.secondary_label, "Account & Billing / Detailed Invoice")
         self.assertEqual(result.classification["agora_route"], "account_billing")
         self.assertEqual(result.classification["account_billing_subcategory"], "detailed_invoice")
-        self.assertEqual(result.decision.route_family, "automated")
-        self.assertEqual(result.decision.execution_action, "detailed_invoice")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
         self.assertEqual(result.decision.semantic_intent, "account_billing.detailed_invoice")
-        self.assertEqual(result.decision.automation_eligibility, "eligible")
+        self.assertEqual(result.decision.automation_eligibility, "not_eligible")
+        self.assertEqual(result.decision.not_automated_reason, "detailed_invoice_requested")
         self.assertEqual(
             result.classification["route_reason_code"],
             "detailed_invoice_requested",
@@ -496,8 +497,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(by_case_id["12708"]["secondary_label"], "Backend Operation / Enablement")
         self.assertEqual(by_case_id["12708"]["reason_code"], "registered_enablement")
         self.assertEqual(by_case_id["10075"]["secondary_label"], "Account & Billing / Detailed Invoice")
-        self.assertEqual(by_case_id["10075"]["route_status"], "automated")
-        self.assertEqual(by_case_id["10075"]["automation_handler"], "billing")
+        self.assertEqual(by_case_id["10075"]["route_status"], "not_automated")
+        self.assertIsNone(by_case_id["10075"]["automation_handler"])
 
     def test_route_correction_uses_layered_labels_without_activating_handler(self) -> None:
         conversation = classification_for_corrected_route(
@@ -514,7 +515,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
             execution_action="detailed_invoice",
         )
         self.assertEqual(automation["secondary_label"], "Account & Billing / Detailed Invoice")
-        self.assertEqual(automation["handler_binding_status"], "completed")
+        self.assertIsNone(automation["handler_binding_status"])
 
         enablement = classification_for_corrected_route(
             scope_label="automation",
@@ -1043,7 +1044,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         )
         self.assertEqual(invoke_stage.call_count, 2)
 
-    def test_quota_increase_uses_registered_quota_handler(self) -> None:
+    def test_quota_increase_is_recognized_but_requires_human_review(self) -> None:
         attempts = [
             _attempt(
                 {
@@ -1085,9 +1086,11 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.classification["automation_subcategory"], "quota")
         self.assertIsNone(result.classification["automation_candidate"])
         self.assertEqual(result.classification["route_reason_code"], "registered_quota")
-        self.assertEqual(result.decision.scope_label, "quota")
-        self.assertEqual(result.decision.execution_action, "quota")
-        self.assertEqual(result.decision.semantic_intent, "quota.capacity_request")
+        self.assertEqual(result.decision.scope_label, "automation")
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertIsNone(result.decision.semantic_intent)
+        self.assertEqual(result.decision.not_automated_reason, "registered_quota")
         self.assertEqual(
             result.classification["stage_reason_codes"],
             {

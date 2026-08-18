@@ -1635,9 +1635,17 @@ def decide_account_route(
                     [*classification.get("additional_intents", []), *billing_additional_intents]
                 )
             ),
-            route_target="automation" if subcategory == "fraud_account" else "human_review",
+            route_target=(
+                "automation"
+                if subcategory == "fraud_account"
+                or (subcategory == "account_suspension" and not suspension_has_additional_intents)
+                else "human_review"
+            ),
             human_review_reason=(
-                None if subcategory == "fraud_account" else account_billing_reason
+                None
+                if subcategory == "fraud_account"
+                or (subcategory == "account_suspension" and not suspension_has_additional_intents)
+                else account_billing_reason
             ),
             route_reason_code=account_billing_reason,
         )
@@ -1649,7 +1657,7 @@ def decide_account_route(
                 *_sanitize_evidence(account_billing_payload.get("evidence_spans")),
             ]
         )
-        if subcategory == "fraud_account":
+        if subcategory in {"fraud_account", "account_suspension"} and not suspension_has_additional_intents:
             classification["handler_binding_status"] = "active"
             return finish(_result(
                 classification,

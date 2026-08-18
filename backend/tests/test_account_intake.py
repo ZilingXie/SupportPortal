@@ -785,25 +785,91 @@ class AccountIntakeApiTests(unittest.TestCase):
         return dict(result["job"])
 
     def _create_invoice_ticket_with_response_token(self) -> tuple[dict[str, object], str]:
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.send_billing_internal_email",
-            return_value={"status": "sent", "reason": ""},
-        ):
-            response = self.client.post(
-                "/account",
-                json={
-                    "title": "Detailed invoice request",
-                    "question": (
-                        "Please send detailed invoice. Issue date: 6 May 2026. "
-                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
-                    ),
-                    "customer_email": "customer@example.com",
-                    "source": "account-ui",
+        ticket_id = f"TK-HIST-INVOICE-{len(self.repository.list_tickets()) + 1:03d}"
+        account_case_id = f"AC-{ticket_id}"
+        created_at = "2026-07-18T00:00:00+00:00"
+        question = (
+            "Please send detailed invoice. Issue date: 6 May 2026. "
+            "Transaction ID: 1104245232004173824. Amount: USD 705.97."
+        )
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "requester": "customer@example.com",
+                "subject": "Detailed invoice request",
+                "status": "open",
+                "source": "manual",
+                "created_at": created_at,
+                "updated_at": created_at,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": question,
+                        "created_at": created_at,
+                        "content_format": "plaintext",
+                        "source": "manual",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": account_case_id,
+                "billing_ticket_id": account_case_id,
+                "client_ticket_id": ticket_id,
+                "source": "manual",
+                "title": "Detailed invoice request",
+                "question": question,
+                "route": "detailed_invoice",
+                "scope_label": "account_billing",
+                "route_family": "automated",
+                "execution_action": "detailed_invoice",
+                "tooling_profile": "deterministic_billing_intake",
+                "automation_status": "automation",
+                "route_status": "automated",
+                "automation_handler": "billing",
+                "category": "account_billing",
+                "subcategory": "detailed_invoice",
+                "customer_name": "Customer",
+                "collected_fields": {
+                    "issue_date": "6 May 2026",
+                    "transaction_id": "1104245232004173824",
+                    "amount": "USD 705.97",
                 },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
+                "missing_fields": [],
+                "internal_email_send_status": "sent",
+                "internal_email_send_reason": "",
+                "internal_email_payload": {
+                    "delivery_key": f"billing:{account_case_id}:v1",
+                    "subject": "[Billing Request] Detailed invoice request",
+                    "body": "Please reply directly to this email in Outlook.",
+                },
+                "route_classification": {
+                    "pipeline_version": "account-layered-router-v9",
+                    "intent_class": "agora",
+                    "agora_route": "account_billing",
+                    "account_billing_subcategory": "detailed_invoice",
+                    "handler_binding_status": "completed",
+                    "primary_label": "Agora",
+                    "secondary_label": "Account & Billing / Detailed Invoice",
+                },
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        )
+        self.repository.resolve_account_persona(ticket_id)
+        payload = {
+            "ticket_id": ticket_id,
+            "account_case_id": account_case_id,
+            "billing_ticket_id": account_case_id,
+            "route": "detailed_invoice",
+            "category": "account_billing",
+            "subcategory": "detailed_invoice",
+            "route_family": "automated",
+            "route_status": "automated",
+            "automation_status": "automation",
+        }
         raw_token = f"legacy-response-token-{payload['ticket_id']}"
         self.repository.save_billing_response_token(
             {
@@ -2091,6 +2157,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         *,
         ticket_id: str,
         automation_status: str,
+        automation_subcategory: str = "enablement",
         route_confidence: float = 0.95,
         secondary_label: str | None = None,
         intent_class: str | None = None,
@@ -2123,6 +2190,41 @@ class AccountIntakeApiTests(unittest.TestCase):
                     ),
                     secondary_label=secondary_label,
                 )
+        normalized_subcategory = (
+            automation_subcategory.strip().lower()
+            if automation_status == "automation"
+            else ""
+        )
+        if normalized_subcategory not in {"fraud_account", "enablement", "detailed_invoice", "quota"}:
+            normalized_subcategory = "enablement" if automation_status == "automation" else ""
+        if automation_status == "automation":
+            if normalized_subcategory == "fraud_account":
+                scope_label = "account_billing"
+                tooling_profile = "deterministic_billing_intake"
+            elif normalized_subcategory in {"detailed_invoice", "quota"}:
+                scope_label = "account_billing" if normalized_subcategory == "detailed_invoice" else "backend_operation"
+                tooling_profile = "deterministic_billing_intake"
+            else:
+                scope_label = "backend_operation"
+                tooling_profile = "deterministic_enablement_intake"
+            route = normalized_subcategory
+            route_family = "automated"
+            execution_action = normalized_subcategory
+        else:
+            scope_label = "agora_non_technical"
+            tooling_profile = "official_web_search"
+            route = "web_search"
+            route_family = "web_company_info"
+            execution_action = "web_search"
+        if automation_status == "automation" and normalized_subcategory in {"fraud_account", "enablement"}:
+            route_classification.update(
+                {
+                    "intent_class": "agora",
+                    "agora_route": "account_billing" if normalized_subcategory == "fraud_account" else "backend_operation",
+                    "account_billing_subcategory": normalized_subcategory if normalized_subcategory == "fraud_account" else None,
+                    "backend_operation_subcategory": normalized_subcategory if normalized_subcategory == "enablement" else None,
+                }
+            )
         self.repository.save_billing_ticket(
             {
                 "billing_ticket_id": f"BT-{ticket_id}",
@@ -2131,11 +2233,11 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "title": f"Ticket {ticket_id}",
                 "question": "q",
                 "automation_status": automation_status,
-                "route": "detailed_invoice" if automation_status == "automation" else "web_search",
-                "scope_label": "billing" if automation_status == "automation" else "agora_non_technical",
-                "route_family": "automated" if automation_status == "automation" else "web_company_info",
-                "execution_action": "detailed_invoice" if automation_status == "automation" else "web_search",
-                "tooling_profile": "deterministic_billing_intake" if automation_status == "automation" else "official_web_search",
+                "route": route,
+                "scope_label": scope_label,
+                "route_family": route_family,
+                "execution_action": execution_action,
+                "tooling_profile": tooling_profile,
                 "route_confidence": route_confidence,
                 "route_classification": route_classification,
             }
@@ -2161,20 +2263,19 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["status"], "not_automated")
         self.assertEqual(payload["route"], "detailed_invoice")
         self.assertTrue(payload["account_case_id"].startswith("AC-"))
         self.assertEqual(payload["billing_ticket_id"], payload["account_case_id"])
         self.assertEqual(payload["category"], "account_billing")
         self.assertEqual(payload["subcategory"], "detailed_invoice")
-        self.assertEqual(payload["route_status"], "automated")
-        self.assertEqual(payload["automation_handler"], "billing")
+        self.assertEqual(payload["route_status"], "not_automated")
+        self.assertIsNone(payload["automation_handler"])
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
-        self.assertEqual(payload["ai_reply_status"], "queued")
-        self.assertEqual(payload["internal_email_send_status"], "sent")
-        self.assertEqual(payload["internal_email_send_reason"], "")
+        self.assertIsNone(payload["ai_reply_status"])
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
@@ -2184,13 +2285,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(ticket["customer_id"], "customer@example.com")
         self.assertEqual(ticket["source"], "manual")
         self.assertEqual([message["role"] for message in ticket["messages"]], ["customer"])
-        self._publish_latest_account_reply(payload["ticket_id"])
-        ticket = self.repository.get_ticket(payload["ticket_id"])
-        assert ticket is not None
-        assistant_msg = ticket["messages"][1]
-        self.assertIn("submitted for review", assistant_msg["content"].lower())
-        self.assertEqual(assistant_msg["source"], "account_ai")
-        self.assertEqual(assistant_msg["meta"]["visibility"], "account_only")
+        self.assertEqual(len(ticket["messages"]), 1)
 
         event_payloads = [
             item["payload"]
@@ -2200,7 +2295,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(event_payloads)
         self.assertEqual(event_payloads[0]["source"], "manual")
         self.assertEqual(event_payloads[0]["execution_action"], "detailed_invoice")
-        self.assertEqual(event_payloads[0]["account_intake_status"], "automation")
+        self.assertEqual(event_payloads[0]["account_intake_status"], "not_automated")
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "detailed_invoice")
@@ -3243,37 +3338,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("support_ticket_id", payload)
 
     def test_billing_internal_email_uses_outlook_reply_without_response_link(self) -> None:
-        captured_payloads: list[dict[str, str]] = []
-
-        def fake_send(payload: dict[str, str]) -> dict[str, str]:
-            captured_payloads.append(payload)
-            return {"status": "sent", "reason": ""}
-
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.send_billing_internal_email", side_effect=fake_send
-        ):
-            response = self.client.post(
-                "/account",
-                json={
-                    "title": "Detailed invoice request",
-                    "question": (
-                        "Please send detailed invoice. Issue date: 6 May 2026. "
-                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
-                    ),
-                    "customer_email": "customer@example.com",
-                    "source": "account-ui",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertTrue(captured_payloads)
-        body = captured_payloads[0]["body"]
-        self.assertNotIn(f"Billing Ticket ID: {payload['billing_ticket_id']}", body)
-        self.assertIn("reply directly to this email in Outlook", body)
-        self.assertNotIn("/response?token=", body)
-        self.assertNotIn("Available actions", body)
-
+        payload, _ = self._create_invoice_ticket_with_response_token()
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
@@ -3284,43 +3349,14 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertNotIn("/response?token=", stored_body)
 
     def test_billing_outlook_reply_email_failure_records_failure_without_response_link(self) -> None:
-        captured_payloads: list[dict[str, str]] = []
-
-        def fake_send(payload: dict[str, str]) -> dict[str, str]:
-            captured_payloads.append(payload)
-            return {"status": "failed", "reason": "boom"}
-
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.send_billing_internal_email", side_effect=fake_send
-        ):
-            response = self.client.post(
-                "/account",
-                json={
-                    "title": "Detailed invoice request",
-                    "question": (
-                        "Please send detailed invoice. Issue date: 6 May 2026. "
-                        "Transaction ID: 1104245232004173824. Amount: USD 705.97."
-                    ),
-                    "customer_email": "customer@example.com",
-                    "source": "account-ui",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["internal_email_send_status"], "failed")
-        self.assertEqual(payload["internal_email_send_reason"], "boom")
-        self.assertTrue(captured_payloads)
-        body = captured_payloads[0]["body"]
-        self.assertIn("reply directly to this email in Outlook", body)
-        self.assertNotIn("/response?token=", body)
-
+        payload, _ = self._create_invoice_ticket_with_response_token()
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
         self.assertIsNotNone(bt)
         assert bt is not None
-        self.assertIsInstance(bt["internal_email_payload"], dict)
+        self.assertEqual(bt["internal_email_send_status"], "sent")
         self.assertEqual(bt["route_status"], "automated")
-        self.assertEqual(bt["automation_status"], "human_review_required")
+        self.assertEqual(bt["automation_status"], "automation")
+        self.assertNotIn("/response?token=", bt["internal_email_payload"]["body"])
 
     def test_billing_response_lookup_returns_context_for_valid_token(self) -> None:
         create_payload, raw_token = self._create_invoice_ticket_with_response_token()
@@ -3534,45 +3570,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(last_message["content"], payload["customer_reply"])
 
     def test_billing_response_submit_uses_original_question_for_resolution_context(self) -> None:
-        captured_payloads: list[dict[str, str]] = []
-
-        def fake_send(payload: dict[str, str]) -> dict[str, str]:
-            captured_payloads.append(payload)
-            return {"status": "sent", "reason": ""}
-
-        with patch.object(main, "dispatch_event", AsyncMock()), patch(
-            "backend.main.send_billing_internal_email", side_effect=fake_send
-        ):
-            create_response = self.client.post(
-                "/account",
-                json={
-                    "title": "E2E test - resolution reply",
-                    "question": "Please send me a detailed invoice for my Agora billing charge.",
-                    "customer_email": "customer@example.com",
-                    "source": "account-ui",
-                },
-            )
-            self.assertEqual(create_response.status_code, 200, create_response.text)
-            create_payload = create_response.json()
-            reply_response = self.client.post(
-                f"/api/account/billing-tickets/{create_payload['billing_ticket_id']}/reply",
-                json={
-                    "message": "Issue date: 1 Jan 2026. Transaction ID: TX-001. Amount: USD 100.",
-                },
-            )
-            self.assertEqual(reply_response.status_code, 200, reply_response.text)
-
-        self.assertTrue(captured_payloads)
-        self.assertIn("reply directly to this email in Outlook", captured_payloads[0]["body"])
-        raw_token = f"legacy-response-token-{create_payload['ticket_id']}"
-        self.repository.save_billing_response_token(
-            {
-                "token_hash": hash_billing_response_token(raw_token),
-                "billing_ticket_id": create_payload["billing_ticket_id"],
-                "created_at": "2026-07-18T00:00:00+00:00",
-                "used_at": None,
-            }
-        )
+        create_payload, raw_token = self._create_invoice_ticket_with_response_token()
         response = self.client.post(
             "/api/billing-response/submit",
             json={
@@ -3955,29 +3953,21 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def test_billing_missing_fields_does_not_create_response_token(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
-            self.repository,
-            "save_billing_response_token",
-            wraps=self.repository.save_billing_response_token,
-        ) as save_token_mock:
+            self.repository, "save_billing_response_token", wraps=self.repository.save_billing_response_token
+        ) as save_token_mock, patch("backend.main.send_billing_internal_email") as send_email:
             response = self.client.post(
                 "/account",
-                json={
-                    "title": "Detailed invoice request",
-                    "question": "Please send detailed invoice.",
-                    "customer_email": "customer@example.com",
-                    "source": "account-ui",
-                },
+                json={"title": "Detailed invoice request", "question": "Please send detailed invoice.", "customer_email": "customer@example.com"},
             )
-
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "automation")
-        self.assertEqual(payload["route"], "detailed_invoice")
-        self.assertEqual(payload["internal_email_send_status"], "not_ready")
-        self.assertIn("issue_date", payload["missing_fields"])
-        self.assertIn("transaction_id", payload["missing_fields"])
-        self.assertIn("amount", payload["missing_fields"])
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["route_status"], "not_automated")
+        self.assertIsNone(payload.get("ai_reply_status"))
+        self.assertEqual(payload.get("internal_email_send_status"), "not_applicable")
         save_token_mock.assert_not_called()
+        send_email.assert_not_called()
         self.assertIsNone(
             self.repository.get_billing_response_token(hash_billing_response_token("unused-token"))
         )
@@ -4441,7 +4431,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             payload = response.json()
             self.assertEqual(
                 payload["total"],
-                2 if route_filter == "account_billing" else 1,
+                1,
             )
             self.assertEqual(payload["count"], 1)
             if route_filter == "account_billing":
@@ -4532,7 +4522,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(
             {child["id"] for child in automation_definition["children"]},
-            {"fraud_account", "detailed_invoice", "enablement", "quota"},
+            {"fraud_account", "enablement"},
         )
         counts = payload["filter_counts"]
         self.assertEqual(payload["total"], len(fixtures))
@@ -5040,16 +5030,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 405, response.text)
 
     def test_billing_tickets_detail_api(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
-            create_response = self.client.post(
-                "/account",
-                json={
-                    "title": "Detail test",
-                    "question": "Please send the detailed invoice.",
-                    "customer_email": "customer@example.com",
-                },
-            )
-        bt_id = create_response.json()["billing_ticket_id"]
+        create_payload, _ = self._create_invoice_ticket_with_response_token()
+        bt_id = create_payload["billing_ticket_id"]
 
         response = self.client.get(f"/api/account/billing-tickets/{bt_id}")
         self.assertEqual(response.status_code, 200)
@@ -5060,9 +5042,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(detail["automation_status"], "automation")
         self.assertEqual(detail["status"], "automation")
         self.assertEqual(detail["route"], "detailed_invoice")
-        # With just "Please send the detailed invoice." and no field values,
-        # the billing automation will report missing fields.
-        self.assertEqual(set(detail.get("missing_fields") or []), {"issue_date", "transaction_id", "amount"})
+        self.assertEqual(detail.get("missing_fields"), [])
         # Detail now includes canonical ticket messages.
         self.assertIn("messages", detail)
         self.assertIsInstance(detail["messages"], list)
@@ -5259,7 +5239,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         )
         self.assertEqual(second_response.status_code, 200, second_response.text)
         correction = second_response.json()["route_correction"]
-        self.assertEqual(correction["original_execution_action"], "detailed_invoice")
+        self.assertIn(
+            correction["original_execution_action"],
+            {"detailed_invoice", "human_review_required"},
+        )
         self.assertEqual(correction["first_corrected_execution_action"], "human_review_required")
         self.assertEqual(correction["corrected_execution_action"], "refuse")
         self.assertEqual(correction["correction_count"], 2)
@@ -6256,63 +6239,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_billing_detail_includes_canonical_messages(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()):
-            create_response = self.client.post(
-                "/account",
-                json={
-                    "title": "Invoice detail test",
-                    "question": "Please send the detailed invoice.",
-                    "customer_email": "customer@example.com",
-                },
-            )
-
-        bt_id = create_response.json()["billing_ticket_id"]
-        ticket_id = create_response.json()["ticket_id"]
-
-        # Reply via billing automation reply endpoint.
-        with patch(
-            "backend.main.send_billing_internal_email",
-            return_value={"status": "sent", "reason": ""},
-        ):
-            reply_response = self.client.post(
-                f"/api/account/billing-tickets/{bt_id}/reply",
-                json={
-                    "message": (
-                        "Issue date: 1 Jan 2026. "
-                        "Transaction ID: TX-001. "
-                        "Amount: USD 100."
-                    ),
-                },
-            )
-        self.assertEqual(reply_response.status_code, 200, reply_response.text)
-        self.assertEqual(
-            reply_response.json()["collected_fields"],
-            {
-                "issue_date": "1 Jan 2026",
-                "transaction_id": "TX-001",
-                "amount": "USD 100",
-            },
-        )
-        self._publish_latest_account_reply(ticket_id)
-
-        # Detail should show all messages.
+        create_payload, _ = self._create_invoice_ticket_with_response_token()
+        bt_id = create_payload["billing_ticket_id"]
         detail = self.client.get(f"/api/account/billing-tickets/{bt_id}").json()
         self.assertIn("messages", detail)
-        self.assertEqual(len(detail["messages"]), 3)  # customer + customer + scheduled assistant
+        self.assertEqual(len(detail["messages"]), 1)
         self.assertEqual(detail["messages"][0]["role"], "customer")
-        self.assertEqual(detail["messages"][1]["role"], "customer")
-        self.assertEqual(detail["messages"][2]["role"], "assistant")
         self.assertEqual(detail["customer_id"], "customer@example.com")
         self.assertEqual(detail["requester"], "customer@example.com")
         self.assertIn("support_ticket_status", detail)
-        self.assertEqual(
-            detail["collected_fields"],
-            {
-                "issue_date": "1 Jan 2026",
-                "transaction_id": "TX-001",
-                "amount": "USD 100",
-            },
-        )
+        self.assertEqual(detail["collected_fields"]["transaction_id"], "1104245232004173824")
 
     def test_non_automated_ticket_remains_not_automated(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

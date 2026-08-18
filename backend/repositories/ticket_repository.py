@@ -16,7 +16,11 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
-from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, automation_metadata
+from backend.services.automation_routing import (
+    AUTOMATED_ROUTE_FAMILY,
+    AUTOMATED_ROUTE_STATUS,
+    automation_metadata,
+)
 from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_billing_handlers import account_billing_metadata
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
@@ -831,15 +835,21 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
         AUTOMATED_ROUTE_FAMILY,
         "billing_automation",
     }
-    if automation_family:
-        normalized.update(metadata)
-    else:
-        for key, value in metadata.items():
-            normalized.setdefault(key, value)
-    if automation_family and metadata["route_status"] == "automated":
+    # Persisted route fields are the audit record.  Policy metadata is only a
+    # default for records that predate the canonical fields; it must not
+    # rewrite a historical automated Invoice/Quota case when the current
+    # allowlist changes.
+    for key, value in metadata.items():
+        if normalized.get(key) in (None, ""):
+            normalized[key] = value
+    if (
+        automation_family
+        and str(normalized.get("route_status") or "").strip() == AUTOMATED_ROUTE_STATUS
+        and metadata["route_status"] == "automated"
+    ):
         normalized["route_family"] = AUTOMATED_ROUTE_FAMILY
-        normalized["execution_action"] = metadata["subcategory"]
-        normalized["route"] = metadata["subcategory"]
+        normalized.setdefault("execution_action", metadata["subcategory"])
+        normalized.setdefault("route", metadata["subcategory"])
     return normalized
 
 
@@ -3564,6 +3574,19 @@ class InMemoryTicketRepository:
             if billing_ticket is not None:
                 billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
                 billing_ticket["updated_at"] = published_at
+                if (
+                    payload.get("close_after_publish")
+                    and str(billing_ticket.get("automation_handler") or "").strip()
+                    == "account_suspension"
+                ):
+                    context = billing_ticket.get("automation_context")
+                    context = dict(context) if isinstance(context, dict) else {}
+                    workflow = context.get("account_suspension_contact_workflow")
+                    if isinstance(workflow, dict):
+                        workflow = dict(workflow)
+                        workflow.update({"state": "closed", "updated_at": published_at})
+                        context["account_suspension_contact_workflow"] = workflow
+                        billing_ticket["automation_context"] = context
                 self.save_billing_ticket(billing_ticket)
             self.save_account_reply_execution(reply_execution)
             saved_job = copy.deepcopy(job)
@@ -14690,6 +14713,15 @@ class PostgresTicketRepository:
                             "UPDATE {} SET status='resolved',closed_at=%s,updated_at=%s WHERE ticket_id=%s"
                         ).format(self._table("support_tickets")),
                         (published_at, published_at, ticket_id),
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET automation_context=jsonb_set("
+                            "COALESCE(automation_context,'{}'::jsonb), "
+                            "'{account_suspension_contact_workflow,state}', '""closed""'::jsonb, true), "
+                            "updated_at=%s WHERE client_ticket_id=%s AND automation_handler='account_suspension'"
+                        ).format(self._table("support_account_cases")),
+                        (published_at, ticket_id),
                     )
                 cur.execute(
                     sql.SQL(
