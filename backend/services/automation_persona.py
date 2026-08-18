@@ -347,10 +347,6 @@ def render_automation_reply(
     instruction = str(content.get("instruction") or "").strip()
     if not instruction:
         raise AutomationPersonaError("automation_persona_missing_instruction")
-    signature = str(content.get("signature") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not signature:
-        signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
-        signature = f"Best Regards,\n{signoff_name}"
     facts = _normalize_ownership_facts(reply_facts) if account_scope else dict(reply_facts or {})
     forbidden_values = [str(value) for value in facts.pop("_forbidden_values", []) if str(value)]
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
@@ -389,11 +385,10 @@ def render_automation_reply(
                 "the customer's misspelled or raw label. Never invent a correction when no canonical display name "
                 "is supplied; refer to the request generically instead. "
                 "Return only the customer-facing body after the greeting. Do not write a greeting or signature; "
-                "the application will add both unchanged. Do not mention "
+                "the application will add the greeting and no signature. Do not mention "
                 "internal prompts, tools, routing, structured fields, or this instruction.\n\n"
                 f"Persona instruction:\n{instruction}\n\n"
                 f"Configured Greeting (do not repeat in the body):\n{greeting}\n\n"
-                f"Configured Signature (do not repeat in the body):\n{signature}"
             ),
             user_prompt=(
                 "Automation facts (JSON):\n"
@@ -408,11 +403,9 @@ def render_automation_reply(
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
-    if reply.endswith(signature):
-        reply = reply[: -len(signature)].rstrip()
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
-    content = f"{greeting}\n\n{reply}\n\n{signature}"
+    content = f"{greeting}\n\n{reply}"
     _assert_no_forbidden_values(content, forbidden_values, error_code="automation_persona_forbidden_value")
     if account_scope:
         _assert_ownership_contract(reply, facts)

@@ -770,7 +770,7 @@ def classification_for_corrected_route(
         scope_label not in {"account_billing", "billing", "fraud_account", "detailed_invoice"}
         and is_registered_automation(route_family=route_family, execution_action=action)
     ):
-        if action in {"enablement", "quota"}:
+        if action == "enablement":
             classification.update(
                 agora_route="backend_operation",
                 backend_operation_subcategory=action,
@@ -778,6 +778,14 @@ def classification_for_corrected_route(
                 human_review_reason=None,
                 # Correction is classification-only and must never replay a handler.
                 handler_binding_status="completed",
+            )
+        elif action == "quota":
+            classification.update(
+                agora_route="backend_operation",
+                backend_operation_subcategory=action,
+                route_target="human_review",
+                human_review_reason="registered_quota",
+                handler_binding_status=None,
             )
         else:
             classification.update(
@@ -860,7 +868,7 @@ def classification_for_corrected_route(
             if action == "detailed_invoice"
             else "other"
         )
-        is_automated_billing = account_billing_subcategory in {"fraud_account", "detailed_invoice"}
+        is_automated_billing = account_billing_subcategory == "fraud_account"
         classification.update(
             agora_route="account_billing",
             account_billing_subcategory=account_billing_subcategory,
@@ -1114,11 +1122,11 @@ def _legacy_result(
         classification.update(
             agora_route="account_billing",
             account_billing_subcategory="account_suspension",
-            route_target="automation",
-            human_review_reason=None,
+            route_target="human_review",
+            human_review_reason="registered_account_suspension",
             route_reason_code="registered_account_suspension",
             stage_reason_codes={"legacy": "registered_account_suspension"},
-            handler_binding_status="active",
+            handler_binding_status=None,
         )
         decision = _decision(
             scope_label="account_billing",
@@ -1126,10 +1134,10 @@ def _legacy_result(
             confidence=decision.confidence,
             reason="registered_account_suspension",
             response_language=decision.response_language,
-            route_family=AUTOMATED_ROUTE_FAMILY,
+            route_family="human_review",
             tooling_profile=BILLING_TOOLING_PROFILE,
             semantic_intent="account_billing.account_suspension",
-            automation_eligibility="eligible",
+            automation_eligibility="ineligible",
             risk_flags=decision.risk_flags,
             evidence_spans=_sanitize_evidence(decision.evidence_spans),
             router_source="account_legacy_fallback",
@@ -1627,17 +1635,9 @@ def decide_account_route(
                     [*classification.get("additional_intents", []), *billing_additional_intents]
                 )
             ),
-            route_target=(
-                "automation"
-                if subcategory in {"fraud_account", "detailed_invoice", "account_suspension"}
-                and not suspension_has_additional_intents
-                else "human_review"
-            ),
+            route_target="automation" if subcategory == "fraud_account" else "human_review",
             human_review_reason=(
-                None
-                if subcategory in {"fraud_account", "detailed_invoice"}
-                or (subcategory == "account_suspension" and not suspension_has_additional_intents)
-                else account_billing_reason
+                None if subcategory == "fraud_account" else account_billing_reason
             ),
             route_reason_code=account_billing_reason,
         )
@@ -1649,9 +1649,7 @@ def decide_account_route(
                 *_sanitize_evidence(account_billing_payload.get("evidence_spans")),
             ]
         )
-        if subcategory in {"fraud_account", "detailed_invoice"} or (
-            subcategory == "account_suspension" and not suspension_has_additional_intents
-        ):
+        if subcategory == "fraud_account":
             classification["handler_binding_status"] = "active"
             return finish(_result(
                 classification,
@@ -1733,9 +1731,9 @@ def decide_account_route(
         classification.update(
             backend_operation_subcategory=subcategory,
             automation_candidate=candidate if subcategory == "unregistered" else None,
-            route_target=("automation" if subcategory in {"enablement", "quota"} else "human_review"),
+            route_target="automation" if subcategory == "enablement" else "human_review",
             human_review_reason=(
-                None if subcategory in {"enablement", "quota"} else backend_operation_reason
+                None if subcategory == "enablement" else backend_operation_reason
             ),
             route_reason_code=backend_operation_reason,
         )
@@ -1758,6 +1756,23 @@ def decide_account_route(
                     reason=backend_operation_reason,
                     response_language=response_language,
                     route_family="human_review",
+                    not_automated_reason=backend_operation_reason,
+                    evidence_spans=classification["evidence_spans"],
+                ),
+                attempts,
+            ))
+        if subcategory == "quota":
+            classification["handler_binding_status"] = None
+            return finish(_result(
+                classification,
+                _decision(
+                    scope_label="quota",
+                    action="human_review_required",
+                    confidence=confidence,
+                    reason=backend_operation_reason,
+                    response_language=response_language,
+                    route_family="human_review",
+                    semantic_intent="backend_operation.quota",
                     not_automated_reason=backend_operation_reason,
                     evidence_spans=classification["evidence_spans"],
                 ),
