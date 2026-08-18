@@ -402,6 +402,7 @@ def _build_billing_internal_email_attempt(
     billing_ticket_id: str,
     customer_email: str | None,
     requester: str | None,
+    zendesk_ticket_url: str | None = None,
     persona_instruction: str | None = None,
     already_requested_fields: list[str] | None = None,
     model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
@@ -413,6 +414,7 @@ def _build_billing_internal_email_attempt(
         customer_email=customer_email,
         requester=requester,
         billing_ticket_id=billing_ticket_id,
+        zendesk_ticket_url=zendesk_ticket_url,
         persona_instruction=persona_instruction,
         already_requested_fields=already_requested_fields,
         use_llm_field_extractor=True,
@@ -453,6 +455,7 @@ def _build_enablement_internal_email_attempt(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None,
+    zendesk_ticket_url: str | None = None,
     existing_fields: dict[str, Any] | None = None,
     already_requested_fields: list[str] | None = None,
     model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
@@ -484,6 +487,7 @@ def _build_enablement_internal_email_attempt(
         account_case_id=account_case_id,
         customer_email=customer_email,
         generate_customer_reply=False,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     internal_email_to_send = dict(enablement_result.internal_email) if enablement_result.internal_email else None
     return {
@@ -507,6 +511,7 @@ def _build_quota_internal_email_attempt(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None,
+    zendesk_ticket_url: str | None = None,
     existing_fields: dict[str, Any] | None = None,
     follow_up_count: int = 0,
     model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
@@ -525,6 +530,7 @@ def _build_quota_internal_email_attempt(
         customer_email=customer_email,
         follow_up_count=follow_up_count,
         generate_customer_reply=False,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     internal_email_to_send = dict(result.internal_email) if result.internal_email else None
     return {
@@ -555,6 +561,7 @@ def _build_account_verification_internal_email_attempt(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None,
+    zendesk_ticket_url: str | None = None,
     existing_fields: dict[str, Any] | None = None,
     follow_up_count: int = 0,
     model_scenario: str = ACCOUNT_ROUTE_SCENARIO,
@@ -568,6 +575,7 @@ def _build_account_verification_internal_email_attempt(
         existing_fields=existing_fields,
         follow_up_count=follow_up_count,
         model_scenario=model_scenario,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     internal_email_to_send = dict(result.internal_email) if result.internal_email else None
     persisted_follow_up_count = result.follow_up_count
@@ -4131,7 +4139,15 @@ def _extract_account_source_link(value: Any) -> str | None:
     - dict with key Link, link, url, source_url, or source
     """
     if isinstance(value, str) and value.strip():
-        return _clean_account_source_link(value)
+        candidate = value.strip()
+        if candidate.startswith("{"):
+            try:
+                parsed = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                return _extract_account_source_link(parsed)
+        return _clean_account_source_link(candidate)
     if isinstance(value, dict):
         for key in ("Link", "link", "url", "source_url", "source"):
             candidate = value.get(key)
@@ -4140,6 +4156,17 @@ def _extract_account_source_link(value: Any) -> str | None:
                 if link:
                     return link
     return None
+
+
+def _account_zendesk_ticket_url(source: Any, ticket_id: str) -> str | None:
+    """Return a trusted Zendesk source only when it names the canonical ticket."""
+    link = _extract_account_source_link(source)
+    if not link:
+        return None
+    source_ticket_id = _zendesk_ticket_id_from_source(link)
+    if source_ticket_id and source_ticket_id != str(ticket_id or "").strip():
+        raise ValueError("Zendesk source ticket does not match canonical ticket id")
+    return link if source_ticket_id else None
 
 
 def _normalize_account_source(value: str | dict[str, Any] | None) -> str:
@@ -5060,6 +5087,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=str(request.customer_email or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
             )
             automation_attempt = billing_email_attempt
         elif handler_registration.implementation == "billing":
@@ -5070,6 +5098,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 billing_ticket_id=billing_ticket_id,
                 customer_email=str(request.customer_email or "").strip() or None,
                 requester=str(request.customer_email or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
                 persona_instruction=str(persona_assignment.get("content", {}).get("instruction") or "") if persona_assignment else None,
             )
             automation_attempt = billing_email_attempt
@@ -5081,6 +5110,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=str(request.customer_email or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
             )
             automation_attempt = enablement_email_attempt
         elif handler_registration.implementation == "quota":
@@ -5091,6 +5121,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=str(request.customer_email or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
             )
             automation_attempt = quota_email_attempt
         else:
@@ -9175,6 +9206,7 @@ async def _reply_to_billing_ticket_impl(
                 ticket_id=client_ticket_id,
                 account_case_id=str(billing_ticket.get("account_case_id") or billing_ticket_id),
                 customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(canonical_ticket.get("source"), client_ticket_id),
                 existing_fields=prior_collected_fields,
                 follow_up_count=persisted_follow_up_count,
             )
@@ -9185,6 +9217,7 @@ async def _reply_to_billing_ticket_impl(
                 ticket_id=client_ticket_id,
                 billing_ticket_id=billing_ticket_id,
                 customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(canonical_ticket.get("source"), client_ticket_id),
                 requester=str(canonical_ticket.get("requester") or "").strip() or None,
                 already_requested_fields=sorted(already_requested_fields),
             )
@@ -9196,6 +9229,7 @@ async def _reply_to_billing_ticket_impl(
                 ticket_id=client_ticket_id,
                 account_case_id=str(billing_ticket.get("account_case_id") or billing_ticket_id),
                 customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(canonical_ticket.get("source"), client_ticket_id),
                 existing_fields=prior_collected_fields,
                 already_requested_fields=sorted(already_requested_fields),
             )
@@ -9207,6 +9241,7 @@ async def _reply_to_billing_ticket_impl(
                 ticket_id=client_ticket_id,
                 account_case_id=str(billing_ticket.get("account_case_id") or billing_ticket_id),
                 customer_email=str(canonical_ticket.get("customer_id") or "").strip() or None,
+                zendesk_ticket_url=_account_zendesk_ticket_url(canonical_ticket.get("source"), client_ticket_id),
                 existing_fields=prior_collected_fields,
                 follow_up_count=int(prior_automation_context.get("follow_up_count") or 0),
             )

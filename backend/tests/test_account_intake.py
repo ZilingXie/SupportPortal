@@ -3269,7 +3269,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertTrue(captured_payloads)
         body = captured_payloads[0]["body"]
-        self.assertIn(f"Billing Ticket ID: {payload['billing_ticket_id']}", body)
+        self.assertNotIn(f"Billing Ticket ID: {payload['billing_ticket_id']}", body)
         self.assertIn("reply directly to this email in Outlook", body)
         self.assertNotIn("/response?token=", body)
         self.assertNotIn("Available actions", body)
