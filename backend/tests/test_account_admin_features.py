@@ -45,7 +45,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
                     "question": "question",
                     "automation_status": status,
                     "route_family": "automated" if status == "automation" else "web_company_info",
-                    "execution_action": "detailed_invoice" if status == "automation" else "web_search",
+                    "execution_action": "fraud_account" if status == "automation" else "web_search",
                     "created_at": f"2026-07-2{ticket_id[-1]}T00:00:00+00:00",
                 }
             )
@@ -64,9 +64,9 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(filtered["total"], 1)
         self.assertEqual(filtered["metrics"]["total_account_cases"], 3)
         self.assertEqual(filtered["cases"][0]["category"], "automation")
-        self.assertEqual(filtered["cases"][0]["subcategory"], "detailed_invoice")
+        self.assertEqual(filtered["cases"][0]["subcategory"], "fraud_account")
         self.assertEqual(filtered["cases"][0]["category_label"], "Account & Billing")
-        self.assertEqual(filtered["cases"][0]["subcategory_label"], "Detailed Invoice")
+        self.assertEqual(filtered["cases"][0]["subcategory_label"], "Fraud Account")
         self.assertIn("primary_label", filtered["cases"][0])
 
     def test_account_reply_supersede_marks_old_account_message(self) -> None:
@@ -1523,7 +1523,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         }
         rendered = apply_persona_to_customer_reply("Hi Taylor,\n\nPlease send the transaction ID.\n\nBest Regards,\nSid", persona)
         self.assertIn("Thanks for contacting the billing team.", rendered)
-        self.assertTrue(rendered.endswith("Best,\nMaya\nSupport Engineer 1"))
+        self.assertNotIn("Support Engineer 1", rendered)
 
         saved = self.repository.save_account_reply_execution({
             "execution_id": "reply-1",

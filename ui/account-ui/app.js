@@ -51,7 +51,7 @@ const DEFAULT_FILTER_DEFINITIONS = [
     label: "Backend Operation",
     children: [
       { id: "enablement", label: "Enablement" },
-      { id: "quota", label: "Quota" },
+      { id: "quota", label: "Backend Operation / Quota" },
       { id: "unregistered", label: "Unregistered" },
     ],
   },
@@ -60,8 +60,8 @@ const DEFAULT_FILTER_DEFINITIONS = [
     label: "Account & Billing",
     children: [
       { id: "account_suspension", label: "Account Suspension" },
-      { id: "fraud_account", label: "Fraud Account" },
-      { id: "detailed_invoice", label: "Detailed Invoice" },
+      { id: "fraud_account", label: "Account & Billing / Fraud Account" },
+      { id: "detailed_invoice", label: "Account & Billing / Detailed Invoice" },
       { id: "other", label: "Other" },
     ],
   },
@@ -143,6 +143,9 @@ const state = {
   zendeskAssignmentPendingCaseId: "",
   zendeskAssignmentError: "",
   zendeskAssignmentErrorCaseId: "",
+  productionPromotionPendingCaseId: "",
+  productionPromotionError: "",
+  productionPromotionErrorCaseId: "",
   zendeskAssignment: null,
   zendeskOwnershipConfirmationOpen: false,
   zendeskAssignmentTargetSnapshot: null,
@@ -1934,6 +1937,13 @@ function renderZendeskAssignmentAction(item, caseId, ticketNumber) {
   `;
 }
 
+function renderProductionPromotionAction(item, caseId) {
+  if (String(item?.processing_profile || "staging").trim().toLowerCase() !== "staging") return "";
+  const pending = state.productionPromotionPendingCaseId === caseId;
+  const error = state.productionPromotionErrorCaseId === caseId ? state.productionPromotionError : "";
+  return `<div class="production-promotion-action"><button class="ghost-button production-promotion-button" type="button" data-action="promote-production" ${pending ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span>${pending ? "Running in Production..." : "Run in Production"}</button>${error ? `<span class="production-promotion-error" role="alert">${escapeHtml(error)}</span>` : ""}</div>`;
+}
+
 function renderDetailView() {
   const item = state.activeItem;
   if (!item && state.detailLoading) {
@@ -1980,6 +1990,7 @@ function renderDetailView() {
         </div>
         <div class="detail-header__actions">
           ${renderClassificationBadges(item)}
+          ${renderProductionPromotionAction(item, accountCaseId)}
           ${renderZendeskAssignmentAction(item, accountCaseId, ticketNumber)}
           <button
             class="danger-button detail-rerun-button"
@@ -2309,6 +2320,37 @@ async function assignAccountCaseToAi() {
     state.zendeskAssignmentErrorCaseId = caseId;
   } finally {
     state.zendeskAssignmentPendingCaseId = "";
+    render();
+  }
+}
+
+async function promoteAccountCaseToProduction() {
+  const item = state.activeItem;
+  const caseId = accountCaseIdentifier(item);
+  if (!item || !caseId || state.productionPromotionPendingCaseId) return;
+  state.productionPromotionPendingCaseId = caseId;
+  state.productionPromotionError = "";
+  state.productionPromotionErrorCaseId = "";
+  render();
+  try {
+    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(caseId)}/promote-production`, { method: "POST", cache: "no-store" });
+    const payload = await readResponsePayload(response);
+    if (!response.ok) throw new Error(responseErrorMessage(payload, "Could not run this case in Production."));
+    const productionCaseId = String(payload.account_case_id || payload.billing_ticket_id || payload.ticket_id || "").trim();
+    const productionDetail = productionCaseId ? await fetchTicketDetail(productionCaseId, { force: true }) : null;
+    if (productionDetail) {
+      state.activeItem = productionDetail;
+      state.view = "detail";
+      cacheDetail(productionDetail);
+    }
+    invalidateSummaryCache();
+    await fetchTickets({ force: true });
+    showToast(payload.idempotent_replay ? "Production run already exists" : "Production run started");
+  } catch (error) {
+    state.productionPromotionError = error instanceof Error ? error.message : "Could not run this case in Production.";
+    state.productionPromotionErrorCaseId = caseId;
+  } finally {
+    state.productionPromotionPendingCaseId = "";
     render();
   }
 }
@@ -2709,6 +2751,9 @@ function bind() {
     el.addEventListener("click", () => {
       void addMessageAsZendeskInternalComment(el.dataset.messageId || "");
     });
+  });
+  document.querySelectorAll("[data-action='promote-production']").forEach((el) => {
+    el.addEventListener("click", () => void promoteAccountCaseToProduction());
   });
   document.querySelectorAll("[data-action='open-zendesk-ownership-confirmation']").forEach((el) => {
     el.addEventListener("click", () => {

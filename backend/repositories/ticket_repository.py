@@ -629,6 +629,10 @@ _ACCOUNT_CASE_LIST_FIELDS = (
     "account_case_id",
     "billing_ticket_id",
     "client_ticket_id",
+    "processing_profile",
+    "zendesk_ticket_id",
+    "origin_staging_case_id",
+    "rule_release",
     "source",
     "title",
     "route",
@@ -773,6 +777,17 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
     normalized["account_case_id"] = str(
         normalized.get("account_case_id") or billing_ticket_id
     ).strip()
+    processing_profile = str(normalized.get("processing_profile") or "staging").strip().lower()
+    if processing_profile not in {"staging", "production"}:
+        raise ValueError("processing_profile must be staging or production")
+    normalized["processing_profile"] = processing_profile
+    normalized["zendesk_ticket_id"] = str(normalized.get("zendesk_ticket_id") or "").strip() or None
+    normalized["origin_staging_case_id"] = str(normalized.get("origin_staging_case_id") or "").strip() or None
+    normalized["rule_release"] = (
+        copy.deepcopy(normalized.get("rule_release"))
+        if isinstance(normalized.get("rule_release"), dict)
+        else {}
+    )
     execution_action = normalized.get("execution_action") or normalized.get("route")
     classification = (
         normalized.get("route_classification")
@@ -832,7 +847,8 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
 # retained at the public method boundary, but all Account Case persistence uses
 # this canonical ordered field list.
 ACCOUNT_CASE_PERSISTED_COLUMNS = (
-    "account_case_id", "billing_ticket_id", "client_ticket_id", "source", "external_id",
+    "account_case_id", "billing_ticket_id", "client_ticket_id", "processing_profile",
+    "zendesk_ticket_id", "origin_staging_case_id", "rule_release", "source", "external_id",
     "created_by", "customer_name", "title", "question", "route", "scope_label",
     "route_family", "execution_action", "tooling_profile", "route_reason", "route_confidence",
     "matched_signals", "automation_status", "execution_reason_code", "missing_fields",
@@ -850,6 +866,10 @@ def _account_case_persisted_values(account_case: dict[str, Any], *, created_at: 
         str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip(),
         str(account_case.get("billing_ticket_id") or "").strip(),
         str(account_case.get("client_ticket_id") or "").strip(),
+        str(account_case.get("processing_profile") or "staging").strip(),
+        str(account_case.get("zendesk_ticket_id") or "").strip() or None,
+        str(account_case.get("origin_staging_case_id") or "").strip() or None,
+        Json(account_case.get("rule_release")) if isinstance(account_case.get("rule_release"), dict) else Json({}),
         str(account_case.get("source") or "").strip(),
         str(account_case.get("external_id") or "").strip() or None,
         str(account_case.get("created_by") or "").strip() or None,
@@ -2177,6 +2197,34 @@ class TicketRepository(Protocol):
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         ...
 
+    def get_account_case_by_zendesk_ticket_id(
+        self, zendesk_ticket_id: str, *, processing_profile: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def claim_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        zendesk_ticket_id: str,
+        idempotency_key: str,
+        created_at: str,
+    ) -> dict[str, Any]:
+        ...
+
+    def complete_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        status: str,
+        zendesk_comment_id: str | None,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        ...
+
     def get_account_case_details(
         self, identifiers: list[str]
     ) -> dict[str, dict[str, Any]]:
@@ -2206,6 +2254,7 @@ class TicketRepository(Protocol):
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> list[dict[str, Any]]:
         ...
 
@@ -2217,6 +2266,7 @@ class TicketRepository(Protocol):
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int]:
         ...
 
@@ -2228,6 +2278,7 @@ class TicketRepository(Protocol):
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         ...
 
@@ -2254,6 +2305,7 @@ class TicketRepository(Protocol):
         automation_filter: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> list[dict[str, Any]]:
         ...
 
@@ -2424,6 +2476,57 @@ class InMemoryTicketRepository:
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket_by_client_ticket_id(ticket_id)
 
+    def get_account_case_by_zendesk_ticket_id(
+        self, zendesk_ticket_id: str, *, processing_profile: str
+    ) -> dict[str, Any] | None:
+        normalized_ticket_id = str(zendesk_ticket_id or "").strip()
+        normalized_profile = str(processing_profile or "").strip().lower()
+        for account_case in self._billing_tickets.values():
+            if (
+                str(account_case.get("zendesk_ticket_id") or "").strip() == normalized_ticket_id
+                and str(account_case.get("processing_profile") or "staging").strip().lower()
+                == normalized_profile
+            ):
+                return copy.deepcopy(account_case)
+        return None
+
+    def claim_account_zendesk_comment_delivery(
+        self, *, account_case_id: str, message_id: str, zendesk_ticket_id: str,
+        idempotency_key: str, created_at: str,
+    ) -> dict[str, Any]:
+        key = (str(account_case_id).strip(), str(message_id).strip())
+        with self._assignment_lock:
+            existing = self._account_zendesk_comment_deliveries.get(key)
+            if existing is not None:
+                return {**copy.deepcopy(existing), "created": False}
+            delivery = {
+                "account_case_id": key[0], "message_id": key[1],
+                "zendesk_ticket_id": str(zendesk_ticket_id).strip(),
+                "idempotency_key": str(idempotency_key).strip(), "is_public": False,
+                "status": "pending", "zendesk_comment_id": None, "failure_code": None,
+                "confirmed_at": None, "created_at": created_at, "updated_at": created_at,
+            }
+            self._account_zendesk_comment_deliveries[key] = delivery
+            return {**copy.deepcopy(delivery), "created": True}
+
+    def complete_account_zendesk_comment_delivery(
+        self, *, account_case_id: str, message_id: str, status: str,
+        zendesk_comment_id: str | None, failure_code: str | None, completed_at: str,
+    ) -> dict[str, Any] | None:
+        key = (str(account_case_id).strip(), str(message_id).strip())
+        with self._assignment_lock:
+            delivery = self._account_zendesk_comment_deliveries.get(key)
+            if delivery is None:
+                return None
+            delivery.update({
+                "status": str(status).strip(),
+                "zendesk_comment_id": str(zendesk_comment_id or "").strip() or None,
+                "failure_code": str(failure_code or "").strip() or None,
+                "confirmed_at": completed_at if status == "delivered" else None,
+                "updated_at": completed_at,
+            })
+            return copy.deepcopy(delivery)
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -2432,15 +2535,22 @@ class InMemoryTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> list[dict[str, Any]]:
-        return self.list_billing_tickets(
+        records = self.list_billing_tickets(
             limit=limit,
             review_status=review_status,
             offset=offset,
             automation_filter=route_status,
             route_errors_only=route_errors_only,
             route_filter=route_filter,
+            processing_profile=processing_profile,
         )
+        profile = str(processing_profile or "staging").strip().lower()
+        return [
+            record for record in records
+            if str(record.get("processing_profile") or "staging").strip().lower() == profile
+        ]
 
     def list_account_case_page(
         self,
@@ -2450,6 +2560,7 @@ class InMemoryTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int]:
         items, total, _filter_counts = self._list_account_case_page_impl(
             limit=limit,
@@ -2458,6 +2569,7 @@ class InMemoryTicketRepository:
             route_status=route_status,
             route_errors_only=route_errors_only,
             route_filter=route_filter,
+            processing_profile=processing_profile,
         )
         return items, total
 
@@ -2469,6 +2581,7 @@ class InMemoryTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         safe_limit = _safe_positive_int(limit, 30)
         requested_offset = _safe_non_negative_int(offset, 0)
@@ -2488,6 +2601,17 @@ class InMemoryTicketRepository:
             route_errors_only=route_errors_only,
             route_filter=None,
         )
+        profile = str(processing_profile or "staging").strip().lower()
+        if profile not in {"staging", "production"}:
+            raise ValueError("processing_profile must be staging or production")
+        filtered_items = [
+            item for item in filtered_items
+            if str(item.get("processing_profile") or "staging").strip().lower() == profile
+        ]
+        all_items = [
+            item for item in all_items
+            if str(item.get("processing_profile") or "staging").strip().lower() == profile
+        ]
         total = len(filtered_items)
         filter_counts = {key: 0 for key in account_case_filter_keys()}
         filter_counts["all"] = len(all_items)
@@ -2560,6 +2684,7 @@ class InMemoryTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         items, total, filter_counts = self._list_account_case_page_impl(
             limit=limit,
@@ -2568,6 +2693,7 @@ class InMemoryTicketRepository:
             route_status=route_status,
             route_errors_only=route_errors_only,
             route_filter=route_filter,
+            processing_profile=processing_profile,
         )
         return items, total, filter_counts
 
@@ -2782,6 +2908,7 @@ class InMemoryTicketRepository:
         self._account_route_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_reply_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_reply_jobs: dict[str, dict[str, Any]] = {}
+        self._account_zendesk_comment_deliveries: dict[tuple[str, str], dict[str, Any]] = {}
         self._account_case_comments: dict[str, dict[str, dict[str, Any]]] = {}
         self._account_case_comment_sync: dict[str, dict[str, Any]] = {}
         self._account_personas: dict[str, dict[str, Any]] = {}
@@ -5601,14 +5728,24 @@ class InMemoryTicketRepository:
         automation_filter: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
         safe_offset = _safe_non_negative_int(offset, 0)
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in {"staging", "production"}:
+            raise ValueError("processing_profile must be staging or production")
         items = sorted(
             self._billing_tickets.values(),
             key=lambda item: str(item.get("created_at") or ""),
             reverse=True,
         )
+        items = [
+            item
+            for item in items
+            if str(item.get("processing_profile") or "staging").strip().lower()
+            == normalized_profile
+        ]
         if review_status:
             items = [
                 item
@@ -6109,6 +6246,120 @@ class PostgresTicketRepository:
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket_by_client_ticket_id(ticket_id)
 
+    def get_account_case_by_zendesk_ticket_id(
+        self, zendesk_ticket_id: str, *, processing_profile: str
+    ) -> dict[str, Any] | None:
+        normalized_ticket_id = str(zendesk_ticket_id or "").strip()
+        normalized_profile = str(processing_profile or "").strip().lower()
+        if not normalized_ticket_id or normalized_profile not in {"staging", "production"}:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE zendesk_ticket_id = %s AND processing_profile = %s"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_ticket_id, normalized_profile),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return dict(zip((item.name for item in cur.description), row))
+
+        return self._run_with_connection_retry(
+            "get_account_case_by_zendesk_ticket_id", _operation
+        )
+
+    def claim_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        zendesk_ticket_id: str,
+        idempotency_key: str,
+        created_at: str,
+    ) -> dict[str, Any]:
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        normalized_ticket_id = str(zendesk_ticket_id or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+        if not all((normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key)):
+            raise ValueError("account case, message, Zendesk ticket, and idempotency key are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,FALSE,'pending',%s,%s) "
+                        "ON CONFLICT (account_case_id, message_id) DO NOTHING "
+                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, created_at, created_at),
+                )
+                row = cur.fetchone()
+                created = row is not None
+                if row is None:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at "
+                            "FROM {} WHERE account_case_id = %s AND message_id = %s"
+                        ).format(self._table("support_account_zendesk_comment_deliveries")),
+                        (normalized_case_id, normalized_message_id),
+                    )
+                    row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError("Zendesk comment delivery claim disappeared")
+                record = dict(zip((item.name for item in cur.description), row))
+                record["created"] = created
+                return record
+
+        return self._run_with_connection_retry(
+            "claim_account_zendesk_comment_delivery", _operation
+        )
+
+    def complete_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        status: str,
+        zendesk_comment_id: str | None,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"delivered", "outcome_unknown", "failed"}:
+            raise ValueError("invalid Zendesk comment delivery status")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status = %s, zendesk_comment_id = %s, failure_code = %s, "
+                        "confirmed_at = CASE WHEN %s = 'delivered' THEN %s ELSE NULL END, updated_at = %s "
+                        "WHERE account_case_id = %s AND message_id = %s "
+                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (
+                        normalized_status,
+                        str(zendesk_comment_id or "").strip() or None,
+                        str(failure_code or "").strip() or None,
+                        normalized_status,
+                        completed_at,
+                        completed_at,
+                        str(account_case_id or "").strip(),
+                        str(message_id or "").strip(),
+                    ),
+                )
+                row = cur.fetchone()
+                return dict(zip((item.name for item in cur.description), row)) if row else None
+
+        return self._run_with_connection_retry(
+            "complete_account_zendesk_comment_delivery", _operation
+        )
+
     def get_account_case_details(
         self, identifiers: list[str]
     ) -> dict[str, dict[str, Any]]:
@@ -6519,6 +6770,7 @@ class PostgresTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> list[dict[str, Any]]:
         return self.list_billing_tickets(
             limit=limit,
@@ -6527,6 +6779,7 @@ class PostgresTicketRepository:
             automation_filter=route_status,
             route_errors_only=route_errors_only,
             route_filter=route_filter,
+            processing_profile=processing_profile,
         )
 
     def list_account_case_page(
@@ -6537,12 +6790,16 @@ class PostgresTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int]:
         safe_limit = _safe_positive_int(limit, 30)
         requested_offset = _safe_non_negative_int(offset, 0)
         normalized_review_status = str(review_status).strip() if review_status else None
         normalized_route_status = str(route_status or "").strip()
         normalized_route_filter = str(route_filter or "").strip()
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in {"staging", "production"}:
+            raise ValueError("processing_profile must be staging or production")
 
         def _operation(conn: psycopg.Connection[Any]) -> tuple[list[dict[str, Any]], int]:
             with conn.cursor() as cur:
@@ -6551,6 +6808,7 @@ class PostgresTicketRepository:
                     automation_filter=normalized_route_status,
                     route_errors_only=route_errors_only,
                     route_filter=normalized_route_filter,
+                    processing_profile=normalized_profile,
                 )
                 selected_columns = sql.SQL(", ").join(
                     sql.SQL("bt.{}").format(sql.Identifier(field))
@@ -6688,12 +6946,16 @@ class PostgresTicketRepository:
         route_status: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         safe_limit = _safe_positive_int(limit, 30)
         requested_offset = _safe_non_negative_int(offset, 0)
         normalized_review_status = str(review_status).strip() if review_status else None
         normalized_route_status = str(route_status or "").strip()
         normalized_route_filter = str(route_filter or "").strip()
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in {"staging", "production"}:
+            raise ValueError("processing_profile must be staging or production")
 
         def _operation(conn: psycopg.Connection[Any]) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
             with conn.transaction():
@@ -6703,12 +6965,14 @@ class PostgresTicketRepository:
                         automation_filter=normalized_route_status,
                         route_errors_only=route_errors_only,
                         route_filter=normalized_route_filter,
+                        processing_profile=normalized_profile,
                     )
                     facet_where_sql, facet_params = self._billing_ticket_filter_sql(
                         review_status=normalized_review_status,
                         automation_filter=normalized_route_status,
                         route_errors_only=route_errors_only,
                         route_filter="",
+                        processing_profile=normalized_profile,
                     )
                     selected_columns = sql.SQL(", ").join(
                         sql.SQL("bt.{}").format(sql.Identifier(field))
@@ -8431,6 +8695,10 @@ class PostgresTicketRepository:
                             account_case_id TEXT NOT NULL UNIQUE,
                             billing_ticket_id TEXT PRIMARY KEY,
                             client_ticket_id TEXT NOT NULL UNIQUE REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            processing_profile TEXT NOT NULL DEFAULT 'staging',
+                            zendesk_ticket_id TEXT,
+                            origin_staging_case_id TEXT,
+                            rule_release JSONB NOT NULL DEFAULT '{}'::jsonb,
                             source TEXT NOT NULL,
                             external_id TEXT,
                             created_by TEXT,
@@ -8478,6 +8746,31 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS account_case_id TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS processing_profile TEXT NOT NULL DEFAULT 'staging'").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS zendesk_ticket_id TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS origin_staging_case_id TEXT").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS rule_release JSONB NOT NULL DEFAULT '{}'::jsonb").format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("UPDATE {} SET processing_profile = 'staging' WHERE processing_profile IS NULL OR processing_profile = ''").format(
                         self._table("support_account_cases"),
                     )
                 )
@@ -8641,6 +8934,31 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (account_case_id)").format(
                         sql.Identifier("idx_support_account_cases_account_case_id"),
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (processing_profile, zendesk_ticket_id) "
+                        "WHERE zendesk_ticket_id IS NOT NULL"
+                    ).format(
+                        sql.Identifier("idx_support_account_cases_profile_zendesk_ticket"),
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE TABLE IF NOT EXISTS {} ("
+                        "account_case_id TEXT NOT NULL REFERENCES {}(account_case_id) ON DELETE CASCADE, "
+                        "message_id TEXT NOT NULL, zendesk_ticket_id TEXT NOT NULL, "
+                        "idempotency_key TEXT NOT NULL UNIQUE, is_public BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_public = FALSE), "
+                        "status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'outcome_unknown', 'failed')), "
+                        "zendesk_comment_id TEXT, failure_code TEXT, confirmed_at TIMESTAMPTZ, "
+                        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+                        "PRIMARY KEY (account_case_id, message_id)"
+                        ")"
+                    ).format(
+                        self._table("support_account_zendesk_comment_deliveries"),
                         self._table("support_account_cases"),
                     )
                 )
@@ -12711,12 +13029,16 @@ class PostgresTicketRepository:
         automation_filter: str | None = None,
         route_errors_only: bool = False,
         route_filter: str | None = None,
+        processing_profile: str = "staging",
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 30)
         safe_offset = _safe_non_negative_int(offset, 0)
         normalized_review_status = str(review_status).strip() if review_status else None
         normalized_automation_filter = str(automation_filter or "").strip()
         normalized_route_filter = str(route_filter or "").strip()
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in {"staging", "production"}:
+            raise ValueError("processing_profile must be staging or production")
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
@@ -12725,6 +13047,7 @@ class PostgresTicketRepository:
                     automation_filter=normalized_automation_filter,
                     route_errors_only=route_errors_only,
                     route_filter=normalized_route_filter,
+                    processing_profile=normalized_profile,
                 )
                 query = sql.SQL(
                     """
@@ -12775,9 +13098,15 @@ class PostgresTicketRepository:
         automation_filter: str,
         route_errors_only: bool,
         route_filter: str,
+        processing_profile: str = "staging",
     ) -> tuple[sql.SQL, tuple[Any, ...]]:
         clauses: list[sql.SQL] = []
         params: list[Any] = []
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in {"staging", "production"}:
+            raise ValueError("processing_profile must be staging or production")
+        clauses.append(sql.SQL("COALESCE(NULLIF(bt.processing_profile, ''), 'staging') = %s"))
+        params.append(normalized_profile)
         if review_status:
             clauses.append(sql.SQL("bt.route_review_status = %s"))
             params.append(review_status)

@@ -339,10 +339,15 @@ def account_automation_payload(
     category: str | None = None,
     created_from: str | None = None,
     created_to: str | None = None,
+    processing_profile: str = "staging",
 ) -> dict[str, Any]:
     safe_page = max(1, int(page))
     safe_size = min(200, max(1, int(page_size)))
-    all_cases = repository.list_account_cases(limit=100000, offset=0)
+    all_cases = repository.list_account_cases(
+        limit=100000,
+        offset=0,
+        processing_profile=processing_profile,
+    )
     automated = sum(1 for item in all_cases if _is_automated(item))
     total = len(all_cases)
     filtered = list(all_cases)
@@ -426,6 +431,7 @@ def account_automation_payload(
         return record
 
     return {
+        "processing_profile": processing_profile,
         "metrics": {
             "total_account_cases": total,
             "automated_cases": automated,

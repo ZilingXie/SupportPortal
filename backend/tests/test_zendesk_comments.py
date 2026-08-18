@@ -11,6 +11,7 @@ from backend.services.zendesk_comments import (
     ZendeskCommentError,
     ZendeskCommentResult,
     add_internal_comment,
+    find_private_internal_comment,
 )
 
 
@@ -101,6 +102,30 @@ class ZendeskCommentServiceTests(unittest.TestCase):
         self.assertEqual(raised.exception.error_code, "zendesk_network_outcome_unknown")
         self.assertNotIn("private body", str(raised.exception))
         self.assertNotIn("private network detail", str(raised.exception))
+
+    def test_audit_readback_finds_exact_private_comment_without_writing(self) -> None:
+        with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen",
+            return_value=_FakeResponse(
+                {
+                    "audits": [
+                        {
+                            "events": [
+                                {"body": "different body", "id": 4, "public": False, "type": "Comment"},
+                                {"body": "validation marker", "id": 5, "public": False, "type": "Comment"},
+                            ]
+                        }
+                    ]
+                }
+            ),
+        ) as urlopen:
+            result = find_private_internal_comment(ticket_id="12807", body="validation marker")
+
+        self.assertEqual(result, ZendeskCommentResult(comment_id="5", status_code=200))
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(request.full_url, "https://agoraio.zendesk.com/api/v2/tickets/12807/audits.json")
+        self.assertIsNone(request.data)
 
     def test_success_requires_verified_private_visibility(self) -> None:
         with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(

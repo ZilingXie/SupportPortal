@@ -81,17 +81,79 @@ def _decode_json_response(response: Any) -> dict[str, Any]:
     return payload
 
 
+def _request_timeout(timeout_seconds: float) -> float:
+    try:
+        timeout = float(timeout_seconds)
+    except (TypeError, ValueError):
+        timeout = 15.0
+    return timeout if timeout > 0 else 15.0
+
+
+def _zendesk_request_error(exc: urllib.error.HTTPError) -> ZendeskCommentError:
+    status_code = int(exc.code or 0) or None
+    category = (
+        "retryable"
+        if status_code in {408, 425, 429} or (status_code is not None and status_code >= 500)
+        else "permanent"
+    )
+    return ZendeskCommentError(category, status_code=status_code, error_code="zendesk_http_error")
+
+
+def find_private_internal_comment(
+    *,
+    ticket_id: str,
+    body: str,
+    timeout_seconds: float = 15.0,
+) -> ZendeskCommentResult | None:
+    """Read recent ticket audits and locate the exact private comment without writing."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    normalized_body = str(body or "").strip()
+    if not normalized_ticket_id or not normalized_body:
+        raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    url = (
+        f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}/audits.json"
+    )
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"Authorization": _basic_auth_header(), "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+            if status_code < 200 or status_code >= 300:
+                category = "retryable" if status_code in {408, 425, 429} or status_code >= 500 else "permanent"
+                raise ZendeskCommentError(category, status_code=status_code, error_code="zendesk_http_error")
+            payload = _decode_json_response(response)
+    except ZendeskCommentError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise _zendesk_request_error(exc) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_audit_read_outcome_unknown") from exc
+
+    audits = payload.get("audits") if isinstance(payload.get("audits"), list) else []
+    for audit in audits:
+        events = audit.get("events") if isinstance(audit, dict) and isinstance(audit.get("events"), list) else []
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                continue
+            if (
+                str(event.get("type") or "").strip().lower() == "comment"
+                and event.get("public") is False
+                and str(event.get("body") or "").strip() == normalized_body
+            ):
+                comment_id = str(event.get("id") or "").strip() or None
+                return ZendeskCommentResult(comment_id=comment_id, status_code=status_code)
+    return None
+
+
 def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 15.0) -> ZendeskCommentResult:
     normalized_ticket_id = str(ticket_id or "").strip()
     normalized_body = str(body or "").strip()
     if not normalized_ticket_id or not normalized_body:
         raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
-    try:
-        timeout = float(timeout_seconds)
-    except (TypeError, ValueError):
-        timeout = 15.0
-    if timeout <= 0:
-        timeout = 15.0
+    timeout = _request_timeout(timeout_seconds)
     url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
     request = urllib.request.Request(
         url,
@@ -116,9 +178,7 @@ def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 
     except ZendeskCommentError:
         raise
     except urllib.error.HTTPError as exc:
-        status_code = int(exc.code or 0) or None
-        category = "retryable" if status_code in {408, 425, 429} or (status_code is not None and status_code >= 500) else "permanent"
-        raise ZendeskCommentError(category, status_code=status_code, error_code="zendesk_http_error") from exc
+        raise _zendesk_request_error(exc) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
 
