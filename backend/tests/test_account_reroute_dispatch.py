@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from datetime import datetime, timedelta, timezone
+import os
 from types import SimpleNamespace
 import subprocess
 import sys
@@ -12,12 +13,21 @@ import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
+
 from fastapi import BackgroundTasks
 
 from backend import main
 from backend.repositories.ticket_repository import (
     AccountRerouteLeaseLostError,
     InMemoryTicketRepository,
+)
+from backend.services.account_suspension_automation import (
+    SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+    SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+    SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+    SUSPENSION_STATE_CLOSING_REPLY_PENDING,
 )
 
 
@@ -454,6 +464,170 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             self.repository.get_latest_account_reply_job(ticket_id)["job_id"],
             reply_checkpoint["job_id"],
         )
+
+    async def test_reply_recovery_rebuilds_suspension_contact_contract(self) -> None:
+        self.repository.initialize()
+        ticket_id = "suspension-recovery-contact"
+        case_id = "AC-SUSPENSION-RECOVERY-CONTACT"
+        rerun_job_id = "account-rerun-contact"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "customer_name": "Customer",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "My account is suspended.",
+                        "created_at": "2026-08-10T01:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": case_id,
+                "billing_ticket_id": case_id,
+                "client_ticket_id": ticket_id,
+                "route": "account_suspension",
+                "execution_action": "account_suspension",
+                "route_family": "automated",
+                "route_status": "automated",
+                "automation_handler": "account_suspension",
+                "automation_status": "automation",
+                "missing_fields": [],
+                "collected_fields": {"suspension_status_or_error": "account suspended"},
+                "internal_email_send_status": "not_applicable",
+                "internal_email_payload": None,
+                "automation_context": {
+                    "rerun_job_id": rerun_job_id,
+                    "rerun_reply_kind": "suspension_contact_confirmation",
+                    "rerun_reply_intent": SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+                    SUSPENSION_CONTACT_WORKFLOW_KEY: {
+                        "state": SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+                        "ticket_email": "customer@example.com",
+                    },
+                },
+            }
+        )
+
+        result = await main._resume_account_rerun_side_effect(
+            case_id,
+            retry_mode="reply",
+            rerun_job_id=rerun_job_id,
+        )
+
+        self.assertEqual(result["status"], "scheduled")
+        job = self.repository.get_latest_account_reply_job(ticket_id)
+        assert job is not None
+        payload = job["payload"]
+        self.assertEqual(payload["reply_intent"], SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION)
+        self.assertNotIn("close_after_publish", payload)
+        self.assertEqual(payload["asked_field_keys"], ["preferred_contact_email"])
+        self.assertTrue(payload["replace_existing_reply"])
+        self.assertEqual(payload["rerun_job_id"], rerun_job_id)
+        self.assertEqual(
+            payload["reply_facts"]["reply_intent"],
+            SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+        )
+
+    async def test_suspension_closing_recovery_sends_once_and_uses_close_contract(self) -> None:
+        self.repository.initialize()
+        ticket_id = "suspension-recovery-closing"
+        case_id = "AC-SUSPENSION-RECOVERY-CLOSING"
+        rerun_job_id = "account-rerun-closing"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "My account is suspended.",
+                        "created_at": "2026-08-10T01:00:00+00:00",
+                    },
+                    {
+                        "role": "customer",
+                        "content": "Yes, please use the email address on this ticket.",
+                        "created_at": "2026-08-10T01:01:00+00:00",
+                    },
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": case_id,
+                "billing_ticket_id": case_id,
+                "client_ticket_id": ticket_id,
+                "route": "account_suspension",
+                "execution_action": "account_suspension",
+                "route_family": "automated",
+                "route_status": "automated",
+                "automation_handler": "account_suspension",
+                "automation_status": "automation",
+                "missing_fields": [],
+                "collected_fields": {"suspension_status_or_error": "account suspended"},
+                "internal_email_send_status": "pending",
+                "internal_email_payload": {
+                    "to": "internal@example.com",
+                    "delivery_key": f"account_suspension:{case_id}:v1:rerun:{rerun_job_id}",
+                },
+                "automation_context": {
+                    "rerun_job_id": rerun_job_id,
+                    "rerun_reply_kind": "suspension_closing_reply",
+                    "rerun_reply_intent": SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+                    SUSPENSION_CONTACT_WORKFLOW_KEY: {
+                        "state": SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+                        "ticket_email": "customer@example.com",
+                        "confirmed_email": "customer@example.com",
+                    },
+                },
+            }
+        )
+
+        with (
+            patch.object(
+                main,
+                "_send_billing_internal_email_attempt",
+                AsyncMock(return_value=("sent", "")),
+            ) as sender,
+            patch.object(
+                main,
+                "_wait_for_account_rerun_reply_preparation",
+                AsyncMock(return_value=True),
+            ),
+        ):
+            result = await main._run_account_rerun_post_commit_side_effects(
+                case_id,
+                rerun_job_id=rerun_job_id,
+                reply_kind="suspension_closing_reply",
+                send_internal_email=True,
+            )
+
+        sender.assert_awaited_once()
+        self.assertEqual(result["email"]["status"], "sent")
+        self.assertEqual(result["reply"]["status"], "scheduled")
+        job = self.repository.get_latest_account_reply_job(ticket_id)
+        assert job is not None
+        payload = job["payload"]
+        self.assertEqual(payload["reply_intent"], SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE)
+        self.assertTrue(payload["close_after_publish"])
+        self.assertEqual(
+            payload["reply_facts"]["reply_intent"],
+            SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+        )
+
+        with patch.object(main, "_send_billing_internal_email_attempt", AsyncMock()) as duplicate_sender:
+            recovery = await main._run_account_rerun_post_commit_side_effects(
+                case_id,
+                rerun_job_id=rerun_job_id,
+                reply_kind=None,
+                retry_mode="reply",
+            )
+        duplicate_sender.assert_not_awaited()
+        self.assertEqual(recovery["reply"]["status"], "already_scheduled")
 
 
 class AccountRerouteFencingTests(unittest.TestCase):

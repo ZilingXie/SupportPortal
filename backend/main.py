@@ -89,6 +89,8 @@ from backend.services.account_suspension_field_extractor import (
 )
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+    SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
     SUSPENSION_STATE_CLOSING_REPLY_PENDING,
     SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
@@ -6443,6 +6445,7 @@ async def _resume_account_rerun_side_effect(
             raise RuntimeError("manual_confirmation_required: automation delivery state is unknown")
         sender = {
             "billing": _send_billing_internal_email_attempt,
+            "account_suspension": _send_billing_internal_email_attempt,
             "enablement": _send_enablement_internal_email_attempt,
             "quota": _send_quota_internal_email_attempt,
         }.get(handler)
@@ -6536,15 +6539,50 @@ async def _resume_account_rerun_side_effect(
         if not customer_timestamps:
             raise ValueError("reply checkpoint ticket has no customer message")
         handler = str(account_case.get("automation_handler") or "").strip() or "automation"
-        facts = _automation_reply_facts(
-            handler=handler,
-            action=str(account_case.get("execution_action") or account_case.get("route") or handler),
-            missing_fields=list(account_case.get("missing_fields") or []),
-            collected_fields=dict(account_case.get("collected_fields") or {}),
-            submitted=bool(account_case.get("internal_email_payload")),
-            customer_name=str(ticket.get("customer_name") or "").strip() or None,
-            account_scope=True,
-        )
+        automation_context = account_case.get("automation_context")
+        automation_context = automation_context if isinstance(automation_context, dict) else {}
+        stored_reply_intent = str(automation_context.get("rerun_reply_intent") or "").strip().lower()
+        suspension_workflow = automation_context.get(SUSPENSION_CONTACT_WORKFLOW_KEY)
+        suspension_workflow = suspension_workflow if isinstance(suspension_workflow, dict) else {}
+        if handler == "account_suspension" and not stored_reply_intent:
+            workflow_state = str(suspension_workflow.get("state") or "").strip().lower()
+            if workflow_state == SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION:
+                stored_reply_intent = SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION
+            elif workflow_state in {
+                SUSPENSION_STATE_HANDOFF_PENDING,
+                SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+            }:
+                stored_reply_intent = SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE
+        if stored_reply_intent == SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION:
+            facts = contact_confirmation_reply_facts(
+                ticket_email=ticket.get("customer_id"),
+                customer_name=str(ticket.get("customer_name") or account_case.get("customer_name") or "").strip() or None,
+            )
+            asked_field_keys = ["preferred_contact_email"]
+        elif stored_reply_intent == SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE:
+            confirmed_email = str(suspension_workflow.get("confirmed_email") or "").strip()
+            if not confirmed_email:
+                raise ValueError("Suspension closing reply checkpoint has no confirmed email")
+            facts = closing_reply_facts(
+                confirmed_email=confirmed_email,
+                customer_name=str(ticket.get("customer_name") or account_case.get("customer_name") or "").strip() or None,
+            )
+            asked_field_keys = []
+        else:
+            facts = _automation_reply_facts(
+                handler=handler,
+                action=str(account_case.get("execution_action") or account_case.get("route") or handler),
+                missing_fields=list(account_case.get("missing_fields") or []),
+                collected_fields=dict(account_case.get("collected_fields") or {}),
+                submitted=bool(account_case.get("internal_email_payload")),
+                customer_name=str(ticket.get("customer_name") or "").strip() or None,
+                account_scope=True,
+            )
+            asked_field_keys = (
+                []
+                if account_case.get("internal_email_payload")
+                else list(account_case.get("missing_fields") or [])
+            )
         try:
             reply_job = await _account_rerun_storage_call(
                 _create_account_reply_job,
@@ -6552,14 +6590,12 @@ async def _resume_account_rerun_side_effect(
                 trigger_message_created_at=max(customer_timestamps),
                 draft_content="",
                 reply_facts=facts,
-                asked_field_keys=(
-                    []
-                    if account_case.get("internal_email_payload")
-                    else list(account_case.get("missing_fields") or [])
-                ),
+                asked_field_keys=asked_field_keys,
                 persona_assignment=None,
                 automation_delivery_key=str((account_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
                 rerun_job_id=rerun_job_id,
+                close_after_publish=stored_reply_intent == SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+                reply_intent=stored_reply_intent or None,
             )
         except Exception as exc:
             failure_code = "account_reply_job_creation_failed"
@@ -6622,8 +6658,11 @@ async def _run_account_rerun_post_commit_side_effects(
         except Exception as exc:
             raise _AccountRerunSideEffectError("email", exc) from exc
 
-    should_schedule_reply = normalized_retry == "reply" or effective_reply_kind == "field_follow_up"
-    if effective_reply_kind == "submission_confirmation" and email_result is not None:
+    should_schedule_reply = normalized_retry == "reply" or effective_reply_kind in {
+        "field_follow_up",
+        "suspension_contact_confirmation",
+    }
+    if effective_reply_kind in {"submission_confirmation", "suspension_closing_reply"} and email_result is not None:
         should_schedule_reply = email_result.get("status") in {"sent", "already_sent"}
 
     reply_result: dict[str, Any] | None = None
@@ -8056,6 +8095,7 @@ async def _run_account_full_reroute_job(
                     "rerun_job_id": job_id,
                     "rerun_mode": "fresh_case_rerun",
                     "rerun_reply_kind": result.reply_kind,
+                    "rerun_reply_intent": getattr(result, "reply_intent", None),
                 }
                 is_full_rerun = str(job.get("scope") or "").strip() == "all_cases"
                 if result.internal_email_to_send:
@@ -8090,6 +8130,7 @@ async def _run_account_full_reroute_job(
                         email_handler=result.email_handler,
                         customer_reply=result.customer_reply,
                         reply_kind=result.reply_kind,
+                        reply_intent=getattr(result, "reply_intent", None),
                         asked_field_keys=result.asked_field_keys,
                     )
                     recipient_audit = {
