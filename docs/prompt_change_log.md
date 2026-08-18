@@ -3703,3 +3703,20 @@ For each new entry, record:
   - `141 passed, 22 subtests passed` across Zendesk, Worker, Workspace Admin, and Account Admin targeted tests.
   - Python and Node syntax checks plus `git diff --check` passed.
   - A live synthetic Zendesk ticket acceptance remains scheduled after the merged root-main stack is running.
+
+## 2026-08-18 - Production Account schema bootstrap correction
+
+- Area or subsystem: production Account Case PostgreSQL bootstrap
+- Prompt or model version: No prompt or model content change.
+- Summary: Corrected JSON object defaults in the support_account_cases CREATE TABLE and ALTER TABLE templates so Psycopg SQL.format treats them as literals instead of extra placeholders. Updated the Account Case persistence contract from 40 to 44 fields and aligned raw-SQL documentation assertions with raw SQL brace syntax.
+- Reason: The first merged local_lightweight stack startup failed before API readiness because an unescaped JSON default caused SQL.format to raise IndexError. No Zendesk synthetic write was attempted while the API was unhealthy.
+- Affected files or config:
+  - backend/repositories/ticket_repository.py
+  - backend/tests/test_repository_configuration.py
+- Expected behavior change:
+  - Runtime schema initialization composes both the CREATE TABLE and migration ALTER TABLE statements without formatting errors.
+  - The bootstrap regression test executes PostgresTicketRepository.initialize through Psycopg composables and asserts the rule_release JSON default.
+- Verification:
+  - 254 passed, 22 subtests passed across repository initialization plus Zendesk, Worker, Workspace Admin, and Account Admin targeted tests.
+  - Python compilation and git diff --check passed.
+  - Official root-main stack health and synthetic Zendesk acceptance will be rerun after the repair PR merges.

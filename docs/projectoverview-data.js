@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T10:59:42Z",
-  "source_base_commit": "c42f96638badda90e28927746b73d97f7d036f57",
-  "registry_digest": "7aed53ba863751f9c97544538e9880db071e5ae2bec7f7190cf668958d446557",
+  "generated_at": "2026-08-18T11:36:50Z",
+  "source_base_commit": "817433773b2f4c0d4c41faeaa74aa38633c2b20e",
+  "registry_digest": "c62d0fe622fe2e6fadd35f67febed9ecb9b1feae0496a9f84b7b490b636e96b8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -825,6 +825,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Production Zendesk delivery gate, audit readback, and Admin production-view regressions",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge schema bootstrap and production delivery regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
         },
         {
           "type": "test",
@@ -2309,6 +2314,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Production Zendesk delivery gate, audit readback, and Admin production-view regressions",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge schema bootstrap and production delivery regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
         }
       ],
       "source_refs": [
@@ -2356,6 +2366,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-18",
           "event": "production_delivery_safety_hardened",
           "summary": "Production 写回仅允许当前注册 Automation；Zendesk outcome_unknown 或遗留 pending delivery 只执行 private audit 回查，绝不重复 PUT；Workspace Admin Account 指标和自动化列表显式读取 production profile。真实合成 Zendesk 验收在合并后执行。"
+        },
+        {
+          "at": "2026-08-18",
+          "event": "schema_bootstrap_sql_format_fixed",
+          "summary": "首次合并后的官方 local_lightweight 栈启动暴露 support_account_cases rule_release JSONB 默认值在 psycopg SQL.format 模板中未转义的问题；修复 CREATE 和 ALTER TABLE 模板的双大括号转义，并将 Account Case 持久化契约测试更新为 44 字段。254 项 repository、Zendesk、Worker 和 Admin 回归通过；合并后重新执行官方栈健康验证。"
         }
       ],
       "legacy_refs": [
