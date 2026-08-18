@@ -30,6 +30,7 @@ const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
 
 const PAGE_SIZE = 10;
 const DEFAULT_FETCH_TIMEOUT_MS = 25_000;
+const PRODUCTION_PROMOTION_TIMEOUT_MS = 300_000;
 const SUMMARY_FRESH_MS = 30_000;
 const DETAIL_FRESH_MS = 60_000;
 const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
@@ -2333,7 +2334,14 @@ async function promoteAccountCaseToProduction() {
   state.productionPromotionErrorCaseId = "";
   render();
   try {
-    const response = await accountFetch(`/api/account/cases/${encodeURIComponent(caseId)}/promote-production`, { method: "POST", cache: "no-store" });
+    const response = await accountFetch(
+      `/api/account/cases/${encodeURIComponent(caseId)}/promote-production`,
+      {
+        method: "POST",
+        cache: "no-store",
+        timeoutMs: PRODUCTION_PROMOTION_TIMEOUT_MS,
+      },
+    );
     const payload = await readResponsePayload(response);
     if (!response.ok) throw new Error(responseErrorMessage(payload, "Could not run this case in Production."));
     const productionCaseId = String(payload.account_case_id || payload.billing_ticket_id || payload.ticket_id || "").trim();
@@ -2347,7 +2355,10 @@ async function promoteAccountCaseToProduction() {
     await fetchTickets({ force: true });
     showToast(payload.idempotent_replay ? "Production run already exists" : "Production run started");
   } catch (error) {
-    state.productionPromotionError = error instanceof Error ? error.message : "Could not run this case in Production.";
+    const errorMessage = error instanceof Error ? error.message : "Could not run this case in Production.";
+    state.productionPromotionError = errorMessage.startsWith("Request timed out after ")
+      ? `${errorMessage}. The request may still be running on the server. Refresh and check for a PRD-* Production Case.`
+      : errorMessage;
     state.productionPromotionErrorCaseId = caseId;
   } finally {
     state.productionPromotionPendingCaseId = "";

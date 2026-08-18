@@ -20,6 +20,7 @@ from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     AUTOMATED_ROUTE_STATUS,
     automation_metadata,
+    is_registered_automation,
 )
 from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_billing_handlers import account_billing_metadata
@@ -48,6 +49,29 @@ LOGGER = logging.getLogger(__name__)
 ACCOUNT_RERUN_RESET_AI_ONLY = "account_ai_only"
 ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY = "customer_messages_only"
 AccountRerunResetMode = Literal["account_ai_only", "customer_messages_only"]
+
+_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS = (
+    "account_case_id",
+    "message_id",
+    "zendesk_ticket_id",
+    "idempotency_key",
+    "is_public",
+    "status",
+    "zendesk_comment_id",
+    "failure_code",
+    "confirmed_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _account_zendesk_comment_delivery_from_row(
+    row: tuple[Any, ...] | None,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS, row))
+
 
 _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS = frozenset(
     {
@@ -2212,7 +2236,7 @@ class TicketRepository(Protocol):
     ) -> dict[str, Any] | None:
         ...
 
-    def claim_account_zendesk_comment_delivery(
+    def create_account_zendesk_comment_delivery(
         self,
         *,
         account_case_id: str,
@@ -2221,6 +2245,26 @@ class TicketRepository(Protocol):
         idempotency_key: str,
         created_at: str,
     ) -> dict[str, Any]:
+        ...
+
+    def claim_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        claimed_at: str,
+        zendesk_ticket_id: str | None = None,
+        idempotency_key: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        ...
+
+    def list_account_zendesk_comment_deliveries(
+        self,
+        *,
+        statuses: tuple[str, ...],
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
         ...
 
     def complete_account_zendesk_comment_delivery(
@@ -2481,7 +2525,15 @@ class InMemoryTicketRepository:
         return False
 
     def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
-        return self.get_billing_ticket(account_case_id)
+        normalized_case_id = str(account_case_id or "").strip()
+        account_case = self.get_billing_ticket(normalized_case_id)
+        if account_case is not None:
+            return account_case
+        with self._assignment_lock:
+            for candidate in self._billing_tickets.values():
+                if str(candidate.get("account_case_id") or "").strip() == normalized_case_id:
+                    return copy.deepcopy(candidate)
+        return None
 
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket_by_client_ticket_id(ticket_id)
@@ -2500,9 +2552,14 @@ class InMemoryTicketRepository:
                 return copy.deepcopy(account_case)
         return None
 
-    def claim_account_zendesk_comment_delivery(
-        self, *, account_case_id: str, message_id: str, zendesk_ticket_id: str,
-        idempotency_key: str, created_at: str,
+    def create_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        zendesk_ticket_id: str,
+        idempotency_key: str,
+        created_at: str,
     ) -> dict[str, Any]:
         key = (str(account_case_id).strip(), str(message_id).strip())
         with self._assignment_lock:
@@ -2513,11 +2570,72 @@ class InMemoryTicketRepository:
                 "account_case_id": key[0], "message_id": key[1],
                 "zendesk_ticket_id": str(zendesk_ticket_id).strip(),
                 "idempotency_key": str(idempotency_key).strip(), "is_public": False,
-                "status": "pending", "zendesk_comment_id": None, "failure_code": None,
+                "status": "queued", "zendesk_comment_id": None, "failure_code": None,
                 "confirmed_at": None, "created_at": created_at, "updated_at": created_at,
             }
             self._account_zendesk_comment_deliveries[key] = delivery
             return {**copy.deepcopy(delivery), "created": True}
+
+    def claim_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        claimed_at: str,
+        zendesk_ticket_id: str | None = None,
+        idempotency_key: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        _ = zendesk_ticket_id, idempotency_key, created_at
+        key = (str(account_case_id).strip(), str(message_id).strip())
+        with self._assignment_lock:
+            delivery = self._account_zendesk_comment_deliveries.get(key)
+            if delivery is None:
+                return {
+                    "account_case_id": key[0],
+                    "message_id": key[1],
+                    "status": "missing",
+                    "claimed": False,
+                    "created": False,
+                }
+            claimed = str(delivery.get("status") or "").strip().lower() == "queued"
+            if claimed:
+                delivery["status"] = "pending"
+                delivery["updated_at"] = claimed_at
+            return {
+                **copy.deepcopy(delivery),
+                "claimed": claimed,
+                "created": False,
+            }
+
+    def list_account_zendesk_comment_deliveries(
+        self,
+        *,
+        statuses: tuple[str, ...],
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        allowed_statuses = {
+            str(status or "").strip().lower()
+            for status in statuses
+            if str(status or "").strip()
+        }
+        if not allowed_statuses:
+            return []
+        safe_limit = max(1, min(int(limit), 500))
+        with self._assignment_lock:
+            deliveries = [
+                copy.deepcopy(delivery)
+                for delivery in self._account_zendesk_comment_deliveries.values()
+                if str(delivery.get("status") or "").strip().lower() in allowed_statuses
+            ]
+        deliveries.sort(
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("account_case_id") or ""),
+                str(item.get("message_id") or ""),
+            )
+        )
+        return deliveries[:safe_limit]
 
     def complete_account_zendesk_comment_delivery(
         self, *, account_case_id: str, message_id: str, status: str,
@@ -3519,23 +3637,23 @@ class InMemoryTicketRepository:
                     "reason": reason,
                 }
 
-            existing = next(
-                (
-                    message
-                    for message in ticket.get("messages", [])
-                    if isinstance(message, dict)
-                    and str(message.get("role") or "").lower() == "assistant"
-                    and str(
-                        (message.get("meta") if isinstance(message.get("meta"), dict) else {}).get(
-                            "account_reply_job_id"
-                        )
-                        or message.get("account_reply_job_id")
-                        or ""
-                    )
-                    == job_id
-                ),
-                None,
-            )
+            existing = None
+            existing_index = -1
+            for index, candidate in enumerate(ticket.get("messages", [])):
+                if not isinstance(candidate, dict):
+                    continue
+                if str(candidate.get("role") or "").lower() != "assistant":
+                    continue
+                candidate_meta = candidate.get("meta") if isinstance(candidate.get("meta"), dict) else {}
+                if str(
+                    candidate_meta.get("account_reply_job_id")
+                    or candidate.get("account_reply_job_id")
+                    or ""
+                ) != job_id:
+                    continue
+                existing = candidate
+                existing_index = index
+                break
             if existing is None:
                 message = {
                     "role": "assistant",
@@ -3557,9 +3675,15 @@ class InMemoryTicketRepository:
                         "source": "account_ai",
                     },
                 }
+                message["message_id"] = f"{ticket_id}:{len(ticket.get('messages', []))}"
                 ticket.setdefault("messages", []).append(message)
             else:
                 message = existing
+                message["message_id"] = str(
+                    message.get("message_id")
+                    or message.get("id")
+                    or f"{ticket_id}:{existing_index}"
+                ).strip()
 
             if payload.get("replace_existing_reply"):
                 self.supersede_account_ai_messages(
@@ -3588,6 +3712,37 @@ class InMemoryTicketRepository:
                         context["account_suspension_contact_workflow"] = workflow
                         billing_ticket["automation_context"] = context
                 self.save_billing_ticket(billing_ticket)
+            delivery = None
+            account_case_id = str(
+                (billing_ticket or {}).get("account_case_id")
+                or (billing_ticket or {}).get("billing_ticket_id")
+                or ""
+            ).strip()
+            processing_profile = str(
+                (billing_ticket or {}).get("processing_profile") or "staging"
+            ).strip().lower()
+            zendesk_ticket_id = str(
+                (billing_ticket or {}).get("zendesk_ticket_id") or ""
+            ).strip()
+            if (
+                billing_ticket is not None
+                and processing_profile == "production"
+                and account_case_id
+                and zendesk_ticket_id
+                and is_registered_automation(
+                    route_family=(billing_ticket or {}).get("route_family"),
+                    execution_action=(billing_ticket or {}).get("execution_action")
+                    or (billing_ticket or {}).get("route"),
+                )
+            ):
+                message_id = str(message.get("message_id") or "").strip()
+                delivery = self.create_account_zendesk_comment_delivery(
+                    account_case_id=account_case_id,
+                    message_id=message_id,
+                    zendesk_ticket_id=zendesk_ticket_id,
+                    idempotency_key=f"production-zendesk-comment:{account_case_id}:{message_id}",
+                    created_at=published_at,
+                )
             self.save_account_reply_execution(reply_execution)
             saved_job = copy.deepcopy(job)
             saved_job["payload"] = copy.deepcopy(payload)
@@ -3595,7 +3750,15 @@ class InMemoryTicketRepository:
             saved_job["published_at"] = published_at
             saved_job["updated_at"] = published_at
             self.save_account_reply_job(saved_job)
-            return {"content": str(message.get("content") or content).strip(), "published_at": published_at}
+            return {
+                "content": str(message.get("content") or content).strip(),
+                "published_at": published_at,
+                "message_id": str(message.get("message_id") or "").strip() or None,
+                "delivery": delivery,
+                "delivery_intent_id": (
+                    str((delivery or {}).get("idempotency_key") or "").strip() or None
+                ),
+            }
 
     def supersede_account_ai_messages(
         self, ticket_id: str, *, except_job_id: str, superseded_at: str
@@ -6264,7 +6427,26 @@ class PostgresTicketRepository:
         )
 
     def get_account_case(self, account_case_id: str) -> dict[str, Any] | None:
-        return self.get_billing_ticket(account_case_id)
+        normalized_case_id = str(account_case_id or "").strip()
+        if not normalized_case_id:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} "
+                        "WHERE billing_ticket_id = %s OR account_case_id = %s "
+                        "LIMIT 1"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_case_id, normalized_case_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return dict(zip((item.name for item in cur.description), row))
+
+        return self._run_with_connection_retry("get_account_case", _operation)
 
     def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
         return self.get_billing_ticket_by_client_ticket_id(ticket_id)
@@ -6294,7 +6476,7 @@ class PostgresTicketRepository:
             "get_account_case_by_zendesk_ticket_id", _operation
         )
 
-    def claim_account_zendesk_comment_delivery(
+    def create_account_zendesk_comment_delivery(
         self,
         *,
         account_case_id: str,
@@ -6315,7 +6497,7 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,FALSE,'pending',%s,%s) "
+                        "VALUES (%s,%s,%s,%s,FALSE,'queued',%s,%s) "
                         "ON CONFLICT (account_case_id, message_id) DO NOTHING "
                         "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
                     ).format(self._table("support_account_zendesk_comment_deliveries")),
@@ -6334,12 +6516,115 @@ class PostgresTicketRepository:
                     row = cur.fetchone()
                 if row is None:
                     raise RuntimeError("Zendesk comment delivery claim disappeared")
-                record = dict(zip((item.name for item in cur.description), row))
+                record = _account_zendesk_comment_delivery_from_row(row)
+                assert record is not None
                 record["created"] = created
                 return record
 
         return self._run_with_connection_retry(
+            "create_account_zendesk_comment_delivery", _operation
+        )
+
+    def claim_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        claimed_at: str,
+        zendesk_ticket_id: str | None = None,
+        idempotency_key: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        _ = zendesk_ticket_id, idempotency_key, created_at
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        normalized_claimed_at = str(claimed_at or "").strip() or _utc_now()
+        if not normalized_case_id or not normalized_message_id:
+            raise ValueError("account case and message are required")
+        columns = (
+            "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
+            "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+        )
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status = 'pending', updated_at = %s "
+                        "WHERE account_case_id = %s AND message_id = %s AND status = 'queued' "
+                        "RETURNING " + columns
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (normalized_claimed_at, normalized_case_id, normalized_message_id),
+                )
+                row = cur.fetchone()
+                claimed = row is not None
+                if row is None:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT " + columns + " FROM {} "
+                            "WHERE account_case_id = %s AND message_id = %s"
+                        ).format(self._table("support_account_zendesk_comment_deliveries")),
+                        (normalized_case_id, normalized_message_id),
+                    )
+                    row = cur.fetchone()
+                if row is None:
+                    return {
+                        "account_case_id": normalized_case_id,
+                        "message_id": normalized_message_id,
+                        "status": "missing",
+                        "claimed": False,
+                        "created": False,
+                    }
+                record = _account_zendesk_comment_delivery_from_row(row)
+                assert record is not None
+                record["claimed"] = claimed
+                record["created"] = False
+                return record
+
+        return self._run_with_connection_retry(
             "claim_account_zendesk_comment_delivery", _operation
+        )
+
+    def list_account_zendesk_comment_deliveries(
+        self,
+        *,
+        statuses: tuple[str, ...],
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        normalized_statuses = tuple(
+            dict.fromkeys(
+                str(status or "").strip().lower()
+                for status in statuses
+                if str(status or "").strip()
+            )
+        )
+        if not normalized_statuses:
+            return []
+        safe_limit = max(1, min(int(limit), 500))
+        columns = (
+            "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
+            "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+        )
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + columns + " FROM {} "
+                        "WHERE status = ANY(%s::TEXT[]) "
+                        "ORDER BY created_at, account_case_id, message_id LIMIT %s"
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (list(normalized_statuses), safe_limit),
+                )
+                return [
+                    record
+                    for row in cur.fetchall()
+                    for record in [_account_zendesk_comment_delivery_from_row(row)]
+                    if record is not None
+                ]
+
+        return self._run_with_connection_retry(
+            "list_account_zendesk_comment_deliveries", _operation
         )
 
     def complete_account_zendesk_comment_delivery(
@@ -6377,7 +6662,7 @@ class PostgresTicketRepository:
                     ),
                 )
                 row = cur.fetchone()
-                return dict(zip((item.name for item in cur.description), row)) if row else None
+                return _account_zendesk_comment_delivery_from_row(row)
 
         return self._run_with_connection_retry(
             "complete_account_zendesk_comment_delivery", _operation
@@ -8975,7 +9260,7 @@ class PostgresTicketRepository:
                         "account_case_id TEXT NOT NULL REFERENCES {}(account_case_id) ON DELETE CASCADE, "
                         "message_id TEXT NOT NULL, zendesk_ticket_id TEXT NOT NULL, "
                         "idempotency_key TEXT NOT NULL UNIQUE, is_public BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_public = FALSE), "
-                        "status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'outcome_unknown', 'failed')), "
+                        "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')), "
                         "zendesk_comment_id TEXT, failure_code TEXT, confirmed_at TIMESTAMPTZ, "
                         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
                         "PRIMARY KEY (account_case_id, message_id)"
@@ -8984,6 +9269,22 @@ class PostgresTicketRepository:
                         self._table("support_account_zendesk_comment_deliveries"),
                         self._table("support_account_cases"),
                     )
+                )
+                zendesk_delivery_table = self._table(
+                    "support_account_zendesk_comment_deliveries"
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} DROP CONSTRAINT IF EXISTS "
+                        "support_account_zendesk_comment_deliveries_status_check"
+                    ).format(zendesk_delivery_table)
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT "
+                        "support_account_zendesk_comment_deliveries_status_check "
+                        "CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed'))"
+                    ).format(zendesk_delivery_table)
                 )
                 cur.execute(
                     sql.SQL(
@@ -14672,6 +14973,67 @@ class PostgresTicketRepository:
                     message_id, existing_content, effective_published_at = existing
                     effective_content = str(existing_content or normalized_content).strip()
 
+                delivery = None
+                cur.execute(
+                    sql.SQL(
+                        "SELECT account_case_id, processing_profile, zendesk_ticket_id "
+                        "FROM {} WHERE client_ticket_id=%s"
+                    ).format(self._table("support_account_cases")),
+                    (ticket_id,),
+                )
+                delivery_case_row = cur.fetchone()
+                if (
+                    account_case is not None
+                    and delivery_case_row is not None
+                    and str(delivery_case_row[0] or "").strip()
+                    and str(delivery_case_row[1] or "").strip().lower() == "production"
+                    and str(delivery_case_row[2] or "").strip()
+                    and is_registered_automation(
+                        route_family=account_case.get("route_family"),
+                        execution_action=account_case.get("execution_action")
+                        or account_case.get("route"),
+                    )
+                ):
+                    delivery_columns = (
+                        "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
+                        "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                    )
+                    delivery_case_id = str(delivery_case_row[0] or "").strip()
+                    delivery_ticket_id = str(delivery_case_row[2] or "").strip()
+                    delivery_key = f"production-zendesk-comment:{delivery_case_id}:{message_id}"
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, created_at, updated_at) "
+                            "VALUES (%s,%s,%s,%s,FALSE,'queued',%s,%s) "
+                            "ON CONFLICT (account_case_id, message_id) DO NOTHING "
+                            "RETURNING " + delivery_columns
+                        ).format(self._table("support_account_zendesk_comment_deliveries")),
+                        (
+                            delivery_case_id,
+                            str(message_id),
+                            delivery_ticket_id,
+                            delivery_key,
+                            published_at,
+                            published_at,
+                        ),
+                    )
+                    delivery_row = cur.fetchone()
+                    delivery_created = delivery_row is not None
+                    if delivery_row is None:
+                        cur.execute(
+                            sql.SQL(
+                                "SELECT " + delivery_columns + " FROM {} "
+                                "WHERE account_case_id=%s AND message_id=%s"
+                            ).format(self._table("support_account_zendesk_comment_deliveries")),
+                            (delivery_case_id, str(message_id)),
+                        )
+                        delivery_row = cur.fetchone()
+                    if delivery_row is None:
+                        raise RuntimeError("Zendesk comment delivery intent disappeared")
+                    delivery = _account_zendesk_comment_delivery_from_row(delivery_row)
+                    assert delivery is not None
+                    delivery["created"] = delivery_created
+
                 if payload.get("replace_existing_reply"):
                     cur.execute(
                         sql.SQL(
@@ -14739,7 +15101,15 @@ class PostgresTicketRepository:
                     ).format(self._table("support_account_reply_jobs")),
                     (effective_published_at, Json(saved_payload), effective_published_at, job_id),
                 )
-                return {"content": effective_content, "published_at": _to_iso(effective_published_at)}
+                return {
+                    "content": effective_content,
+                    "published_at": _to_iso(effective_published_at),
+                    "message_id": str(message_id),
+                    "delivery": delivery,
+                    "delivery_intent_id": (
+                        str((delivery or {}).get("idempotency_key") or "").strip() or None
+                    ),
+                }
 
         return self._run_with_connection_retry("publish_account_reply", _operation)
 

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T11:36:50Z",
-  "source_base_commit": "817433773b2f4c0d4c41faeaa74aa38633c2b20e",
-  "registry_digest": "c62d0fe622fe2e6fadd35f67febed9ecb9b1feae0496a9f84b7b490b636e96b8",
+  "generated_at": "2026-08-18T13:23:10Z",
+  "source_base_commit": "0396c66bc1d3f192df4615e79d8e4499c14df551",
+  "registry_digest": "d395da6617d92aa74d2ba61e690fa88da0167a1f014f3b93c81c5905fbe5aec9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -830,6 +830,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Post-merge schema bootstrap and production delivery regression suite",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
+        },
+        {
+          "type": "test",
+          "label": "Queued publication intent, atomic delivery claim, recovery drain, and production timeout regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_account_ui_contract.py -q",
+          "result": "230 passed, 9 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "Full Zendesk, Worker, Repository, Workspace API, Account Admin, and Account UI regression suite",
+          "command": "source /Users/xieziling/Desktop/personal_proj/SupportPortal/.env && /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_account_zendesk_comment.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py backend/tests/test_account_ui_contract.py -q",
+          "result": "297 passed, 4 warnings, 22 subtests passed"
         },
         {
           "type": "test",
@@ -2279,13 +2291,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-18",
-      "title": "完成 AI 回复写回 Zendesk：internal comment，已完成",
+      "title": "完成 AI 回复写回 Zendesk：internal comment",
       "status": "done",
       "owner": "zac",
       "summary": "Production 注册 Automation 的 Account AI 回复可幂等写回 Zendesk private internal comment，并以只读 audit 回查处理未知投递结果。",
       "next_action": "",
       "acceptance_criteria": [
-        "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。"
+        "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。",
+        "Production 注册 Automation 的已发布 Account AI reply 与 queued Zendesk delivery intent 在同一 publication transaction 内持久化。",
+        "queued delivery 只能被原子 claim 一次；pending 或 outcome_unknown 只允许 audit readback，不能重复 PUT。",
+        "缺 App ID 导致 internal email 为 not_ready 时，enablement production reply 仍创建 Zendesk private-comment delivery intent。",
+        "Run in Production 使用专用 300 秒 timeout，并在 timeout 后提示服务端可能仍在执行及检查 PRD-* Case。",
+        "staging、未注册 route、退役 route 或无 Zendesk ticket 的 Case 不创建 delivery ledger 或 Zendesk side effect。"
       ],
       "blockers": [],
       "evidence": [
@@ -2319,6 +2336,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Post-merge schema bootstrap and production delivery regression suite",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
+        },
+        {
+          "type": "test",
+          "label": "Queued publication intent, atomic delivery claim, recovery drain, and production timeout regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_account_ui_contract.py -q",
+          "result": "230 passed, 9 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "Full Zendesk, Worker, Repository, Workspace API, Account Admin, and Account UI regression suite",
+          "command": "source /Users/xieziling/Desktop/personal_proj/SupportPortal/.env && /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_account_zendesk_comment.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py backend/tests/test_account_ui_contract.py -q",
+          "result": "297 passed, 4 warnings, 22 subtests passed"
         }
       ],
       "source_refs": [
@@ -2371,6 +2400,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-18",
           "event": "schema_bootstrap_sql_format_fixed",
           "summary": "首次合并后的官方 local_lightweight 栈启动暴露 support_account_cases rule_release JSONB 默认值在 psycopg SQL.format 模板中未转义的问题；修复 CREATE 和 ALTER TABLE 模板的双大括号转义，并将 Account Case 持久化契约测试更新为 44 字段。254 项 repository、Zendesk、Worker 和 Admin 回归通过；合并后重新执行官方栈健康验证。"
+        },
+        {
+          "at": "2026-08-18",
+          "event": "production_publication_delivery_gap_reopened",
+          "summary": "真实 production Account reply 已发布到本地但未创建 Zendesk delivery ledger；重新打开 Task，补齐 publication transaction 内 queued intent、worker 恢复 drain 与 Run in Production 专用 timeout。"
+        },
+        {
+          "at": "2026-08-18",
+          "event": "production_publication_delivery_intent_implemented",
+          "summary": "Production registered Automation 的 reply publication 已与 queued Zendesk delivery intent 绑定；worker 支持 queued claim 与 poller recovery，pending/outcome_unknown 维持 audit-only，Run in Production 使用 300 秒专用 timeout。目标与完整回归通过，待合并后官方栈和合成 Zendesk 验收。"
         }
       ],
       "legacy_refs": [

@@ -242,6 +242,186 @@ class WorkerResilienceTests(unittest.TestCase):
             "delivered",
         )
 
+    def test_queued_delivery_is_claimed_once_and_written_as_private_comment(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-QUEUED",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12838",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+        }
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "add_internal_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-queued", status_code=200),
+        ) as add_comment:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12838",
+                message_id="1372",
+                job_id="reply-queued",
+                content="The feature is enabled.",
+            )
+
+        repository.claim_account_zendesk_comment_delivery.assert_called_once_with(
+            account_case_id="AC-QUEUED",
+            message_id="1372",
+            claimed_at=unittest.mock.ANY,
+        )
+        add_comment.assert_called_once_with(
+            ticket_id="12838",
+            body="The feature is enabled.",
+        )
+        self.assertEqual(
+            repository.complete_account_zendesk_comment_delivery.call_args.kwargs,
+            {
+                "account_case_id": "AC-QUEUED",
+                "message_id": "1372",
+                "status": "delivered",
+                "zendesk_comment_id": "comment-queued",
+                "failure_code": None,
+                "completed_at": unittest.mock.ANY,
+            },
+        )
+
+    def test_pending_delivery_uses_audit_readback_without_put(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-PENDING",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12838",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": False,
+            "status": "pending",
+        }
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "add_internal_comment"
+        ) as add_comment, patch.object(
+            worker,
+            "find_private_internal_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-pending", status_code=200),
+        ) as find_comment:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12838",
+                message_id="1372",
+                job_id="reply-pending",
+                content="The feature is enabled.",
+            )
+
+        add_comment.assert_not_called()
+        find_comment.assert_called_once_with(ticket_id="12838", body="The feature is enabled.")
+        self.assertEqual(
+            repository.complete_account_zendesk_comment_delivery.call_args.kwargs["status"],
+            "delivered",
+        )
+
+    def test_staging_or_missing_external_ticket_never_creates_delivery(self) -> None:
+        for case in (
+            {
+                "account_case_id": "AC-STAGING",
+                "processing_profile": "staging",
+                "zendesk_ticket_id": "12838",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            },
+            {
+                "account_case_id": "AC-MISSING-TICKET",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "",
+                "route_family": "automated",
+                "execution_action": "enablement",
+            },
+        ):
+            repository = Mock()
+            repository.get_account_case_by_ticket_id.return_value = case
+            with patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "add_internal_comment"
+            ) as add_comment:
+                worker._deliver_production_account_reply_to_zendesk(
+                    ticket_id="PRD-CASE",
+                    message_id="1372",
+                    job_id="reply-case",
+                    content="The feature is enabled.",
+                )
+
+            repository.claim_account_zendesk_comment_delivery.assert_not_called()
+            add_comment.assert_not_called()
+
+    def test_reply_poller_recovers_queued_delivery_after_publication_worker_stops(self) -> None:
+        repository = Mock()
+        repository.list_account_zendesk_comment_deliveries.return_value = [
+            {
+                "account_case_id": "AC-RECOVER",
+                "message_id": "1372",
+                "status": "queued",
+            }
+        ]
+        repository.get_account_case.return_value = {
+            "client_ticket_id": "PRD-RECOVER",
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "PRD-RECOVER",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "message_id": "1372",
+                    "content": "The feature is enabled.",
+                    "meta": {"account_reply_job_id": "reply-recover"},
+                }
+            ],
+        }
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_deliver_production_account_reply_to_zendesk",
+        ) as deliver:
+            worker._drain_production_zendesk_comment_deliveries(limit=20)
+
+        repository.list_account_zendesk_comment_deliveries.assert_called_once_with(
+            statuses=("queued", "pending", "outcome_unknown"),
+            limit=20,
+        )
+        deliver.assert_called_once_with(
+            ticket_id="PRD-RECOVER",
+            message_id="1372",
+            job_id="reply-recover",
+            content="The feature is enabled.",
+        )
+
+    def test_delivery_is_not_put_twice_after_first_completion(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-IDEMPOTENT",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12838",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.side_effect = [
+            {"claimed": True, "status": "pending"},
+            {"claimed": False, "status": "delivered"},
+        ]
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "add_internal_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-once", status_code=200),
+        ) as add_comment:
+            for _ in range(2):
+                worker._deliver_production_account_reply_to_zendesk(
+                    ticket_id="PRD-12838",
+                    message_id="1372",
+                    job_id="reply-idempotent",
+                    content="The feature is enabled.",
+                )
+
+        add_comment.assert_called_once()
+
     def test_worker_rag_executor_uses_extended_timeout_and_recovery_window(self) -> None:
         detail = worker.RagTicketAnswerDetail(
             answer="Use joinChannel with a token.",
