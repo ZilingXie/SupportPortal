@@ -3,7 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import os
+import json
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 from backend.services.account_verification_automation import (
     build_account_verification_internal_email_payload,
@@ -26,6 +29,35 @@ class InternalEmailRecipientResolutionError(ValueError):
     def __init__(self, reason_code: str, message: str) -> None:
         super().__init__(message)
         self.reason_code = str(reason_code or "account_internal_email_recipient_missing").strip()
+
+
+def _extract_zendesk_ticket_url(source: Any, ticket_id: str) -> str | None:
+    raw = source
+    if isinstance(raw, str) and raw.strip().startswith("{"):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(raw, dict):
+        raw = next((raw.get(key) for key in ("Link", "link", "url", "source_url", "source") if raw.get(key)), None)
+    candidate = " ".join(str(raw or "").split()).strip()
+    if not candidate:
+        return None
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower()
+    match = re.match(r"^/agent/tickets/(\d+)$", parsed.path or "")
+    if not match:
+        match = re.match(r"^/api/v2/tickets/(\d+)\.json$", parsed.path or "")
+    if (host != "zendesk.com" and not host.endswith(".zendesk.com")) or not match:
+        return None
+    if match.group(1) != str(ticket_id or "").strip():
+        raise InternalEmailPayloadUpgradeError("Zendesk source ticket does not match canonical ticket id")
+    if parsed.path.startswith("/api/v2/tickets/"):
+        authority = parsed.hostname or ""
+        if parsed.port is not None:
+            authority = f"{authority}:{parsed.port}"
+        return f"{parsed.scheme}://{authority}/agent/tickets/{match.group(1)}"
+    return candidate
 
 
 # Only these handlers may resolve an Account internal-mail destination.  The
@@ -184,6 +216,7 @@ def upgrade_internal_email_payload(
     missing = [str(item) for item in missing_fields] if isinstance(missing_fields, list) else []
     customer_email = _customer_email(account_case, canonical_ticket)
     customer_message = _customer_message(account_case, canonical_ticket)
+    zendesk_ticket_url = _extract_zendesk_ticket_url(canonical_ticket.get("source"), ticket_id)
 
     try:
         if action in {"fraud_account", "account_verification"}:
@@ -193,6 +226,8 @@ def upgrade_internal_email_payload(
                 customer_email=customer_email,
                 collected_fields={str(key): str(value) for key, value in collected_fields.items()},
                 missing_fields=missing,
+                customer_message=customer_message,
+                zendesk_ticket_url=zendesk_ticket_url,
             )
         elif action in {"account_suspension", "detailed_invoice"}:
             rendered = build_billing_internal_email_payload(
@@ -203,6 +238,7 @@ def upgrade_internal_email_payload(
                 customer_message=customer_message,
                 billing_ticket_id=account_case_id,
                 response_link=str(payload.get("response_link") or payload.get("action_url") or "").strip() or None,
+                zendesk_ticket_url=zendesk_ticket_url,
             )
         elif action == "enablement":
             rendered = build_enablement_internal_email_payload(
@@ -211,6 +247,7 @@ def upgrade_internal_email_payload(
                 customer_email=customer_email,
                 customer_message=customer_message,
                 collected_fields={str(key): str(value) for key, value in collected_fields.items()},
+                zendesk_ticket_url=zendesk_ticket_url,
             )
         elif action == "quota":
             rendered = build_quota_internal_email_payload(
@@ -220,6 +257,7 @@ def upgrade_internal_email_payload(
                 customer_message=customer_message,
                 collected_fields=collected_fields,
                 missing_fields=missing,
+                zendesk_ticket_url=zendesk_ticket_url,
             )
         else:
             raise InternalEmailPayloadUpgradeError(f"unsupported automation action: {action or 'unknown'}")

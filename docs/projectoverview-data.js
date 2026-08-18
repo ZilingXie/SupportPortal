@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T06:22:48Z",
-  "source_base_commit": "2dafa6b8bab7578232c8697ca05db01bbc443a7e",
-  "registry_digest": "a667c7296153f9c8af8ac35a3683ddf173f894fc3d355379995c7d1f95fdc6c7",
+  "generated_at": "2026-08-18T07:58:17Z",
+  "source_base_commit": "81f472e208d1c577d8848488dd0578274b93c64f",
+  "registry_digest": "f96331d4a4efc32bdd87fae5ffae78c0ac281252321f609219cf101bbc8bad42",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -412,6 +412,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PR #732"
         },
         {
+          "type": "test",
+          "command": "python3 -m py_compile backend/main.py backend/services/internal_email_template.py backend/services/account_verification_automation.py backend/services/billing_automation.py backend/services/enablement_automation.py backend/services/quota_automation.py backend/services/internal_email_payload.py"
+        },
+        {
+          "type": "test",
+          "command": "python3 -m unittest backend.tests.test_internal_email_template backend.tests.test_account_verification_automation.AccountVerificationAutomationTests.test_missing_information_is_followed_up_only_once backend.tests.test_enablement_automation.EnablementAutomationTests.test_sample_routes_and_extracts_media_relay backend.tests.test_quota_automation",
+          "result": "12 passed"
+        },
+        {
+          "type": "test",
+          "command": "Focused email contract smoke: matching Zendesk Ticket IDs render clickable HTML links; mismatched source IDs fail closed.",
+          "result": "passed"
+        },
+        {
           "type": "pr",
           "number": 570,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/570",
@@ -483,7 +497,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 8,
-      "done_count": 5,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -2575,15 +2589,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-24",
       "title": "监控 Account Automation 执行结果与失败原因",
-      "status": "active",
+      "status": "done",
       "owner": "unassigned",
       "summary": "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。",
-      "next_action": "Monitor automated case 执行结果：跟踪 automation_status、missing_fields、internal_email_send_status、Outlook reply / PDF 附件转发、customer follow-up 和异常失败原因。",
+      "next_action": "",
       "acceptance_criteria": [
         "完成 Monitor 维度的交付和验证。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "command": "python3 -m py_compile backend/main.py backend/services/internal_email_template.py backend/services/account_verification_automation.py backend/services/billing_automation.py backend/services/enablement_automation.py backend/services/quota_automation.py backend/services/internal_email_payload.py"
+        },
+        {
+          "type": "test",
+          "command": "python3 -m unittest backend.tests.test_internal_email_template backend.tests.test_account_verification_automation.AccountVerificationAutomationTests.test_missing_information_is_followed_up_only_once backend.tests.test_enablement_automation.EnablementAutomationTests.test_sample_routes_and_extracts_media_relay backend.tests.test_quota_automation",
+          "result": "12 passed"
+        },
+        {
+          "type": "test",
+          "command": "Focused email contract smoke: matching Zendesk Ticket IDs render clickable HTML links; mismatched source IDs fail closed.",
+          "result": "passed"
+        }
+      ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],

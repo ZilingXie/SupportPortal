@@ -214,6 +214,7 @@ def build_billing_automation_result(
     requester: str | None = None,
     billing_ticket_id: str | None = None,
     response_link: str | None = None,
+    zendesk_ticket_url: str | None = None,
     persona_instruction: str | None = None,
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
     use_llm_field_extractor: bool = False,
@@ -280,6 +281,7 @@ def build_billing_automation_result(
         customer_message=message,
         billing_ticket_id=billing_ticket_id,
         response_link=response_link,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     return BillingAutomationResult(
         customer_reply=_build_escalation_reply(normalized_action) if generate_customer_reply else "",
@@ -1076,6 +1078,7 @@ def _build_internal_email(
     customer_message: str,
     billing_ticket_id: str | None,
     response_link: str | None,
+    zendesk_ticket_url: str | None,
 ) -> dict[str, str]:
     normalized_ticket_id = _clean_text(ticket_id) or "{{ticket_id}}"
     normalized_billing_ticket_id = _clean_text(billing_ticket_id)
@@ -1123,7 +1126,6 @@ def _build_internal_email(
         if collected_fields.get(field_name)
     )
     summary_fields: list[tuple[str, Any]] = [
-        ("Billing Ticket ID", normalized_billing_ticket_id),
         ("Ticket ID", normalized_ticket_id),
         ("Customer email", normalized_customer_email),
     ]
@@ -1146,6 +1148,7 @@ def _build_internal_email(
         original_message=customer_message,
         action_text=action_text,
         action_url=normalized_response_link,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     return {
         "to": to_address,
@@ -1164,6 +1167,7 @@ def build_billing_internal_email_payload(
     customer_message: str,
     billing_ticket_id: str | None,
     response_link: str | None = None,
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     """Render a persisted Billing-family handoff without re-running extraction."""
     return _build_internal_email(
@@ -1174,4 +1178,5 @@ def build_billing_internal_email_payload(
         customer_message=customer_message,
         billing_ticket_id=billing_ticket_id,
         response_link=response_link,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
