@@ -142,6 +142,10 @@ const state = {
   zendeskCommentPendingMessageId: "",
   zendeskCommentError: "",
   zendeskCommentErrorMessageId: "",
+  zendeskAssignmentPendingCaseId: "",
+  zendeskAssignmentError: "",
+  zendeskAssignmentErrorCaseId: "",
+  zendeskAssignment: null,
 };
 
 let accessToken = readStorage(ACCOUNT_ACCESS_TOKEN_KEY, "");
@@ -1900,6 +1904,33 @@ function renderPersonaAssignment(item) {
   return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value"><strong>${escapeHtml(displayName)}</strong><span class="persona-version-badge">${escapeHtml(versionLabel)}</span>${presentation ? `<span class="persona-style-badge persona-style-badge--${presentation.styleKey}">${presentation.style}</span>` : ""}</span></div>`;
 }
 
+function renderZendeskAssignmentAction(item, caseId, ticketNumber) {
+  const sourceTicketId = zendeskTicketId(item?.source);
+  const numericTicketId = /^\d+$/.test(String(ticketNumber || "").trim())
+    ? String(ticketNumber).trim()
+    : "";
+  const linked = Boolean(sourceTicketId || numericTicketId);
+  const isPending = state.zendeskAssignmentPendingCaseId === caseId;
+  const assigned = state.zendeskAssignment?.caseId === caseId
+    && state.zendeskAssignment.status === "assigned";
+  const error = state.zendeskAssignmentErrorCaseId === caseId
+    ? state.zendeskAssignmentError
+    : "";
+  if (assigned) {
+    return `<div class="zendesk-assignment-action zendesk-assignment-action--assigned" role="status"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>Assigned to AI</div>`;
+  }
+  return `
+    <div class="zendesk-assignment-action">
+      <button class="ghost-button zendesk-assignment-button" type="button" data-action="assign-to-ai" ${!linked || isPending ? "disabled" : ""}>
+        <span class="material-symbols-outlined" aria-hidden="true">${isPending ? "progress_activity" : "smart_toy"}</span>
+        ${isPending ? "Assigning..." : "Assign to AI"}
+      </button>
+      ${!linked ? `<span class="zendesk-assignment-hint">No Zendesk ticket linked</span>` : ""}
+      ${error ? `<span class="zendesk-assignment-error" role="alert">${escapeHtml(error)}</span>` : ""}
+    </div>
+  `;
+}
+
 function renderDetailView() {
   const item = state.activeItem;
   if (!item && state.detailLoading) {
@@ -1946,6 +1977,7 @@ function renderDetailView() {
         </div>
         <div class="detail-header__actions">
           ${renderClassificationBadges(item)}
+          ${renderZendeskAssignmentAction(item, accountCaseId, ticketNumber)}
           <button
             class="danger-button detail-rerun-button"
             type="button"
@@ -2239,6 +2271,41 @@ async function addMessageAsZendeskInternalComment(messageId) {
     state.zendeskCommentErrorMessageId = normalizedMessageId;
   } finally {
     state.zendeskCommentPendingMessageId = "";
+    render();
+  }
+}
+
+async function assignAccountCaseToAi() {
+  const item = state.activeItem;
+  const caseId = accountCaseIdentifier(item);
+  if (!item || !caseId || state.zendeskAssignmentPendingCaseId) return;
+  const ticketNumber = accountTicketNumber(item);
+  const linked = Boolean(zendeskTicketId(item?.source) || /^\d+$/.test(String(ticketNumber || "").trim()));
+  if (!linked) return;
+  state.zendeskAssignmentPendingCaseId = caseId;
+  state.zendeskAssignmentError = "";
+  state.zendeskAssignmentErrorCaseId = "";
+  render();
+  try {
+    const response = await accountFetch(
+      `/api/account/cases/${encodeURIComponent(caseId)}/zendesk-ai-assignment`,
+      { method: "POST", cache: "no-store" },
+    );
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not assign the case to AI."));
+    }
+    state.zendeskAssignment = { caseId, status: "assigned", payload };
+    state.activeItem = { ...state.activeItem, zendesk_ai_assignment: payload };
+    cacheDetail(state.activeItem);
+    showToast(payload.already_assigned ? "Case is already assigned to AI" : "Case assigned to AI");
+  } catch (error) {
+    state.zendeskAssignmentError = error instanceof Error
+      ? error.message
+      : "Could not assign the case to AI.";
+    state.zendeskAssignmentErrorCaseId = caseId;
+  } finally {
+    state.zendeskAssignmentPendingCaseId = "";
     render();
   }
 }
@@ -2611,6 +2678,9 @@ function bind() {
     el.addEventListener("click", () => {
       void addMessageAsZendeskInternalComment(el.dataset.messageId || "");
     });
+  });
+  document.querySelectorAll("[data-action='assign-to-ai']").forEach((el) => {
+    el.addEventListener("click", () => void assignAccountCaseToAi());
   });
   document.querySelectorAll("[data-action='submit-route-correction']").forEach((el) => {
     el.addEventListener("click", submitRouteCorrection);

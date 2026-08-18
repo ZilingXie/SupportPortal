@@ -957,7 +957,7 @@
       "source_ref": "docs/project/functions/controlled-rollout.json",
       "legacy_id": "controlled-rollout",
       "target_type": "function",
-      "target_id": "case-automation",
+      "target_id": "case-route",
       "disposition": "merged"
     },
     {

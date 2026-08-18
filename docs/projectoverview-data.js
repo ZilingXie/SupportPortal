@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-17T10:49:42Z",
-  "source_base_commit": "36fcdcc76ed0e453697a9c4dea4732c6b11baca9",
-  "registry_digest": "7130796f8e9ed50c8a9b375b13b038fa32fbade29d22356e6b1e7f8eb48be8f6",
+  "generated_at": "2026-08-18T06:07:33Z",
+  "source_base_commit": "2a2c1ddb62504bf513a46a1216b1bdc44e299668",
+  "registry_digest": "d5fa915a00d3484a93fe648bff569005966f9e00c84aba5e45d331f2654efb77",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -488,161 +488,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "function_id": "case-automation",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "title": "Case Automation",
-      "goal": "定义并交付可安全扩展的 Account/Billing Case 自动化能力和受控范围。",
-      "acceptance_criteria": [],
-      "evidence": [
-        {
-          "type": "pr",
-          "number": 659,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
-          "label": "PR #659"
-        },
-        {
-          "type": "pr",
-          "number": 681,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
-          "label": "PR #681"
-        },
-        {
-          "type": "pr",
-          "number": 657,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
-          "label": "PR #657"
-        },
-        {
-          "type": "pr",
-          "number": 683,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/683",
-          "label": "PR #683"
-        },
-        {
-          "type": "pr",
-          "number": 685,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/685",
-          "label": "PR #685"
-        },
-        {
-          "type": "pr",
-          "number": 686,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/686",
-          "label": "PR #686"
-        },
-        {
-          "type": "pr",
-          "number": 687,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/687",
-          "label": "PR #687"
-        },
-        {
-          "type": "pr",
-          "number": 702,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/702",
-          "label": "PR #702"
-        },
-        {
-          "type": "test",
-          "label": "Fraud Account grounding v3 regression coverage",
-          "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
-        },
-        {
-          "type": "pr",
-          "number": 749,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/749",
-          "label": "PR #749"
-        },
-        {
-          "type": "pr",
-          "number": 750,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/750",
-          "label": "PR #750"
-        },
-        {
-          "type": "pr",
-          "number": 426,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/426",
-          "label": "PR #426"
-        },
-        {
-          "type": "pr",
-          "number": 432,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/432",
-          "label": "PR #432"
-        },
-        {
-          "type": "pr",
-          "number": 571,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/571",
-          "label": "PR #571"
-        },
-        {
-          "type": "pr",
-          "number": 670,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
-          "label": "PR #670"
-        },
-        {
-          "type": "pr",
-          "number": 674,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/674",
-          "label": "PR #674"
-        },
-        {
-          "type": "pr",
-          "number": 675,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/675",
-          "label": "PR #675"
-        },
-        {
-          "type": "pr",
-          "number": 676,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/676",
-          "label": "PR #676"
-        },
-        {
-          "type": "pr",
-          "number": 680,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/680",
-          "label": "PR #680"
-        },
-        {
-          "type": "pr",
-          "number": 709,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/709",
-          "label": "PR #709"
-        },
-        {
-          "type": "pr",
-          "number": 568,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
-          "label": "PR #568"
-        },
-        {
-          "type": "pr",
-          "number": 572,
-          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
-          "label": "PR #572"
-        }
-      ],
-      "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
-        "docs/roadmap.html",
-        "docs/feature_list.md",
-        "docs/roadmap.html#lanes"
-      ],
-      "legacy_ids": [
-        "controlled-rollout"
-      ],
-      "status": "done",
-      "task_count": 6,
-      "done_count": 6,
-      "blocked_count": 0
-    },
-    {
-      "schema_version": 2,
       "function_id": "case-route",
       "phase_id": "phase-1",
       "module_id": "account-automation",
@@ -667,6 +512,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 520,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/520",
           "label": "PR #520"
+        },
+        {
+          "type": "pr",
+          "number": 659,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/659",
+          "label": "PR #659"
+        },
+        {
+          "type": "pr",
+          "number": 681,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/681",
+          "label": "PR #681"
+        },
+        {
+          "type": "pr",
+          "number": 657,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/657",
+          "label": "PR #657"
         },
         {
           "type": "pr",
@@ -735,6 +598,41 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PR #729"
         },
         {
+          "type": "test",
+          "label": "Fraud Account grounding v3 regression coverage",
+          "details": "二次 LLM verification、唯一 source quote 修正 message id、非法 verifier fail-closed、显式缺字段不重复验证和敏感支付信息 fail-closed 均通过 24 条定向测试。"
+        },
+        {
+          "type": "pr",
+          "number": 749,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/749",
+          "label": "PR #749"
+        },
+        {
+          "type": "pr",
+          "number": 750,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/750",
+          "label": "PR #750"
+        },
+        {
+          "type": "pr",
+          "number": 426,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/426",
+          "label": "PR #426"
+        },
+        {
+          "type": "pr",
+          "number": 432,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/432",
+          "label": "PR #432"
+        },
+        {
+          "type": "pr",
+          "number": 571,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/571",
+          "label": "PR #571"
+        },
+        {
           "type": "pr",
           "number": 665,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/665",
@@ -775,6 +673,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 726,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/726",
           "label": "PR #726"
+        },
+        {
+          "type": "pr",
+          "number": 670,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/670",
+          "label": "PR #670"
+        },
+        {
+          "type": "pr",
+          "number": 674,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/674",
+          "label": "PR #674"
+        },
+        {
+          "type": "pr",
+          "number": 568,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/568",
+          "label": "PR #568"
+        },
+        {
+          "type": "pr",
+          "number": 572,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
+          "label": "PR #572"
         }
       ],
       "source_refs": [
@@ -787,6 +709,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "routing-taxonomy",
         "routing-fallback-billing-risk-sniff",
         "routing-quality-validation",
+        "controlled-rollout",
         "routing-billing-risky-negatives",
         "p2-06",
         "routing-real-zendesk-replay",
@@ -795,8 +718,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "p2-08"
       ],
       "status": "active",
-      "task_count": 5,
-      "done_count": 4,
+      "task_count": 11,
+      "done_count": 10,
       "blocked_count": 0
     },
     {
@@ -917,6 +840,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 703,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/703",
           "label": "PR #703"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk AI assignment service and Account API tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI assignment contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk assignment regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk assignee identity and error classification regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
+          "label": "Feature list and Project Overview validation",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
         }
       ],
       "source_refs": [
@@ -928,8 +876,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 5,
-      "done_count": 4,
+      "task_count": 6,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -1615,6 +1563,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [
@@ -1631,7 +1584,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "legacy_ids": [
@@ -1747,7 +1700,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-09",
-      "title": "完成 Billing 与 Detailed Invoice 自动化闭环",
+      "title": "完成 Billing 与 Detailed Invoice 自动化执行闭环",
       "status": "done",
       "owner": "jojo",
       "summary": "Billing 与 Detailed Invoice 已完成路由、内部处理、结果回传和客户更新闭环。",
@@ -2070,6 +2023,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 automation-execution 重新归类到 case-automation。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -2079,7 +2037,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3175,6 +3133,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从历史 Account intake、Case history 和 Automated Case 迁移记录补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3183,7 +3146,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3380,6 +3343,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从 Phase 2 Enablement handler、字段提取和回复记录补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3388,7 +3356,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3422,6 +3390,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从历史 Quota automation handler 和内部流转实现补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3430,7 +3403,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3477,6 +3450,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "backfilled",
           "summary": "从 Billing Case migration 和 automation foundation 实现补回。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "reclassified",
+          "summary": "Function 从 case-automation 合并到 case-route。"
         }
       ],
       "legacy_refs": [],
@@ -3485,7 +3463,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "case-automation"
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
@@ -3853,6 +3831,75 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-49",
+      "title": "支持 Account Case 一键派给 Zendesk AI Agent",
+      "status": "done",
+      "owner": "zac",
+      "summary": "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "Account Case 详情提供 Assign to AI 操作，只有 Admin 可以执行。",
+        "派单只更新 Zendesk assignee_id，保留 ticket 原 group、status 和 comments。",
+        "目标用户由服务端配置并校验为 active Agent；Zendesk 拒绝或结果未知时明确提示。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Zendesk AI assignment service and Account API tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
+          "label": "Account UI assignment contract tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Account Zendesk assignment regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_comments backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_ui_contract -q"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk assignee identity and error classification regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment -q"
+        },
+        {
+          "type": "test",
+          "label": "Feature list and Project Overview validation",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
+        }
+      ],
+      "source_refs": [
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-08-17",
+      "updated_at": "2026-08-17",
+      "history": [
+        {
+          "at": "2026-08-17",
+          "event": "implemented",
+          "summary": "增加 Account Admin Assign to AI 操作，保持 Zendesk ticket 原 group 只更新 assignee。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "verified",
+          "summary": "47 项后端与 Account UI 合同测试、Python/Node 语法检查及 Feature List/Project Overview 校验通过。"
+        },
+        {
+          "at": "2026-08-17",
+          "event": "assignee_identity_resolution_fixed",
+          "summary": "改用 users/me 校验配置邮箱对应的凭据身份，避免 users/search 权限不足误报为 group membership，并区分 Zendesk 权限错误与 422 group 拒绝。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
     },
     {
       "schema_version": 2,
@@ -6901,6 +6948,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口可查看 Account Case 历史和详情。",
         "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
+        "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
@@ -6974,6 +7022,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "对话支持上传 txt/log/err 日志附件。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
+        "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",
@@ -7986,7 +8035,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "source_ref": "docs/project/functions/controlled-rollout.json",
         "legacy_id": "controlled-rollout",
         "target_type": "function",
-        "target_id": "case-automation",
+        "target_id": "case-route",
         "disposition": "merged"
       },
       {
@@ -8638,7 +8687,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       },
       "controlled-rollout": {
         "target_type": "function",
-        "target_id": "case-automation"
+        "target_id": "case-route"
       },
       "routing-quality-validation": {
         "target_type": "function",

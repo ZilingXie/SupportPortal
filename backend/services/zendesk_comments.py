@@ -37,7 +37,7 @@ class ZendeskCommentError(RuntimeError):
         super().__init__(self.error_code)
 
 
-def _basic_auth_header() -> str:
+def zendesk_basic_auth_header() -> str:
     raw = str(os.getenv(ZENDESK_BASIC_AUTH_ENV) or "").strip()
     if raw.lower().startswith("basic "):
         raw = raw[6:].strip()
@@ -53,6 +53,10 @@ def _basic_auth_header() -> str:
     if not username or not secret:
         raise ZendeskCommentError("permanent", error_code="zendesk_basic_auth_invalid")
     return "Basic " + base64.b64encode(decoded.encode("utf-8")).decode("ascii")
+
+
+def _basic_auth_header() -> str:
+    return zendesk_basic_auth_header()
 
 
 def _comment_event(payload: dict[str, Any]) -> dict[str, Any] | None:
