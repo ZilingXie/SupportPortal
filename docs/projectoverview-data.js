@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T13:45:45Z",
-  "source_base_commit": "902f3b5146b1acb4e5885541081fe10760b14bc7",
-  "registry_digest": "baf0f0c88646ee9c235643d7a78cd970b10aa29996bb4dcc9acba5bb7d599e52",
+  "generated_at": "2026-08-18T14:58:31Z",
+  "source_base_commit": "341a99cdad7f1a793a940a6eb3f19e61a3d0a91f",
+  "registry_digest": "b328944f33820d50b68b8cc1594497e3fcddccc7130ee2719025c0056caba11e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7101,7 +7101,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。",
         "对话支持上传 txt/log/err 日志附件。",
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
-        "`/account` 的 Automated execution view 以四个 registered 子类展示跨业务自动化：Account & Billing / Fraud Account、Account & Billing / Detailed Invoice、Backend Operation / Enablement 和 Backend Operation / Quota；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership；非风控 Account Suspension 仅提取上下文并保持 not automated。",
+        "`/account` 的 Automated execution view 展示三类 active Automation：Account & Billing / Fraud Account、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。",
         "Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。",
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。",

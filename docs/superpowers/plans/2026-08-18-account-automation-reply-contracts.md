@@ -129,11 +129,11 @@ Before the first runtime code edit, read and follow the complete `karpathy-guide
 - [x] Stage 1 - Canonical reply contract and Persona output guarantees
 - [x] Stage 2 - Fraud, Suspension, and Enablement normal flows
 - [x] Stage 3 - Full rerun and recovery consistency
-- [ ] Stage 4 - Integrated verification, documentation, and finalize readiness
+- [x] Stage 4 - Integrated verification, documentation, and finalize readiness
 - [ ] Stage 5 - One PR, merge, official-stack restart, and build verification
 - [ ] Stage 6 - One full rerun and three-Case live validation
 
-Current stage: `Stage 4`
+Current stage: `Stage 5`
 
 ## Stage 0 - Task Registry And Preflight
 
@@ -518,10 +518,10 @@ Report `状态：已完成` only when:
 | 1 | completed | `backend/services/account_reply_jobs.py`, `backend/services/automation_persona.py`, `backend/worker.py`, related Persona/version-fence/Worker tests | `python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker` (116 passed); `py_compile` and `git diff --check` passed | `d6707564b0688e4a5e82e9e4a647529926dd6106` | Added canonical intent/derived closure contract, rejected intent conflicts and legacy Fraud close jobs, upgraded to `automation-persona-v9`, added intent-specific content checks and deterministic trailing-signature removal, and blocked invalid content before `publish_account_reply()`. |
 | 2 | completed | `backend/main.py`, `backend/services/account_suspension_automation.py`, `backend/services/automation_persona.py`, `backend/worker.py`, `backend/tests/test_account_intake.py`, `backend/tests/test_account_verification_automation.py`, `backend/tests/test_worker.py` | `python -m unittest backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_intake backend.tests.test_worker` (277 passed); `py_compile` and `git diff --check` passed | `79383988a5dfbf6077fd6c3cf674a40392bc243a` | Fraud now uses `fraud_handoff_confirmation` and remains open; Suspension uses explicit confirmation, durable closing-reply gating, and Human Review for ambiguity/failure; Enablement completion accepts only explicit positive completion and validates the closing reply. Active membership compatibility tests now assert inactive legacy routes have no side effects. The Suspension negative parser was narrowed so uncertainty such as `not sure` is not treated as an explicit negative. |
 | 3 | completed | `backend/services/account_full_reroute.py`, `backend/main.py`, `backend/tests/test_account_full_reroute.py`, `backend/tests/test_account_reroute_dispatch.py` | `python -m unittest backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_rerun_recovery backend.tests.test_account_intake` (211 passed); `py_compile` and `git diff --check` passed | `bb0b912349d12b5e3d683bdeb1b93e7a9ac0af60` | Added active Suspension full-rerun reconstruction: the first customer message cannot confirm contact, later explicit confirmation drives handoff, and ambiguous/conflicting history enters Human Review. Persisted rerun intent/workflow now rebuilds Suspension contact/closing replies during recovery; closing reply is scheduled only after email success, and reply-only recovery does not resend completed handoffs. The rerun dispatch test sets a non-secret placeholder `TICKET_DB_DSN` before importing `backend.main`, so the Plan command runs without external environment setup. |
-| 4 | pending |  |  |  |  |
+| 4 | completed | `docs/feature_list.md`, `docs/prompt_change_log.md`, `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | Integrated suite: `367 tests passed`; `py_compile` passed; `python3 scripts/verify_feature_list.py` passed; `python3 scripts/generate_project_overview.py --write` and `--check` passed; `git diff --check` passed | `341a99cdad7f1a793a940a6eb3f19e61a3d0a91f` (pre-Stage 4 metadata); Stage 4 changes are pending commit | Synchronized the feature list to the three active Automation workflows, appended the `automation-persona-v9` prompt/model change record, marked Task `p1-50` done after automated acceptance evidence, and regenerated Project Overview. Stage 5 finalization and post-merge live validation remain. |
 | 5 | pending |  |  |  | One merged implementation PR |
 | 6 | pending | runtime only |  | n/a | Full rerun and three live Cases |
 
 ## Resume From Here
 
-Start at Stage 4 in the existing task worktree. Do not recreate the branch or worktree. Recheck current Git state and root cleanliness, then run the integrated targeted suite and documentation/project-registry checks. Stage 3 is implemented and its rerun/recovery suite is green in local commit `bb0b912349d12b5e3d683bdeb1b93e7a9ac0af60`; do not push or finalize before Stage 4 passes.
+Start at Stage 5 in the existing task worktree. Do not recreate the branch or worktree. Recheck current Git state and root cleanliness, commit the Stage 4 documentation/registry changes, then run the exact `finalize_task_to_main.sh` command from this Plan. Stage 4 automated verification is green; after merge, restart and validate the official stack before the single Stage 6 full rerun.
