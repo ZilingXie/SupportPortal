@@ -33,6 +33,8 @@ ROUTING_STAGE_DESCRIPTIONS = {
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
+# Kept for compatibility with historical Persona payloads. New Automation
+# replies intentionally ignore signatures.
 DEFAULT_PERSONA_SIGNATURE = "Best,\nSid\nSupport Engineer 2"
 ACCOUNT_PERSONA_PRESET_VERSION = "automation-persona-presets-v1"
 
@@ -632,8 +634,6 @@ def routing_config_payload() -> dict[str, Any]:
 
 def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
     content = persona.get("content") if isinstance(persona.get("content"), dict) else {}
-    signoff_name = str(content.get("signoff_name") or "Sid").strip() or "Sid"
-    signature = str(content.get("signature") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     opener = str(content.get("opener") or "").strip()
     normalized = str(reply or "").strip()
     if opener and opener not in normalized:
@@ -643,20 +643,11 @@ def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
             if salutation
             else f"{opener}\n\n{normalized}"
         )
-    if signoff_name != "Sid" and re.search(r"\nSid\s*$", normalized):
-        normalized = re.sub(r"\nSid\s*$", f"\n{signoff_name}", normalized)
-    signoff_pattern = re.compile(r"(\n\n(?:Best [Rr]egards,|此致)\n)[^\n]+\s*$")
-    if signoff_name != "Sid" and signoff_pattern.search(normalized):
-        normalized = signoff_pattern.sub(lambda match: f"{match.group(1)}{signoff_name}", normalized)
-    styled = (
-        normalized
-        if re.search(r"\n(?:Sid|" + re.escape(signoff_name) + r")\s*$", normalized)
-        else ensure_customer_reply_email_style(body=normalized, opener=opener or None, signoff_name=signoff_name)
-    )
-    if not signature:
-        return styled
-    legacy_suffix = re.compile(r"\n\n(?:Best [Rr]egards,|此致)\n" + re.escape(signoff_name) + r"\s*$")
-    body = legacy_suffix.sub("", styled).rstrip()
-    if body.endswith(signature):
-        body = body[: -len(signature)].rstrip()
-    return f"{body}\n\n{signature}"
+    # Historical Persona records may contain signatures, but the current
+    # Automation customer-reply contract never emits a sign-off.
+    styled = ensure_customer_reply_email_style(body=normalized, opener=opener or None, signoff_name="Sid")
+    return re.sub(
+        r"\n\n(?:Best [Rr]egards,|Best [Rr]egards|Regards,|此致)\n[^\n]+\s*$",
+        "",
+        styled,
+    ).rstrip()

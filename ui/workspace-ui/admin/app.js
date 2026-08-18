@@ -15,7 +15,16 @@ const ADMIN_SECTION_TITLES = {
   audit: "Audit",
 };
 const TOP_LEVEL_AGENT_KEYS = new Set(["route-agent", "client-agent", "engineer-agent", "guardrail-agent"]);
-const AUTOMATION_BEHAVIOR_KEYS = new Set(["fraud-account", "account-suspension", "detailed-invoice", "enablement", "quota", "unregistered"]);
+// Keep legacy outcomes addressable in the Admin UI for historical case review;
+// active execution remains governed by the backend registry.
+const AUTOMATION_BEHAVIOR_KEYS = new Set([
+  "fraud-account",
+  "account-suspension",
+  "detailed-invoice",
+  "enablement",
+  "quota",
+  "unregistered",
+]);
 
 const root = document.getElementById("workspace-admin-root");
 
@@ -1290,12 +1299,6 @@ function publishedPersonaVersion(persona) {
   return versions.find(item => Number(item.version) === Number(persona?.published_version)) || versions.at(-1) || null;
 }
 
-function personaSignature(content = {}) {
-  const signature = String(content.signature || "").trim();
-  if (signature) return signature;
-  return `Best Regards,\n${String(content.signoff_name || "Sid").trim() || "Sid"}`;
-}
-
 function renderAutomationPersonaPanel() {
   const personas = orderedAutomationPersonas(
     Array.isArray(agentConfigData.automation_personas) ? agentConfigData.automation_personas : [],
@@ -1307,7 +1310,7 @@ function renderAutomationPersonaPanel() {
   const draft = {
     instruction: published?.content?.instruction || "",
     opener: published?.content?.opener || "",
-    signature: personaSignature(published?.content),
+    signature: published?.content?.signature || "",
     change_note: "",
     ...(personaDraftValues[persona.persona_key] || {}),
   };

@@ -14,9 +14,7 @@ ACCOUNT_CASE_FILTER_GROUPS: tuple[dict[str, Any], ...] = (
         "label": "Automated",
         "children": (
             {"id": "fraud_account", "label": "Account & Billing / Fraud Account"},
-            {"id": "detailed_invoice", "label": "Account & Billing / Detailed Invoice"},
             {"id": "enablement", "label": "Backend Operation / Enablement"},
-            {"id": "quota", "label": "Backend Operation / Quota"},
         ),
     },
     {
@@ -78,9 +76,7 @@ _DEPRECATED_GROUP_FILTERS = {"agora_non_technical"}
 _BACKEND_OPERATION_SUBCATEGORIES = {"enablement", "quota", "unregistered"}
 _AUTOMATION_SUBCATEGORIES = {
     "fraud_account",
-    "detailed_invoice",
     "enablement",
-    "quota",
 }
 _ACCOUNT_BILLING_SUBCATEGORIES = {
     "account_suspension",
@@ -167,7 +163,7 @@ def backend_operation_metadata(subcategory: Any) -> dict[str, str | None]:
     normalized = str(subcategory or "").strip().lower()
     if normalized not in _BACKEND_OPERATION_SUBCATEGORIES:
         normalized = "unregistered"
-    automated = normalized in {"enablement", "quota"}
+    automated = normalized == "enablement"
     return {
         "category": "backend_operation",
         "subcategory": normalized,
