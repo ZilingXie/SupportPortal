@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T06:07:33Z",
-  "source_base_commit": "2a2c1ddb62504bf513a46a1216b1bdc44e299668",
-  "registry_digest": "d5fa915a00d3484a93fe648bff569005966f9e00c84aba5e45d331f2654efb77",
+  "generated_at": "2026-08-18T06:22:48Z",
+  "source_base_commit": "2dafa6b8bab7578232c8697ca05db01bbc443a7e",
+  "registry_digest": "a667c7296153f9c8af8ac35a3683ddf173f894fc3d355379995c7d1f95fdc6c7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3838,11 +3838,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "支持 Account Case 一键派给 Zendesk AI Agent",
       "status": "done",
       "owner": "zac",
-      "summary": "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+      "summary": "Account Admin 可让关联 Zendesk ticket 由配置的 AI Agent 接手，并展示 Zendesk 返回的最终 ownership 和 group。",
       "next_action": "",
       "acceptance_criteria": [
-        "Account Case 详情提供 Assign to AI 操作，只有 Admin 可以执行。",
-        "派单只更新 Zendesk assignee_id，保留 ticket 原 group、status 和 comments。",
+        "Account Case 详情提供 Take ownership as AI 操作，只有 Admin 可以执行。",
+        "操作只发送 Zendesk assignee_id 更新，保留 status 和 comments，并展示 Zendesk 返回的最终 group。",
         "目标用户由服务端配置并校验为 active Agent；Zendesk 拒绝或结果未知时明确提示。"
       ],
       "blockers": [],
@@ -3882,7 +3882,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-17",
           "event": "implemented",
-          "summary": "增加 Account Admin Assign to AI 操作，保持 Zendesk ticket 原 group 只更新 assignee。"
+          "summary": "修正 Account Admin ownership 语义，展示 Zendesk 接手后实际返回的最终 group。"
         },
         {
           "at": "2026-08-17",
@@ -6948,7 +6948,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口可查看 Account Case 历史和详情。",
         "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
-        "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+        "Account Admin 可让关联 Zendesk ticket 由配置的 AI Agent 接手，并展示 Zendesk 返回的最终 ownership 和 group。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
@@ -7022,7 +7022,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "对话支持上传 txt/log/err 日志附件。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
-        "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+        "Account Admin 可让关联 Zendesk ticket 由配置的 AI Agent 接手，并展示 Zendesk 返回的最终 ownership 和 group。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",

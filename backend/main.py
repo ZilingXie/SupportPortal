@@ -4852,7 +4852,7 @@ def _account_zendesk_assignment_http_error(exc: ZendeskCommentError) -> HTTPExce
     if exc.status_code == 422:
         return HTTPException(
             status_code=502,
-            detail="Zendesk rejected the assignment; confirm the AI Agent belongs to the ticket group",
+            detail="Zendesk rejected the ownership transfer; verify the ticket workflow and AI Agent permissions",
         )
     return HTTPException(status_code=502, detail="Zendesk rejected the AI assignment; check the integration configuration")
 
@@ -4870,6 +4870,8 @@ def _account_zendesk_assignment_payload(
         "assignee_email": result.assignee_email,
         "assignee_name": result.assignee_name,
         "group_id": result.group_id,
+        "previous_group_id": result.previous_group_id,
+        "group_changed": bool(result.group_changed),
         "already_assigned": bool(result.already_assigned),
     }
 

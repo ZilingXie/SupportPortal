@@ -61,6 +61,8 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
             assignee_email="ai-support-agent@agora.io",
             assignee_name="AI Support",
             group_id="27216254064148",
+            previous_group_id="27216254064148",
+            group_changed=False,
             status_code=200,
             already_assigned=False,
         )
@@ -70,7 +72,28 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["assignee_id"], "48557297720084")
         self.assertEqual(response.json()["group_id"], "27216254064148")
+        self.assertFalse(response.json()["group_changed"])
         assign.assert_called_once_with(ticket_id="12807")
+
+    def test_admin_response_exposes_zendesk_final_group_change(self) -> None:
+        result = ZendeskAssignmentResult(
+            ticket_id="12807",
+            assignee_id="48557297720084",
+            assignee_email="ai-support-agent@agora.io",
+            assignee_name="AI Support",
+            group_id="29388501432596",
+            previous_group_id="27216254064148",
+            group_changed=True,
+            status_code=200,
+            already_assigned=False,
+        )
+        with patch("backend.main.assign_ticket_to_configured_ai", return_value=result):
+            response = self.client.post("/api/account/cases/AC-12807/zendesk-ai-assignment")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["group_id"], "29388501432596")
+        self.assertEqual(response.json()["previous_group_id"], "27216254064148")
+        self.assertTrue(response.json()["group_changed"])
 
     def test_unlinked_case_is_rejected(self) -> None:
         self.repository.save_account_case({
@@ -122,7 +145,8 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
             response = self.client.post("/api/account/cases/AC-12807/zendesk-ai-assignment")
 
         self.assertEqual(response.status_code, 502, response.text)
-        self.assertIn("ticket group", response.json()["detail"])
+        self.assertIn("ownership transfer", response.json()["detail"])
+        self.assertNotIn("ticket group", response.json()["detail"])
 
 if __name__ == "__main__":
     unittest.main()

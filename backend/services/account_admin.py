@@ -112,7 +112,7 @@ _ENV_EXACT_DESCRIPTIONS = {
     "WORKSPACE_BOOTSTRAP_ADMIN_NAME": "Display name for the bootstrap Workspace administrator account.",
     "WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD": "Initial password for the bootstrap Workspace administrator account.",
     "zendesk_basic_auth": "Base64-encoded Zendesk Basic Auth credential used for server-side ticket updates; never returned as a value.",
-    "ZENDESK_AI_ASSIGNEE_EMAIL": "Exact email of the active Zendesk Agent used by the Account Assign to AI action.",
+    "ZENDESK_AI_ASSIGNEE_EMAIL": "Exact email of the active Zendesk Agent used by the Account ownership action.",
     "STACK_RUNTIME_MODE": "Selects which SupportPortal services the single-host stack runs.",
     "STACK_DB_MODE": "Selects whether the single-host stack uses local or remote data services.",
     "NGINX_HOST_PORT": "Host port exposed by the SupportPortal Nginx gateway.",
