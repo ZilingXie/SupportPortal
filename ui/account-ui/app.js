@@ -43,9 +43,7 @@ const DEFAULT_FILTER_DEFINITIONS = [
     label: "Automated",
     children: [
       { id: "fraud_account", label: "Account & Billing / Fraud Account" },
-      { id: "detailed_invoice", label: "Account & Billing / Detailed Invoice" },
       { id: "enablement", label: "Backend Operation / Enablement" },
-      { id: "quota", label: "Backend Operation / Quota" },
     ],
   },
   {

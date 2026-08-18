@@ -261,14 +261,14 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(result.content, f"Hi Jack,\n\n{response.text}\n\nBest,\nSid\nSupport Engineer 2")
+        self.assertEqual(result.content, f"Hi Jack,\n\n{response.text}")
         self.assertEqual(result.model, "persona-model")
         self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
         self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("Do not write a greeting or signature", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("Hi Jack,", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
-        self.assertIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
+        self.assertNotIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
 
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
@@ -301,10 +301,10 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated.\n\nBest,\nSid",
+            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated.",
         )
 
-    def test_legacy_signoff_name_is_rendered_as_a_signature(self) -> None:
+    def test_legacy_signoff_name_is_ignored(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(text="The request is complete.", model_name="persona-model")
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -315,7 +315,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm", "signoff_name": "Maya"}},
             )
 
-        self.assertTrue(result.content.endswith("Best Regards,\nMaya"))
+        self.assertEqual(result.content, "Hi Customer,\n\nThe request is complete.")
 
     def test_submission_reply_rejects_internal_team_ownership(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")

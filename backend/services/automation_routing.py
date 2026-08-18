@@ -12,6 +12,10 @@ QUOTA_AUTOMATION_HANDLER = "quota"
 ACCOUNT_SUSPENSION_AUTOMATION_HANDLER = "account_suspension"
 AUTOMATION_SUBCATEGORY_ALIASES: dict[str, str] = {}
 
+# Registry keeps every known implementation available for compatibility and
+# future re-enablement; only this set may receive new automation side effects.
+ACTIVE_AUTOMATION_SUBCATEGORIES = frozenset({"fraud_account", "enablement"})
+
 AUTOMATION_HANDLER_REGISTRY: dict[str, frozenset[str]] = {
     BILLING_AUTOMATION_HANDLER: frozenset(
         {
@@ -35,7 +39,11 @@ def automation_metadata(*, route_family: Any, execution_action: Any) -> dict[str
     normalized_family = str(route_family or "").strip().lower()
     normalized_action = canonical_automation_subcategory(execution_action)
     is_automated = normalized_family in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}
-    handler = _handler_for_subcategory(normalized_action) if is_automated else None
+    handler = (
+        _handler_for_subcategory(normalized_action)
+        if is_automated and normalized_action in ACTIVE_AUTOMATION_SUBCATEGORIES
+        else None
+    )
     if handler is None:
         category = normalized_family if normalized_family and not is_automated else None
         return {
