@@ -514,6 +514,18 @@ class AccountUiContractTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_production_promotion_uses_long_timeout_and_explains_server_continuation(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        promotion_start = app_source.index("async function promoteAccountCaseToProduction")
+        promotion_end = app_source.index("\nfunction renderZendeskOwnershipConfirmation", promotion_start)
+        promotion_source = app_source[promotion_start:promotion_end]
+
+        self.assertIn("const DEFAULT_FETCH_TIMEOUT_MS = 25_000;", app_source)
+        self.assertIn("const PRODUCTION_PROMOTION_TIMEOUT_MS = 300_000;", app_source)
+        self.assertIn("timeoutMs: PRODUCTION_PROMOTION_TIMEOUT_MS", promotion_source)
+        self.assertIn("request may still be running on the server", promotion_source)
+        self.assertIn("check for a PRD-* Production Case", promotion_source)
+
     def test_account_app_contains_filter_state_and_reply_composer(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 

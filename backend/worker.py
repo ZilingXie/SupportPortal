@@ -860,8 +860,10 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     persisted_content = str(published_reply.get("content") or "").strip()
     if not persisted_content:
         return
+    message_id = str(published_reply.get("message_id") or "").strip() or job_id
     _deliver_production_account_reply_to_zendesk(
         ticket_id=ticket_id,
+        message_id=message_id,
         job_id=job_id,
         content=persisted_content,
     )
@@ -870,10 +872,13 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
 def _deliver_production_account_reply_to_zendesk(
     *,
     ticket_id: str,
-    job_id: str,
+    message_id: str | None = None,
+    job_id: str | None = None,
     content: str,
 ) -> None:
     """Write one published production reply as a Zendesk internal comment."""
+    effective_message_id = str(message_id or job_id or "").strip()
+    effective_job_id = str(job_id or "").strip() or effective_message_id
     account_case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
     if not isinstance(account_case, dict):
         return
@@ -884,8 +889,12 @@ def _deliver_production_account_reply_to_zendesk(
         execution_action=str(account_case.get("execution_action") or account_case.get("route") or ""),
     ):
         LOGGER.info(
-            "production_zendesk_delivery_skipped account_case_id=%s reason=unregistered_automation",
+            "production_zendesk_delivery_skipped job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s delivery_status=skipped failure_code=unregistered_automation",
+            effective_job_id,
+            ticket_id,
             account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "unknown",
+            effective_message_id or "unknown",
         )
         return
     account_case_id = str(
@@ -894,27 +903,46 @@ def _deliver_production_account_reply_to_zendesk(
     zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
     if not account_case_id or not zendesk_ticket_id:
         LOGGER.error(
-            "production_zendesk_delivery_skipped account_case_id=%s reason=missing_external_ticket",
+            "production_zendesk_delivery_skipped job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s delivery_status=skipped failure_code=missing_external_ticket",
+            effective_job_id,
+            ticket_id,
             account_case_id or "unknown",
+            effective_message_id or "unknown",
+        )
+        return
+    if not effective_message_id:
+        LOGGER.error(
+            "production_zendesk_delivery_skipped job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=unknown delivery_status=skipped failure_code=missing_message_id",
+            effective_job_id or "unknown",
+            ticket_id,
+            account_case_id,
         )
         return
 
-    message_id = str(job_id or "").strip()
-    idempotency_key = f"production-zendesk-comment:{account_case_id}:{message_id}"
     claim = ticket_repository.claim_account_zendesk_comment_delivery(
         account_case_id=account_case_id,
-        message_id=message_id,
-        zendesk_ticket_id=zendesk_ticket_id,
-        idempotency_key=idempotency_key,
-        created_at=now_iso(),
+        message_id=effective_message_id,
+        claimed_at=now_iso(),
     )
-    if not bool(claim.get("created")):
-        if str(claim.get("status") or "").strip().lower() in {"pending", "outcome_unknown"}:
+    delivery_status = str(claim.get("status") or "").strip().lower()
+    if not bool(claim.get("claimed")):
+        if delivery_status in {"pending", "outcome_unknown"}:
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
-                message_id=message_id,
+                message_id=effective_message_id,
                 zendesk_ticket_id=zendesk_ticket_id,
                 content=content,
+            )
+        elif delivery_status == "missing":
+            LOGGER.error(
+                "production_zendesk_delivery_skipped job_id=%s ticket_id=%s account_case_id=%s "
+                "message_id=%s delivery_status=missing failure_code=delivery_ledger_missing",
+                effective_job_id,
+                ticket_id,
+                account_case_id,
+                effective_message_id,
             )
         return
 
@@ -924,7 +952,7 @@ def _deliver_production_account_reply_to_zendesk(
         if exc.category == "outcome_unknown":
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
-                message_id=message_id,
+                message_id=effective_message_id,
                 zendesk_ticket_id=zendesk_ticket_id,
                 content=content,
                 fallback_failure_code=exc.error_code,
@@ -932,37 +960,132 @@ def _deliver_production_account_reply_to_zendesk(
         else:
             ticket_repository.complete_account_zendesk_comment_delivery(
                 account_case_id=account_case_id,
-                message_id=message_id,
+                message_id=effective_message_id,
                 status="failed",
                 zendesk_comment_id=None,
                 failure_code=exc.error_code,
                 completed_at=now_iso(),
             )
         LOGGER.warning(
-            "production_zendesk_delivery_failed account_case_id=%s job_id=%s category=%s code=%s",
-            account_case_id, job_id, exc.category, exc.error_code,
+            "production_zendesk_delivery_failed job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s delivery_status=%s failure_code=%s category=%s",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+            "outcome_unknown" if exc.category == "outcome_unknown" else "failed",
+            exc.error_code,
+            exc.category,
         )
     except Exception:
         ticket_repository.complete_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
-            message_id=message_id,
+            message_id=effective_message_id,
             status="failed",
             zendesk_comment_id=None,
             failure_code="zendesk_delivery_unexpected_error",
             completed_at=now_iso(),
         )
         LOGGER.exception(
-            "production_zendesk_delivery_failed account_case_id=%s job_id=%s",
-            account_case_id, job_id,
+            "production_zendesk_delivery_failed job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s delivery_status=failed failure_code=zendesk_delivery_unexpected_error",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
         )
     else:
         ticket_repository.complete_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
-            message_id=message_id,
+            message_id=effective_message_id,
             status="delivered",
             zendesk_comment_id=result.comment_id,
             failure_code=None,
             completed_at=now_iso(),
+        )
+        LOGGER.info(
+            "production_zendesk_delivery_completed job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s delivery_status=delivered failure_code=none",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+        )
+
+
+def _account_reply_message_for_delivery(
+    ticket: dict[str, Any],
+    *,
+    message_id: str,
+) -> dict[str, Any] | None:
+    normalized_message_id = str(message_id or "").strip()
+    messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
+    ticket_id = str(ticket.get("ticket_id") or "").strip()
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        candidate_ids = {
+            str(message.get("message_id") or "").strip(),
+            str(message.get("id") or "").strip(),
+            f"{ticket_id}:{index}",
+            str(meta.get("account_reply_job_id") or "").strip(),
+        }
+        if normalized_message_id not in candidate_ids:
+            continue
+        content = str(message.get("content") or "").strip()
+        if not content:
+            return None
+        return message
+    return None
+
+
+def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
+    """Recover persisted Account reply intents without creating new ones."""
+    deliveries = ticket_repository.list_account_zendesk_comment_deliveries(
+        statuses=("queued", "pending", "outcome_unknown"),
+        limit=limit,
+    )
+    for delivery in deliveries:
+        account_case_id = str(delivery.get("account_case_id") or "").strip()
+        message_id = str(delivery.get("message_id") or "").strip()
+        delivery_status = str(delivery.get("status") or "").strip().lower()
+        account_case = ticket_repository.get_account_case(account_case_id)
+        ticket_id = str((account_case or {}).get("client_ticket_id") or "").strip()
+        ticket = ticket_repository.get_ticket(ticket_id) if ticket_id else None
+        message = (
+            _account_reply_message_for_delivery(ticket, message_id=message_id)
+            if isinstance(ticket, dict)
+            else None
+        )
+        if not isinstance(message, dict):
+            failure_code = "zendesk_delivery_message_missing"
+            LOGGER.error(
+                "production_zendesk_delivery_recovery_failed job_id=%s ticket_id=%s "
+                "account_case_id=%s message_id=%s delivery_status=%s failure_code=%s",
+                "unknown",
+                ticket_id or "unknown",
+                account_case_id or "unknown",
+                message_id or "unknown",
+                delivery_status or "unknown",
+                failure_code,
+            )
+            if delivery_status == "queued":
+                ticket_repository.complete_account_zendesk_comment_delivery(
+                    account_case_id=account_case_id,
+                    message_id=message_id,
+                    status="failed",
+                    zendesk_comment_id=None,
+                    failure_code=failure_code,
+                    completed_at=now_iso(),
+                )
+            continue
+        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        _deliver_production_account_reply_to_zendesk(
+            ticket_id=ticket_id,
+            message_id=message_id,
+            job_id=str(meta.get("account_reply_job_id") or "").strip() or message_id,
+            content=str(message.get("content") or "").strip(),
         )
 
 
@@ -1288,6 +1411,7 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                     due_only=True,
                     limit=10,
                 )
+            _drain_production_zendesk_comment_deliveries(limit=20)
         except Exception:
             LOGGER.exception("Account reply poller failed")
         sleep_until = time.time() + max(interval_seconds, 1.0)

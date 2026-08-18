@@ -883,6 +883,183 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("DROP CONSTRAINT IF EXISTS", repo_source)
         self.assertIn("pg_get_constraintdef", repo_source)
 
+    def test_in_memory_production_publication_creates_one_queued_zendesk_intent(self) -> None:
+        repository = InMemoryTicketRepository()
+        ticket_id = "TK-ZENDESK-QUEUED"
+        repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable the feature.",
+                        "created_at": "2026-08-18T00:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        repository.save_billing_ticket(
+            {
+                "account_case_id": "AC-ZENDESK-QUEUED",
+                "billing_ticket_id": "AC-ZENDESK-QUEUED",
+                "client_ticket_id": ticket_id,
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12838",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "internal_email_send_status": "not_ready",
+            }
+        )
+        job = repository.save_account_reply_job(
+            {
+                "job_id": "reply-zendesk-queued",
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": "2026-08-18T00:00:00+00:00",
+                "status": "persona_publishing",
+                "scheduled_for": "2026-08-18T00:01:00+00:00",
+                "claimed_at": "2026-08-18T00:01:00+00:00",
+                "attempt_count": 1,
+                "payload": {"generated_content": "The feature is enabled."},
+            }
+        )
+
+        result = repository.publish_account_reply(
+            job,
+            content="The feature is enabled.",
+            payload=dict(job["payload"]),
+            published_at="2026-08-18T00:02:00+00:00",
+            reply_execution={
+                "execution_id": "reply-execution-zendesk-queued",
+                "ticket_id": ticket_id,
+            },
+        )
+
+        self.assertEqual(result["message_id"], "TK-ZENDESK-QUEUED:1")
+        self.assertEqual(result["delivery"]["status"], "queued")
+        self.assertTrue(result["delivery"]["created"])
+        self.assertEqual(
+            result["delivery_intent_id"],
+            "production-zendesk-comment:AC-ZENDESK-QUEUED:TK-ZENDESK-QUEUED:1",
+        )
+        deliveries = repository.list_account_zendesk_comment_deliveries(
+            statuses=("queued",),
+        )
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0]["message_id"], result["message_id"])
+        self.assertFalse(deliveries[0]["is_public"])
+
+    def test_postgres_publication_persists_queued_delivery_with_message_id(self) -> None:
+        published_at = datetime(2026, 8, 18, tzinfo=timezone.utc)
+        claimed_at = datetime(2026, 8, 18, 0, 1, tzinfo=timezone.utc)
+        delivery_row = (
+            "AC-ZENDESK-POSTGRES",
+            "42",
+            "12838",
+            "production-zendesk-comment:AC-ZENDESK-POSTGRES:42",
+            False,
+            "queued",
+            None,
+            None,
+            None,
+            published_at,
+            published_at,
+        )
+        cursor = _ReusableCursor(
+            fetchone_results=[
+                ("TK-ZENDESK-POSTGRES",),
+                ("enablement", "automated", "enablement", None, None),
+                (
+                    "reply-zendesk-postgres",
+                    "TK-ZENDESK-POSTGRES",
+                    published_at,
+                    "persona_publishing",
+                    claimed_at,
+                    1,
+                ),
+                None,
+                (42, published_at),
+                ("AC-ZENDESK-POSTGRES", "production", "12838"),
+                delivery_row,
+            ]
+        )
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+        job = {
+            "job_id": "reply-zendesk-postgres",
+            "ticket_id": "TK-ZENDESK-POSTGRES",
+            "trigger_message_created_at": "2026-08-18T00:00:00+00:00",
+            "status": "persona_publishing",
+            "claimed_at": "2026-08-18T00:01:00+00:00",
+            "attempt_count": 1,
+        }
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.publish_account_reply(
+                job,
+                content="The feature is enabled.",
+                payload={},
+                published_at="2026-08-18T00:02:00+00:00",
+                reply_execution={
+                    "execution_id": "reply-execution-zendesk-postgres",
+                    "ticket_id": job["ticket_id"],
+                },
+            )
+
+        self.assertEqual(result["message_id"], "42")
+        self.assertEqual(result["delivery"]["status"], "queued")
+        self.assertEqual(
+            result["delivery_intent_id"],
+            "production-zendesk-comment:AC-ZENDESK-POSTGRES:42",
+        )
+        rendered_queries = "\n".join(
+            query.as_string() if hasattr(query, "as_string") else str(query)
+            for args, _kwargs in cursor.executed
+            if args
+            for query in [args[0]]
+        )
+        self.assertIn("support_account_zendesk_comment_deliveries", rendered_queries)
+        self.assertIn("'queued'", rendered_queries)
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_postgres_zendesk_delivery_claim_only_transitions_queued_rows(self) -> None:
+        delivery_row = (
+            "AC-ZENDESK-CLAIM",
+            "42",
+            "12838",
+            "production-zendesk-comment:AC-ZENDESK-CLAIM:42",
+            False,
+            "pending",
+            None,
+            None,
+            None,
+            datetime(2026, 8, 18, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 0, 3, tzinfo=timezone.utc),
+        )
+        cursor = _ReusableCursor(fetchone_results=[delivery_row])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.claim_account_zendesk_comment_delivery(
+                account_case_id="AC-ZENDESK-CLAIM",
+                message_id="42",
+                claimed_at="2026-08-18T00:03:00+00:00",
+            )
+
+        self.assertTrue(result["claimed"])
+        self.assertEqual(result["status"], "pending")
+        rendered_query = cursor.executed[0][0][0].as_string()
+        self.assertIn("status = 'pending'", rendered_query)
+        self.assertIn("status = 'queued'", rendered_query)
+
     def test_publish_account_reply_inserts_and_commits_all_account_state_together(self) -> None:
         published_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
         cursor = _ReusableCursor(
@@ -1293,6 +1470,20 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def get_engineer_case", repo_source)
         self.assertIn("def list_engineer_cases", repo_source)
         self.assertIn("def save_engineer_case", repo_source)
+
+    def test_zendesk_delivery_schema_supports_queued_and_migrates_existing_constraint(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed'))",
+            sql_source,
+        )
+        self.assertIn(
+            "support_account_zendesk_comment_deliveries_status_check",
+            repo_source,
+        )
+        self.assertIn("ALTER TABLE {} DROP CONSTRAINT IF EXISTS", repo_source)
 
     def test_workspace_account_upsert_qualifies_existing_account_columns(self) -> None:
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
