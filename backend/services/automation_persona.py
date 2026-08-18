@@ -373,7 +373,7 @@ def _assert_suspension_closing_contract(reply: str) -> None:
     )
     if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if "close" not in lowered or "reopen" not in lowered:
+    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered) or "reopen" not in lowered:
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
@@ -381,7 +381,7 @@ def _assert_enablement_completion_contract(reply: str) -> None:
     lowered = str(reply or "").casefold()
     if not re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", lowered):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if "close" not in lowered:
+    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 

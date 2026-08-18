@@ -127,13 +127,13 @@ Before the first runtime code edit, read and follow the complete `karpathy-guide
 
 - [x] Stage 0 - Task registry and implementation preflight
 - [x] Stage 1 - Canonical reply contract and Persona output guarantees
-- [ ] Stage 2 - Fraud, Suspension, and Enablement normal flows
+- [x] Stage 2 - Fraud, Suspension, and Enablement normal flows
 - [ ] Stage 3 - Full rerun and recovery consistency
 - [ ] Stage 4 - Integrated verification, documentation, and finalize readiness
 - [ ] Stage 5 - One PR, merge, official-stack restart, and build verification
 - [ ] Stage 6 - One full rerun and three-Case live validation
 
-Current stage: `Stage 2`
+Current stage: `Stage 3`
 
 ## Stage 0 - Task Registry And Preflight
 
@@ -514,9 +514,9 @@ Report `状态：已完成` only when:
 
 | Stage | Status | Changed paths | Verification | Local commit | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | `python3 scripts/generate_project_overview.py --write`; `python3 scripts/generate_project_overview.py --check`; `git diff --check` all passed | pending | Created Task `p1-50`; generator accepts `active` (not the plan shorthand `in_progress`) and `test`/`document` evidence types; no runtime files changed. karpathy-guidelines was read in full before runtime edits. |
-| 1 | completed | `backend/services/account_reply_jobs.py`, `backend/services/automation_persona.py`, `backend/worker.py`, related Persona/version-fence/Worker tests | `python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker` (116 passed); `py_compile` and `git diff --check` passed | pending | Added canonical intent/derived closure contract, rejected intent conflicts and legacy Fraud close jobs, upgraded to `automation-persona-v9`, added intent-specific content checks and deterministic trailing-signature removal, and blocked invalid content before `publish_account_reply()`. |
-| 2 | pending |  |  |  |  |
+| 0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | `python3 scripts/generate_project_overview.py --write`; `python3 scripts/generate_project_overview.py --check`; `git diff --check` all passed | `bbbb70c689d2aa4818024ad3583631dc0c9e74b8` | Created Task `p1-50`; generator accepts `active` (not the plan shorthand `in_progress`) and `test`/`document` evidence types; no runtime files changed. karpathy-guidelines was read in full before runtime edits. |
+| 1 | completed | `backend/services/account_reply_jobs.py`, `backend/services/automation_persona.py`, `backend/worker.py`, related Persona/version-fence/Worker tests | `python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker` (116 passed); `py_compile` and `git diff --check` passed | `d6707564b0688e4a5e82e9e4a647529926dd6106` | Added canonical intent/derived closure contract, rejected intent conflicts and legacy Fraud close jobs, upgraded to `automation-persona-v9`, added intent-specific content checks and deterministic trailing-signature removal, and blocked invalid content before `publish_account_reply()`. |
+| 2 | completed | `backend/main.py`, `backend/services/account_suspension_automation.py`, `backend/services/automation_persona.py`, `backend/worker.py`, `backend/tests/test_account_intake.py`, `backend/tests/test_account_verification_automation.py`, `backend/tests/test_worker.py` | `python -m unittest backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_intake backend.tests.test_worker` (277 passed); `py_compile` and `git diff --check` passed | pending | Fraud now uses `fraud_handoff_confirmation` and remains open; Suspension uses explicit confirmation, durable closing-reply gating, and Human Review for ambiguity/failure; Enablement completion accepts only explicit positive completion and validates the closing reply. Active membership compatibility tests now assert inactive legacy routes have no side effects. The Suspension negative parser was narrowed so uncertainty such as `not sure` is not treated as an explicit negative. |
 | 3 | pending |  |  |  |  |
 | 4 | pending |  |  |  |  |
 | 5 | pending |  |  |  | One merged implementation PR |
@@ -524,4 +524,4 @@ Report `状态：已完成` only when:
 
 ## Resume From Here
 
-Start at Stage 2 in the existing task worktree. Do not recreate the branch or worktree. Recheck current Git state and root cleanliness, then fix the Fraud, Account Suspension, and Enablement normal Intake/customer-reply flows. Stage 1 is implemented and ready to commit.
+Start at Stage 3 in the existing task worktree. Do not recreate the branch or worktree. Recheck current Git state and root cleanliness, then implement and verify full rerun/recovery parity for Fraud, Enablement, and the two-stage Account Suspension workflow. Stage 2 is implemented and its focused suite is green; commit the Stage 2 changes before proceeding.

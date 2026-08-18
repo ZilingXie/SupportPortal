@@ -18,7 +18,12 @@ _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _AFFIRMATIVE_TICKET_EMAIL_RE = re.compile(
     r"(?i)\b(?:yes|yeah|yep|correct|right|that's right|that is right|please use|you can use)\b"
 )
-_NEGATIVE_RE = re.compile(r"(?i)\b(?:no|not|different|instead|rather than|do not use)\b")
+# Keep uncertainty such as "not sure" out of the explicit-negative branch.
+# A bare "not" is only meaningful here when it negates an address/choice.
+_NEGATIVE_RE = re.compile(
+    r"(?i)\b(?:no|different|instead|rather than|do not use|don't use|not use)\b"
+    r"|\bnot\s+(?=\S+@)"
+)
 
 
 def normalize_contact_email(value: Any) -> str | None:
@@ -91,6 +96,9 @@ def contact_confirmation_reply_facts(*, ticket_email: Any = None, customer_name:
 
 
 def closing_reply_facts(*, confirmed_email: str, customer_name: Any = None) -> dict[str, Any]:
+    # The confirmed address is an internal routing fact and must not be exposed
+    # to the customer-facing Persona prompt or reply body.
+    del confirmed_email
     return {
         "behavior": "account_suspension",
         "reply_intent": SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
@@ -101,6 +109,5 @@ def closing_reply_facts(*, confirmed_email: str, customer_name: Any = None) -> d
         "resolution_status": "completed",
         "customer_language": "en",
         "customer_first_name": str(customer_name or "Customer").strip() or "Customer",
-        "confirmed_contact_email": normalize_contact_email(confirmed_email),
         "ownership_state": "case_closed",
     }

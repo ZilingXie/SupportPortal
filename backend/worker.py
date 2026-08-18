@@ -1415,6 +1415,30 @@ def _render_case_persona_reply(
         return ""
 
 
+def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
+    """Accept only a completed enablement statement, not a plan or request."""
+    positive = re.compile(r"\b(?:enabled|activated|provisioned|turned\s+on)\b")
+    negative = re.compile(
+        r"\b(?:not|never|cannot|can't|couldn't|unable\s+to|failed\s+to|will\s+not|won't)\b"
+        r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
+        r"|\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
+        r"[^.!?\n]{0,60}\b(?:not\s+possible|failed|unsuccessful|unavailable)\b",
+        flags=re.IGNORECASE,
+    )
+    future_or_request = re.compile(
+        r"\b(?:will|would|may|might|can|could|should|please|need\s+to|trying\s+to|plan\s+to|request(?:ed)?\s+to)\b"
+        r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b",
+        flags=re.IGNORECASE,
+    )
+    for sentence in re.split(r"[.!?\n]+", str(note or "")):
+        if not positive.search(sentence):
+            continue
+        if negative.search(sentence) or future_or_request.search(sentence):
+            continue
+        return True
+    return False
+
+
 def _process_claimed_account_reply_jobs(
     *,
     from_status: str,
@@ -2142,13 +2166,11 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             dict(collected_fields)
             if handler == "enablement" else {"products": collected_fields.get("products") or []}
         )
-        enablement_completed = False
-        if handler == "enablement":
-            lowered_note = note.casefold()
-            enablement_completed = bool(
-                re.search(r"\b(?:enabled|activated|provisioned|turned on)\b", lowered_note)
-                and not re.search(r"\b(?:not enabled|unable to enable|cannot enable|can't enable)\b", lowered_note)
-            )
+        enablement_completed = (
+            _enablement_reply_explicitly_confirms_completion(note)
+            if handler == "enablement"
+            else False
+        )
         reply_intent = (
             ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE
             if enablement_completed
@@ -2160,6 +2182,26 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             source_facts=[note], resolution_status="completed",
             save_case=ticket_repository.save_account_case, persist_failure=False,
         )
+        customer_reply = strip_trailing_automation_signature(customer_reply)
+        if enablement_completed:
+            try:
+                validate_account_reply_contract(
+                    customer_reply,
+                    {
+                        "behavior": "enablement",
+                        "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+                    },
+                    top_level_reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+                    close_after_publish=True,
+                )
+            except AutomationPersonaError as exc:
+                _mark_account_case_for_human_review(
+                    account_case,
+                    reason=str(exc),
+                    timestamp=now_iso(),
+                    policy_decision="automation_persona_human_review",
+                )
+                customer_reply = ""
         timestamp = now_iso()
         source = f"{handler}_reply_email"
         case_id = account_case.get("account_case_id") or account_case.get("billing_ticket_id")

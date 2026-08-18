@@ -91,6 +91,7 @@ from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
     SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+    SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
     SUSPENSION_STATE_HANDOFF_PENDING,
     closing_reply_facts,
     contact_confirmation_reply_facts,
@@ -741,6 +742,24 @@ def _automation_reply_facts(
 ) -> dict[str, Any]:
     """Build Persona input without making the Behavior layer write customer copy."""
     if account_scope:
+        if submitted and str(action or handler or "").strip().lower() == "fraud_account":
+            facts = build_automation_reply_facts(
+                behavior="fraud_account",
+                reply_intent="fraud_handoff_confirmation",
+                known_information=collected_fields,
+                performed_actions=["Sent the internal handoff email."],
+                next_step="The relevant team will contact the customer within 24 hours.",
+                resolution_status="internal_handoff_sent",
+                source_facts=resolution_facts,
+                customer_name=customer_name,
+            )
+            facts.update(
+                {
+                    "ownership_state": "support_owned_after_internal_handoff",
+                    "customer_update_commitment": "relevant_team_contact_within_24_hours",
+                }
+            )
+            return facts
         return build_account_automation_reply_facts(
             handler=handler,
             action=action,
@@ -5476,9 +5495,9 @@ async def _create_account_intake_impl(
                     automation_delivery_key=str(
                         (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
                     ),
-                    close_after_publish=route in {"fraud_account", "account_suspension"},
+                    close_after_publish=route == "account_suspension",
                     reply_intent=(
-                        "fraud_handoff_and_close"
+                        "fraud_handoff_confirmation"
                         if route == "fraud_account"
                         else "account_suspension_handoff_and_close"
                         if route == "account_suspension"
@@ -9436,7 +9455,7 @@ async def _reply_to_billing_ticket_impl(
         if confirmation.get("status") != "confirmed":
             suspension_workflow["failure_reason"] = str(confirmation.get("reason") or "confirmation_required")
             if confirmation.get("status") == "human_review":
-                suspension_workflow["state"] = "human_review_required"
+                suspension_workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
                 billing_ticket["automation_status"] = "human_review_required"
             suspension_workflow["updated_at"] = timestamp
             billing_ticket["automation_context"] = {
@@ -9487,7 +9506,7 @@ async def _reply_to_billing_ticket_impl(
             sender=_send_billing_internal_email_attempt,
         )
         if not delivery_result.succeeded:
-            suspension_workflow["state"] = "human_review_required"
+            suspension_workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
             suspension_workflow["failure_reason"] = delivery_result.reason or delivery_result.status
             billing_ticket["automation_context"] = {**dict(billing_ticket.get("automation_context") or {}), SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow}
             await async_to_thread(ticket_repository.save_account_case, billing_ticket)
@@ -9499,18 +9518,44 @@ async def _reply_to_billing_ticket_impl(
         billing_ticket["automation_context"] = {**dict(billing_ticket.get("automation_context") or {}), SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow}
         billing_ticket["automation_status"] = "automation"
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
-        persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, client_ticket_id)
-        closing_job = await async_to_thread(
-            _create_account_reply_job,
-            ticket_id=client_ticket_id,
-            trigger_message_created_at=timestamp,
-            reply_facts=closing_reply_facts(confirmed_email=confirmed_email, customer_name=billing_ticket.get("customer_name")),
-            asked_field_keys=[],
-            persona_assignment=persona_assignment,
-            automation_delivery_key=str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""),
-            close_after_publish=True,
-            reply_intent="account_suspension_handoff_and_close",
-        )
+        try:
+            persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, client_ticket_id)
+            closing_job = await async_to_thread(
+                _create_account_reply_job,
+                ticket_id=client_ticket_id,
+                trigger_message_created_at=timestamp,
+                reply_facts=closing_reply_facts(
+                    confirmed_email=confirmed_email,
+                    customer_name=billing_ticket.get("customer_name"),
+                ),
+                asked_field_keys=[],
+                persona_assignment=persona_assignment,
+                automation_delivery_key=str(
+                    (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                ),
+                close_after_publish=True,
+                reply_intent="account_suspension_handoff_and_close",
+            )
+        except Exception as exc:
+            suspension_workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
+            suspension_workflow["failure_reason"] = "account_suspension_closing_reply_job_failed"
+            billing_ticket["automation_context"] = {
+                **dict(billing_ticket.get("automation_context") or {}),
+                SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow,
+            }
+            billing_ticket = await _record_account_reply_job_failure(
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                handler="account_suspension",
+                detail=exc,
+            )
+            return {
+                **billing_ticket,
+                **_build_account_ticket_view_model(billing_ticket),
+                "messages": canonical_ticket.get("messages", []),
+                "support_ticket_status": canonical_ticket.get("status"),
+                "ai_reply_status": None,
+            }
         suspension_workflow["closing_reply_job_id"] = closing_job.get("job_id")
         suspension_workflow["updated_at"] = now_iso()
         billing_ticket["automation_context"] = {**dict(billing_ticket.get("automation_context") or {}), SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow}
@@ -9985,9 +10030,9 @@ async def _reply_to_billing_ticket_impl(
                     if not requested_field_keys
                     else None
                 ),
-                close_after_publish=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() in {"fraud_account", "account_suspension"},
+                close_after_publish=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "account_suspension",
                 reply_intent=(
-                    "fraud_handoff_and_close"
+                    "fraud_handoff_confirmation"
                     if str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "fraud_account"
                     else "account_suspension_handoff_and_close"
                     if str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "account_suspension"
