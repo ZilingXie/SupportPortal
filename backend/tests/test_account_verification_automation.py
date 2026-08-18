@@ -16,6 +16,7 @@ from backend.services.account_verification_field_extractor import (
     extract_account_verification_fields,
     validate_account_verification_follow_up,
 )
+from backend.services.account_suspension_automation import suspension_contact_confirmation
 
 
 def _provided(group: str, value: str, quote: str) -> dict[str, object]:
@@ -415,6 +416,30 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         self.assertFalse(result.requires_human_review)
         self.assertEqual(result.customer_reply, "")
         self.assertEqual(result.follow_up_count, 1)
+
+
+class AccountSuspensionContactConfirmationTests(unittest.TestCase):
+    def test_explicit_ticket_email_confirmation_is_accepted(self) -> None:
+        result = suspension_contact_confirmation(
+            "Yes, please use the email address on this ticket.",
+            ticket_email="customer@example.com",
+        )
+
+        self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(result["email"], "customer@example.com")
+
+    def test_ambiguous_or_conflicting_confirmation_goes_to_human_review(self) -> None:
+        ambiguous = suspension_contact_confirmation(
+            "I'm not sure which address is best.",
+            ticket_email="customer@example.com",
+        )
+        conflicting = suspension_contact_confirmation(
+            "No, do not use customer@example.com; please use customer@example.com instead.",
+            ticket_email="customer@example.com",
+        )
+
+        self.assertEqual(ambiguous["status"], "human_review")
+        self.assertEqual(conflicting["status"], "human_review")
 
 
 if __name__ == "__main__":

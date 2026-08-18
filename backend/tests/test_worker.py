@@ -2353,12 +2353,86 @@ class WorkerResilienceTests(unittest.TestCase):
         commit = repository.commit_automation_reply_result.call_args.kwargs
         assistant_message = commit["assistant_message"]
         self.assertEqual(assistant_message["source"], "enablement_reply_email")
-        self.assertEqual(assistant_message["content"], generated_reply)
+        self.assertEqual(
+            assistant_message["content"],
+            "Hi there,\n\nPlease add a payment method before activation.",
+        )
+        self.assertNotIn("Best Regards", assistant_message["content"])
+        self.assertNotIn("Sid", assistant_message["content"])
         self.assertNotIn("has been enabled", assistant_message["content"])
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
         self.assertEqual(len(commit["events"]), 2)
         event_payload = commit["events"][0]["payload"]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
+
+    def test_enablement_explicit_completion_closes_after_sanitized_customer_reply(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ENABLEMENT-DONE",
+            "billing_ticket_id": "AC-TK-ENABLEMENT-DONE",
+            "client_ticket_id": "TK-ENABLEMENT-DONE",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+            "collected_fields": {"requested_feature": "media_relay"},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ENABLEMENT-DONE",
+            "messages": [{"role": "customer", "content": "Please enable Media Relay."}],
+        }
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-done",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-DONE",
+            body_text="Media Relay has been enabled successfully.",
+        )
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_render_case_persona_reply",
+            return_value="Hi Customer,\n\nThe feature is enabled, and this ticket is closing.\n\nBest,\nSid",
+        ):
+            handled = worker.handle_enablement_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertTrue(commit["close_after_publish"])
+        self.assertEqual(
+            commit["assistant_message"]["content"],
+            "Hi Customer,\n\nThe feature is enabled, and this ticket is closing.",
+        )
+
+    def test_enablement_non_completion_reply_does_not_close(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ENABLEMENT-NOT-DONE",
+            "billing_ticket_id": "AC-TK-ENABLEMENT-NOT-DONE",
+            "client_ticket_id": "TK-ENABLEMENT-NOT-DONE",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+            "collected_fields": {"requested_feature": "media_relay"},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ENABLEMENT-NOT-DONE",
+            "messages": [{"role": "customer", "content": "Please enable Media Relay."}],
+        }
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-not-done",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-NOT-DONE",
+            body_text="We are unable to enable Media Relay at this time.",
+        )
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_render_case_persona_reply",
+            return_value="Hi Customer,\n\nWe are still investigating this request.",
+        ):
+            handled = worker.handle_enablement_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertFalse(commit["close_after_publish"])
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
 
     def test_enablement_reply_subject_accepts_numeric_zendesk_ticket_id(self) -> None:
         self.assertEqual(
@@ -4214,6 +4288,54 @@ class WorkerResilienceTests(unittest.TestCase):
             worker.AUTOMATION_PERSONA_PROMPT_VERSION,
         )
         repository.publish_account_reply.assert_called_once()
+
+    def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
+        job = {
+            "job_id": "account-reply-invalid-contract",
+            "ticket_id": "TK-INVALID-CONTRACT",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:01:00+00:00",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "submission_confirmation",
+                },
+                "generated_content": "We are reviewing the request.",
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-INVALID-CONTRACT",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_account_case_by_ticket_id.return_value = None
+        repository.transition_claimed_account_reply_to_human_review.return_value = {
+            **job,
+            "status": "human_review",
+        }
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker._publish_account_reply_job(job)
+
+        repository.publish_account_reply.assert_not_called()
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        self.assertEqual(
+            repository.transition_claimed_account_reply_to_human_review.call_args.kwargs["policy_decision"],
+            "account_reply_contract_human_review",
+        )
 
     def test_persona_reply_facts_are_rendered_before_scheduling(self) -> None:
         job = {

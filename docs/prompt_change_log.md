@@ -3720,3 +3720,24 @@ For each new entry, record:
   - 254 passed, 22 subtests passed across repository initialization plus Zendesk, Worker, Workspace Admin, and Account Admin targeted tests.
   - Python compilation and git diff --check passed.
   - Official root-main stack health and synthetic Zendesk acceptance will be rerun after the repair PR merges.
+
+## 2026-08-18 - Account Automation reply and rerun contract v9
+
+- Area or subsystem: `/account` Automation Persona, Account reply jobs, normal Intake, full rerun, and reply-only recovery
+- Prompt or model version: `automation-persona-v9`; model configuration unchanged
+- Summary: Unified the active Fraud Account, Account Suspension, and Enablement customer-reply intents across Intake, fresh rerun, and recovery. Customer replies now require the relevant 24-hour handoff or activation/change-window facts, Suspension contact and closing stages are reconstructed from customer history, and trailing AI signatures are removed before the final contract validation.
+- Reason: Case `12839` exposed missing Enablement SLA/change-window language and an AI signature in the published reply. Rerun paths also lacked the active two-stage Suspension workflow and could rebuild a generic reply instead of the canonical close decision.
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/services/account_reply_jobs.py`
+  - `backend/services/account_full_reroute.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - Account Persona, Worker, Intake, full-rerun, and recovery tests
+- Expected behavior change:
+  - Fraud handoff replies say the relevant team will contact the customer within 24 hours and leave the ticket open.
+  - Enablement submission replies include up to 24 hours to activate and a Monday-Friday change window; only an explicit positive internal completion reply can close the ticket.
+  - Suspension first replies ask for the preferred contact email and ticket-email choice; only explicit confirmation, successful internal handoff, and durable closing-reply publication can close the ticket.
+  - Invalid or conflicting intent/content, legacy Fraud closing jobs, and signed output fail closed or enter Human Review without publishing.
+- Verification:
+  - `211` tests passed in the Stage 3 full-rerun/recovery suite; the Stage 4 integrated targeted suite and documentation checks are recorded in the task Plan after completion.

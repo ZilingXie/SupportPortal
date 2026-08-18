@@ -7,6 +7,14 @@ from unittest.mock import Mock
 from backend.services.account_case_reroute import AccountCaseReroute
 from backend.services.account_full_reroute import reprocess_account_case
 from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
+from backend.services.account_suspension_automation import (
+    SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+    SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+    SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+    SUSPENSION_STATE_HANDOFF_PENDING,
+    SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
+)
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
 from backend.services.billing_automation import BillingAutomationResult
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
@@ -193,6 +201,7 @@ class AccountFullRerouteTests(unittest.TestCase):
         self.assertEqual(result.account_case["route_status"], "automated")
         self.assertEqual(result.account_case["automation_handler"], "billing")
         self.assertIsNotNone(result.internal_email_to_send)
+        self.assertEqual(result.reply_intent, "fraud_handoff_confirmation")
 
     def test_quota_reroute_reextracts_with_quota_handler(self) -> None:
         original = {
@@ -323,7 +332,7 @@ class AccountFullRerouteTests(unittest.TestCase):
         self.assertEqual(result.account_case["internal_email_send_status"], "not_applicable")
         self.assertEqual(result.account_case["automation_context"], {})
 
-    def test_account_suspension_reextracts_but_never_executes(self) -> None:
+    def test_account_suspension_rerun_asks_for_contact_without_using_first_message(self) -> None:
         original = {
             **_case(action="account_suspension"),
             "collected_fields": {"known_reason": "wrong"},
@@ -337,44 +346,140 @@ class AccountFullRerouteTests(unittest.TestCase):
                 grounding_status="passed",
             )
         )
-        rerouted = {
-            **original,
-            "route": "human_review_required",
-            "execution_action": "human_review_required",
-            "route_family": "human_review",
-            "route_status": "not_automated",
-            "category": "account_billing",
-            "subcategory": "account_suspension",
-            "automation_handler": None,
-            "route_classification": {
-                "primary_label": "Agora",
-                "secondary_label": "Account & Billing / Account Suspension",
-                "agora_route": "account_billing",
-                "account_billing_subcategory": "account_suspension",
-            },
-        }
-
         result = reprocess_account_case(
             original,
             ticket=_ticket(),
-            reroute=Mock(return_value=_reroute_result(rerouted)),
+            reroute=Mock(return_value=_reroute_result(original)),
             extract_suspension=extractor,
         )
 
         self.assertEqual(extractor.call_args.kwargs["existing_fields"], {})
         self.assertEqual(result.account_case["collected_fields"], {"known_reason": "balance"})
-        self.assertEqual(result.account_case["automation_status"], "not_automated")
-        self.assertEqual(result.account_case["category"], "account_billing")
-        self.assertIsNone(result.account_case["automation_handler"])
+        self.assertEqual(result.account_case["automation_status"], "automation")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["automation_handler"], "account_suspension")
         self.assertEqual(result.account_case["internal_email_send_status"], "not_applicable")
-        self.assertEqual(result.account_case["automation_context"], {})
-        self.assertIn("field_extraction", result.route_execution["classification"])
-        self.assertIn(
-            "account_suspension_field_extractor",
-            result.route_execution["prompt_snapshots"],
-        )
+        workflow = result.account_case["automation_context"][SUSPENSION_CONTACT_WORKFLOW_KEY]
+        self.assertEqual(workflow["state"], SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION)
+        self.assertEqual(result.reply_kind, "suspension_contact_confirmation")
+        self.assertEqual(result.reply_intent, SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION)
         self.assertIsNone(result.internal_email_to_send)
-        self.assertFalse(result.customer_reply)
+        self.assertEqual(
+            result.route_execution["prompt_snapshots"]["account_suspension_field_extractor"],
+            extractor.return_value.prompt_snapshot,
+        )
+        self.assertNotIn("customer@example.com", str(workflow.get("confirmed_email")))
+
+    def test_legacy_account_suspension_review_is_migrated_by_full_rerun(self) -> None:
+        original = {
+            **_case(action="account_suspension"),
+            "category": "account_billing",
+            "subcategory": "account_suspension",
+            "route_family": "human_review",
+            "route_status": "not_automated",
+            "automation_handler": None,
+            "automation_status": "not_automated",
+            "route_classification": {
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "account_suspension",
+                "account_billing_additional_intents": [],
+                "route_target": "human_review",
+                "human_review_reason": "registered_account_suspension",
+                "route_reason_code": "registered_account_suspension",
+            },
+        }
+        extractor = Mock(
+            return_value=AccountSuspensionFieldExtraction(
+                status="partial",
+                collected_fields={"suspension_status_or_error": "account suspended"},
+                grounding_status="passed",
+            )
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_suspension=extractor,
+        )
+
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "account_suspension")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["route_family"], "automated")
+        self.assertEqual(result.account_case["automation_handler"], "account_suspension")
+        self.assertEqual(result.handler_status, "active")
+        self.assertEqual(result.reply_kind, "suspension_contact_confirmation")
+        self.assertTrue(result.route_execution["legacy_suspension_migrated"])
+
+    def test_account_suspension_rerun_uses_later_explicit_confirmation(self) -> None:
+        original = _case(action="account_suspension")
+        ticket = {
+            **_ticket(),
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "My account is suspended; please investigate customer@example.com.",
+                    "message_id": "problem",
+                },
+                {
+                    "role": "customer",
+                    "content": "Yes, please use the email address on this ticket.",
+                    "message_id": "confirmation",
+                },
+            ],
+        }
+        extraction = AccountSuspensionFieldExtraction(
+            status="partial",
+            collected_fields={"suspension_status_or_error": "account suspended"},
+            grounding_status="passed",
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=ticket,
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_suspension=Mock(return_value=extraction),
+        )
+
+        self.assertEqual(result.reply_kind, "suspension_closing_reply")
+        self.assertEqual(result.reply_intent, SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE)
+        self.assertEqual(result.email_handler, "billing")
+        self.assertIsNotNone(result.internal_email_to_send)
+        workflow = result.account_case["automation_context"][SUSPENSION_CONTACT_WORKFLOW_KEY]
+        self.assertEqual(workflow["state"], SUSPENSION_STATE_HANDOFF_PENDING)
+        self.assertEqual(workflow["confirmed_email"], "customer@example.com")
+
+    def test_account_suspension_rerun_conflicting_history_moves_to_human_review(self) -> None:
+        original = _case(action="account_suspension")
+        ticket = {
+            **_ticket(),
+            "messages": [
+                {"role": "customer", "content": "My account is suspended.", "message_id": "problem"},
+                {"role": "customer", "content": "Yes, use the email on this ticket.", "message_id": "first"},
+                {"role": "customer", "content": "No, use other@example.com instead.", "message_id": "second"},
+            ],
+        }
+        extraction = AccountSuspensionFieldExtraction(
+            status="partial",
+            collected_fields={"suspension_status_or_error": "account suspended"},
+            grounding_status="passed",
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=ticket,
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_suspension=Mock(return_value=extraction),
+        )
+
+        self.assertEqual(result.handler_status, "human_review")
+        self.assertEqual(result.account_case["automation_status"], "human_review_required")
+        self.assertEqual(result.account_case["internal_email_send_status"], "not_applicable")
+        workflow = result.account_case["automation_context"][SUSPENSION_CONTACT_WORKFLOW_KEY]
+        self.assertEqual(workflow["state"], SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED)
+        self.assertIsNone(result.internal_email_to_send)
+        self.assertIsNone(result.reply_kind)
 
     def test_enablement_reextracts_and_sends_new_complete_request(self) -> None:
         original = {**_case(), "collected_fields": {"app_id": "wrong"}}
@@ -402,6 +507,7 @@ class AccountFullRerouteTests(unittest.TestCase):
         self.assertIsNotNone(result.internal_email_to_send)
         self.assertEqual(result.email_handler, "enablement")
         self.assertEqual(result.reply_kind, "submission_confirmation")
+        self.assertEqual(result.reply_intent, "submission_confirmation")
 
     def test_enablement_does_not_resend_same_binding_when_legacy_payload_has_no_key(self) -> None:
         original = {

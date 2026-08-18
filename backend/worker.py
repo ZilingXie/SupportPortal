@@ -33,6 +33,7 @@ from backend.services.account_admin import (
     apply_persona_to_customer_reply,
 )
 from backend.services.account_reply_jobs import (
+    AccountReplyContractError,
     ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
@@ -46,8 +47,9 @@ from backend.services.account_reply_jobs import (
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
-    ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
+    ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+    normalize_account_reply_contract,
     is_account_reply_persona_preparing_status,
     is_account_reply_persona_publishing_status,
 )
@@ -58,6 +60,8 @@ from backend.services.automation_persona import (
     build_automation_reply_facts,
     extract_automation_resolution_facts,
     render_automation_reply,
+    strip_trailing_automation_signature,
+    validate_account_reply_contract,
 )
 from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
@@ -152,6 +156,64 @@ def _account_reply_needs_persona_render(payload: dict[str, Any]) -> bool:
         or str(payload.get("persona_prompt_version") or "").strip()
         != AUTOMATION_PERSONA_PROMPT_VERSION
     )
+
+
+def _normalize_account_reply_job_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
+    """Normalize persisted intent fields before rendering or publication."""
+    reply_facts = payload.get("reply_facts") if isinstance(payload.get("reply_facts"), dict) else {}
+    top_level_intent = str(payload.get("reply_intent") or "").strip() or None
+    close_after_publish = bool(payload.get("close_after_publish"))
+    if not reply_facts and not top_level_intent and not close_after_publish:
+        return payload, None, False
+    try:
+        normalized_facts, intent, derived_close = normalize_account_reply_contract(
+            reply_facts,
+            reply_intent=top_level_intent,
+            close_after_publish=close_after_publish,
+            reject_legacy_fraud_close=True,
+        )
+    except AccountReplyContractError as exc:
+        raise AutomationPersonaError(str(exc)) from exc
+    if reply_facts and not intent:
+        raise AutomationPersonaError("automation_persona_missing_reply_intent")
+    if normalized_facts:
+        payload["reply_facts"] = normalized_facts
+    if intent:
+        payload["reply_intent"] = intent
+    if derived_close:
+        payload["close_after_publish"] = True
+    else:
+        payload.pop("close_after_publish", None)
+    return payload, intent, derived_close
+
+
+def _account_reply_contract_required(payload: dict[str, Any]) -> bool:
+    facts = payload.get("reply_facts") if isinstance(payload.get("reply_facts"), dict) else {}
+    behavior = str(facts.get("behavior") or "").strip().lower()
+    intent = str(facts.get("reply_intent") or payload.get("reply_intent") or "").strip().lower()
+    return behavior in {"fraud_account", "enablement", "account_suspension"} or intent in {
+        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+        SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+    }
+
+
+def _move_invalid_account_reply_to_human_review(
+    job: dict[str, Any],
+    ticket: dict[str, Any],
+    failure: BaseException,
+) -> None:
+    transitioned = _move_automation_reply_to_human_review(
+        job,
+        ticket,
+        str(failure),
+        policy_decision="account_reply_contract_human_review",
+        failure_stage="account_reply_contract",
+        failure_code=str(getattr(failure, "code", "account_reply_contract_failed")),
+    )
+    if transitioned:
+        _record_account_worker_failure(job=job, ticket=ticket, failure=failure)
 
 
 def _record_account_worker_failure(
@@ -558,6 +620,16 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
     if not job_id or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
     payload = dict(job.get("payload") or {})
+    if (
+        (isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"))
+        or payload.get("reply_intent")
+        or payload.get("close_after_publish")
+    ):
+        try:
+            payload, _, _ = _normalize_account_reply_job_payload(payload)
+        except AutomationPersonaError as exc:
+            _move_invalid_account_reply_to_human_review(job, ticket, exc)
+            return
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
         if payload.get("reply_pipeline") not in {
             None,
@@ -775,6 +847,17 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         _cancel_stale_account_reply_job(current_job, expected_status=claimed_status)
         return
 
+    if existing_message is None and (
+        (isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"))
+        or payload.get("reply_intent")
+        or payload.get("close_after_publish")
+    ):
+        try:
+            payload, _, _ = _normalize_account_reply_job_payload(payload)
+        except AutomationPersonaError as exc:
+            _move_invalid_account_reply_to_human_review(current_job, ticket, exc)
+            return
+
     if (
         existing_message is None
         and isinstance(payload.get("reply_facts"), dict)
@@ -826,15 +909,52 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         or ""
     ).strip()
     if not content:
-        payload["error"] = "AI reply draft is unavailable."
-        current_job["status"] = "manual_attention"
-        current_job["payload"] = payload
-        current_job["updated_at"] = now_iso()
-        _update_claimed_account_reply_job(
-            current_job,
-            expected_status=claimed_status,
-        )
+        if existing_message is None:
+            _move_invalid_account_reply_to_human_review(
+                current_job,
+                ticket,
+                AutomationPersonaError("automation_persona_empty_response"),
+            )
+        else:
+            payload["error"] = "AI reply draft is unavailable."
+            current_job["status"] = "manual_attention"
+            current_job["payload"] = payload
+            current_job["updated_at"] = now_iso()
+            _update_claimed_account_reply_job(
+                current_job,
+                expected_status=claimed_status,
+            )
         return
+
+    if existing_message is None:
+        content = strip_trailing_automation_signature(content)
+        try:
+            if (
+                isinstance(payload.get("reply_facts"), dict)
+                and payload.get("reply_facts")
+                and _account_reply_contract_required(payload)
+            ):
+                normalized_facts, derived_close = validate_account_reply_contract(
+                    content,
+                    dict(payload["reply_facts"]),
+                    top_level_reply_intent=str(payload.get("reply_intent") or "").strip() or None,
+                    close_after_publish=bool(payload.get("close_after_publish")),
+                )
+                payload["reply_facts"] = normalized_facts
+                if derived_close:
+                    payload["close_after_publish"] = True
+                else:
+                    payload.pop("close_after_publish", None)
+        except (AutomationPersonaError, AccountReplyContractError) as exc:
+            _move_invalid_account_reply_to_human_review(current_job, ticket, exc)
+            return
+        if not content:
+            _move_invalid_account_reply_to_human_review(
+                current_job,
+                ticket,
+                AutomationPersonaError("automation_persona_empty_response"),
+            )
+            return
 
     published_at = str((existing_message or {}).get("created_at") or now_iso())
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)
@@ -1275,8 +1395,10 @@ def _render_case_persona_reply(
             account_scope=reply_intent in {
                 "submission_confirmation",
                 "request_missing_information",
+                ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
                 SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
                 ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+                ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
             },
         ).content
     except AutomationPersonaError as exc:
@@ -1291,6 +1413,30 @@ def _render_case_persona_reply(
         if persist_failure:
             save_case(case)
         return ""
+
+
+def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
+    """Accept only a completed enablement statement, not a plan or request."""
+    positive = re.compile(r"\b(?:enabled|activated|provisioned|turned\s+on)\b")
+    negative = re.compile(
+        r"\b(?:not|never|cannot|can't|couldn't|unable\s+to|failed\s+to|will\s+not|won't)\b"
+        r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
+        r"|\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
+        r"[^.!?\n]{0,60}\b(?:not\s+possible|failed|unsuccessful|unavailable)\b",
+        flags=re.IGNORECASE,
+    )
+    future_or_request = re.compile(
+        r"\b(?:will|would|may|might|can|could|should|please|need\s+to|trying\s+to|plan\s+to|request(?:ed)?\s+to)\b"
+        r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b",
+        flags=re.IGNORECASE,
+    )
+    for sentence in re.split(r"[.!?\n]+", str(note or "")):
+        if not positive.search(sentence):
+            continue
+        if negative.search(sentence) or future_or_request.search(sentence):
+            continue
+        return True
+    return False
 
 
 def _process_claimed_account_reply_jobs(
@@ -2020,13 +2166,11 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             dict(collected_fields)
             if handler == "enablement" else {"products": collected_fields.get("products") or []}
         )
-        enablement_completed = False
-        if handler == "enablement":
-            lowered_note = note.casefold()
-            enablement_completed = bool(
-                re.search(r"\b(?:enabled|activated|provisioned|turned on)\b", lowered_note)
-                and not re.search(r"\b(?:not enabled|unable to enable|cannot enable|can't enable)\b", lowered_note)
-            )
+        enablement_completed = (
+            _enablement_reply_explicitly_confirms_completion(note)
+            if handler == "enablement"
+            else False
+        )
         reply_intent = (
             ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE
             if enablement_completed
@@ -2038,6 +2182,26 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             source_facts=[note], resolution_status="completed",
             save_case=ticket_repository.save_account_case, persist_failure=False,
         )
+        customer_reply = strip_trailing_automation_signature(customer_reply)
+        if enablement_completed:
+            try:
+                validate_account_reply_contract(
+                    customer_reply,
+                    {
+                        "behavior": "enablement",
+                        "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+                    },
+                    top_level_reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+                    close_after_publish=True,
+                )
+            except AutomationPersonaError as exc:
+                _mark_account_case_for_human_review(
+                    account_case,
+                    reason=str(exc),
+                    timestamp=now_iso(),
+                    policy_decision="automation_persona_human_review",
+                )
+                customer_reply = ""
         timestamp = now_iso()
         source = f"{handler}_reply_email"
         case_id = account_case.get("account_case_id") or account_case.get("billing_ticket_id")

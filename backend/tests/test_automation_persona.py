@@ -12,6 +12,7 @@ from backend.services.automation_persona import (
     customer_first_name,
     extract_automation_resolution_facts,
     render_automation_reply,
+    validate_account_reply_contract,
 )
 from backend.services.detailed_invoice_field_extractor import extract_detailed_invoice_fields
 from backend.services.billing_automation import build_billing_automation_result
@@ -138,7 +139,8 @@ class AutomationPersonaTests(unittest.TestCase):
         response = SimpleNamespace(
             text=(
                 "Thank you for reaching out. We are reviewing it with our internal team and will keep you posted "
-                "as soon as we have an update.\n\nWe appreciate your patience."
+                "as soon as we have an update. Activation may take up to 24 hours, and the change window is "
+                "Monday-Friday.\n\nWe appreciate your patience."
             ),
             model_name="persona-model",
         )
@@ -189,7 +191,8 @@ class AutomationPersonaTests(unittest.TestCase):
             text=(
                 "The assigned Support Engineer has started coordinating the request with the internal team, and the "
                 "case is currently in progress with them. The assigned Support Engineer will continue monitoring the "
-                "request and proactively update you when there is progress."
+                "request and proactively update you when there is progress. Activation may take up to 24 hours, "
+                "and the change window is Monday-Friday."
             ),
             model_name="persona-model",
         )
@@ -203,10 +206,13 @@ class AutomationPersonaTests(unittest.TestCase):
                     account_scope=True,
                 )
 
-    def test_old_submission_facts_are_normalized_before_v8_prompt(self) -> None:
+    def test_old_submission_facts_are_normalized_before_v9_prompt(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="We are reviewing the request with our internal team and will keep you posted.",
+            text=(
+                "We are reviewing the request with our internal team and will keep you posted. Activation may take "
+                "up to 24 hours, and the change window is Monday-Friday."
+            ),
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -283,7 +289,10 @@ class AutomationPersonaTests(unittest.TestCase):
     def test_render_removes_model_generated_greeting_before_adding_configured_greeting(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="Hi Jack, I am coordinating the request with our internal team and will keep you updated.",
+            text=(
+                "Hi Jack, I am coordinating the request with our internal team and will keep you updated. Activation "
+                "may take up to 24 hours, and the change window is Monday-Friday."
+            ),
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -301,7 +310,8 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated.",
+            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated. Activation may "
+            "take up to 24 hours, and the change window is Monday-Friday.",
         )
 
     def test_legacy_signoff_name_is_ignored(self) -> None:
@@ -317,10 +327,83 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(result.content, "Hi Customer,\n\nThe request is complete.")
 
+    def test_trailing_signature_is_removed_but_body_words_are_preserved(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="This is the best next step for the request.\n\nBest,\nSid\nSupport Engineer 2",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                persona_assignment={"content": {"instruction": "Warm"}},
+            )
+
+        self.assertIn("This is the best next step", result.content)
+        self.assertNotIn("Best,\nSid", result.content)
+        self.assertNotIn("Support Engineer 2", result.content)
+
+    def test_fraud_handoff_requires_relevant_team_and_24_hours(self) -> None:
+        facts = {
+            "behavior": "fraud_account",
+            "reply_intent": "fraud_handoff_confirmation",
+        }
+        validate_account_reply_contract(
+            "The relevant team will contact you within 24 hours.",
+            facts,
+        )
+        with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
+            validate_account_reply_contract("We received your request and will review it.", facts)
+
+    def test_enablement_submission_requires_sla_and_change_window(self) -> None:
+        facts = {
+            "behavior": "enablement",
+            "reply_intent": "submission_confirmation",
+        }
+        with self.assertRaisesRegex(AutomationPersonaError, "enablement_submission_contract_failed"):
+            validate_account_reply_contract("We are reviewing the request.", facts)
+        validate_account_reply_contract(
+            "I am coordinating activation and will keep you updated. It may take up to 24 hours, and the change "
+            "window is Monday-Friday.",
+            facts,
+        )
+
+    def test_suspension_contact_contract_requires_email_close_and_reopen_terms(self) -> None:
+        facts = {
+            "behavior": "account_suspension",
+            "reply_intent": "account_suspension_contact_confirmation_request",
+        }
+        validate_account_reply_contract(
+            "Which email is most convenient for you? Should we use the email on this ticket? "
+            "The relevant team will contact you within 24 hours; the ticket will close after handoff, "
+            "and you can reopen it if nobody contacts you.",
+            facts,
+        )
+        with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
+            validate_account_reply_contract("Please share an email address.", facts)
+
+    def test_conflicting_intents_and_legacy_fraud_close_are_rejected(self) -> None:
+        with self.assertRaisesRegex(AutomationPersonaError, "account_reply_intent_conflict"):
+            validate_account_reply_contract(
+                "The request is being reviewed.",
+                {"behavior": "enablement", "reply_intent": "submission_confirmation"},
+                top_level_reply_intent="resolution_update",
+            )
+        with self.assertRaisesRegex(AutomationPersonaError, "legacy_fraud_handoff_close_intent"):
+            validate_account_reply_contract(
+                "The relevant team will contact you within 24 hours.",
+                {"behavior": "fraud_account", "reply_intent": "fraud_handoff_and_close"},
+            )
+
     def test_submission_reply_rejects_internal_team_ownership(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="We submitted the request. The internal team will follow up after review.",
+            text=(
+                "We submitted the request. The internal team will follow up after review. Activation may take up to "
+                "24 hours, and the change window is Monday-Friday."
+            ),
             model_name="persona-model",
         )
         facts = build_automation_reply_facts(

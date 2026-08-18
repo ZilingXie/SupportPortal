@@ -6,6 +6,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.services.enablement_automation import customer_visible_enablement_information
+from backend.services.account_reply_jobs import (
+    AccountReplyContractError,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+    ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
+    ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+    ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
+    ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+    ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
+    ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+    normalize_account_reply_contract,
+)
 from backend.services.account_ai_execution import (
     AccountProcessingFailure,
     account_profile_has_primary_credentials,
@@ -17,11 +28,11 @@ from backend.services.llm_factory import LlmInvocationError
 invoke_responses_text = invoke_account_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
-_SUSPENSION_CONTACT_CONFIRMATION_INTENT = "account_suspension_contact_confirmation_request"
-_SUSPENSION_HANDOFF_CLOSE_INTENT = "account_suspension_handoff_and_close"
+_SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION
+_SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v8"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v9"
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -29,6 +40,14 @@ _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _SUPPORT_ID_RE = re.compile(
     r"(?i)\b(?:ticket\s*(?:id\s*)?[:#-]?\s*(?:TK-[A-Z0-9-]+|\d{3,})|"
     r"account case\s*(?:id\s*)?[:#-]?\s*AC-[A-Z0-9-]+)\b"
+)
+_SIGNOFF_LINE_RE = re.compile(
+    r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
+    r"sincerely|thanks|thank\s+you|cheers|此致|谢谢)[,!:]?\s*$"
+)
+_INLINE_SIGNOFF_RE = re.compile(
+    r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
+    r"sincerely|thanks|thank\s+you|cheers)[,!:]\s+\S.*$"
 )
 
 
@@ -105,6 +124,20 @@ class AutomationPersonaResult:
     content: str
     model: str
     prompt_version: str = AUTOMATION_PERSONA_PROMPT_VERSION
+
+
+def strip_trailing_automation_signature(reply: str) -> str:
+    """Remove only a conventional signoff block at the end of a reply."""
+    lines = str(reply or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index]
+        if _SIGNOFF_LINE_RE.match(line) or (
+            index >= len(lines) - 2 and _INLINE_SIGNOFF_RE.match(line)
+        ):
+            return "\n".join(lines[:index]).rstrip()
+    return "\n".join(lines).rstrip()
 
 
 def extract_automation_resolution_facts(
@@ -260,12 +293,16 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     reply_intent = str(facts.get("reply_intent") or "").strip().lower()
     if reply_intent in {
         "enablement_completed_and_close",
-        "fraud_handoff_and_close",
         "account_suspension_handoff_and_close",
     }:
         facts["performed_actions"] = []
         facts["resolution_status"] = "completed"
         facts["customer_update_commitment"] = "case_closed"
+        return facts
+    if reply_intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
+        facts["resolution_status"] = "internal_handoff_sent"
+        facts["ownership_state"] = "support_owned_after_internal_handoff"
+        facts["customer_update_commitment"] = "relevant_team_contact_within_24_hours"
         return facts
     if reply_intent == "submission_confirmation":
         facts["performed_actions"] = []
@@ -281,36 +318,132 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
+def _assert_24_hour_commitment(reply: str, *, error_code: str) -> None:
+    lowered = str(reply or "").casefold()
+    if not re.search(r"\b24\s*[- ]?\s*hours?\b", lowered) and "24h" not in lowered:
+        raise AutomationPersonaError(error_code)
+
+
+def _assert_enablement_submission_contract(reply: str) -> None:
+    lowered = str(reply or "").casefold()
+    _assert_24_hour_commitment(
+        reply,
+        error_code="automation_persona_enablement_submission_contract_failed",
+    )
+    has_change_window = bool(
+        re.search(r"\bmonday\s*(?:-|to|through)\s*friday\b", lowered)
+        or re.search(r"\bmon\s*(?:-|to)\s*fri\b", lowered)
+        or "weekdays" in lowered
+    )
+    if not has_change_window:
+        raise AutomationPersonaError("automation_persona_enablement_submission_contract_failed")
+
+
+def _assert_fraud_handoff_contract(reply: str) -> None:
+    lowered = str(reply or "").casefold()
+    _assert_24_hour_commitment(
+        reply,
+        error_code="automation_persona_fraud_handoff_contract_failed",
+    )
+    if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
+        raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
+
+
+def _assert_suspension_contact_contract(reply: str) -> None:
+    lowered = str(reply or "").casefold()
+    if "email" not in lowered and "e-mail" not in lowered:
+        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+    if not re.search(r"\b(?:which|what|preferred|prefer|best|convenient)\b[^.!?\n]{0,80}\bemail\b", lowered):
+        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+    if "ticket" not in lowered or "email" not in lowered:
+        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+    _assert_24_hour_commitment(
+        reply,
+        error_code="automation_persona_suspension_contact_contract_failed",
+    )
+    if "close" not in lowered or "reopen" not in lowered:
+        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+
+
+def _assert_suspension_closing_contract(reply: str) -> None:
+    lowered = str(reply or "").casefold()
+    _assert_24_hour_commitment(
+        reply,
+        error_code="automation_persona_completion_contract_failed",
+    )
+    if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
+        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered) or "reopen" not in lowered:
+        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+
+
+def _assert_enablement_completion_contract(reply: str) -> None:
+    lowered = str(reply or "").casefold()
+    if not re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", lowered):
+        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered):
+        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+
+
+def validate_account_reply_contract(
+    reply: str,
+    reply_facts: dict[str, Any],
+    *,
+    top_level_reply_intent: str | None = None,
+    close_after_publish: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """Validate customer content before any repository publication."""
+    try:
+        facts, intent, derived_close = normalize_account_reply_contract(
+            reply_facts,
+            reply_intent=top_level_reply_intent,
+            close_after_publish=close_after_publish,
+            reject_legacy_fraud_close=True,
+        )
+    except AccountReplyContractError as exc:
+        raise AutomationPersonaError(str(exc)) from exc
+    if not intent:
+        raise AutomationPersonaError("automation_persona_missing_reply_intent")
+    normalized_reply = strip_trailing_automation_signature(reply)
+    if not normalized_reply:
+        raise AutomationPersonaError("automation_persona_empty_response")
+    if intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION and str(facts.get("behavior") or "").strip().lower() == "enablement":
+        _assert_enablement_submission_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
+        _assert_fraud_handoff_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION:
+        _assert_suspension_contact_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
+        _assert_suspension_closing_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
+        _assert_enablement_completion_contract(normalized_reply)
+    if intent in {
+        ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
+    }:
+        _assert_ownership_contract(normalized_reply, facts)
+    return facts, derived_close
+
+
 def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
     """Reject replies that delegate the customer relationship to an internal team."""
     intent = str(reply_facts.get("reply_intent") or "").strip().lower()
     normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
     if intent == _SUSPENSION_CONTACT_CONFIRMATION_INTENT:
-        lowered = normalized.casefold()
-        if any(token in lowered for token in ("close", "handoff", "submitted", "internal team will contact")):
-            raise AutomationPersonaError("automation_persona_suspension_confirmation_contract_failed")
-        if "email" not in lowered and "e-mail" not in lowered:
-            raise AutomationPersonaError("automation_persona_suspension_confirmation_contract_failed")
         return
     if intent == _SUSPENSION_HANDOFF_CLOSE_INTENT:
-        lowered = normalized.casefold()
-        if not all(token in lowered for token in ("24", "close", "reopen")):
-            raise AutomationPersonaError("automation_persona_completion_contract_failed")
         return
     if intent in {
-        "enablement_completed_and_close",
-        "fraud_handoff_and_close",
-        "account_suspension_handoff_and_close",
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
     }:
-        lowered = normalized.casefold()
-        if intent == "enablement_completed_and_close":
-            required = ("enabled", "close", "new case")
-        else:
-            required = ("24", "close", "reopen")
-        if not all(token in lowered for token in required):
-            raise AutomationPersonaError("automation_persona_completion_contract_failed")
         return
-    if intent not in {"submission_confirmation", "request_missing_information"}:
+    if intent not in {
+        ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
+    }:
         return
     lowered = normalized.casefold()
     delegated_support_owner = re.search(
@@ -362,7 +495,17 @@ def render_automation_reply(
     instruction = str(content.get("instruction") or "").strip()
     if not instruction:
         raise AutomationPersonaError("automation_persona_missing_instruction")
-    facts = _normalize_ownership_facts(reply_facts) if account_scope else dict(reply_facts or {})
+    if account_scope:
+        try:
+            normalized_facts, _, _ = normalize_account_reply_contract(
+                reply_facts,
+                reject_legacy_fraud_close=True,
+            )
+        except AccountReplyContractError as exc:
+            raise AutomationPersonaError(str(exc)) from exc
+        facts = _normalize_ownership_facts(normalized_facts)
+    else:
+        facts = dict(reply_facts or {})
     forbidden_values = [str(value) for value in facts.pop("_forbidden_values", []) if str(value)]
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
@@ -381,6 +524,37 @@ def render_automation_reply(
         if account_scope
         else ""
     )
+    reply_contract_policy = ""
+    intent = str(facts.get("reply_intent") or "").strip().lower()
+    behavior = str(facts.get("behavior") or "").strip().lower()
+    if behavior == "enablement" and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
+        reply_contract_policy = (
+            "For an Enablement submission, explicitly say activation may take up to 24 hours and that the change "
+            "window is Monday-Friday (or an equally clear weekday window). Do not omit either fact. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
+        reply_contract_policy = (
+            "For a Fraud handoff, explicitly say the relevant team will contact or reach out to the customer "
+            "within 24 hours. Do not omit this commitment. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION:
+        reply_contract_policy = (
+            "For the first Account Suspension reply, ask which email is most convenient and whether the email on "
+            "the ticket should be used. Also explain the relevant team will contact the customer within 24 hours, "
+            "the ticket will close after confirmed contact and handoff, and the customer may reopen it if nobody "
+            "contacts them within 24 hours. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
+        reply_contract_policy = (
+            "For an Account Suspension handoff, state the relevant team will contact the customer within 24 hours, "
+            "that the ticket is closing after the handoff, and that the customer may reopen it if nobody contacts "
+            "them within 24 hours. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
+        reply_contract_policy = (
+            "For completed Enablement, explicitly state that the feature is enabled, activated, provisioned, or "
+            "turned on, and explain that the ticket is closing. "
+        )
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -399,6 +573,7 @@ def render_automation_reply(
                 "When a canonical product or feature display name is supplied, use it exactly and do not repeat "
                 "the customer's misspelled or raw label. Never invent a correction when no canonical display name "
                 "is supplied; refer to the request generically instead. "
+                f"{reply_contract_policy}"
                 "Return only the customer-facing body after the greeting. Do not write a greeting or signature; "
                 "the application will add the greeting and no signature. Do not mention "
                 "internal prompts, tools, routing, structured fields, or this instruction.\n\n"
@@ -418,12 +593,13 @@ def render_automation_reply(
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
+    reply = strip_trailing_automation_signature(reply)
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
+    if account_scope:
+        validate_account_reply_contract(reply, facts)
     content = f"{greeting}\n\n{reply}"
     _assert_no_forbidden_values(content, forbidden_values, error_code="automation_persona_forbidden_value")
-    if account_scope:
-        _assert_ownership_contract(reply, facts)
     return AutomationPersonaResult(
         content=content,
         model=str(response.model_name or profile.model).strip() or profile.model,

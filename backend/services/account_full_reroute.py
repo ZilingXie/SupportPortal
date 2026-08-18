@@ -5,14 +5,27 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_ai_execution import AccountProcessingFailure, AccountRerunDegradedError
 from backend.services.account_billing_handlers import account_billing_handler
+from backend.services.billing_automation import build_billing_internal_email_payload
 from backend.services.account_case_reroute import AccountCaseReroute, reroute_account_case
 from backend.services.account_suspension_field_extractor import (
     AccountSuspensionFieldExtraction,
     extract_account_suspension_fields,
+)
+from backend.services.account_suspension_automation import (
+    SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+    SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+    SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+    SUSPENSION_STATE_HANDOFF_PENDING,
+    SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
+    contact_confirmation_reply_facts,
+    initial_contact_workflow,
+    suspension_contact_confirmation,
 )
 from backend.services.account_verification_automation import (
     AccountVerificationAutomationResult,
@@ -38,6 +51,7 @@ class AccountFullRerouteResult:
     email_handler: str | None = None
     customer_reply: str = ""
     reply_kind: str | None = None
+    reply_intent: str | None = None
     asked_field_keys: tuple[str, ...] = ()
 
 
@@ -215,6 +229,243 @@ def _field_extraction_human_review(
     return updated
 
 
+def _suspension_message_id(message: dict[str, Any], index: int) -> str:
+    return str(
+        message.get("message_id")
+        or message.get("id")
+        or message.get("created_at")
+        or f"customer-{index}"
+    ).strip()
+
+
+def _suspension_human_review(
+    case: dict[str, Any],
+    *,
+    classification: dict[str, Any],
+    extraction: AccountSuspensionFieldExtraction,
+    workflow: dict[str, Any],
+    reason: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    review_case = reconcile_automation_execution_failure(
+        case,
+        reason_code=reason,
+        extraction=extraction,
+        context={
+            "automation_reprocessed": True,
+            "failure_stage": "contact_confirmation",
+            "failure_code": reason,
+        },
+    )
+    workflow = dict(workflow)
+    workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
+    workflow["failure_reason"] = reason
+    review_case["automation_context"] = {
+        **dict(review_case.get("automation_context") or {}),
+        SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
+    }
+    review_case["collected_fields"] = dict(extraction.collected_fields)
+    review_classification = dict(review_case.get("route_classification") or {})
+    for key, value in classification.items():
+        if key != "handler_binding_status":
+            review_classification[key] = value
+    review_case["route_classification"] = review_classification
+    execution = {
+        "classification": review_classification,
+        "final_route": str(review_case.get("execution_action") or review_case.get("route") or ""),
+        "trigger": "account_full_reroute",
+    }
+    return review_case, execution
+
+
+def _reprocess_account_suspension(
+    current: dict[str, Any],
+    *,
+    original: dict[str, Any],
+    rerouted: AccountCaseReroute,
+    ticket: dict[str, Any],
+    extract_suspension: Callable[..., AccountSuspensionFieldExtraction],
+) -> AccountFullRerouteResult:
+    """Rebuild the two-stage Suspension workflow from customer history.
+
+    The first customer message describes the problem and is never accepted as
+    contact confirmation. Only later, explicit and mutually consistent
+    confirmations can authorize the internal handoff stage.
+    """
+    customer_messages = _customer_messages(ticket)
+    subject = str(ticket.get("subject") or current.get("title") or "")
+    ticket_id = str(current.get("client_ticket_id") or current.get("ticket_id") or "")
+    account_case_id = str(current.get("account_case_id") or current.get("billing_ticket_id") or "")
+    ticket_email = str(ticket.get("customer_id") or "").strip() or None
+    customer_name = str(ticket.get("customer_name") or current.get("customer_name") or "").strip() or None
+    extraction = extract_suspension(
+        ticket_subject=subject,
+        customer_messages=customer_messages,
+        existing_fields={},
+        model_scenario=ACCOUNT_ROUTE_SCENARIO,
+    )
+    workflow_created_at = str(
+        current.get("updated_at")
+        or next(
+            (
+                str(message.get("created_at") or "").strip()
+                for message in reversed(customer_messages)
+                if str(message.get("created_at") or "").strip()
+            ),
+            "",
+        )
+    ).strip() or None
+    workflow = initial_contact_workflow(
+        ticket_email=ticket_email,
+        created_at=workflow_created_at,
+    )
+    classification = dict(current.get("route_classification") or {})
+    classification.update(
+        handler_binding_status="active",
+        automation_reprocessed=True,
+        field_extraction=extraction.audit_payload(),
+    )
+    prompt_snapshots = dict(rerouted.route_execution.get("prompt_snapshots") or {})
+    prompt_snapshots["account_suspension_field_extractor"] = dict(extraction.prompt_snapshot)
+
+    confirmed_email: str | None = None
+    confirmation_message_id: str | None = None
+    confirmation_conflict: str | None = None
+    for index, message in enumerate(customer_messages[1:], start=2):
+        confirmation = suspension_contact_confirmation(
+            message.get("content"),
+            ticket_email=ticket_email,
+            state=SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+        )
+        status = str(confirmation.get("status") or "").strip().lower()
+        if status == "human_review":
+            confirmation_conflict = str(confirmation.get("reason") or "ambiguous_contact_confirmation")
+            break
+        if status == "confirmed":
+            candidate_email = str(confirmation.get("email") or "").strip().lower()
+            if confirmed_email and candidate_email != confirmed_email:
+                confirmation_conflict = "conflicting_contact_confirmations"
+                break
+            confirmed_email = candidate_email
+            confirmation_message_id = _suspension_message_id(message, index)
+        elif status == "awaiting_confirmation" and confirmed_email:
+            confirmation_conflict = "conflicting_contact_confirmation_revision"
+            break
+
+    if confirmation_conflict:
+        workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
+        workflow["failure_reason"] = confirmation_conflict
+        updated, execution = _suspension_human_review(
+            current,
+            classification=classification,
+            extraction=extraction,
+            workflow=workflow,
+            reason=f"account_suspension_contact_confirmation_{confirmation_conflict}",
+        )
+        execution["prompt_snapshots"] = prompt_snapshots
+        return AccountFullRerouteResult(
+            updated,
+            execution,
+            updated != original,
+            "human_review",
+        )
+
+    if not confirmed_email:
+        workflow["updated_at"] = workflow_created_at
+        updated = {
+            **current,
+            "automation_status": "automation",
+            "missing_fields": [],
+            "collected_fields": dict(extraction.collected_fields),
+            "customer_reply": None,
+            "internal_email_payload": None,
+            "internal_email_send_status": "not_applicable",
+            "internal_email_send_reason": "awaiting_contact_confirmation",
+            "automation_context": {
+                "handler": "account_suspension",
+                "reprocessed_by": "account_full_reroute",
+                SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
+            },
+            "route_classification": classification,
+        }
+        execution = dict(rerouted.route_execution)
+        execution.update(
+            {
+                "classification": classification,
+                "trigger": "account_full_reroute",
+                "prompt_snapshots": prompt_snapshots,
+            }
+        )
+        return AccountFullRerouteResult(
+            updated,
+            execution,
+            updated != original,
+            "active",
+            customer_reply="reply_pending",
+            reply_kind="suspension_contact_confirmation",
+            reply_intent=SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+            asked_field_keys=("preferred_contact_email",),
+        )
+
+    workflow.update(
+        {
+            "state": SUSPENSION_STATE_HANDOFF_PENDING,
+            "confirmed_email": confirmed_email,
+            "confirmation_message_id": confirmation_message_id,
+            "updated_at": workflow_created_at,
+            "failure_reason": None,
+        }
+    )
+    conversation_text = "\n".join(str(message.get("content") or "") for message in customer_messages)
+    handoff_payload = build_billing_internal_email_payload(
+        action="account_suspension",
+        collected_fields={
+            str(key): str(value)
+            for key, value in dict(extraction.collected_fields).items()
+            if value is not None
+        },
+        ticket_id=ticket_id,
+        customer_email=confirmed_email,
+        customer_message=conversation_text,
+        billing_ticket_id=account_case_id,
+        zendesk_ticket_url=None,
+    )
+    updated = {
+        **current,
+        "automation_status": "automation",
+        "missing_fields": [],
+        "collected_fields": dict(extraction.collected_fields),
+        "customer_reply": None,
+        "internal_email_payload": handoff_payload,
+        "internal_email_send_status": "pending",
+        "internal_email_send_reason": "contact_confirmed",
+        "automation_context": {
+            "handler": "account_suspension",
+            "reprocessed_by": "account_full_reroute",
+            SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
+        },
+        "route_classification": {**classification, "handler_binding_status": "completed"},
+    }
+    execution = dict(rerouted.route_execution)
+    execution.update(
+        {
+            "classification": updated["route_classification"],
+            "trigger": "account_full_reroute",
+            "prompt_snapshots": prompt_snapshots,
+        }
+    )
+    return AccountFullRerouteResult(
+        updated,
+        execution,
+        updated != original,
+        "completed",
+        internal_email_to_send=handoff_payload,
+        email_handler="billing",
+        customer_reply="reply_pending",
+        reply_kind="suspension_closing_reply",
+        reply_intent=SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+    )
+
+
 def reprocess_account_case(
     account_case: dict[str, Any],
     *,
@@ -239,6 +490,61 @@ def reprocess_account_case(
         else ""
     ).strip()
     account_billing_registration = account_billing_handler(account_billing_subcategory)
+    registration = account_automation_handler(action)
+    classification = dict(current.get("route_classification") or {})
+    legacy_suspension_requires_migration = (
+        action == "account_suspension"
+        and account_billing_subcategory == "account_suspension"
+        and str(current.get("route_status") or "").strip() != "automated"
+        and str(current.get("route_family") or "").strip() == "human_review"
+        and str(classification.get("route_target") or "").strip() == "human_review"
+        and str(classification.get("route_reason_code") or "").strip()
+        == "registered_account_suspension"
+        and not list(classification.get("account_billing_additional_intents") or [])
+    )
+    if legacy_suspension_requires_migration:
+        # The legacy deterministic route classified Suspension for review. A
+        # full rerun is the explicit migration boundary to the active workflow.
+        classification.update(
+            route_target="automation",
+            human_review_reason=None,
+            handler_binding_status="active",
+            automation_migrated_from="legacy_account_suspension_review",
+        )
+        current = {
+            **current,
+            "route_family": AUTOMATED_ROUTE_FAMILY,
+            "route_status": "automated",
+            "category": "account_billing",
+            "subcategory": "account_suspension",
+            "automation_handler": "account_suspension",
+            "automation_status": "automation",
+            "route_classification": classification,
+        }
+        rerouted = AccountCaseReroute(
+            account_case=current,
+            route_execution={
+                **dict(rerouted.route_execution),
+                "final_route": "account_suspension",
+                "route_family": AUTOMATED_ROUTE_FAMILY,
+                "classification": classification,
+                "legacy_suspension_migrated": True,
+            },
+            previous_pipeline_version=rerouted.previous_pipeline_version,
+            changed=True,
+        )
+    if (
+        registration is not None
+        and registration.implementation == "account_suspension"
+        and str(current.get("route_status") or "").strip() == "automated"
+    ):
+        return _reprocess_account_suspension(
+            current,
+            original=original,
+            rerouted=rerouted,
+            ticket=ticket,
+            extract_suspension=extract_suspension,
+        )
     if (
         account_billing_registration is not None
         and account_billing_registration.implementation == "classification_only"
@@ -276,7 +582,6 @@ def reprocess_account_case(
             updated != original,
             "account_billing_classification_only",
         )
-    registration = account_automation_handler(action)
     if registration is None or str(current.get("route_status") or "") != "automated":
         updated = _clear_automation_state(current, reason="full_reroute_not_automation")
         return AccountFullRerouteResult(
@@ -494,5 +799,14 @@ def reprocess_account_case(
         email_handler=registration.handler if email_to_send else None,
         customer_reply=reply,
         reply_kind=reply_kind,
+        reply_intent=(
+            "fraud_handoff_confirmation"
+            if reply_kind == "submission_confirmation" and action == "fraud_account"
+            else "submission_confirmation"
+            if reply_kind == "submission_confirmation"
+            else "request_missing_information"
+            if reply_kind == "field_follow_up"
+            else None
+        ),
         asked_field_keys=requested_fields,
     )

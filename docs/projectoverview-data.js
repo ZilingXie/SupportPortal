@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T13:23:10Z",
-  "source_base_commit": "0396c66bc1d3f192df4615e79d8e4499c14df551",
-  "registry_digest": "d395da6617d92aa74d2ba61e690fa88da0167a1f014f3b93c81c5905fbe5aec9",
+  "generated_at": "2026-08-18T15:07:31Z",
+  "source_base_commit": "7f157626a9cc955546033f7d3ece631b730860aa",
+  "registry_digest": "8204a4d58066c67c76d9532ea7c9dcad2623d7852153a343dcb4227f84231c20",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -484,6 +484,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 725,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/725",
           "label": "PR #725"
+        },
+        {
+          "type": "test",
+          "label": "Task worktree and direct-to-main repository policy preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Task worktree and branch are correct; root main is clean at 902f3b5; repository policy verification passed."
+        },
+        {
+          "type": "document",
+          "label": "karpathy-guidelines read before runtime edits",
+          "command": "Read /Users/xieziling/.codex/skills/karpathy-guidelines/SKILL.md",
+          "result": "Complete skill read; runtime implementation must remain surgical, explicit, fail-loud, and test-driven."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation integrated targeted suite",
+          "command": "python -m unittest backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery",
+          "result": "368 tests passed; normal Intake, full rerun, reply-only recovery, Persona v9 contracts, Worker publication gates, the three active Automation flows, and legacy Suspension full-rerun migration are green."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation static and registry checks",
+          "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
         }
       ],
       "source_refs": [
@@ -496,8 +520,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 8,
-      "done_count": 6,
+      "task_count": 9,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -4001,6 +4025,69 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p1-50",
+      "title": "统一 Account Automation 客户回复与 Rerun 契约",
+      "status": "done",
+      "owner": "zac",
+      "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
+      "next_action": "进入 Stage 5：创建单一 implementation PR，合并后重启官方栈，并在 Stage 6 执行一次 full rerun 和三 Case live validation。",
+      "acceptance_criteria": [
+        "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
+        "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
+        "enablement 客户提交确认包含最长 24 小时激活时间和 Monday-Friday 变更窗口；只有真实内部回复明确表示已启用后才通知客户并关闭，否定回复不关闭。",
+        "所有 AI 客户回复不包含尾部签名；签名清理不能误删正文中的普通 best 或 regards。",
+        "Intake、full rerun 和 reply-only recovery 使用同一 canonical reply intent 和关闭判定；intent 冲突、旧 Fraud 关闭契约或无效回复 fail closed 或进入 Human Review。",
+        "未通过最终 content/intent 校验的回复不会调用 publish_account_reply，也不会创建 production Zendesk delivery intent。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Task worktree and direct-to-main repository policy preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Task worktree and branch are correct; root main is clean at 902f3b5; repository policy verification passed."
+        },
+        {
+          "type": "document",
+          "label": "karpathy-guidelines read before runtime edits",
+          "command": "Read /Users/xieziling/.codex/skills/karpathy-guidelines/SKILL.md",
+          "result": "Complete skill read; runtime implementation must remain surgical, explicit, fail-loud, and test-driven."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation integrated targeted suite",
+          "command": "python -m unittest backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery",
+          "result": "368 tests passed; normal Intake, full rerun, reply-only recovery, Persona v9 contracts, Worker publication gates, the three active Automation flows, and legacy Suspension full-rerun migration are green."
+        },
+        {
+          "type": "test",
+          "label": "Account Automation static and registry checks",
+          "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
+        }
+      ],
+      "source_refs": [
+        "docs/superpowers/plans/2026-08-18-account-automation-reply-contracts.md",
+        "docs/feature_list.md",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-08-18",
+      "updated_at": "2026-08-18",
+      "history": [
+        {
+          "at": "2026-08-18",
+          "event": "started",
+          "summary": "创建任务并完成 Stage 0 工作区、仓库策略和实现前置规则检查；尚未声明运行时完成。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -7038,7 +7125,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。",
         "对话支持上传 txt/log/err 日志附件。",
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
-        "`/account` 的 Automated execution view 以四个 registered 子类展示跨业务自动化：Account & Billing / Fraud Account、Account & Billing / Detailed Invoice、Backend Operation / Enablement 和 Backend Operation / Quota；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership；非风控 Account Suspension 仅提取上下文并保持 not automated。",
+        "`/account` 的 Automated execution view 展示三类 active Automation：Account & Billing / Fraud Account、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。",
         "Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。",
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。",
