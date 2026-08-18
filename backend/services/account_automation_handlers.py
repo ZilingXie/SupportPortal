@@ -39,8 +39,8 @@ _HANDLERS = {
     ),
     "account_suspension": AccountAutomationHandlerRegistration(
         subcategory="account_suspension",
-        handler="billing",
-        implementation="billing",
+        handler="account_suspension",
+        implementation="account_suspension",
     ),
 }
 

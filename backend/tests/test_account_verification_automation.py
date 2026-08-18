@@ -381,10 +381,19 @@ class AccountVerificationAutomationTests(unittest.TestCase):
     def test_all_account_automation_subcategories_are_explicitly_registered(self) -> None:
         self.assertEqual(
             registered_account_automation_subcategories(),
-            frozenset({"fraud_account", "detailed_invoice", "enablement", "quota"}),
+            frozenset({
+                "fraud_account",
+                "detailed_invoice",
+                "enablement",
+                "quota",
+                "account_suspension",
+            }),
         )
         self.assertEqual(account_automation_handler("fraud_account").implementation, "account_verification")
-        self.assertIsNone(account_automation_handler("account_suspension"))
+        self.assertEqual(
+            account_automation_handler("account_suspension").implementation,
+            "account_suspension",
+        )
         self.assertIsNone(account_automation_handler("unknown"))
 
     def test_follow_up_composer_is_not_called(self) -> None:

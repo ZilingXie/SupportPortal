@@ -17,6 +17,9 @@ from backend.services.llm_factory import LlmInvocationError
 invoke_responses_text = invoke_account_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
 
+_SUSPENSION_CONTACT_CONFIRMATION_INTENT = "account_suspension_contact_confirmation_request"
+_SUSPENSION_HANDOFF_CLOSE_INTENT = "account_suspension_handoff_and_close"
+
 
 AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v8"
 
@@ -282,6 +285,18 @@ def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
     """Reject replies that delegate the customer relationship to an internal team."""
     intent = str(reply_facts.get("reply_intent") or "").strip().lower()
     normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
+    if intent == _SUSPENSION_CONTACT_CONFIRMATION_INTENT:
+        lowered = normalized.casefold()
+        if any(token in lowered for token in ("close", "handoff", "submitted", "internal team will contact")):
+            raise AutomationPersonaError("automation_persona_suspension_confirmation_contract_failed")
+        if "email" not in lowered and "e-mail" not in lowered:
+            raise AutomationPersonaError("automation_persona_suspension_confirmation_contract_failed")
+        return
+    if intent == _SUSPENSION_HANDOFF_CLOSE_INTENT:
+        lowered = normalized.casefold()
+        if not all(token in lowered for token in ("24", "close", "reopen")):
+            raise AutomationPersonaError("automation_persona_completion_contract_failed")
+        return
     if intent in {
         "enablement_completed_and_close",
         "fraud_handoff_and_close",

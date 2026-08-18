@@ -43,12 +43,10 @@ def account_billing_metadata(subcategory: Any) -> dict[str, str | None]:
     normalized = str(subcategory or "").strip().lower()
     if normalized not in ACCOUNT_BILLING_SUBCATEGORIES:
         normalized = "other"
-    # Suspension and invoice remain classified here, but neither is an active
-    # automation entry point. Fraud review is the only billing automation.
-    is_automated = normalized == "fraud_account"
+    is_automated = normalized in {"fraud_account", "account_suspension"}
     return {
         "category": "account_billing",
         "subcategory": normalized,
         "route_status": "automated" if is_automated else "not_automated",
-        "automation_handler": "billing" if is_automated else None,
+        "automation_handler": normalized if normalized == "account_suspension" else "billing" if is_automated else None,
     }

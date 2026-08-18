@@ -88,6 +88,7 @@ from backend.services.investigation_flow import (
     start_or_refresh_investigation,
 )
 from backend.services.billing_automation import poll_automation_request_replies, record_billing_request_reply
+from backend.services.account_suspension_automation import SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
     send_enablement_internal_email,
@@ -1004,7 +1005,12 @@ def _render_case_persona_reply(
         return render_automation_reply(
             reply_facts=facts,
             persona_assignment=persona,
-            account_scope=reply_intent in {"submission_confirmation", "request_missing_information"},
+            account_scope=reply_intent in {
+                "submission_confirmation",
+                "request_missing_information",
+                SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+                ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+            },
         ).content
     except AutomationPersonaError as exc:
         timestamp = now_iso()

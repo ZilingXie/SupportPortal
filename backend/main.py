@@ -69,7 +69,11 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
 )
 from backend.services.agora_service_events import get_agora_service_events_payload
-from backend.services.billing_automation import build_billing_automation_result, send_billing_internal_email
+from backend.services.billing_automation import (
+    build_billing_automation_result,
+    build_billing_internal_email_payload,
+    send_billing_internal_email,
+)
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_automation_handlers import account_automation_handler
@@ -82,6 +86,16 @@ from backend.services.account_verification_field_extractor import AccountVerific
 from backend.services.account_suspension_field_extractor import (
     AccountSuspensionFieldExtraction,
     extract_account_suspension_fields,
+)
+from backend.services.account_suspension_automation import (
+    SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+    SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+    SUSPENSION_STATE_HANDOFF_PENDING,
+    closing_reply_facts,
+    contact_confirmation_reply_facts,
+    initial_contact_workflow,
+    suspension_contact_confirmation,
 )
 from backend.services.account_full_reroute import (
     AccountFullRerouteResult,
@@ -107,6 +121,7 @@ from backend.services.internal_email_payload import (
 )
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
+    AUTOMATED_ROUTE_STATUS,
     automation_metadata,
     is_registered_automation,
 )
@@ -630,6 +645,43 @@ def _build_account_suspension_classification_attempt(
         "field_extraction": extraction,
         "prompt_snapshots": {"account_suspension_field_extractor": dict(extraction.prompt_snapshot)},
         "automation_context": {},
+    }
+
+
+def _build_account_suspension_contact_attempt(
+    *,
+    ticket_subject: str,
+    customer_messages: list[dict[str, Any]],
+    ticket_email: str | None,
+    customer_name: str | None,
+    created_at: str,
+    existing_workflow: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    extraction = extract_account_suspension_fields(
+        ticket_subject=ticket_subject,
+        customer_messages=customer_messages,
+    )
+    workflow = dict(existing_workflow or initial_contact_workflow(
+        ticket_email=ticket_email,
+        created_at=created_at,
+    ))
+    workflow.setdefault("state", SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION)
+    workflow["updated_at"] = created_at
+    return {
+        "customer_reply": "",
+        "missing_fields": [],
+        "collected_fields": dict(extraction.collected_fields),
+        "internal_email_payload": None,
+        "internal_email_to_send": None,
+        "internal_email_send_status": "not_applicable",
+        "internal_email_send_reason": "awaiting_contact_confirmation",
+        "requires_human_review": False,
+        "field_extraction": extraction,
+        "prompt_snapshots": {"account_suspension_field_extractor": dict(extraction.prompt_snapshot)},
+        "automation_context": {SUSPENSION_CONTACT_WORKFLOW_KEY: workflow},
+        "reply_facts": contact_confirmation_reply_facts(
+            ticket_email=ticket_email, customer_name=customer_name,
+        ),
     }
 
 
@@ -4356,9 +4408,10 @@ def _build_account_ticket_view_model(
         route_family=ticket.get("route_family"),
         execution_action=execution_action,
     )
+    explicit_route_status = str(ticket.get("route_status") or "").strip()
     category = ticket.get("category") or metadata["category"]
     subcategory = ticket.get("subcategory") or metadata["subcategory"]
-    route_status = ticket.get("route_status") or metadata["route_status"]
+    route_status = explicit_route_status or metadata["route_status"]
     automation_handler = ticket.get("automation_handler") or metadata["automation_handler"]
     route_family = ticket.get("route_family")
     normalized_route = ticket.get("route")
@@ -4372,19 +4425,19 @@ def _build_account_ticket_view_model(
         "backend_operation",
         "security_compliance",
     }:
-        category = metadata["category"]
-        subcategory = metadata["subcategory"]
-        route_status = metadata["route_status"]
-        automation_handler = metadata["automation_handler"]
+        category = category or metadata["category"]
+        subcategory = subcategory or metadata["subcategory"]
+        route_status = route_status or metadata["route_status"]
+        automation_handler = automation_handler or metadata["automation_handler"]
     if automation_family and route_classification.get("agora_route") != "account_billing":
-        route_status = metadata["route_status"]
-        category = metadata["category"]
-        subcategory = metadata["subcategory"]
-        automation_handler = metadata["automation_handler"]
-    if metadata["route_status"] == "automated":
+        route_status = route_status or metadata["route_status"]
+        category = category or metadata["category"]
+        subcategory = subcategory or metadata["subcategory"]
+        automation_handler = automation_handler or metadata["automation_handler"]
+    if metadata["route_status"] == "automated" and route_status == AUTOMATED_ROUTE_STATUS:
         route_family = AUTOMATED_ROUTE_FAMILY
-        normalized_route = metadata["subcategory"]
-        normalized_execution_action = metadata["subcategory"]
+        normalized_route = normalized_route or metadata["subcategory"]
+        normalized_execution_action = normalized_execution_action or metadata["subcategory"]
     primary_label, secondary_label = account_case_labels(ticket)
     execution_failure = (
         route_classification.get("automation_execution")
@@ -5102,6 +5155,14 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 persona_instruction=str(persona_assignment.get("content", {}).get("instruction") or "") if persona_assignment else None,
             )
             automation_attempt = billing_email_attempt
+        elif handler_registration.implementation == "account_suspension":
+            automation_attempt = _build_account_suspension_contact_attempt(
+                ticket_subject=title,
+                customer_messages=list(ticket.get("messages") or []),
+                ticket_email=str(request.customer_email or "").strip() or None,
+                customer_name=customer_name,
+                created_at=timestamp,
+            )
         elif handler_registration.implementation == "enablement":
             enablement_email_attempt = _build_enablement_internal_email_attempt(
                 message=route_input,
@@ -5186,31 +5247,15 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
             enablement_email_attempt = None
             quota_email_attempt = None
             automation_attempt = None
-        elif route == "account_suspension" and not automation_attempt.get("internal_email_to_send"):
-            # Do not claim automation or create a reply job without a trusted
-            # internal handoff payload for the suspension case.
-            is_automation_route = False
-            is_billing_route = False
-            response_status = "not_automated"
-            route_metadata.update(
-                {
-                    "route_status": "not_automated",
-                    "automation_handler": None,
-                }
-            )
-            route_classification.update(
-                {
-                    "route_target": "human_review",
-                    "human_review_reason": "account_billing_classification_only",
-                    "handler_binding_status": None,
-                }
-            )
+        elif route == "account_suspension":
             missing_fields = []
             collected_fields = dict(automation_attempt.get("collected_fields") or {})
+            assistant_reply_facts = dict(automation_attempt.get("reply_facts") or {})
             internal_email_payload = None
             internal_email_send_status = "not_applicable"
-            internal_email_send_reason = "account_billing_classification_only"
-            automation_context = {}
+            internal_email_send_reason = "awaiting_contact_confirmation"
+            automation_context = dict(automation_attempt.get("automation_context") or {})
+            route_classification["handler_binding_status"] = "active"
         else:
             missing_fields = list(automation_attempt["missing_fields"])
             collected_fields = dict(automation_attempt["collected_fields"])
@@ -5316,7 +5361,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
     )
     asked_field_keys = list(missing_fields) if missing_fields and not internal_email_payload else []
     reply_job = None
-    if is_automation_route and asked_field_keys and assistant_reply_facts:
+    if is_automation_route and assistant_reply_facts and (asked_field_keys or route == "account_suspension"):
         try:
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -5326,6 +5371,11 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 draft_content="",
                 asked_field_keys=asked_field_keys,
                 persona_assignment=persona_assignment,
+                reply_intent=(
+                    "account_suspension_contact_confirmation_request"
+                    if route == "account_suspension"
+                    else None
+                ),
             )
         except Exception as exc:
             billing_ticket = await _record_account_reply_job_failure(
@@ -9191,6 +9241,126 @@ async def _reply_to_billing_ticket_impl(
         if isinstance(billing_ticket.get("automation_context"), dict)
         else {}
     )
+
+    # Suspension is a two-stage workflow. Consume the customer's confirmation
+    # here so it cannot fall through into the generic route/extraction path.
+    suspension_workflow = prior_automation_context.get(SUSPENSION_CONTACT_WORKFLOW_KEY)
+    if (
+        prior_handler == "account_suspension"
+        and isinstance(suspension_workflow, dict)
+        and str(suspension_workflow.get("state") or "").strip()
+        == SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION
+    ):
+        confirmation = suspension_contact_confirmation(
+            customer_message,
+            ticket_email=suspension_workflow.get("ticket_email")
+            or canonical_ticket.get("customer_id"),
+            state=suspension_workflow.get("state"),
+        )
+        if confirmation.get("status") != "confirmed":
+            suspension_workflow["failure_reason"] = str(confirmation.get("reason") or "confirmation_required")
+            if confirmation.get("status") == "human_review":
+                suspension_workflow["state"] = "human_review_required"
+                billing_ticket["automation_status"] = "human_review_required"
+            suspension_workflow["updated_at"] = timestamp
+            billing_ticket["automation_context"] = {
+                **prior_automation_context,
+                SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow,
+            }
+            await async_to_thread(ticket_repository.cancel_pending_account_reply_jobs, client_ticket_id, updated_at=timestamp)
+            await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+            return {**billing_ticket, **_build_account_ticket_view_model(billing_ticket), "messages": canonical_ticket.get("messages", []), "support_ticket_status": canonical_ticket.get("status"), "ai_reply_status": None}
+
+        confirmed_email = str(confirmation.get("email") or "").strip().lower()
+        # Persist the phase before delivery; retries observe this durable marker
+        # and never create a second handoff for the same confirmation message.
+        suspension_workflow.update(
+            {
+                "state": SUSPENSION_STATE_HANDOFF_PENDING,
+                "confirmed_email": confirmed_email,
+                "confirmation_message_id": str(customer_msg.get("external_id") or timestamp),
+                "updated_at": timestamp,
+                "failure_reason": None,
+            }
+        )
+        fields = prior_collected_fields if isinstance(prior_collected_fields, dict) else {}
+        handoff_payload = build_billing_internal_email_payload(
+            action="account_suspension",
+            collected_fields={str(key): str(value) for key, value in fields.items() if value is not None},
+            ticket_id=client_ticket_id,
+            customer_email=confirmed_email,
+            customer_message=conversation_text,
+            billing_ticket_id=str(billing_ticket.get("billing_ticket_id") or billing_ticket_id),
+            zendesk_ticket_url=_account_zendesk_ticket_url(canonical_ticket.get("source"), client_ticket_id),
+        )
+        billing_ticket["internal_email_payload"] = handoff_payload
+        billing_ticket["internal_email_send_status"] = "pending"
+        billing_ticket["internal_email_send_reason"] = "contact_confirmed"
+        billing_ticket["automation_context"] = {
+            **prior_automation_context,
+            SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow,
+        }
+        await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
+            account_case=billing_ticket,
+            ticket_id=client_ticket_id,
+            handler="account_suspension",
+            payload=handoff_payload,
+            sender=_send_billing_internal_email_attempt,
+        )
+        if not delivery_result.succeeded:
+            suspension_workflow["state"] = "human_review_required"
+            suspension_workflow["failure_reason"] = delivery_result.reason or delivery_result.status
+            billing_ticket["automation_context"] = {**dict(billing_ticket.get("automation_context") or {}), SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow}
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+            return {**billing_ticket, **_build_account_ticket_view_model(billing_ticket), "messages": canonical_ticket.get("messages", []), "support_ticket_status": canonical_ticket.get("status"), "ai_reply_status": None}
+
+        suspension_workflow["state"] = SUSPENSION_STATE_CLOSING_REPLY_PENDING
+        suspension_workflow["handoff_delivery_key"] = str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or "")
+        suspension_workflow["updated_at"] = now_iso()
+        billing_ticket["automation_context"] = {**dict(billing_ticket.get("automation_context") or {}), SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow}
+        billing_ticket["automation_status"] = "automation"
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, client_ticket_id)
+        closing_job = await async_to_thread(
+            _create_account_reply_job,
+            ticket_id=client_ticket_id,
+            trigger_message_created_at=timestamp,
+            reply_facts=closing_reply_facts(confirmed_email=confirmed_email, customer_name=billing_ticket.get("customer_name")),
+            asked_field_keys=[],
+            persona_assignment=persona_assignment,
+            automation_delivery_key=str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""),
+            close_after_publish=True,
+            reply_intent="account_suspension_handoff_and_close",
+        )
+        suspension_workflow["closing_reply_job_id"] = closing_job.get("job_id")
+        suspension_workflow["updated_at"] = now_iso()
+        billing_ticket["automation_context"] = {**dict(billing_ticket.get("automation_context") or {}), SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow}
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        return {**billing_ticket, **_build_account_ticket_view_model(billing_ticket), "messages": canonical_ticket.get("messages", []), "support_ticket_status": canonical_ticket.get("status"), **_account_reply_job_public(closing_job)}
+    elif prior_handler == "account_suspension" and isinstance(suspension_workflow, dict) and str(suspension_workflow.get("state") or "").strip() in {
+        SUSPENSION_STATE_HANDOFF_PENDING,
+        SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+        "closed",
+        "human_review_required",
+    }:
+        # Once confirmation has been accepted, or the workflow has failed closed,
+        # never re-run routing/extraction for a later customer message.
+        billing_ticket["automation_context"] = {
+            **prior_automation_context,
+            SUSPENSION_CONTACT_WORKFLOW_KEY: suspension_workflow,
+        }
+        await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        return {
+            **billing_ticket,
+            **_build_account_ticket_view_model(billing_ticket),
+            "messages": canonical_ticket.get("messages", []),
+            "support_ticket_status": canonical_ticket.get("status"),
+            "ai_reply_status": None,
+        }
 
     def build_automation_attempt(handler: str, action: str) -> dict[str, Any]:
         registration = account_automation_handler(action)
