@@ -45,6 +45,8 @@ def _internal_email(
     customer_email: str | None,
     collected_fields: dict[str, str],
     missing_fields: list[str],
+    customer_message: str = "",
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     provided_fields = [
         (_GROUP_LABELS[group], collected_fields[group])
@@ -58,7 +60,6 @@ def _internal_email(
         ticket_id=ticket_id,
         intro="A customer has requested a fraud/risk account review.",
         summary_fields=(
-            ("Account Case ID", account_case_id),
             ("Ticket ID", ticket_id),
             ("Customer email", customer_email or "(not provided)"),
         ),
@@ -71,7 +72,9 @@ def _internal_email(
         ),
         missing_fields=tuple(_GROUP_LABELS.get(group, group) for group in missing_fields),
         missing_title="Missing after one follow-up",
+        original_message=customer_message,
         action_text="Please reply directly to this email with a customer-shareable handling update.",
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     return {
         "to": os.getenv(ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV, "").strip()
@@ -89,6 +92,8 @@ def build_account_verification_internal_email_payload(
     customer_email: str | None,
     collected_fields: dict[str, str],
     missing_fields: list[str],
+    customer_message: str = "",
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     """Render the persisted Fraud/Account Verification handoff payload."""
     return _internal_email(
@@ -97,6 +102,8 @@ def build_account_verification_internal_email_payload(
         customer_email=customer_email,
         collected_fields=collected_fields,
         missing_fields=missing_fields,
+        customer_message=customer_message,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
 
 
@@ -112,6 +119,7 @@ def build_account_verification_automation_result(
     extract: Callable[..., AccountVerificationFieldExtraction] | None = None,
     compose_follow_up: Callable[..., tuple[str, dict[str, str]]] | None = None,
     model_scenario: str = INTENT_ROUTER_SCENARIO,
+    zendesk_ticket_url: str | None = None,
 ) -> AccountVerificationAutomationResult:
     # Customer copy is intentionally deferred to Automation Persona. Keep the
     # legacy argument for callers that still pass it while migrating tests/data.
@@ -149,6 +157,14 @@ def build_account_verification_automation_result(
         customer_email=customer_email,
         collected_fields=extraction.collected_fields,
         missing_fields=extraction.missing_fields,
+        customer_message="\n".join(
+            str(message.get("content") or "").strip()
+            for message in customer_messages
+            if isinstance(message, dict)
+            and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+            and str(message.get("content") or "").strip()
+        ),
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     return AccountVerificationAutomationResult(
         customer_reply="",

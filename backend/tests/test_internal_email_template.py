@@ -124,6 +124,30 @@ class InternalEmailTemplateTests(unittest.TestCase):
         self.assertNotIn("href=", invalid["body_html"])
         self.assertIn('href="https://support.example.test/response?token=abc&amp;x=1"', valid["body_html"])
 
+    def test_zendesk_ticket_link_is_clickable_and_must_match_ticket_id(self) -> None:
+        rendered = render_internal_handoff_email(
+            request_type="Enablement",
+            title="Media Relay enablement request",
+            ticket_id="12829",
+            intro="Review the request.",
+            summary_fields=(("Ticket ID", "12829"),),
+            action_text="Please reply directly to this email.",
+            zendesk_ticket_url="https://acme.zendesk.com/agent/tickets/12829",
+        )
+        self.assertIn("Zendesk ticket: https://acme.zendesk.com/agent/tickets/12829", rendered["body"])
+        self.assertIn('href="https://acme.zendesk.com/agent/tickets/12829"', rendered["body_html"])
+        self.assertIn(">12829</a>", rendered["body_html"])
+        with self.assertRaisesRegex(ValueError, "does not match ticket id"):
+            render_internal_handoff_email(
+                request_type="Enablement",
+                title="Media Relay enablement request",
+                ticket_id="12829",
+                intro="Review the request.",
+                summary_fields=(),
+                action_text="Please reply directly to this email.",
+                zendesk_ticket_url="https://acme.zendesk.com/agent/tickets/12823",
+            )
+
     def test_graph_sendmail_uses_html_content_type_only_when_requested(self) -> None:
         requests = []
 

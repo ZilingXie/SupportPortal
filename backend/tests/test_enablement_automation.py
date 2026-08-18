@@ -42,7 +42,7 @@ class EnablementAutomationTests(unittest.TestCase):
         self.assertEqual(result.collected_fields["app_id"], "7da36383d624411698e5c0bc1fda6324")
         self.assertEqual(result.collected_fields["requested_feature"], "media_relay")
         self.assertEqual(result.internal_email["to"], "")
-        self.assertIn("Account Case ID: AC-TK-12302", result.internal_email["body"])
+        self.assertNotIn("Account Case ID", result.internal_email["body"])
         self.assertIn("App ID: 7da36383d624411698e5c0bc1fda6324", result.internal_email["body"])
         self.assertIn("Feature: Media Relay", result.internal_email["body"])
         self.assertIn("body_html", result.internal_email)

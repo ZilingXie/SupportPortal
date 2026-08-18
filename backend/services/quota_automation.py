@@ -58,6 +58,7 @@ def build_quota_automation_result(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None,
+    zendesk_ticket_url: str | None = None,
     follow_up_count: int = 0,
     generate_customer_reply: bool = True,
 ) -> QuotaAutomationResult:
@@ -86,6 +87,7 @@ def build_quota_automation_result(
             customer_message=customer_message,
             collected_fields=fields,
             missing_fields=extraction.missing_fields,
+            zendesk_ticket_url=zendesk_ticket_url,
         ),
         count,
         proceed_with_missing,
@@ -195,6 +197,7 @@ def _build_internal_email(
     customer_message: str,
     collected_fields: dict[str, Any],
     missing_fields: list[str],
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, Any]:
     products = collected_fields.get("products") or ["account quota"]
     product_label = ", ".join(str(item) for item in products) if isinstance(products, list) else str(products)
@@ -209,7 +212,6 @@ def _build_internal_email(
         ticket_id=ticket_id,
         intro="A customer has requested a quota or capacity review.",
         summary_fields=(
-            ("Account Case ID", account_case_id),
             ("Ticket ID", ticket_id),
             ("Customer email", customer_email or "{{customer_email}}"),
         ),
@@ -217,6 +219,7 @@ def _build_internal_email(
         missing_fields=tuple(missing_fields),
         original_message=customer_message,
         action_text="Please reply directly to this email with a customer-shareable handling update.",
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     return {
         "to": "",
@@ -236,6 +239,7 @@ def build_quota_internal_email_payload(
     customer_message: str,
     collected_fields: dict[str, Any],
     missing_fields: list[str],
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, Any]:
     """Render a persisted Quota handoff without re-running extraction."""
     return _build_internal_email(
@@ -245,6 +249,7 @@ def build_quota_internal_email_payload(
         customer_message=customer_message,
         collected_fields=collected_fields,
         missing_fields=missing_fields,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
 
 

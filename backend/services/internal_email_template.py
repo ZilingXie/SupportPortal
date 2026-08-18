@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from html import escape
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -53,6 +54,7 @@ def render_internal_handoff_email(
     original_message: str | None = None,
     action_text: str,
     action_url: str | None = None,
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     """Render one stable plain-text and HTML internal handoff payload."""
     normalized_request_type = _clean_text(request_type) or "Internal request"
@@ -64,6 +66,7 @@ def render_internal_handoff_email(
     normalized_missing = tuple(_clean_text(item) for item in missing_fields if _clean_text(item))
     normalized_message = _normalize_multiline(original_message)
     safe_action_url = _safe_http_url(action_url)
+    safe_zendesk_ticket_url = _safe_zendesk_ticket_url(zendesk_ticket_url, normalized_ticket_id)
 
     body = _render_text(
         request_type=normalized_request_type,
@@ -77,6 +80,7 @@ def render_internal_handoff_email(
         original_message=normalized_message,
         action_text=_normalize_multiline(action_text),
         action_url=safe_action_url,
+        zendesk_ticket_url=safe_zendesk_ticket_url,
     )
     body_html = _render_html(
         request_type=normalized_request_type,
@@ -90,6 +94,7 @@ def render_internal_handoff_email(
         original_message=normalized_message,
         action_text=_normalize_multiline(action_text),
         action_url=safe_action_url,
+        zendesk_ticket_url=safe_zendesk_ticket_url,
     )
     return {
         "body": body,
@@ -112,6 +117,7 @@ def _render_text(
     original_message: str,
     action_text: str,
     action_url: str | None,
+    zendesk_ticket_url: str | None,
 ) -> str:
     blocks = [
         "Hi team,",
@@ -119,6 +125,8 @@ def _render_text(
         intro,
         "Request summary:\n" + _text_fields(summary_fields),
     ]
+    if zendesk_ticket_url:
+        blocks.insert(2, f"Zendesk ticket: {zendesk_ticket_url}")
     for section in sections:
         section_lines = [section.title]
         if section.body:
@@ -161,10 +169,16 @@ def _render_html(
     original_message: str,
     action_text: str,
     action_url: str | None,
+    zendesk_ticket_url: str | None,
 ) -> str:
     request_type_html = _html_text(request_type)
     title_html = _html_text(title)
     ticket_html = _html_text(ticket_id)
+    ticket_link_html = (
+        f'<a href="{escape(zendesk_ticket_url, quote=True)}" style="color:{_LIGHT_THEME["link"]};text-decoration:underline;">{ticket_html}</a>'
+        if zendesk_ticket_url
+        else ticket_html
+    )
     summary_html = _html_field_rows(summary_fields)
     sections_html = "".join(_html_section(section) for section in sections)
     missing_html = _html_missing_fields(missing_fields, missing_title)
@@ -202,7 +216,7 @@ def _render_html(
                 </tr>
               </table>
               <h1 class=\"email-text\" style=\"margin:14px 0 6px;font-size:25px;line-height:32px;color:{_LIGHT_THEME['text']};font-weight:700;\">{title_html}</h1>
-              <p class=\"email-muted\" style=\"margin:0;font-size:14px;line-height:22px;color:{_LIGHT_THEME['muted']};\">Ticket {ticket_html}</p>
+              <p class=\"email-muted\" style=\"margin:0;font-size:14px;line-height:22px;color:{_LIGHT_THEME['muted']};\">Ticket {ticket_link_html}</p>
             </td>
           </tr>
           <tr>
@@ -339,6 +353,20 @@ def _safe_http_url(value: Any) -> str | None:
     parsed = urlparse(candidate)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return None
+    return candidate
+
+
+def _safe_zendesk_ticket_url(value: Any, ticket_id: str) -> str | None:
+    candidate = _safe_http_url(value)
+    if not candidate:
+        return None
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower()
+    if host != "zendesk.com" and not host.endswith(".zendesk.com"):
+        raise ValueError("Zendesk ticket URL is not from a Zendesk host")
+    match = re.match(r"^/agent/tickets/(\d+)$", parsed.path or "")
+    if not match or match.group(1) != _clean_text(ticket_id):
+        raise ValueError("Zendesk ticket URL does not match ticket id")
     return candidate
 
 

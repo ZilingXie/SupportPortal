@@ -167,6 +167,7 @@ def build_enablement_automation_result(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None = None,
+    zendesk_ticket_url: str | None = None,
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
     generate_customer_reply: bool = True,
 ) -> EnablementAutomationResult:
@@ -222,6 +223,7 @@ def build_enablement_automation_result(
             customer_email=customer_email,
             customer_message=message,
             collected_fields=collected_fields,
+            zendesk_ticket_url=zendesk_ticket_url,
         ),
     )
 
@@ -235,6 +237,7 @@ def build_enablement_automation_result_from_fields(
     ticket_id: str,
     account_case_id: str,
     customer_email: str | None = None,
+    zendesk_ticket_url: str | None = None,
     generate_customer_reply: bool = False,
 ) -> EnablementAutomationResult:
     fields = {
@@ -265,6 +268,7 @@ def build_enablement_automation_result_from_fields(
             customer_email=customer_email,
             customer_message=customer_message,
             collected_fields=fields,
+            zendesk_ticket_url=zendesk_ticket_url,
         ),
     )
 
@@ -426,6 +430,7 @@ def _build_internal_email(
     customer_email: str | None,
     customer_message: str,
     collected_fields: dict[str, str],
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     raw_feature_label = collected_fields["requested_feature_label"]
     feature_key = _clean_text(collected_fields.get("requested_feature")).lower()
@@ -437,7 +442,6 @@ def _build_internal_email(
         ticket_id=ticket_id,
         intro="A customer has requested backend feature enablement.",
         summary_fields=(
-            ("Account Case ID", account_case_id),
             ("Ticket ID", ticket_id),
             ("App ID", app_id),
             ("Customer email", customer_email or "{{customer_email}}"),
@@ -445,6 +449,7 @@ def _build_internal_email(
         sections=(InternalEmailSection(title="Requested feature", fields=(("Feature", feature_label),)),),
         original_message=customer_message,
         action_text="Please reply directly to this email with a customer-shareable handling update.",
+        zendesk_ticket_url=zendesk_ticket_url,
     )
     return {
         "to": "",
@@ -463,6 +468,7 @@ def build_enablement_internal_email_payload(
     customer_email: str | None,
     customer_message: str,
     collected_fields: dict[str, str],
+    zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     """Render a persisted Enablement handoff without re-running extraction."""
     return _build_internal_email(
@@ -471,6 +477,7 @@ def build_enablement_internal_email_payload(
         customer_email=customer_email,
         customer_message=customer_message,
         collected_fields=collected_fields,
+        zendesk_ticket_url=zendesk_ticket_url,
     )
 
 
