@@ -4,6 +4,7 @@ import unittest
 
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.account_reply_jobs import (
+    AccountReplyContractError,
     ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_V8_PREPARING,
@@ -12,6 +13,7 @@ from backend.services.account_reply_jobs import (
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
     create_account_reply_job,
+    normalize_account_reply_contract,
 )
 
 
@@ -73,6 +75,52 @@ class AccountReplyVersionFenceTests(unittest.TestCase):
             account_reply_persona_status_for_stage(job, "scheduled"),
             ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
         )
+
+    def test_nested_and_top_level_intents_must_match(self) -> None:
+        with self.assertRaisesRegex(AccountReplyContractError, "account_reply_intent_conflict"):
+            normalize_account_reply_contract(
+                {"reply_intent": "submission_confirmation"},
+                reply_intent="resolution_update",
+            )
+
+    def test_close_is_derived_from_canonical_intent(self) -> None:
+        facts, intent, close_after_publish = normalize_account_reply_contract(
+            {"reply_intent": "account_suspension_handoff_and_close"},
+        )
+        self.assertEqual(intent, facts["reply_intent"])
+        self.assertTrue(close_after_publish)
+
+        with self.assertRaisesRegex(AccountReplyContractError, "account_reply_close_intent_conflict"):
+            normalize_account_reply_contract(
+                {"reply_intent": "fraud_handoff_confirmation"},
+                close_after_publish=True,
+            )
+
+    def test_job_payload_uses_one_intent_and_derived_close_flag(self) -> None:
+        repository = InMemoryTicketRepository()
+        job = create_account_reply_job(
+            repository,
+            ticket_id="TK-CONTRACT",
+            trigger_message_created_at="2026-08-14T00:00:00+00:00",
+            created_at="2026-08-14T00:00:01+00:00",
+            delay_seconds=360,
+            reply_facts={
+                "behavior": "account_suspension",
+                "reply_intent": "account_suspension_handoff_and_close",
+            },
+        )
+        self.assertEqual(
+            job["payload"]["reply_facts"]["reply_intent"],
+            job["payload"]["reply_intent"],
+        )
+        self.assertTrue(job["payload"]["close_after_publish"])
+
+    def test_unpublished_legacy_fraud_close_is_rejected(self) -> None:
+        with self.assertRaisesRegex(AccountReplyContractError, "legacy_fraud_handoff_close_intent"):
+            normalize_account_reply_contract(
+                {"reply_intent": "fraud_handoff_and_close"},
+                reject_legacy_fraud_close=True,
+            )
 
 
 if __name__ == "__main__":

@@ -4215,6 +4215,54 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         repository.publish_account_reply.assert_called_once()
 
+    def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
+        job = {
+            "job_id": "account-reply-invalid-contract",
+            "ticket_id": "TK-INVALID-CONTRACT",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:01:00+00:00",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "submission_confirmation",
+                },
+                "generated_content": "We are reviewing the request.",
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-INVALID-CONTRACT",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_account_case_by_ticket_id.return_value = None
+        repository.transition_claimed_account_reply_to_human_review.return_value = {
+            **job,
+            "status": "human_review",
+        }
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker._publish_account_reply_job(job)
+
+        repository.publish_account_reply.assert_not_called()
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        self.assertEqual(
+            repository.transition_claimed_account_reply_to_human_review.call_args.kwargs["policy_decision"],
+            "account_reply_contract_human_review",
+        )
+
     def test_persona_reply_facts_are_rendered_before_scheduling(self) -> None:
         job = {
             "job_id": "account-reply-persona-prepare",

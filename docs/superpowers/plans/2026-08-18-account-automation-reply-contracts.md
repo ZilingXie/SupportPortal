@@ -126,14 +126,14 @@ Before the first runtime code edit, read and follow the complete `karpathy-guide
 ## Stage Status
 
 - [x] Stage 0 - Task registry and implementation preflight
-- [ ] Stage 1 - Canonical reply contract and Persona output guarantees
+- [x] Stage 1 - Canonical reply contract and Persona output guarantees
 - [ ] Stage 2 - Fraud, Suspension, and Enablement normal flows
 - [ ] Stage 3 - Full rerun and recovery consistency
 - [ ] Stage 4 - Integrated verification, documentation, and finalize readiness
 - [ ] Stage 5 - One PR, merge, official-stack restart, and build verification
 - [ ] Stage 6 - One full rerun and three-Case live validation
 
-Current stage: `Stage 1`
+Current stage: `Stage 2`
 
 ## Stage 0 - Task Registry And Preflight
 
@@ -515,7 +515,7 @@ Report `状态：已完成` only when:
 | Stage | Status | Changed paths | Verification | Local commit | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | `python3 scripts/generate_project_overview.py --write`; `python3 scripts/generate_project_overview.py --check`; `git diff --check` all passed | pending | Created Task `p1-50`; generator accepts `active` (not the plan shorthand `in_progress`) and `test`/`document` evidence types; no runtime files changed. karpathy-guidelines was read in full before runtime edits. |
-| 1 | pending |  |  |  |  |
+| 1 | completed | `backend/services/account_reply_jobs.py`, `backend/services/automation_persona.py`, `backend/worker.py`, related Persona/version-fence/Worker tests | `python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker` (116 passed); `py_compile` and `git diff --check` passed | pending | Added canonical intent/derived closure contract, rejected intent conflicts and legacy Fraud close jobs, upgraded to `automation-persona-v9`, added intent-specific content checks and deterministic trailing-signature removal, and blocked invalid content before `publish_account_reply()`. |
 | 2 | pending |  |  |  |  |
 | 3 | pending |  |  |  |  |
 | 4 | pending |  |  |  |  |
@@ -524,4 +524,4 @@ Report `状态：已完成` only when:
 
 ## Resume From Here
 
-Start at Stage 1 in the existing task worktree. Do not recreate the branch or worktree. Recheck current Git state and root cleanliness, then implement the canonical reply contract and Persona v9 guarantees. Stage 0 has no runtime changes and is ready to commit.
+Start at Stage 2 in the existing task worktree. Do not recreate the branch or worktree. Recheck current Git state and root cleanliness, then fix the Fraud, Account Suspension, and Enablement normal Intake/customer-reply flows. Stage 1 is implemented and ready to commit.

@@ -21,11 +21,69 @@ ACCOUNT_REPLY_PERSONA_V8_PREPARING = "persona_v8_preparing"
 ACCOUNT_REPLY_PERSONA_V8_SCHEDULED = "persona_v8_scheduled"
 ACCOUNT_REPLY_PERSONA_V8_PUBLISHING = "persona_v8_publishing"
 
-# Customer-visible completion messages that close the linked Account ticket only
-# after the reply has been committed successfully.
-ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE = "enablement_completed_and_close"
-ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE = "fraud_handoff_and_close"
+# Customer-visible reply intents. Closure is derived from this set rather than
+# from an independent caller flag.
+ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION = "request_missing_information"
+ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION = "submission_confirmation"
+ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION = "fraud_handoff_confirmation"
+ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE = "fraud_handoff_and_close"  # legacy, rejected for new jobs
+ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION = "account_suspension_contact_confirmation_request"
 ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE = "account_suspension_handoff_and_close"
+ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE = "enablement_completed_and_close"
+ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE = "resolution_update"
+
+ACCOUNT_REPLY_CLOSE_INTENTS = frozenset(
+    {
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+    }
+)
+ACCOUNT_REPLY_KNOWN_INTENTS = frozenset(
+    {
+        ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
+        ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
+    }
+)
+
+
+class AccountReplyContractError(ValueError):
+    """Raised when an unpublished Account reply violates its intent contract."""
+
+    def __init__(self, code: str) -> None:
+        self.code = "_".join(str(code or "account_reply_contract_failed").strip().lower().split())
+        super().__init__(self.code)
+
+
+def normalize_account_reply_contract(
+    reply_facts: dict[str, Any] | None,
+    *,
+    reply_intent: str | None = None,
+    close_after_publish: bool = False,
+    reject_legacy_fraud_close: bool = False,
+) -> tuple[dict[str, Any], str | None, bool]:
+    """Canonicalize nested/top-level intent and derive the close decision."""
+    facts = copy.deepcopy(reply_facts) if isinstance(reply_facts, dict) else {}
+    nested_intent = str(facts.get("reply_intent") or "").strip().lower() or None
+    top_level_intent = str(reply_intent or "").strip().lower() or None
+    if nested_intent and top_level_intent and nested_intent != top_level_intent:
+        raise AccountReplyContractError("account_reply_intent_conflict")
+    canonical_intent = nested_intent or top_level_intent
+    if canonical_intent and canonical_intent not in ACCOUNT_REPLY_KNOWN_INTENTS:
+        raise AccountReplyContractError("unsupported_account_reply_intent")
+    if canonical_intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE and reject_legacy_fraud_close:
+        raise AccountReplyContractError("legacy_fraud_handoff_close_intent")
+    derived_close = canonical_intent in ACCOUNT_REPLY_CLOSE_INTENTS
+    if close_after_publish and not derived_close:
+        raise AccountReplyContractError("account_reply_close_intent_conflict")
+    if canonical_intent:
+        facts["reply_intent"] = canonical_intent
+    return facts, canonical_intent, derived_close
 
 
 def account_reply_persona_pipeline_for_job(
@@ -111,6 +169,12 @@ def create_account_reply_job(
     trigger_at = datetime.fromisoformat(trigger_message_created_at).astimezone(timezone.utc)
     created_at_value = datetime.fromisoformat(created_at).astimezone(timezone.utc)
     scheduled_for = (max(trigger_at, created_at_value) + timedelta(seconds=delay_seconds)).isoformat()
+    normalized_facts, canonical_intent, derived_close = normalize_account_reply_contract(
+        reply_facts,
+        reply_intent=reply_intent,
+        close_after_publish=close_after_publish,
+        reject_legacy_fraud_close=True,
+    )
     repository.cancel_pending_account_reply_jobs(
         ticket_id,
         updated_at=created_at,
@@ -127,8 +191,8 @@ def create_account_reply_job(
         ),
         "visibility": "account_only",
     }
-    if isinstance(reply_facts, dict) and reply_facts:
-        payload["reply_facts"] = copy.deepcopy(reply_facts)
+    if normalized_facts:
+        payload["reply_facts"] = normalized_facts
         payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
     if persona_assignment:
         payload.update(
@@ -143,10 +207,10 @@ def create_account_reply_job(
     if str(rerun_job_id or "").strip():
         payload["rerun_job_id"] = str(rerun_job_id).strip()
         payload["replace_existing_reply"] = True
-    if close_after_publish:
+    if derived_close:
         payload["close_after_publish"] = True
-    if str(reply_intent or "").strip():
-        payload["reply_intent"] = str(reply_intent).strip()
+    if canonical_intent:
+        payload["reply_intent"] = canonical_intent
     job = {
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": ticket_id,
