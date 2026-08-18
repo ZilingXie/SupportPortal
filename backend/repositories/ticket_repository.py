@@ -8698,7 +8698,7 @@ class PostgresTicketRepository:
                             processing_profile TEXT NOT NULL DEFAULT 'staging',
                             zendesk_ticket_id TEXT,
                             origin_staging_case_id TEXT,
-                            rule_release JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            rule_release JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             source TEXT NOT NULL,
                             external_id TEXT,
                             created_by TEXT,
@@ -8765,7 +8765,7 @@ class PostgresTicketRepository:
                     )
                 )
                 cur.execute(
-                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS rule_release JSONB NOT NULL DEFAULT '{}'::jsonb").format(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS rule_release JSONB NOT NULL DEFAULT '{{}}'::jsonb").format(
                         self._table("support_account_cases"),
                     )
                 )
