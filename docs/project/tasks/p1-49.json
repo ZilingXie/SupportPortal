@@ -4,11 +4,11 @@
   "title": "支持 Account Case 一键派给 Zendesk AI Agent",
   "status": "done",
   "owner": "zac",
-  "summary": "Account Admin 可将关联 Zendesk ticket 保持原 group 并派给配置的 AI Support Agent。",
+  "summary": "Account Admin 可让关联 Zendesk ticket 由配置的 AI Agent 接手，并展示 Zendesk 返回的最终 ownership 和 group。",
   "next_action": "",
   "acceptance_criteria": [
-    "Account Case 详情提供 Assign to AI 操作，只有 Admin 可以执行。",
-    "派单只更新 Zendesk assignee_id，保留 ticket 原 group、status 和 comments。",
+    "Account Case 详情提供 Take ownership as AI 操作，只有 Admin 可以执行。",
+    "操作只发送 Zendesk assignee_id 更新，保留 status 和 comments，并展示 Zendesk 返回的最终 group。",
     "目标用户由服务端配置并校验为 active Agent；Zendesk 拒绝或结果未知时明确提示。"
   ],
   "blockers": [],
@@ -46,7 +46,7 @@
     {
       "at": "2026-08-17",
       "event": "implemented",
-      "summary": "增加 Account Admin Assign to AI 操作，保持 Zendesk ticket 原 group 只更新 assignee。"
+      "summary": "修正 Account Admin ownership 语义，展示 Zendesk 接手后实际返回的最终 group。"
     },
     {
       "at": "2026-08-17",

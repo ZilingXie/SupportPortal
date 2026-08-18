@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260817-account-assign-to-ai-1", html)
+        self.assertIn("20260818-account-take-ownership-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -457,17 +457,26 @@ class AccountUiContractTests(unittest.TestCase):
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
         for marker in (
-            "Assign to AI",
-            "Assigning...",
-            "Assigned to AI",
+            "Take ownership as AI",
+            "Taking ownership...",
+            "AI owns this ticket",
             "assignAccountCaseToAi",
             "zendeskAssignmentPendingCaseId",
             "zendeskAssignmentErrorCaseId",
+            "zendeskOwnershipConfirmationOpen",
+            "zendeskAssignmentTargetSnapshot",
             "zendesk-ai-assignment",
+            "open-zendesk-ownership-confirmation",
+            "confirm-zendesk-ownership",
+            "Zendesk may move this ticket to the AI Agent's default group",
+            "group_changed",
             "No Zendesk ticket linked",
             "finally",
         ):
             self.assertIn(marker, app_source)
+        self.assertNotIn("Assign to AI", app_source)
+        self.assertNotIn("Assigning...", app_source)
+        self.assertNotIn("Assigned to AI", app_source)
         self.assertIn("zendesk-assignment-action", styles)
         self.assertIn("zendesk-assignment-button", styles)
 

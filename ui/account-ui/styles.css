@@ -1449,6 +1449,30 @@ select.input,
   font-weight: 700;
 }
 
+.zendesk-assignment-action--assigned > span {
+  display: grid;
+  gap: 2px;
+}
+
+.zendesk-assignment-group {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.zendesk-assignment-group--changed {
+  color: var(--primary);
+}
+
+.zendesk-assignment-action--assigned > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.zendesk-ownership-modal {
+  width: min(480px, 100%);
+}
+
 .zendesk-assignment-error {
   color: var(--danger);
 }

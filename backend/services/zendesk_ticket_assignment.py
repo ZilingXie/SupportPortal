@@ -26,6 +26,8 @@ class ZendeskAssignmentResult:
     assignee_email: str
     assignee_name: str
     group_id: str | None
+    previous_group_id: str | None
+    group_changed: bool
     status_code: int
     already_assigned: bool
 
@@ -149,6 +151,8 @@ def assign_ticket_to_configured_ai(
             assignee_email=actual_email,
             assignee_name=str(user.get("name") or expected_email).strip(),
             group_id=group_id,
+            previous_group_id=group_id,
+            group_changed=False,
             status_code=200,
             already_assigned=True,
         )
@@ -162,12 +166,15 @@ def assign_ticket_to_configured_ai(
     updated_ticket = updated_payload.get("ticket") if isinstance(updated_payload.get("ticket"), dict) else {}
     if str(updated_ticket.get("assignee_id") or "").strip() != assignee_id:
         raise _assignment_error("outcome_unknown", status_code=status_code, error_code="zendesk_assignment_unverified")
+    final_group_id = str(updated_ticket.get("group_id") or "").strip() or None
     return ZendeskAssignmentResult(
         ticket_id=normalized_ticket_id,
         assignee_id=assignee_id,
         assignee_email=actual_email,
         assignee_name=str(user.get("name") or expected_email).strip(),
-        group_id=group_id,
+        group_id=final_group_id,
+        previous_group_id=group_id,
+        group_changed=bool(group_id and final_group_id and group_id != final_group_id),
         status_code=status_code,
         already_assigned=False,
     )
