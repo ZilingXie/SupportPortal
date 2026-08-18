@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_ai_execution import AccountProcessingFailure, AccountRerunDegradedError
@@ -490,6 +491,48 @@ def reprocess_account_case(
     ).strip()
     account_billing_registration = account_billing_handler(account_billing_subcategory)
     registration = account_automation_handler(action)
+    classification = dict(current.get("route_classification") or {})
+    legacy_suspension_requires_migration = (
+        action == "account_suspension"
+        and account_billing_subcategory == "account_suspension"
+        and str(current.get("route_status") or "").strip() != "automated"
+        and str(current.get("route_family") or "").strip() == "human_review"
+        and str(classification.get("route_target") or "").strip() == "human_review"
+        and str(classification.get("route_reason_code") or "").strip()
+        == "registered_account_suspension"
+        and not list(classification.get("account_billing_additional_intents") or [])
+    )
+    if legacy_suspension_requires_migration:
+        # The legacy deterministic route classified Suspension for review. A
+        # full rerun is the explicit migration boundary to the active workflow.
+        classification.update(
+            route_target="automation",
+            human_review_reason=None,
+            handler_binding_status="active",
+            automation_migrated_from="legacy_account_suspension_review",
+        )
+        current = {
+            **current,
+            "route_family": AUTOMATED_ROUTE_FAMILY,
+            "route_status": "automated",
+            "category": "account_billing",
+            "subcategory": "account_suspension",
+            "automation_handler": "account_suspension",
+            "automation_status": "automation",
+            "route_classification": classification,
+        }
+        rerouted = AccountCaseReroute(
+            account_case=current,
+            route_execution={
+                **dict(rerouted.route_execution),
+                "final_route": "account_suspension",
+                "route_family": AUTOMATED_ROUTE_FAMILY,
+                "classification": classification,
+                "legacy_suspension_migrated": True,
+            },
+            previous_pipeline_version=rerouted.previous_pipeline_version,
+            changed=True,
+        )
     if (
         registration is not None
         and registration.implementation == "account_suspension"

@@ -370,6 +370,48 @@ class AccountFullRerouteTests(unittest.TestCase):
         )
         self.assertNotIn("customer@example.com", str(workflow.get("confirmed_email")))
 
+    def test_legacy_account_suspension_review_is_migrated_by_full_rerun(self) -> None:
+        original = {
+            **_case(action="account_suspension"),
+            "category": "account_billing",
+            "subcategory": "account_suspension",
+            "route_family": "human_review",
+            "route_status": "not_automated",
+            "automation_handler": None,
+            "automation_status": "not_automated",
+            "route_classification": {
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "account_suspension",
+                "account_billing_additional_intents": [],
+                "route_target": "human_review",
+                "human_review_reason": "registered_account_suspension",
+                "route_reason_code": "registered_account_suspension",
+            },
+        }
+        extractor = Mock(
+            return_value=AccountSuspensionFieldExtraction(
+                status="partial",
+                collected_fields={"suspension_status_or_error": "account suspended"},
+                grounding_status="passed",
+            )
+        )
+
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_suspension=extractor,
+        )
+
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "account_suspension")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["route_family"], "automated")
+        self.assertEqual(result.account_case["automation_handler"], "account_suspension")
+        self.assertEqual(result.handler_status, "active")
+        self.assertEqual(result.reply_kind, "suspension_contact_confirmation")
+        self.assertTrue(result.route_execution["legacy_suspension_migrated"])
+
     def test_account_suspension_rerun_uses_later_explicit_confirmation(self) -> None:
         original = _case(action="account_suspension")
         ticket = {
