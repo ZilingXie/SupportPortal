@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T07:58:17Z",
-  "source_base_commit": "81f472e208d1c577d8848488dd0578274b93c64f",
-  "registry_digest": "f96331d4a4efc32bdd87fae5ffae78c0ac281252321f609219cf101bbc8bad42",
+  "generated_at": "2026-08-18T11:36:50Z",
+  "source_base_commit": "817433773b2f4c0d4c41faeaa74aa38633c2b20e",
+  "registry_digest": "c62d0fe622fe2e6fadd35f67febed9ecb9b1feae0496a9f84b7b490b636e96b8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -820,6 +820,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account Zendesk internal comment timeout and regression tests",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Production Zendesk delivery gate, audit readback, and Admin production-view regressions",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge schema bootstrap and production delivery regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
         },
         {
           "type": "test",
@@ -2272,7 +2282,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "完成 AI 回复写回 Zendesk：internal comment，已完成",
       "status": "done",
       "owner": "zac",
-      "summary": "Account AI 消息已支持幂等写回 Zendesk internal comment。",
+      "summary": "Production 注册 Automation 的 Account AI 回复可幂等写回 Zendesk private internal comment，并以只读 audit 回查处理未知投递结果。",
       "next_action": "",
       "acceptance_criteria": [
         "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。"
@@ -2299,13 +2309,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account Zendesk internal comment timeout and regression tests",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment -q"
+        },
+        {
+          "type": "test",
+          "label": "Production Zendesk delivery gate, audit readback, and Admin production-view regressions",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge schema bootstrap and production delivery regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py -q"
         }
       ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-17",
+      "updated_at": "2026-08-18",
       "history": [
         {
           "at": "2026-08-16",
@@ -2341,6 +2361,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 zendesk-delivery 重新归类到 zendesk-connection。"
+        },
+        {
+          "at": "2026-08-18",
+          "event": "production_delivery_safety_hardened",
+          "summary": "Production 写回仅允许当前注册 Automation；Zendesk outcome_unknown 或遗留 pending delivery 只执行 private audit 回查，绝不重复 PUT；Workspace Admin Account 指标和自动化列表显式读取 production profile。真实合成 Zendesk 验收在合并后执行。"
+        },
+        {
+          "at": "2026-08-18",
+          "event": "schema_bootstrap_sql_format_fixed",
+          "summary": "首次合并后的官方 local_lightweight 栈启动暴露 support_account_cases rule_release JSONB 默认值在 psycopg SQL.format 模板中未转义的问题；修复 CREATE 和 ALTER TABLE 模板的双大括号转义，并将 Account Case 持久化契约测试更新为 44 字段。254 项 repository、Zendesk、Worker 和 Admin 回归通过；合并后重新执行官方栈健康验证。"
         }
       ],
       "legacy_refs": [

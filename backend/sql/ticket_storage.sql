@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     account_case_id TEXT NOT NULL UNIQUE,
     billing_ticket_id TEXT PRIMARY KEY,
     client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    processing_profile TEXT NOT NULL DEFAULT 'staging' CHECK (processing_profile IN ('staging', 'production')),
+    zendesk_ticket_id TEXT,
+    origin_staging_case_id TEXT,
+    rule_release JSONB NOT NULL DEFAULT '{}'::jsonb,
     source TEXT NOT NULL,
     external_id TEXT,
     created_by TEXT,
@@ -98,6 +102,25 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     route_review_status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_cases_profile_zendesk_ticket
+    ON support_account_cases (processing_profile, zendesk_ticket_id)
+    WHERE zendesk_ticket_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
+    account_case_id TEXT NOT NULL REFERENCES support_account_cases(account_case_id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    zendesk_ticket_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    is_public BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_public = FALSE),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'outcome_unknown', 'failed')),
+    zendesk_comment_id TEXT,
+    failure_code TEXT,
+    confirmed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (account_case_id, message_id)
 );
 
 CREATE TABLE IF NOT EXISTS support_billing_response_tokens (

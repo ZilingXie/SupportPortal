@@ -3682,3 +3682,41 @@ For each new entry, record:
   - Preflight failures report the frozen total and accurate unprocessed Case count instead of zero.
 - Verification:
   - Account preflight, rerun lifecycle, fail-fast/Resume, UI contract, Node syntax, feature-list verification, and `git diff --check`.
+
+## 2026-08-18 - Production Account Zendesk delivery safety
+
+- Area or subsystem: production Account reply publication, Zendesk internal-comment delivery ledger, and Workspace Admin Account operations
+- Prompt or model version: No prompt or model content change. Production cases continue to persist the promoted runtime Prompt release snapshot.
+- Summary: Production replies can write a Zendesk `public=false` internal comment only when their Case remains a currently registered Automation. The delivery ledger now reconciles `pending` and `outcome_unknown` records with a read-only Zendesk audit lookup; reconciliation never issues a second PUT. Workspace Admin Account automation and billing metrics explicitly read the production profile.
+- Reason: A production Case must not permit a manual or retired route to create an external side effect, and an ambiguous Zendesk write outcome must be confirmed remotely before any future operator action rather than retried blindly.
+- Affected files or config:
+  - `backend/worker.py`
+  - `backend/services/zendesk_comments.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/main.py`
+  - `backend/services/account_admin.py`
+- Expected behavior change:
+  - Staging, non-production, unregistered, and retired Automation replies never create a Zendesk delivery claim or comment.
+  - A successful audit match records the Zendesk comment id as delivered; a missing or unreadable match stays `outcome_unknown` without a resend.
+  - `/api/workspace/admin/account-automation` and Account billing metrics return production-profile data only.
+- Verification:
+  - `141 passed, 22 subtests passed` across Zendesk, Worker, Workspace Admin, and Account Admin targeted tests.
+  - Python and Node syntax checks plus `git diff --check` passed.
+  - A live synthetic Zendesk ticket acceptance remains scheduled after the merged root-main stack is running.
+
+## 2026-08-18 - Production Account schema bootstrap correction
+
+- Area or subsystem: production Account Case PostgreSQL bootstrap
+- Prompt or model version: No prompt or model content change.
+- Summary: Corrected JSON object defaults in the support_account_cases CREATE TABLE and ALTER TABLE templates so Psycopg SQL.format treats them as literals instead of extra placeholders. Updated the Account Case persistence contract from 40 to 44 fields and aligned raw-SQL documentation assertions with raw SQL brace syntax.
+- Reason: The first merged local_lightweight stack startup failed before API readiness because an unescaped JSON default caused SQL.format to raise IndexError. No Zendesk synthetic write was attempted while the API was unhealthy.
+- Affected files or config:
+  - backend/repositories/ticket_repository.py
+  - backend/tests/test_repository_configuration.py
+- Expected behavior change:
+  - Runtime schema initialization composes both the CREATE TABLE and migration ALTER TABLE statements without formatting errors.
+  - The bootstrap regression test executes PostgresTicketRepository.initialize through Psycopg composables and asserts the rule_release JSON default.
+- Verification:
+  - 254 passed, 22 subtests passed across repository initialization plus Zendesk, Worker, Workspace Admin, and Account Admin targeted tests.
+  - Python compilation and git diff --check passed.
+  - Official root-main stack health and synthetic Zendesk acceptance will be rerun after the repair PR merges.

@@ -4,6 +4,8 @@ import hashlib
 import logging
 import os
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +29,9 @@ class PromptRuntimeSnapshot:
 
 _SNAPSHOT: PromptRuntimeSnapshot | None = None
 _SNAPSHOT_LOCK = threading.Lock()
+_OVERRIDE_SNAPSHOT: ContextVar[PromptRuntimeSnapshot | None] = ContextVar(
+    "prompt_runtime_override_snapshot", default=None
+)
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -139,7 +144,7 @@ def initialize_prompt_runtime_from_environment(*, service_name: str) -> PromptRu
 
 
 def resolve_system_prompt(prompt_key: str, fallback: str) -> str:
-    snapshot = _SNAPSHOT
+    snapshot = _OVERRIDE_SNAPSHOT.get() or _SNAPSHOT
     if snapshot is None:
         if _env_flag("PROMPT_RELEASE_REQUIRED", default=False):
             raise RuntimeError("Prompt runtime was not initialized")
@@ -150,6 +155,28 @@ def resolve_system_prompt(prompt_key: str, fallback: str) -> str:
             raise RuntimeError(f"Managed prompt {prompt_key} is missing from {snapshot.release_id}")
         return str(fallback)
     return content
+
+
+def current_prompt_runtime_snapshot() -> PromptRuntimeSnapshot:
+    """Return the initialized runtime snapshot for an immutable Case release."""
+    snapshot = _OVERRIDE_SNAPSHOT.get() or _SNAPSHOT
+    if snapshot is None:
+        snapshot = _code_snapshot()
+    return PromptRuntimeSnapshot(
+        release_id=snapshot.release_id,
+        prompts=dict(snapshot.prompts),
+        source=snapshot.source,
+    )
+
+
+@contextmanager
+def use_prompt_runtime_snapshot(snapshot: PromptRuntimeSnapshot):
+    """Temporarily route a request through its frozen managed Prompt release."""
+    token = _OVERRIDE_SNAPSHOT.set(snapshot)
+    try:
+        yield
+    finally:
+        _OVERRIDE_SNAPSHOT.reset(token)
 
 
 def prompt_runtime_info() -> dict[str, Any]:

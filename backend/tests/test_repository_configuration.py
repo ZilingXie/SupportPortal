@@ -411,9 +411,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
     def test_account_case_upsert_contract_has_matching_columns_placeholders_and_parameters(self) -> None:
         contract = account_case_upsert_contract()
         self.assertEqual(contract, {
-            "column_count": 40,
-            "placeholder_count": 40,
-            "parameter_count": 40,
+            "column_count": 44,
+            "placeholder_count": 44,
+            "parameter_count": 44,
             "consistent": True,
         })
         record = {
@@ -428,7 +428,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         values = _account_case_persisted_values(record, created_at="now", updated_at="now")
         self.assertEqual(len(ACCOUNT_CASE_PERSISTED_COLUMNS), len(values))
         rendered = account_case_upsert_sql(sql.Identifier("support_account_cases")).as_string()
-        self.assertEqual(rendered.count("%s"), 40)
+        self.assertEqual(rendered.count("%s"), 44)
     def test_account_filter_python_and_postgres_membership_fixture_parity(self) -> None:
         for _name, item, expected in ACCOUNT_CASE_FILTER_PARITY_FIXTURES:
             self.assertEqual(account_case_filter_memberships(item), expected)
@@ -1535,7 +1535,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("route_review_status TEXT NOT NULL DEFAULT 'pending'", sql_source)
         self.assertIn("def mark_billing_route_reviewed", repo_source)
 
-    def test_ticket_repository_initialize_escapes_case_memory_ledger_jsonb_default_for_sql_formatting(self) -> None:
+    def test_ticket_repository_initialize_escapes_jsonb_defaults_for_sql_formatting(self) -> None:
         cursor = _ReusableCursor()
         connection = _ReusableConnection(cursor)
         repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
@@ -1550,6 +1550,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
         self.assertIn("support_case_memory_ledger", executed_sql)
         self.assertIn("metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
+        self.assertIn("support_account_cases", executed_sql)
+        self.assertIn("rule_release JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
 
     def test_ticket_repository_initialize_holds_advisory_lock_in_one_transaction(self) -> None:
         cursor = _ReusableCursor()
