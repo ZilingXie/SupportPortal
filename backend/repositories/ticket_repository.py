@@ -2022,6 +2022,7 @@ class TicketRepository(Protocol):
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
         assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
         events: list[dict[str, Any]], completed_at: str,
+        close_after_publish: bool = False,
     ) -> bool: ...
 
     def record_rollout_event(
@@ -3430,6 +3431,9 @@ class InMemoryTicketRepository:
                     superseded_at=published_at,
                 )
             ticket["updated_at"] = published_at
+            if payload.get("close_after_publish"):
+                ticket["status"] = "resolved"
+                ticket["closed_at"] = published_at
             if billing_ticket is not None:
                 billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
                 billing_ticket["updated_at"] = published_at
@@ -5252,6 +5256,7 @@ class InMemoryTicketRepository:
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
         assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
         events: list[dict[str, Any]], completed_at: str,
+        close_after_publish: bool = False,
     ) -> bool:
         with self._assignment_lock:
             claim = self._automation_reply_claims.get(str(automation_reply_key))
@@ -5266,6 +5271,9 @@ class InMemoryTicketRepository:
                 if not any((item.get("meta") or {}).get("automation_reply_key") == automation_reply_key for item in ticket.get("messages", [])):
                     ticket.setdefault("messages", []).append(message)
             ticket["updated_at"] = completed_at
+            if close_after_publish:
+                ticket["status"] = "resolved"
+                ticket["closed_at"] = completed_at
             account_case = next((item for item in self._billing_tickets.values() if item.get("client_ticket_id") == ticket_id), None)
             if account_case is None:
                 raise ValueError(f"account case not found for {ticket_id}")
@@ -11599,6 +11607,7 @@ class PostgresTicketRepository:
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
         assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
         events: list[dict[str, Any]], completed_at: str,
+        close_after_publish: bool = False,
     ) -> bool:
         allowed_case_fields = {
             "route", "scope_label", "route_family", "execution_action", "tooling_profile",
@@ -11631,6 +11640,11 @@ class PostgresTicketRepository:
                     cur.execute(sql.SQL("UPDATE {} SET updated_at=%s WHERE ticket_id=%s").format(self._table("support_tickets")), (completed_at, ticket_id))
                     if cur.rowcount != 1:
                         raise ValueError(f"linked support ticket not found for {ticket_id}")
+                    if close_after_publish:
+                        cur.execute(
+                            sql.SQL("UPDATE {} SET status='resolved',closed_at=%s,updated_at=%s WHERE ticket_id=%s").format(self._table("support_tickets")),
+                            (completed_at, completed_at, ticket_id),
+                        )
                     if assistant_message:
                         meta = _ticket_message_meta(assistant_message)
                         meta["automation_reply_key"] = automation_reply_key
@@ -14341,6 +14355,13 @@ class PostgresTicketRepository:
                     ).format(self._table("support_account_cases")),
                     (effective_content, published_at, ticket_id),
                 )
+                if payload.get("close_after_publish"):
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='resolved',closed_at=%s,updated_at=%s WHERE ticket_id=%s"
+                        ).format(self._table("support_tickets")),
+                        (published_at, published_at, ticket_id),
+                    )
                 cur.execute(
                     sql.SQL(
                         "INSERT INTO {} (execution_id,ticket_id,payload,created_at) VALUES (%s,%s,%s,%s) "

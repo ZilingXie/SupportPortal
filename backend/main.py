@@ -771,6 +771,8 @@ def _create_account_reply_job(
     persona_assignment: dict[str, Any] | None = None,
     automation_delivery_key: str | None = None,
     rerun_job_id: str | None = None,
+    close_after_publish: bool = False,
+    reply_intent: str | None = None,
 ) -> dict[str, Any]:
     created_at = now_iso()
     return create_account_reply_job(
@@ -785,6 +787,8 @@ def _create_account_reply_job(
         persona_assignment=persona_assignment,
         automation_delivery_key=automation_delivery_key,
         rerun_job_id=rerun_job_id,
+        close_after_publish=close_after_publish,
+        reply_intent=reply_intent,
     )
 
 
@@ -4419,7 +4423,9 @@ def _build_account_ticket_view_model(
         "automation_handler": automation_handler,
         "automation_mode": route_classification.get("automation_mode") or (
             "classification_only"
-            if subcategory == "account_suspension" or category == "security_compliance"
+            if route_status != "automated" and (
+                subcategory == "account_suspension" or category == "security_compliance"
+            )
             else "active"
             if route_status == "automated" else None
         ),
@@ -5147,6 +5153,31 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
             enablement_email_attempt = None
             quota_email_attempt = None
             automation_attempt = None
+        elif route == "account_suspension" and not automation_attempt.get("internal_email_to_send"):
+            # Do not claim automation or create a reply job without a trusted
+            # internal handoff payload for the suspension case.
+            is_automation_route = False
+            is_billing_route = False
+            response_status = "not_automated"
+            route_metadata.update(
+                {
+                    "route_status": "not_automated",
+                    "automation_handler": None,
+                }
+            )
+            route_classification.update(
+                {
+                    "route_target": "human_review",
+                    "human_review_reason": "account_billing_classification_only",
+                    "handler_binding_status": None,
+                }
+            )
+            missing_fields = []
+            collected_fields = dict(automation_attempt.get("collected_fields") or {})
+            internal_email_payload = None
+            internal_email_send_status = "not_applicable"
+            internal_email_send_reason = "account_billing_classification_only"
+            automation_context = {}
         else:
             missing_fields = list(automation_attempt["missing_fields"])
             collected_fields = dict(automation_attempt["collected_fields"])
@@ -5165,10 +5196,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
             route_classification["handler_binding_status"] = "active" if missing_fields else "completed"
             if automation_attempt.get("internal_email_to_send"):
                 route_classification["handler_binding_status"] = "completed"
-    elif (
-        account_billing_registration is not None
-        and account_billing_registration.implementation == "classification_only"
-    ):
+    elif account_billing_subcategory == "account_suspension" and not is_automation_route:
         classification_attempt = _build_account_suspension_classification_attempt(
             ticket_subject=title,
             customer_messages=list(ticket.get("messages") or []),
@@ -5329,6 +5357,14 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                     persona_assignment=persona_assignment,
                     automation_delivery_key=str(
                         (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                    ),
+                    close_after_publish=route in {"fraud_account", "account_suspension"},
+                    reply_intent=(
+                        "fraud_handoff_and_close"
+                        if route == "fraud_account"
+                        else "account_suspension_handoff_and_close"
+                        if route == "account_suspension"
+                        else None
                     ),
                 )
             except Exception as exc:
@@ -9338,10 +9374,7 @@ async def _reply_to_billing_ticket_impl(
                 billing_ticket["automation_status"] = "automation"
         else:
             account_billing_registration = account_billing_handler(account_billing_subcategory)
-            if (
-                account_billing_registration is not None
-                and account_billing_registration.implementation == "classification_only"
-            ):
+            if account_billing_subcategory == "account_suspension" and not is_automation_route:
                 classification_attempt = _build_account_suspension_classification_attempt(
                     ticket_subject=str(
                         canonical_ticket.get("subject") or billing_ticket.get("title") or ""
@@ -9567,6 +9600,14 @@ async def _reply_to_billing_ticket_impl(
                 automation_delivery_key=(
                     str((billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or "")
                     if not requested_field_keys
+                    else None
+                ),
+                close_after_publish=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() in {"fraud_account", "account_suspension"},
+                reply_intent=(
+                    "fraud_handoff_and_close"
+                    if str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "fraud_account"
+                    else "account_suspension_handoff_and_close"
+                    if str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "account_suspension"
                     else None
                 ),
             )

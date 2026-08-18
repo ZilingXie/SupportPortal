@@ -690,7 +690,11 @@ def account_route_metadata(
         normalized_classification.get("account_billing_subcategory") or ""
     ).strip().lower()
     if agora_route == "account_billing":
-        return account_billing_metadata(account_billing_subcategory)
+        metadata = account_billing_metadata(account_billing_subcategory)
+        normalized_family = str(route_family or "").strip().lower()
+        if normalized_family not in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}:
+            metadata.update({"route_status": "not_automated", "automation_handler": None})
+        return metadata
     if agora_route == "security_compliance":
         return security_compliance_metadata()
     legacy_automation_subcategory = str(
@@ -1106,12 +1110,15 @@ def _legacy_result(
         )
     )
     if is_deterministic_suspension:
-        action = "human_review_required"
+        action = "account_suspension"
         classification.update(
             agora_route="account_billing",
             account_billing_subcategory="account_suspension",
+            route_target="automation",
+            human_review_reason=None,
             route_reason_code="registered_account_suspension",
             stage_reason_codes={"legacy": "registered_account_suspension"},
+            handler_binding_status="active",
         )
         decision = _decision(
             scope_label="account_billing",
@@ -1119,9 +1126,10 @@ def _legacy_result(
             confidence=decision.confidence,
             reason="registered_account_suspension",
             response_language=decision.response_language,
-            route_family="human_review",
+            route_family=AUTOMATED_ROUTE_FAMILY,
+            tooling_profile=BILLING_TOOLING_PROFILE,
             semantic_intent="account_billing.account_suspension",
-            not_automated_reason="registered_account_suspension",
+            automation_eligibility="eligible",
             risk_flags=decision.risk_flags,
             evidence_spans=_sanitize_evidence(decision.evidence_spans),
             router_source="account_legacy_fallback",
@@ -1138,7 +1146,7 @@ def _legacy_result(
             }
         )
     if is_registered_automation(route_family=decision.route_family, execution_action=action):
-        if action in {"fraud_account", "detailed_invoice"}:
+        if action in {"fraud_account", "detailed_invoice", "account_suspension"}:
             classification.update(
                 agora_route="account_billing",
                 account_billing_subcategory=action,
@@ -1152,7 +1160,7 @@ def _legacy_result(
                 reason=(
                     "registered_fraud_account"
                     if action == "fraud_account"
-                    else "detailed_invoice_requested"
+                    else ("registered_account_suspension" if action == "account_suspension" else "detailed_invoice_requested")
                 ),
                 response_language=decision.response_language,
                 route_family=AUTOMATED_ROUTE_FAMILY,
@@ -1608,6 +1616,9 @@ def decide_account_route(
             for value in list(account_billing_payload.get("additional_intents") or [])[:4]
             if " ".join(str(value or "").split()).strip()
         ]
+        suspension_has_additional_intents = (
+            subcategory == "account_suspension" and bool(billing_additional_intents)
+        )
         classification.update(
             account_billing_subcategory=subcategory,
             account_billing_additional_intents=list(dict.fromkeys(billing_additional_intents)),
@@ -1616,9 +1627,17 @@ def decide_account_route(
                     [*classification.get("additional_intents", []), *billing_additional_intents]
                 )
             ),
-            route_target=("automation" if subcategory in {"fraud_account", "detailed_invoice"} else "human_review"),
+            route_target=(
+                "automation"
+                if subcategory in {"fraud_account", "detailed_invoice", "account_suspension"}
+                and not suspension_has_additional_intents
+                else "human_review"
+            ),
             human_review_reason=(
-                None if subcategory in {"fraud_account", "detailed_invoice"} else account_billing_reason
+                None
+                if subcategory in {"fraud_account", "detailed_invoice"}
+                or (subcategory == "account_suspension" and not suspension_has_additional_intents)
+                else account_billing_reason
             ),
             route_reason_code=account_billing_reason,
         )
@@ -1630,7 +1649,9 @@ def decide_account_route(
                 *_sanitize_evidence(account_billing_payload.get("evidence_spans")),
             ]
         )
-        if subcategory in {"fraud_account", "detailed_invoice"}:
+        if subcategory in {"fraud_account", "detailed_invoice"} or (
+            subcategory == "account_suspension" and not suspension_has_additional_intents
+        ):
             classification["handler_binding_status"] = "active"
             return finish(_result(
                 classification,

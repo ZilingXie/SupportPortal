@@ -21,6 +21,12 @@ ACCOUNT_REPLY_PERSONA_V8_PREPARING = "persona_v8_preparing"
 ACCOUNT_REPLY_PERSONA_V8_SCHEDULED = "persona_v8_scheduled"
 ACCOUNT_REPLY_PERSONA_V8_PUBLISHING = "persona_v8_publishing"
 
+# Customer-visible completion messages that close the linked Account ticket only
+# after the reply has been committed successfully.
+ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE = "enablement_completed_and_close"
+ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE = "fraud_handoff_and_close"
+ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE = "account_suspension_handoff_and_close"
+
 
 def account_reply_persona_pipeline_for_job(
     job: dict[str, Any],
@@ -99,6 +105,8 @@ def create_account_reply_job(
     persona_assignment: dict[str, Any] | None = None,
     automation_delivery_key: str | None = None,
     rerun_job_id: str | None = None,
+    close_after_publish: bool = False,
+    reply_intent: str | None = None,
 ) -> dict[str, Any]:
     trigger_at = datetime.fromisoformat(trigger_message_created_at).astimezone(timezone.utc)
     created_at_value = datetime.fromisoformat(created_at).astimezone(timezone.utc)
@@ -135,6 +143,10 @@ def create_account_reply_job(
     if str(rerun_job_id or "").strip():
         payload["rerun_job_id"] = str(rerun_job_id).strip()
         payload["replace_existing_reply"] = True
+    if close_after_publish:
+        payload["close_after_publish"] = True
+    if str(reply_intent or "").strip():
+        payload["reply_intent"] = str(reply_intent).strip()
     job = {
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": ticket_id,

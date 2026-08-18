@@ -225,6 +225,13 @@ def build_account_automation_reply_facts(
                 "customer_update_commitment": "update_when_available",
             }
         )
+        if behavior.lower() == "enablement":
+            facts.update(
+                {
+                    "activation_sla": "up to 24 hours",
+                    "change_window": "Monday-Friday",
+                }
+            )
         return facts
     facts = build_automation_reply_facts(
         behavior=behavior,
@@ -248,6 +255,15 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     """Apply the ownership contract to persisted facts from older reply jobs."""
     facts = dict(reply_facts or {})
     reply_intent = str(facts.get("reply_intent") or "").strip().lower()
+    if reply_intent in {
+        "enablement_completed_and_close",
+        "fraud_handoff_and_close",
+        "account_suspension_handoff_and_close",
+    }:
+        facts["performed_actions"] = []
+        facts["resolution_status"] = "completed"
+        facts["customer_update_commitment"] = "case_closed"
+        return facts
     if reply_intent == "submission_confirmation":
         facts["performed_actions"] = []
         facts["next_step"] = None
@@ -265,9 +281,22 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
 def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
     """Reject replies that delegate the customer relationship to an internal team."""
     intent = str(reply_facts.get("reply_intent") or "").strip().lower()
+    normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
+    if intent in {
+        "enablement_completed_and_close",
+        "fraud_handoff_and_close",
+        "account_suspension_handoff_and_close",
+    }:
+        lowered = normalized.casefold()
+        if intent == "enablement_completed_and_close":
+            required = ("enabled", "close", "new case")
+        else:
+            required = ("24", "close", "reopen")
+        if not all(token in lowered for token in required):
+            raise AutomationPersonaError("automation_persona_completion_contract_failed")
+        return
     if intent not in {"submission_confirmation", "request_missing_information"}:
         return
-    normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
     lowered = normalized.casefold()
     delegated_support_owner = re.search(
         r"(?:^|[.!?\n])\s*the\s+(?:assigned\s+)?support\s+engineer\b"

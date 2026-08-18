@@ -45,6 +45,9 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+    ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
+    ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
     is_account_reply_persona_preparing_status,
     is_account_reply_persona_publishing_status,
 )
@@ -1743,9 +1746,21 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             dict(collected_fields)
             if handler == "enablement" else {"products": collected_fields.get("products") or []}
         )
+        enablement_completed = False
+        if handler == "enablement":
+            lowered_note = note.casefold()
+            enablement_completed = bool(
+                re.search(r"\b(?:enabled|activated|provisioned|turned on)\b", lowered_note)
+                and not re.search(r"\b(?:not enabled|unable to enable|cannot enable|can't enable)\b", lowered_note)
+            )
+        reply_intent = (
+            ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE
+            if enablement_completed
+            else "resolution_update"
+        )
         customer_reply = _render_case_persona_reply(
             ticket_id=client_ticket_id, case=account_case, behavior=handler,
-            reply_intent="resolution_update", known_information=known_information,
+            reply_intent=reply_intent, known_information=known_information,
             source_facts=[note], resolution_status="completed",
             save_case=ticket_repository.save_account_case, persist_failure=False,
         )
@@ -1783,6 +1798,7 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                                   "updated_at": timestamp},
             events=[{"event_type": resolution_name, "payload": resolution_event},
                     {"event_type": followup_name, "payload": followup_event}], completed_at=timestamp,
+            close_after_publish=enablement_completed,
         )
         return "completed" if committed else "in_progress"
     except Exception as exc:
