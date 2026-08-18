@@ -23,6 +23,7 @@ from backend.repositories.ticket_repository import (
 )
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
+from backend.services.zendesk_comments import ZendeskCommentError, ZendeskCommentResult
 
 if importlib.util.find_spec("redis") is None:
     redis_module = types.ModuleType("redis")
@@ -190,6 +191,55 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(
             calls,
             ["resolve_closed", "reassign_off_schedule", "reassign_due", "dispatch_pending"],
+        )
+
+    def test_production_reply_delivery_skips_unregistered_automation(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-1",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12807",
+            "route_family": "automated",
+            "execution_action": "detailed_invoice",
+        }
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "add_internal_comment"
+        ) as add_comment:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12807", job_id="reply-1", content="Private reply"
+            )
+
+        repository.claim_account_zendesk_comment_delivery.assert_not_called()
+        add_comment.assert_not_called()
+
+    def test_existing_unknown_delivery_uses_readback_without_resending(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-1",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12807",
+            "route_family": "automated",
+            "execution_action": "fraud_account",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "created": False,
+            "status": "outcome_unknown",
+        }
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "add_internal_comment"
+        ) as add_comment, patch.object(
+            worker, "find_private_internal_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-1", status_code=200),
+        ) as find_comment:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12807", job_id="reply-1", content="Private reply"
+            )
+
+        add_comment.assert_not_called()
+        find_comment.assert_called_once_with(ticket_id="12807", body="Private reply")
+        self.assertEqual(
+            repository.complete_account_zendesk_comment_delivery.call_args.kwargs["status"],
+            "delivered",
         )
 
     def test_worker_rag_executor_uses_extended_timeout_and_recovery_window(self) -> None:

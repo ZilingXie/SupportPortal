@@ -217,7 +217,15 @@ from backend.services.account_case_filters import (
     normalize_account_case_filter,
 )
 from backend.services.agent_config import build_agent_config_payload
-from backend.services.prompt_runtime import initialize_prompt_runtime, initialize_prompt_runtime_from_environment, prompt_runtime_info, resolve_system_prompt
+from backend.services.prompt_runtime import (
+    PromptRuntimeSnapshot,
+    current_prompt_runtime_snapshot,
+    initialize_prompt_runtime,
+    initialize_prompt_runtime_from_environment,
+    prompt_runtime_info,
+    resolve_system_prompt,
+    use_prompt_runtime_snapshot,
+)
 from backend.services.prompt_versioning import PromptVersionService
 from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
@@ -4953,7 +4961,18 @@ async def assign_account_case_to_zendesk_ai(
     )
 
 
-async def _create_account_intake_impl(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
+async def _create_account_intake_impl(
+    request: AccountIntakeRequest,
+    http_request: Request | None,
+    *,
+    ticket_id_override: str | None = None,
+    processing_profile: str = "staging",
+    origin_staging_case_id: str | None = None,
+    zendesk_ticket_id: str | None = None,
+    rule_release: dict[str, Any] | None = None,
+    idempotency_scope: str = "account_intake",
+    intake_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     title = " ".join(str(request.title or "").split()).strip()
     question = str(request.question or "").strip()
     if not question:
@@ -4961,15 +4980,19 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
     if not title:
         title = derive_ticket_title(question)
 
-    ticket_id = _resolve_account_ticket_id(request)
-    intake_payload = await http_request.json()
+    ticket_id = str(ticket_id_override or _resolve_account_ticket_id(request)).strip()
+    if not ticket_id:
+        raise HTTPException(status_code=422, detail="ticket_id is required")
+    external_zendesk_ticket_id = str(zendesk_ticket_id or ticket_id).strip()
+    if intake_payload is None:
+        intake_payload = await http_request.json() if http_request is not None else {}
     intake_identity = _account_intake_identity(request, payload=intake_payload, ticket_id=ticket_id)
     request_started_at = now_iso()
     idempotency_key = _account_intake_idempotency_key(request)
     if idempotency_key:
         idempotency_record = await async_to_thread(
             ticket_repository.begin_idempotent_request,
-            "account_intake",
+            idempotency_scope,
             idempotency_key,
             created_at=request_started_at,
         )
@@ -5087,7 +5110,9 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=str(request.customer_email or "").strip() or None,
-                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
+                zendesk_ticket_url=_account_zendesk_ticket_url(
+                    ticket.get("source"), external_zendesk_ticket_id
+                ),
             )
             automation_attempt = billing_email_attempt
         elif handler_registration.implementation == "billing":
@@ -5098,7 +5123,9 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 billing_ticket_id=billing_ticket_id,
                 customer_email=str(request.customer_email or "").strip() or None,
                 requester=str(request.customer_email or "").strip() or None,
-                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
+                zendesk_ticket_url=_account_zendesk_ticket_url(
+                    ticket.get("source"), external_zendesk_ticket_id
+                ),
                 persona_instruction=str(persona_assignment.get("content", {}).get("instruction") or "") if persona_assignment else None,
             )
             automation_attempt = billing_email_attempt
@@ -5110,7 +5137,9 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=str(request.customer_email or "").strip() or None,
-                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
+                zendesk_ticket_url=_account_zendesk_ticket_url(
+                    ticket.get("source"), external_zendesk_ticket_id
+                ),
             )
             automation_attempt = enablement_email_attempt
         elif handler_registration.implementation == "quota":
@@ -5121,7 +5150,9 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=str(request.customer_email or "").strip() or None,
-                zendesk_ticket_url=_account_zendesk_ticket_url(ticket.get("source"), ticket_id),
+                zendesk_ticket_url=_account_zendesk_ticket_url(
+                    ticket.get("source"), external_zendesk_ticket_id
+                ),
             )
             automation_attempt = quota_email_attempt
         else:
@@ -5266,6 +5297,10 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
         "account_case_id": account_case_id,
         "billing_ticket_id": billing_ticket_id,
         "client_ticket_id": ticket_id,
+        "processing_profile": processing_profile,
+        "zendesk_ticket_id": str(zendesk_ticket_id or "").strip() or None,
+        "origin_staging_case_id": str(origin_staging_case_id or "").strip() or None,
+        "rule_release": copy.deepcopy(rule_release) if isinstance(rule_release, dict) else {},
         "source": _serialize_billing_ticket_source(request.source, account_source),
         "external_id": str(request.external_id or "").strip() or _zendesk_ticket_id_from_source(request.source) or None,
         "created_by": str(request.created_by).strip() or None,
@@ -5690,7 +5725,7 @@ async def _create_account_intake_impl(request: AccountIntakeRequest, http_reques
     if idempotency_key:
         await async_to_thread(
             ticket_repository.complete_idempotent_request,
-            "account_intake",
+            idempotency_scope,
             idempotency_key,
             response_payload=response_payload,
             updated_at=now_iso(),
@@ -6139,6 +6174,7 @@ def list_billing_tickets(
     automation_status: str | None = None,
     route_status: str | None = None,
     route_errors: bool = False,
+    processing_profile: str = Query(default="staging", pattern="^(staging|production)$"),
     route_label: str | None = Query(
         default=None,
         pattern="^(human_review|conversation|agora_technical|security_compliance|agora_non_technical|account_billing|uncertain|automation|automation:(fraud_account|detailed_invoice|enablement|quota)|human_review:unregistered|all)$",
@@ -6174,6 +6210,7 @@ def list_billing_tickets(
         route_status=normalized_automation_status,
         route_errors_only=route_errors,
         route_filter=normalized_route_filter,
+        processing_profile=processing_profile,
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     safe_page = min(requested_page, total_pages)
@@ -9051,6 +9088,145 @@ async def _notify_account_rerun_failure(
     return _account_rerun_alert_status(alert)
 
 
+def _production_rule_release(snapshot: PromptRuntimeSnapshot) -> dict[str, Any]:
+    return {
+        "release_id": snapshot.release_id,
+        "source": snapshot.source,
+        "prompts": copy.deepcopy(snapshot.prompts),
+    }
+
+
+def _production_zendesk_ticket_id(account_case: dict[str, Any]) -> str:
+    explicit = str(account_case.get("zendesk_ticket_id") or "").strip()
+    if explicit:
+        return explicit
+    from_source = _zendesk_ticket_id_from_source(account_case.get("source"))
+    if from_source:
+        return from_source
+    external_id = str(account_case.get("external_id") or "").strip()
+    return external_id if external_id.isdigit() else ""
+
+
+@app.post(
+    "/api/account/cases/{account_case_id}/promote-production",
+)
+async def promote_account_case_to_production(
+    account_case_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    """Run an independently persisted production pass after staging review."""
+    staging_case_id = str(account_case_id or "").strip()
+    if not staging_case_id:
+        raise HTTPException(status_code=422, detail="account case id is required")
+
+    bundles = await async_to_thread(ticket_repository.get_account_case_details, [staging_case_id])
+    bundle = bundles.get(staging_case_id)
+    staging_case = bundle.get("account_case") if isinstance(bundle, dict) else None
+    staging_ticket = bundle.get("ticket") if isinstance(bundle, dict) else None
+    if not isinstance(staging_case, dict):
+        raise HTTPException(status_code=404, detail="account case not found")
+    if str(staging_case.get("processing_profile") or "staging").strip().lower() != "staging":
+        raise HTTPException(status_code=409, detail="only staging cases can be promoted")
+
+    zendesk_ticket_id = _production_zendesk_ticket_id(staging_case)
+    if not zendesk_ticket_id:
+        raise HTTPException(status_code=400, detail="staging case is not linked to a Zendesk ticket")
+    existing = await async_to_thread(
+        ticket_repository.get_account_case_by_zendesk_ticket_id,
+        zendesk_ticket_id,
+        processing_profile="production",
+    )
+    if isinstance(existing, dict):
+        return {
+            "status": "already_promoted",
+            "idempotent_replay": True,
+            "account_case_id": existing.get("account_case_id"),
+            "ticket_id": existing.get("client_ticket_id"),
+            "zendesk_ticket_id": zendesk_ticket_id,
+            "processing_profile": "production",
+        }
+
+    production_ticket_id = f"PRD-{zendesk_ticket_id}"
+    snapshot = current_prompt_runtime_snapshot()
+    rule_release = _production_rule_release(snapshot)
+    requester_email = str(
+        staging_case.get("customer_email")
+        or (staging_ticket or {}).get("requester")
+        or (staging_ticket or {}).get("customer_id")
+        or ""
+    ).strip()
+    request = AccountIntakeRequest(
+        title=str(staging_case.get("title") or ""),
+        question=str(staging_case.get("question") or ""),
+        customer_email=requester_email or None,
+        customer_name=(
+            str(staging_case.get("customer_name") or "").strip() or None
+        ),
+        external_id=zendesk_ticket_id,
+        source=staging_case.get("source"),
+        created_by=f"production-review:{principal.account_id}",
+    )
+    intake_payload = {
+        "customer_name": request.customer_name,
+        "customer_email": request.customer_email,
+        "source_account_case_id": staging_case_id,
+    }
+    try:
+        with use_prompt_runtime_snapshot(snapshot):
+            result = await _create_account_intake_impl(
+                request,
+                None,
+                ticket_id_override=production_ticket_id,
+                processing_profile="production",
+                origin_staging_case_id=staging_case_id,
+                zendesk_ticket_id=zendesk_ticket_id,
+                rule_release=rule_release,
+                idempotency_scope="account_production_intake",
+                intake_payload=intake_payload,
+            )
+    except AccountProcessingFailure as exc:
+        production_ticket = await async_to_thread(ticket_repository.get_ticket, production_ticket_id)
+        production_case = await async_to_thread(
+            ticket_repository.get_account_case_by_ticket_id, production_ticket_id
+        )
+        if not isinstance(production_case, dict):
+            production_case = {
+                "account_case_id": f"AC-{production_ticket_id}",
+                "billing_ticket_id": f"AC-{production_ticket_id}",
+                "client_ticket_id": production_ticket_id,
+                "processing_profile": "production",
+                "zendesk_ticket_id": zendesk_ticket_id,
+                "origin_staging_case_id": staging_case_id,
+                "rule_release": rule_release,
+                "source": _serialize_billing_ticket_source(
+                    staging_case.get("source"),
+                    _normalize_account_source(staging_case.get("source")),
+                ),
+                "external_id": zendesk_ticket_id,
+                "created_by": f"production-review:{principal.account_id}",
+                "customer_name": str(staging_case.get("customer_name") or "").strip() or None,
+                "title": str(staging_case.get("title") or "Account request"),
+                "question": str(staging_case.get("question") or ""),
+            }
+        result = await _persist_account_processing_failure(
+            account_case=production_case,
+            ticket=production_ticket,
+            failure=exc,
+            idempotency_key=zendesk_ticket_id,
+            idempotency_scope="account_production_intake",
+        )
+    return {
+        **result,
+        "processing_profile": "production",
+        "origin_staging_case_id": staging_case_id,
+        "zendesk_ticket_id": zendesk_ticket_id,
+        "rule_release": {
+            "release_id": snapshot.release_id,
+            "source": snapshot.source,
+        },
+    }
+
+
 @app.post("/account")
 async def create_account_intake(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
     try:
@@ -10915,7 +11091,10 @@ def get_workspace_admin_metrics(
     engineer_cases = ticket_repository.list_engineer_case_headers()
     accounts = ticket_repository.list_workspace_accounts()
     client_tickets = ticket_repository.list_tickets(include_messages=False)
-    billing_tickets = ticket_repository.list_billing_tickets(limit=10000)
+    billing_tickets = ticket_repository.list_billing_tickets(
+        limit=10000,
+        processing_profile="production",
+    )
     assignment_counts = {"pending": 0, "assigned": 0, "resolved": 0}
     client_status_counts = {
         "open": 0,
@@ -11052,7 +11231,16 @@ def get_workspace_admin_account_automation(
     created_to: str | None = Query(default=None, max_length=64),
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return account_automation_payload(ticket_repository, page=page, page_size=page_size, route_status=route_status, category=category, created_from=created_from, created_to=created_to)
+    return account_automation_payload(
+        ticket_repository,
+        page=page,
+        page_size=page_size,
+        route_status=route_status,
+        category=category,
+        created_from=created_from,
+        created_to=created_to,
+        processing_profile="production",
+    )
 
 
 @app.get("/api/workspace/admin/account-routing/config")

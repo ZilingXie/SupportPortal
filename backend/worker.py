@@ -68,6 +68,7 @@ from backend.services.account_automation_delivery import (
     ensure_account_delivery_key,
     is_rerun_owned_delivery,
 )
+from backend.services.automation_routing import is_registered_automation
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -114,6 +115,11 @@ from backend.services.client_ticket_agent_runtime import (
 from backend.services.product_selection import resolve_support_product_context
 from backend.services.prompt_runtime import initialize_prompt_runtime
 from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
+from backend.services.zendesk_comments import (
+    ZendeskCommentError,
+    add_internal_comment,
+    find_private_internal_comment,
+)
 from backend.services.rag_executor import build_worker_rag_executor
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -843,12 +849,150 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         "published_at": published_at,
         "created_at": published_at,
     }
-    ticket_repository.publish_account_reply(
+    published_reply = ticket_repository.publish_account_reply(
         current_job,
         content=content,
         payload=payload,
         published_at=published_at,
         reply_execution=reply_execution,
+    )
+    persisted_content = str(published_reply.get("content") or "").strip()
+    if not persisted_content:
+        return
+    _deliver_production_account_reply_to_zendesk(
+        ticket_id=ticket_id,
+        job_id=job_id,
+        content=persisted_content,
+    )
+
+
+def _deliver_production_account_reply_to_zendesk(
+    *,
+    ticket_id: str,
+    job_id: str,
+    content: str,
+) -> None:
+    """Write one published production reply as a Zendesk internal comment."""
+    account_case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
+    if not isinstance(account_case, dict):
+        return
+    if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
+        return
+    if not is_registered_automation(
+        route_family=str(account_case.get("route_family") or ""),
+        execution_action=str(account_case.get("execution_action") or account_case.get("route") or ""),
+    ):
+        LOGGER.info(
+            "production_zendesk_delivery_skipped account_case_id=%s reason=unregistered_automation",
+            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "unknown",
+        )
+        return
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
+    if not account_case_id or not zendesk_ticket_id:
+        LOGGER.error(
+            "production_zendesk_delivery_skipped account_case_id=%s reason=missing_external_ticket",
+            account_case_id or "unknown",
+        )
+        return
+
+    message_id = str(job_id or "").strip()
+    idempotency_key = f"production-zendesk-comment:{account_case_id}:{message_id}"
+    claim = ticket_repository.claim_account_zendesk_comment_delivery(
+        account_case_id=account_case_id,
+        message_id=message_id,
+        zendesk_ticket_id=zendesk_ticket_id,
+        idempotency_key=idempotency_key,
+        created_at=now_iso(),
+    )
+    if not bool(claim.get("created")):
+        if str(claim.get("status") or "").strip().lower() in {"pending", "outcome_unknown"}:
+            _reconcile_production_zendesk_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                zendesk_ticket_id=zendesk_ticket_id,
+                content=content,
+            )
+        return
+
+    try:
+        result = add_internal_comment(ticket_id=zendesk_ticket_id, body=content)
+    except ZendeskCommentError as exc:
+        if exc.category == "outcome_unknown":
+            _reconcile_production_zendesk_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                zendesk_ticket_id=zendesk_ticket_id,
+                content=content,
+                fallback_failure_code=exc.error_code,
+            )
+        else:
+            ticket_repository.complete_account_zendesk_comment_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                status="failed",
+                zendesk_comment_id=None,
+                failure_code=exc.error_code,
+                completed_at=now_iso(),
+            )
+        LOGGER.warning(
+            "production_zendesk_delivery_failed account_case_id=%s job_id=%s category=%s code=%s",
+            account_case_id, job_id, exc.category, exc.error_code,
+        )
+    except Exception:
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            status="failed",
+            zendesk_comment_id=None,
+            failure_code="zendesk_delivery_unexpected_error",
+            completed_at=now_iso(),
+        )
+        LOGGER.exception(
+            "production_zendesk_delivery_failed account_case_id=%s job_id=%s",
+            account_case_id, job_id,
+        )
+    else:
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            status="delivered",
+            zendesk_comment_id=result.comment_id,
+            failure_code=None,
+            completed_at=now_iso(),
+        )
+
+
+def _reconcile_production_zendesk_delivery(
+    *,
+    account_case_id: str,
+    message_id: str,
+    zendesk_ticket_id: str,
+    content: str,
+    fallback_failure_code: str = "zendesk_delivery_outcome_unknown",
+) -> None:
+    """Confirm a possibly successful write with a read-only audit query; never resend it."""
+    try:
+        result = find_private_internal_comment(ticket_id=zendesk_ticket_id, body=content)
+    except ZendeskCommentError as exc:
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            status="outcome_unknown",
+            zendesk_comment_id=None,
+            failure_code=exc.error_code,
+            completed_at=now_iso(),
+        )
+        return
+    ticket_repository.complete_account_zendesk_comment_delivery(
+        account_case_id=account_case_id,
+        message_id=message_id,
+        status="delivered" if result is not None else "outcome_unknown",
+        zendesk_comment_id=result.comment_id if result is not None else None,
+        failure_code=None if result is not None else fallback_failure_code,
+        completed_at=now_iso(),
     )
 
 
