@@ -372,6 +372,7 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         self.assertTrue(second.proceed_with_missing_fields)
         self.assertIsNotNone(second.internal_email)
         assert second.internal_email is not None
+        self.assertEqual(second.internal_email["subject"], "[Fraud Account Review] - Ticket 12475")
         self.assertIn("Missing after one follow-up", second.internal_email["body"])
         self.assertNotIn("Website", second.internal_email["body"])
         self.assertEqual(second.internal_email["body_content_type"], "HTML")

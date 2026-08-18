@@ -365,7 +365,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIsNotNone(resolution.evidence_summary)
         assert resolution.evidence_summary is not None
         internal_email = resolution.evidence_summary["billing_internal_email"]
-        self.assertEqual(internal_email["subject"], "[Billing Request] Account suspension review request - Ticket {{ticket_id}}")
+        self.assertEqual(internal_email["subject"], "[Account Suspension Review] - Ticket {{ticket_id}}")
         self.assertIn("Company name: ExampleCo", internal_email["body"])
         self.assertIn("Contact email: ops@example.com", internal_email["body"])
 
@@ -523,7 +523,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(verification.internal_email["to"], "verification@example.com")
         self.assertIn("Account verification request", verification.internal_email["subject"])
         self.assertEqual(suspension.internal_email["to"], "suspension@example.com")
-        self.assertIn("Account suspension review request", suspension.internal_email["subject"])
+        self.assertEqual(suspension.internal_email["subject"], "[Account Suspension Review] - Ticket TK-SUSP-1")
         self.assertEqual(invoice.internal_email["to"], "invoice@example.com")
 
     def test_billing_internal_email_action_destination_falls_back_to_generic_destination(self) -> None:

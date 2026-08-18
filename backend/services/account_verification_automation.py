@@ -79,7 +79,7 @@ def _internal_email(
     return {
         "to": os.getenv(ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV, "").strip()
         or DEFAULT_ACCOUNT_VERIFICATION_INTERNAL_EMAIL,
-        "subject": f"[Billing Request] Fraud account review - Ticket {ticket_id}",
+        "subject": f"[Fraud Account Review] - Ticket {ticket_id}",
         "delivery_key": delivery_key,
         **rendered,
     }

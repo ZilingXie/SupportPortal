@@ -1091,7 +1091,7 @@ def _build_internal_email(
     to_address = _destination_email_for_action(action)
     from_address = _clean_text(os.getenv(BILLING_INTERNAL_EMAIL_FROM_ENV)) or DEFAULT_BILLING_EMAIL_FROM
     if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
-        subject = f"Account suspension review request - Ticket {normalized_ticket_id}"
+        subject = f"Account Suspension Review - Ticket {normalized_ticket_id}"
         field_order = (
             "company_name",
             "company_location",
@@ -1153,7 +1153,11 @@ def _build_internal_email(
     return {
         "to": to_address,
         "from": from_address,
-        "subject": f"{BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX} {subject}",
+        "subject": (
+            f"[Account Suspension Review] - Ticket {normalized_ticket_id}"
+            if action == BILLING_ACTION_ACCOUNT_SUSPENSION
+            else f"{BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX} {subject}"
+        ),
         **rendered,
     }
 
