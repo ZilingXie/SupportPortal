@@ -16,6 +16,35 @@ require_command python3
 
 ensure_root_workspace_on_main
 
+deploy_lock_dir="${SUPPORTPORTAL_DEPLOY_LOCK_DIR:-${TMPDIR:-/tmp}/supportportal-single-host-stack.lock}"
+lock_owner_file="$deploy_lock_dir/pid"
+if ! mkdir "$deploy_lock_dir" 2>/dev/null; then
+  stale_pid=""
+  if [[ -f "$lock_owner_file" ]]; then
+    stale_pid="$(<"$lock_owner_file")"
+  fi
+  if [[ "$stale_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$stale_pid" 2>/dev/null; then
+    rm -f "$lock_owner_file"
+    rmdir "$deploy_lock_dir" 2>/dev/null || true
+    mkdir "$deploy_lock_dir" || die "Unable to reclaim stale restart lock: $deploy_lock_dir"
+  else
+    die "Another single-host stack restart is already running (lock: $deploy_lock_dir)."
+  fi
+fi
+printf '%s\n' "$$" >"$lock_owner_file"
+rollback_image=""
+cleanup_rollback_image() {
+  if [[ -n "$rollback_image" ]]; then
+    podman image rm -f "$rollback_image" >/dev/null 2>&1 || true
+  fi
+}
+cleanup_on_exit() {
+  cleanup_rollback_image
+  rm -f "$lock_owner_file"
+  rmdir "$deploy_lock_dir" 2>/dev/null || true
+}
+trap cleanup_on_exit EXIT
+
 use_local_env=0
 runtime_mode_override=""
 db_mode_override=""
@@ -209,7 +238,7 @@ fi
 echo "requirements.base.txt: $(git hash-object requirements.base.txt)"
 echo "requirements.ml.txt: $(git hash-object requirements.ml.txt)"
 
-health_attempts="${SUPPORTPORTAL_HEALTH_ATTEMPTS:-60}"
+health_attempts="${SUPPORTPORTAL_HEALTH_ATTEMPTS:-180}"
 health_interval_seconds="${SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS:-2}"
 [[ "$health_attempts" =~ ^[1-9][0-9]*$ ]] || die "SUPPORTPORTAL_HEALTH_ATTEMPTS must be a positive integer."
 [[ "$health_interval_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS must be non-negative."
@@ -221,7 +250,7 @@ wait_for_stack_health() {
 
   for (( attempt = 1; attempt <= health_attempts; attempt++ )); do
     payload="$(curl -fsS "http://127.0.0.1:${health_port}/health" 2>/dev/null || true)"
-    if [[ -n "$payload" ]] && python3 - "$payload" "$expected_ref" <<'PY'
+    if [[ -n "$payload" ]] && python3 - "$payload" "$expected_ref" "$db_mode" <<'PY'
 import json
 import sys
 
@@ -230,12 +259,23 @@ try:
 except (TypeError, ValueError):
     raise SystemExit(1)
 
-raise SystemExit(
-    0
-    if payload.get("status") == "ok"
-    and str((payload.get("app_build") or {}).get("ref") or "") == sys.argv[2]
-    else 1
-)
+if payload.get("status") != "ok":
+    raise SystemExit(1)
+if str((payload.get("app_build") or {}).get("ref") or "") != sys.argv[2]:
+    raise SystemExit(1)
+if sys.argv[3] == "remote":
+    checks = {
+        "ticket_storage": "postgres",
+        "knowledge_storage": "postgres",
+        "rag_service": "ok",
+    }
+    for key, expected in checks.items():
+        if payload.get(key) != expected:
+            raise SystemExit(1)
+prompt_runtime = payload.get("prompt_runtime")
+if not isinstance(prompt_runtime, dict) or prompt_runtime.get("status") != "loaded":
+    raise SystemExit(1)
+raise SystemExit(0)
 PY
     then
       printf '%s\n' "$payload"
@@ -248,19 +288,23 @@ PY
   return 1
 }
 
+print_startup_diagnostics() {
+  warn "Single-host stack health gate failed; collecting redacted diagnostics."
+  podman-compose "${compose_args[@]}" ps 2>&1 | tail -n 80 >&2 || true
+  podman ps -a --filter name=deployment_ --format '{{.Names}} {{.Status}}' 2>&1 | tail -n 80 >&2 || true
+  for service in api rag_api worker_query worker_aux rag_worker; do
+    podman logs --tail 100 "deployment_${service}_1" 2>&1 \
+      | sed -E 's#(postgres(?:ql)?://)[^ @]+@#\1[REDACTED]@#g; s#(Bearer )[A-Za-z0-9._-]+#\1[REDACTED]#g' \
+      | tail -n 100 >&2 || true
+  done
+}
+
 previous_image="$(podman inspect --format '{{.ImageName}}' deployment_api_1 2>/dev/null || true)"
 previous_image_id="$(podman inspect --format '{{.Image}}' deployment_api_1 2>/dev/null || true)"
 previous_ref="${previous_image##*:}"
 new_image="$APP_RUNTIME_IMAGE"
 new_ref="$APP_BUILD_REF"
 rollback_image=""
-
-cleanup_rollback_image() {
-  if [[ -n "$rollback_image" ]]; then
-    podman image rm -f "$rollback_image" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup_rollback_image EXIT
 
 if [[ -n "$previous_image" && -n "$previous_image_id" ]]; then
   rollback_image="localhost/supportportal-app:rollback-${new_ref}-$$"
@@ -277,13 +321,26 @@ restore_previous_stack() {
   export APP_RUNTIME_IMAGE="$rollback_image"
   export APP_BUILD_REF="$previous_ref"
   podman-compose "${compose_args[@]}" down >/dev/null 2>&1 || true
-  if podman-compose "${compose_args[@]}" up -d --no-build \
-    && wait_for_stack_health "$previous_ref" >/dev/null; then
+  if start_stack "$previous_ref"; then
     warn "Restored previous image $previous_image."
     return 0
   fi
   warn "Failed to restore previous image $previous_image."
   return 1
+}
+
+start_stack() {
+  local expected_ref="$1"
+  if ! podman-compose "${compose_args[@]}" up -d --no-build redis rag_api api ws_gateway nginx; then
+    return 1
+  fi
+  if ! wait_for_stack_health "$expected_ref"; then
+    return 1
+  fi
+  if ! podman-compose "${compose_args[@]}" up -d --no-build rag_worker worker_query worker_aux; then
+    return 1
+  fi
+  wait_for_stack_health "$expected_ref"
 }
 
 podman-compose "${compose_args[@]}" config >/dev/null
@@ -301,13 +358,15 @@ fi
 podman-compose "${compose_args[@]}" "${build_args[@]}"
 "$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose "${compose_args[@]}" down
+remaining_containers="$(podman ps -a --filter name=deployment_ --format '{{.Names}}' 2>/dev/null || true)"
+if [[ -n "$remaining_containers" ]]; then
+  print_startup_diagnostics
+  die "Deployment containers remain after compose down; refusing to start a second stack: $remaining_containers"
+fi
 
-if ! podman-compose "${compose_args[@]}" up -d --no-build; then
+if ! start_stack "$new_ref"; then
+  print_startup_diagnostics
   restore_previous_stack || true
   exit 1
 fi
 podman-compose "${compose_args[@]}" ps
-if ! wait_for_stack_health "$new_ref"; then
-  restore_previous_stack || true
-  exit 1
-fi

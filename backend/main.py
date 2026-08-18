@@ -213,8 +213,9 @@ from backend.services.account_case_filters import (
     normalize_account_case_filter,
 )
 from backend.services.agent_config import build_agent_config_payload
-from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info, resolve_system_prompt
+from backend.services.prompt_runtime import initialize_prompt_runtime, initialize_prompt_runtime_from_environment, prompt_runtime_info, resolve_system_prompt
 from backend.services.prompt_versioning import PromptVersionService
+from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
 from backend.services.case_memory_ledger import build_case_memory_ledger_record_from_feedback
 from backend.services.engineer_hitl_review import build_engineer_auto_hitl_feedback
@@ -3853,6 +3854,12 @@ def _initialize_asset_repository_with_fallback() -> None:
 @app.on_event("startup")
 def startup_event() -> None:
     global ticket_repository, asset_repository
+    if runtime_schema_check_enabled():
+        check_runtime_schema()
+        initialize_prompt_runtime_from_environment(service_name="api")
+        _start_account_reroute_dispatcher()
+        LOGGER.info("Runtime schema preflight passed; skipped startup DDL bootstrap.")
+        return
     attempts = max(1, _ticket_db_startup_init_retries() + 1)
     retry_delay_seconds = _ticket_db_startup_init_retry_delay_seconds()
     last_error: Exception | None = None

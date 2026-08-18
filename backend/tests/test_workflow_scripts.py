@@ -262,6 +262,7 @@ class WorkflowScriptTests(unittest.TestCase):
     ) -> subprocess.CompletedProcess[str]:
         script_path = SCRIPT_ROOT / script_name
         env = self._script_env()
+        env.setdefault("SUPPORTPORTAL_DEPLOY_LOCK_DIR", str(self.root / "deploy-lock"))
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
@@ -723,6 +724,8 @@ class WorkflowScriptTests(unittest.TestCase):
                     (item for item in ("config", "build", "down", "up", "ps") if item in sys.argv[1:]),
                     "",
                 )
+                if command == "down":
+                    (state_dir / "containers_down").write_text("1", encoding="utf-8")
                 if command == os.environ.get("RESTART_FAIL_COMPOSE_COMMAND"):
                     print(f"forced {{command}} failure", file=sys.stderr)
                     raise SystemExit(23)
@@ -733,6 +736,13 @@ class WorkflowScriptTests(unittest.TestCase):
                 ):
                     print("forced new up failure", file=sys.stderr)
                     raise SystemExit(24)
+                if (
+                    command == "up"
+                    and "worker_query" in sys.argv[1:]
+                    and os.environ.get("RESTART_FAIL_WORKER_UP") == "1"
+                ):
+                    print("forced worker up failure", file=sys.stderr)
+                    raise SystemExit(25)
                 if "ps" in sys.argv[1:]:
                     print("NAME\\napi up")
                 else:
@@ -763,7 +773,17 @@ class WorkflowScriptTests(unittest.TestCase):
                 if sys.argv[-1].endswith(":18080/health"):
                     print({json.dumps({"status": "ok", "app_build": {"ref": auxiliary_health_build_ref}})!r})
                 else:
-                    print(json.dumps({{"status": "ok", "app_build": {{"ref": runtime_ref or {official_health_build_ref!r}}}}}))
+                    payload = {{
+                        "status": "ok",
+                        "app_build": {{"ref": runtime_ref or {official_health_build_ref!r}}},
+                        "ticket_storage": "postgres",
+                        "knowledge_storage": "postgres",
+                        "rag_service": "ok",
+                        "prompt_runtime": {{"status": "loaded"}},
+                    }}
+                    if os.environ.get("RESTART_HEALTH_MISSING_FIELDS") == "1":
+                        payload.pop("knowledge_storage")
+                    print(json.dumps(payload))
                 """
             ),
         )
@@ -784,7 +804,7 @@ class WorkflowScriptTests(unittest.TestCase):
 
                 args = sys.argv[1:]
                 if args[:2] == ["ps", "--format"]:
-                    lines = ["deployment_api_1|{official_image}"]
+                    lines = [] if (state_dir / "containers_down").exists() else ["deployment_api_1|{official_image}"]
                     if {auxiliary_present!r}:
                         lines.append("deploymentlw_api_1|{auxiliary_image}")
                     print("\\n".join(lines))
@@ -975,7 +995,16 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "--no-build", "ps"])
+        commands = [
+            next((item for item in ("config", "build", "down", "up", "ps") if item in call["argv"]), "")
+            for call in calls
+        ]
+        self.assertEqual(commands, ["config", "build", "down", "up", "up", "ps"])
+        core_up, worker_up = calls[3], calls[4]
+        self.assertTrue({"redis", "rag_api", "api", "ws_gateway", "nginx"}.issubset(core_up["argv"]))
+        self.assertTrue({"rag_worker", "worker_query", "worker_aux"}.issubset(worker_up["argv"]))
+        self.assertNotIn("worker_query", core_up["argv"])
+        self.assertNotIn("worker_aux", core_up["argv"])
         for call in calls:
             self.assertEqual(call["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
@@ -1041,8 +1070,9 @@ class WorkflowScriptTests(unittest.TestCase):
             call for call in calls
             if "up" in call["argv"] and call["app_runtime_image"] == rollback_tag
         ]
-        self.assertEqual(len(rollback_up), 1)
-        self.assertIn("--no-build", rollback_up[0]["argv"])
+        self.assertEqual(len(rollback_up), 2)
+        self.assertTrue({"redis", "rag_api", "api", "ws_gateway", "nginx"}.issubset(rollback_up[0]["argv"]))
+        self.assertTrue({"rag_worker", "worker_query", "worker_aux"}.issubset(rollback_up[1]["argv"]))
         self.assertIn("restored previous image", result.stderr.lower())
 
     def test_restart_single_host_stack_same_tag_failure_restores_previous_image_id(self) -> None:
@@ -1084,10 +1114,111 @@ class WorkflowScriptTests(unittest.TestCase):
             call for call in compose_calls
             if "up" in call["argv"] and call["app_runtime_image"] == rollback_tag
         ]
-        self.assertEqual(len(rollback_up), 1)
-        self.assertIn("--no-build", rollback_up[0]["argv"])
+        self.assertEqual(len(rollback_up), 2)
+        self.assertTrue({"redis", "rag_api", "api", "ws_gateway", "nginx"}.issubset(rollback_up[0]["argv"]))
+        self.assertTrue({"rag_worker", "worker_query", "worker_aux"}.issubset(rollback_up[1]["argv"]))
         cleanup_calls = [call["argv"] for call in podman_calls if call["argv"][:2] == ["image", "rm"]]
         self.assertEqual(cleanup_calls, [["image", "rm", "-f", rollback_tag]])
+
+    def test_restart_single_host_stack_rejects_remote_health_missing_contract(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "RESTART_HEALTH_MISSING_FIELDS": "1",
+                "SUPPORTPORTAL_HEALTH_ATTEMPTS": "1",
+                "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS": "0",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        up_calls = [call for call in calls if "up" in call["argv"]]
+        self.assertEqual(len(up_calls), 2)
+        self.assertNotIn("worker_query", up_calls[0]["argv"])
+        self.assertNotIn("worker_query", up_calls[1]["argv"])
+
+    def test_restart_single_host_stack_rejects_active_deploy_lock(self) -> None:
+        _, _, repo = self._init_remote_repo_on_main()
+        lock_dir = self.root / "active-deploy-lock"
+        lock_dir.mkdir()
+        (lock_dir / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+        try:
+            result = self._run_workflow(
+                "restart_single_host_stack.sh",
+                repo,
+                extra_env={"SUPPORTPORTAL_DEPLOY_LOCK_DIR": str(lock_dir)},
+            )
+        finally:
+            (lock_dir / "pid").unlink(missing_ok=True)
+            lock_dir.rmdir()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("another single-host stack restart is already running", result.stderr.lower())
+
+    def test_restart_single_host_stack_reclaims_stale_deploy_lock(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+        lock_dir = self.root / "stale-deploy-lock"
+        lock_dir.mkdir()
+        (lock_dir / "pid").write_text("999999\n", encoding="utf-8")
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "SUPPORTPORTAL_DEPLOY_LOCK_DIR": str(lock_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertFalse(lock_dir.exists())
+
+    def test_restart_single_host_stack_worker_failure_rolls_back(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        previous_image = "localhost/supportportal-app:previous-ref"
+        fake_bin, state_dir = self._install_fake_single_host_commands(official_image=previous_image)
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "RESTART_FAIL_WORKER_UP": "1",
+                "SUPPORTPORTAL_HEALTH_ATTEMPTS": "1",
+                "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS": "0",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        podman_calls = self._read_json_lines(state_dir / "podman_cli_calls.jsonl")
+        self.assertTrue(any(call["argv"][:1] == ["tag"] for call in podman_calls))
+        compose_calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        worker_ups = [call for call in compose_calls if "up" in call["argv"] and "worker_query" in call["argv"]]
+        self.assertGreaterEqual(len(worker_ups), 2, "new and rollback worker stages should both be attempted")
 
     def test_restart_single_host_stack_use_local_env_is_root_only_compatibility_alias(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
