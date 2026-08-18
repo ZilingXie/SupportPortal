@@ -37,6 +37,11 @@ _HANDLERS = {
         handler="quota",
         implementation="quota",
     ),
+    "account_suspension": AccountAutomationHandlerRegistration(
+        subcategory="account_suspension",
+        handler="billing",
+        implementation="billing",
+    ),
 }
 
 
