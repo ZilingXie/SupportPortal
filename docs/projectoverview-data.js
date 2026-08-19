@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T15:07:31Z",
-  "source_base_commit": "7f157626a9cc955546033f7d3ece631b730860aa",
-  "registry_digest": "8204a4d58066c67c76d9532ea7c9dcad2623d7852153a343dcb4227f84231c20",
+  "generated_at": "2026-08-19T02:28:10Z",
+  "source_base_commit": "3f1f65cb8cbdf86f007ed87ab9a1549fa2c72ddc",
+  "registry_digest": "d81c1f6b3727bf6f54d5bf38b421729f831aa67afa835694783864171c91e155",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -508,6 +508,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account Automation static and registry checks",
           "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal repair preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Root main and origin/main are synchronized at 3f1f65c; the repair worktree is clean on codex/account-automation-signature-source-removal; repository policy verification passed."
         }
       ],
       "source_refs": [
@@ -521,7 +527,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 9,
-      "done_count": 7,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -4027,15 +4033,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-50",
       "title": "统一 Account Automation 客户回复与 Rerun 契约",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "进入 Stage 5：创建单一 implementation PR，合并后重启官方栈，并在 Stage 6 执行一次 full rerun 和三 Case live validation。",
+      "next_action": "执行签名源头移除 repair：删除 Persona Signature 配置和生成链路，改为非破坏性 fail-closed 检查，修复完成状态与回复极性后重新部署和运行验收。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
         "enablement 客户提交确认包含最长 24 小时激活时间和 Monday-Friday 变更窗口；只有真实内部回复明确表示已启用后才通知客户并关闭，否定回复不关闭。",
-        "所有 AI 客户回复不包含尾部签名；签名清理不能误删正文中的普通 best 或 regards。",
+        "Account Persona 不再配置、持久化或生成签名；发布前只做非破坏性的尾部签名检查，不能误删正文中的普通 best 或 regards。",
         "Intake、full rerun 和 reply-only recovery 使用同一 canonical reply intent 和关闭判定；intent 冲突、旧 Fraud 关闭契约或无效回复 fail closed 或进入 Human Review。",
         "未通过最终 content/intent 校验的回复不会调用 publish_account_reply，也不会创建 production Zendesk delivery intent。"
       ],
@@ -4064,6 +4070,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account Automation static and registry checks",
           "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal repair preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Root main and origin/main are synchronized at 3f1f65c; the repair worktree is clean on codex/account-automation-signature-source-removal; repository policy verification passed."
         }
       ],
       "source_refs": [
@@ -4072,12 +4084,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/prompt_change_log.md"
       ],
       "created_at": "2026-08-18",
-      "updated_at": "2026-08-18",
+      "updated_at": "2026-08-19",
       "history": [
         {
           "at": "2026-08-18",
           "event": "started",
           "summary": "创建任务并完成 Stage 0 工作区、仓库策略和实现前置规则检查；尚未声明运行时完成。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "repair_started",
+          "summary": "PR #790 已合并，但验收确认签名仍由运行时生成后清理，且完成状态和回复极性校验仍有缺口；创建独立 repair worktree 从源头移除签名能力。"
         }
       ],
       "legacy_refs": [],

@@ -524,4 +524,31 @@ Report `状态：已完成` only when:
 
 ## Resume From Here
 
-Start Stage 5 in the existing task worktree. Do not recreate the branch or worktree. Stage 4 is green with 368 targeted tests and all static/registry checks; commit the updated Task/Plan metadata, then recheck ownership and run the exact `finalize_task_to_main.sh` command from this Plan. After merge, restart and validate the official stack before the single Stage 6 full rerun.
+PR `#790` was squash-merged to `main` as `3f1f65c`, and the original task worktree/branch were removed. Acceptance review then found that Signature remained a configured capability and the runtime still generated a Sid signature before deleting it. The original implementation is therefore superseded by the repair addendum below; do not recreate or reuse the original branch.
+
+## Repair Addendum - Signature Source Removal
+
+- Repair branch: `codex/account-automation-signature-source-removal`
+- Repair worktree: `/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/account-automation-signature-source-removal`
+- Repair base: `3f1f65cb8cbdf86f007ed87ab9a1549fa2c72ddc`
+- Strategy: local stage commits followed by one repair PR
+
+The repair removes Signature as an Account Persona capability instead of generating and then deleting it. New Persona content supports only `instruction` and optional `opener`; historical version JSON remains immutable, while new writes, publishes, and rollbacks cannot propagate `signature` or `signoff_name`. Runtime content is projected to supported fields only.
+
+The publication defense is non-destructive: it inspects only the reply tail, never truncates body text, and moves a signed reply to Human Review before `publish_account_reply()` or production delivery intent persistence. The same repair closes the demonstrated polarity gaps where questions, revoked Enablement states, or negated customer commitments could satisfy a positive completion contract.
+
+### Repair Stage Log
+
+| Repair stage | Status | Changed paths | Verification | Local commit | Notes |
+| --- | --- | --- | --- | --- | --- |
+| R0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | repository policy; Project Overview `--write`/`--check`; `git diff --check` passed | recorded in R1 checkpoint | Repair workspace and repository policy verified; karpathy-guidelines read before runtime edits. |
+| R1 | pending | Persona backend/API/repositories/Admin UI and focused tests | pending | pending | Remove Signature configuration, writes, propagation, and generation. |
+| R2 | pending | Persona renderer/Worker publication fence and focused tests | pending | pending | Replace destructive stripping with tail-only fail-closed validation. |
+| R3 | pending | Enablement completion and reply polarity validators/tests | pending | pending | Reject questions, future/request language, negation, and revoked state. |
+| R4 | pending | Prompt/task/plan/Project Overview records and integrated verification | pending | pending | Record `automation-persona-v10` and final branch evidence. |
+| R5 | pending | one repair PR and official-stack verification | pending | n/a | Finalize, restart, verify health/build/runtime/UI markers. |
+| R6 | pending | runtime only | pending | n/a | One full rerun and Cases `12839`, `12571`, `12744`; production-linked count must be zero before POST. |
+
+### Repair Resume From Here
+
+Begin R1 in the repair worktree. Remove Signature configuration and generation at the source, then run the focused Persona API/repository/Admin UI tests. Do not run a full rerun until the repair PR is merged, the official stack serves `automation-persona-v10`, and the authenticated preflight confirms zero production/Zendesk-linked Account Cases.
