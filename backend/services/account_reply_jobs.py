@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -20,6 +21,9 @@ ACCOUNT_REPLY_PERSONA_V8_QUEUED = "persona_v8_queued"
 ACCOUNT_REPLY_PERSONA_V8_PREPARING = "persona_v8_preparing"
 ACCOUNT_REPLY_PERSONA_V8_SCHEDULED = "persona_v8_scheduled"
 ACCOUNT_REPLY_PERSONA_V8_PUBLISHING = "persona_v8_publishing"
+ACCOUNT_REPLY_DELAY_MIN_SECONDS = 6 * 60
+ACCOUNT_REPLY_DELAY_MAX_SECONDS = 10 * 60
+_ACCOUNT_REPLY_RANDOM = random.SystemRandom()
 
 # Customer-visible reply intents. Closure is derived from this set rather than
 # from an independent caller flag.
@@ -58,6 +62,19 @@ class AccountReplyContractError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = "_".join(str(code or "account_reply_contract_failed").strip().lower().split())
         super().__init__(self.code)
+
+
+def account_reply_delay_seconds_for_profile(processing_profile: str) -> int:
+    """Return the artificial reply delay for one validated environment profile."""
+    normalized_profile = str(processing_profile or "staging").strip().lower()
+    if normalized_profile == "staging":
+        return 0
+    if normalized_profile == "production":
+        return _ACCOUNT_REPLY_RANDOM.randint(
+            ACCOUNT_REPLY_DELAY_MIN_SECONDS,
+            ACCOUNT_REPLY_DELAY_MAX_SECONDS,
+        )
+    raise ValueError("processing_profile must be staging or production")
 
 
 def normalize_account_reply_contract(

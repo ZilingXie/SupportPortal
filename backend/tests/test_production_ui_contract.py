@@ -72,6 +72,12 @@ class ProductionUiContractTests(unittest.TestCase):
             self.assertNotIn(marker, styles, marker)
         self.assertNotIn("production-promotion", styles)
 
+    def test_production_app_keeps_delayed_reply_copy(self) -> None:
+        app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("AI reply scheduled", app_source)
+        self.assertIn("standard 6-10 minute delay", app_source)
+
     def test_production_app_javascript_syntax(self) -> None:
         result = subprocess.run(
             ["node", "--check", "ui/production-ui/app.js"],

@@ -9,7 +9,6 @@ import importlib.util
 import json
 import logging
 import os
-import random
 import re
 import threading
 import time
@@ -200,6 +199,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
     ACCOUNT_REPLY_PERSONA_V8_QUEUED,
     ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+    account_reply_delay_seconds_for_profile,
     create_account_reply_job,
 )
 from backend.services.automation_persona import (
@@ -801,13 +801,8 @@ def _automation_reply_facts(
     )
 
 
-ACCOUNT_REPLY_DELAY_MIN_SECONDS = 6 * 60
-ACCOUNT_REPLY_DELAY_MAX_SECONDS = 10 * 60
-_ACCOUNT_REPLY_RANDOM = random.SystemRandom()
-
-
 def _account_reply_delay_seconds() -> int:
-    return _ACCOUNT_REPLY_RANDOM.randint(ACCOUNT_REPLY_DELAY_MIN_SECONDS, ACCOUNT_REPLY_DELAY_MAX_SECONDS)
+    return account_reply_delay_seconds_for_profile(_default_account_processing_profile())
 
 
 def _account_asked_field_keys(ticket: dict[str, Any]) -> set[str]:

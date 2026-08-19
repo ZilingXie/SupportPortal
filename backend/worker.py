@@ -45,6 +45,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
     ACCOUNT_REPLY_PERSONA_V8_QUEUED,
     ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+    account_reply_delay_seconds_for_profile,
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
@@ -1683,6 +1684,9 @@ def _queue_enablement_submission_confirmation(
         ticket_repository.save_account_case(account_case)
         return False
     created_at = now_iso()
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
     ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=created_at)
     reply_payload: dict[str, Any] = {
         "draft_content": "",
@@ -1707,7 +1711,8 @@ def _queue_enablement_submission_confirmation(
             "trigger_message_created_at": trigger_message_created_at,
             "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
             "scheduled_for": (
-                datetime.now(timezone.utc) + timedelta(minutes=6)
+                datetime.fromisoformat(created_at).astimezone(timezone.utc)
+                + timedelta(seconds=delay_seconds)
             ).isoformat(),
             "payload": reply_payload,
             "attempt_count": 0,

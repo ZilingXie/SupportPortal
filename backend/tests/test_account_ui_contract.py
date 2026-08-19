@@ -91,6 +91,9 @@ class AccountUiContractTests(unittest.TestCase):
             "All non-customer messages will be permanently deleted",
             "Engineer, manual, and internal messages are included",
             "The current route review and correction will be reset",
+            "AI reply queued",
+            "Publishing as soon as preparation completes.",
+            "queued for publication as soon as preparation completes",
             "Independent audit records will be retained",
             "invalidateDetailCache(targetCaseId)",
         ):
@@ -98,6 +101,8 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("account-case-search", styles)
         self.assertIn("detail-rerun-button", styles)
         self.assertIn("danger-button", styles)
+        self.assertNotIn("standard 6-10 minute delay", app_source)
+        self.assertIn("20260819-account-immediate-reply-1", Path("ui/account-ui/index.html").read_text(encoding="utf-8"))
 
         helper_start = app_source.index("function normalizeCaseNumberQuery")
         helper_end = app_source.index("\nfunction", helper_start + 1)
@@ -610,7 +615,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertNotIn("/api/tickets/query", app_source)
         self.assertIn("ai_reply_scheduled_for", app_source)
         self.assertIn("formatMessageTimestamp", app_source)
-        self.assertIn("AI reply scheduled", app_source)
+        self.assertIn("AI reply queued", app_source)
         self.assertNotIn("Customer reply", app_source)
 
     def test_account_app_distinguishes_zendesk_author_identity(self) -> None:

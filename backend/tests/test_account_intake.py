@@ -6834,13 +6834,37 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert bt is not None
         self.assertEqual(bt["source"], '{"Link": "https://example.com/case/42"}')
 
-    def test_account_reply_delay_is_sampled_once_within_six_to_ten_minutes(self) -> None:
-        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
-            main, "_account_reply_delay_seconds", return_value=417
-        ):
+    def test_staging_account_reply_job_is_immediately_due(self) -> None:
+        with patch.dict(os.environ):
+            os.environ.pop("ACCOUNT_DEFAULT_PROCESSING_PROFILE", None)
+            with patch.object(main, "dispatch_event", AsyncMock()):
+                response = self.client.post(
+                    "/account",
+                    json={
+                        "title": "Enable Media Relay Feature",
+                        "question": "Please enable Media Relay from your end.",
+                        "customer_email": "customer@example.com",
+                    },
+                )
+
+        payload = response.json()
+        job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        assert job is not None
+        created_at = datetime.fromisoformat(job["created_at"])
+        scheduled = datetime.fromisoformat(job["scheduled_for"])
+        self.assertEqual((scheduled - created_at).total_seconds(), 0)
+        self.assertEqual(payload["ai_reply_scheduled_for"], job["scheduled_for"])
+
+    def test_production_account_reply_delay_is_sampled_once(self) -> None:
+        with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ), patch.object(
+            main, "account_reply_delay_seconds_for_profile", return_value=417
+        ) as delay:
             response = self.client.post(
                 "/account",
                 json={
+                    "external_id": "99887769",
                     "title": "Enable Media Relay Feature",
                     "question": "Please enable Media Relay from your end.",
                     "customer_email": "customer@example.com",
@@ -6854,6 +6878,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         scheduled = datetime.fromisoformat(job["scheduled_for"])
         self.assertEqual((scheduled - created_at).total_seconds(), 417)
         self.assertEqual(payload["ai_reply_scheduled_for"], job["scheduled_for"])
+        delay.assert_called_once_with("production")
 
     def test_account_intake_identity_uses_name_value_and_source_from_same_field(self) -> None:
         for field_name in ("customer_name", "cx_name", "cx name", "cxName", "requester_name"):
