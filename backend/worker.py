@@ -239,6 +239,7 @@ def _record_account_worker_failure(
         or "account_reply_worker_failed"
     ).strip()
     detail = str(getattr(failure, "detail", "") or "").strip()
+    attempt_count = max(0, int(getattr(failure, "attempt_count", 1)))
     if not isinstance(failure, AccountProcessingFailure):
         detail = type(failure).__name__
     reply_job_id = str(job.get("job_id") or "unknown-job").strip() or "unknown-job"
@@ -258,7 +259,7 @@ def _record_account_worker_failure(
                     "policy_decision": "account_processing_failure_human_review",
                     "failure_stage": stage,
                     "failure_code": code,
-                    "failure_attempt_count": 4,
+                    "failure_attempt_count": attempt_count,
                     "failure_incident_id": incident_id,
                 },
             )
@@ -267,7 +268,7 @@ def _record_account_worker_failure(
             {
                 "failure_stage": stage,
                 "failure_code": code,
-                "failure_attempt_count": 4,
+                "failure_attempt_count": attempt_count,
                 "failure_incident_id": incident_id,
                 "policy_decision": "account_processing_failure_human_review",
                 "updated_at": now,
@@ -286,7 +287,7 @@ def _record_account_worker_failure(
             "incident_id": incident_id,
             "stage": stage,
             "code": code,
-            "attempt_count": 4,
+            "attempt_count": attempt_count,
         }
         updated["route_classification"] = classification
         execution_context = dict(updated.get("automation_context") or {})
@@ -303,7 +304,7 @@ def _record_account_worker_failure(
             ticket_id=ticket_id or None,
             account_case_id=case_id or None,
             job_id=str(job.get("job_id") or "") or None,
-            attempts=4,
+            attempts=attempt_count,
             detail=detail,
             now=now,
         )
@@ -696,7 +697,7 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                     str(exc),
                     policy_decision="automation_persona_human_review",
                     failure_stage="automation_persona",
-                    failure_code="automation_persona_generation_failed",
+                    failure_code=exc.code,
                 )
                 if transitioned:
                     _record_account_worker_failure(job=job, ticket=ticket, failure=exc)
@@ -891,7 +892,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 str(exc),
                 policy_decision="automation_persona_human_review",
                 failure_stage="automation_persona",
-                failure_code="automation_persona_generation_failed",
+                failure_code=exc.code,
             )
             if transitioned:
                 _record_account_worker_failure(job=current_job, ticket=ticket, failure=exc)

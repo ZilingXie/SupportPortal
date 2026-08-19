@@ -48,6 +48,54 @@ def test_account_text_retries_three_times_then_returns_fourth_success(monkeypatc
     assert calls[0]["profile"].fallback_models == ()
 
 
+def test_account_text_validation_retries_share_the_four_call_budget(monkeypatch):
+    calls = Mock(
+        side_effect=[
+            LlmTextResult(text="invalid", model_name="gpt-test"),
+            LlmInvocationError("temporary outage"),
+            LlmTextResult(text="still invalid", model_name="gpt-test"),
+            LlmTextResult(text="valid", model_name="gpt-test"),
+        ]
+    )
+    monkeypatch.setattr("backend.services.account_ai_execution.invoke_responses_text", calls)
+
+    def validate(response):
+        if response.text != "valid":
+            raise AccountProcessingFailure("account_response_contract_failed", stage="test")
+
+    result = invoke_account_responses_text(
+        profile=_profile(),
+        system_prompt="system",
+        user_prompt="user",
+        stage="test",
+        validate_response=validate,
+    )
+
+    assert result.text == "valid"
+    assert calls.call_count == 4
+
+
+def test_account_text_validation_exhaustion_preserves_code_and_attempt_count(monkeypatch):
+    calls = Mock(return_value=LlmTextResult(text="invalid", model_name="gpt-test"))
+    monkeypatch.setattr("backend.services.account_ai_execution.invoke_responses_text", calls)
+
+    def validate(_response):
+        raise AccountProcessingFailure("account_response_contract_failed", stage="test")
+
+    with pytest.raises(AccountProcessingFailure) as raised:
+        invoke_account_responses_text(
+            profile=_profile(),
+            system_prompt="system",
+            user_prompt="user",
+            stage="test",
+            validate_response=validate,
+        )
+
+    assert raised.value.code == "account_response_contract_failed"
+    assert raised.value.attempt_count == 4
+    assert calls.call_count == 4
+
+
 def test_account_json_exhaustion_is_system_failure(monkeypatch):
     calls = Mock(side_effect=[LlmTextResult(text="not-json", model_name="gpt-test")] * 4)
     monkeypatch.setattr("backend.services.account_ai_execution.invoke_responses_text", calls)

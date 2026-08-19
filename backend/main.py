@@ -6589,7 +6589,8 @@ def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("checkpoint", None)
     normalized.setdefault("retry_mode", None)
     normalized.setdefault("frozen_case_ids", list(normalized.get("target_case_ids") or []))
-    if str(normalized.get("status") or "").strip() == "needs_recovery":
+    status = str(normalized.get("status") or "").strip()
+    if status == "needs_recovery":
         # Older jobs predate the explicit recovery contract. Derive these fields
         # on the response copy only so reading history never mutates the job.
         normalized["phase"] = "Recovery required"
@@ -6626,6 +6627,8 @@ def _public_account_reroute_job(job: dict[str, Any]) -> dict[str, Any]:
             ).strip()
             or "unknown"
         )
+        normalized["reply_job_summary"] = _account_rerun_reply_job_summary(normalized)
+    elif status == "failed" and normalized.get("reply_job_ids"):
         normalized["reply_job_summary"] = _account_rerun_reply_job_summary(normalized)
     if "remaining" not in normalized:
         normalized["remaining"] = max(

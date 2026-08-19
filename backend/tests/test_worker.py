@@ -4726,7 +4726,10 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
             "render_automation_reply",
-            side_effect=worker.AutomationPersonaError("persona TLS failure"),
+            side_effect=worker.AutomationPersonaError(
+                "automation_persona_fraud_handoff_contract_failed",
+                attempt_count=4,
+            ),
         ), patch.object(worker, "notify_account_failure") as notify:
             worker._publish_account_reply_job(job)
 
@@ -4738,8 +4741,9 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(saved_job["payload"]["failure_stage"], "automation_persona")
         self.assertEqual(
             saved_job["payload"]["failure_code"],
-            "automation_persona_generation_failed",
+            "automation_persona_fraud_handoff_contract_failed",
         )
+        self.assertEqual(saved_case["failure_attempt_count"], 4)
         self.assertEqual(saved_case["automation_status"], "human_review_required")
         self.assertEqual(saved_case["internal_email_send_status"], "sent")
         self.assertEqual(saved_case["internal_email_payload"], email_payload)
