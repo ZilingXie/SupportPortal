@@ -160,7 +160,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             selectedAgentViews['automation-router'] = 'persona';
             const personaMarkup = renderAgentConfig();
             if (!personaMarkup.includes('Automation Persona') || !personaMarkup.includes('Default Support')) throw new Error('Automation Persona management missing');
-            if (!personaMarkup.includes('name="signature"') || !personaMarkup.includes('Support Engineer 2') || personaMarkup.includes('Signoff name')) throw new Error('Persona Signature editor missing');
+            if (personaMarkup.includes('name="signature"') || !personaMarkup.includes('Automation replies are sent without a signature.')) throw new Error('Persona Signature capability was not removed');
             selectedAgentViews['automation-router'] = 'overview';
             selectedAutomationBehaviorKey = 'detailed-invoice';
             const behaviorMarkup = renderAgentConfig();
@@ -295,12 +295,12 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (markup.includes('undefined')) throw new Error('Persona selector rendered undefined content');
             if (!markup.includes('randomly selects') || !markup.includes('enabled Personas with a published version') || !markup.includes('pins that exact Persona version')) throw new Error('Persona selection and pinning explanation missing');
             if (!markup.includes('Full reruns clear') || !markup.includes('Reply-only recovery keeps') || !markup.includes('Human Review')) throw new Error('Persona reset and Human Review explanation missing');
-            if (!markup.includes('name="instruction"') || !markup.includes('name="signature"')) throw new Error('Instruction and Signature must remain independent fields');
+            if (!markup.includes('name="instruction"') || markup.includes('name="signature"')) throw new Error('Persona editor must expose instruction without Signature');
             if (!markup.includes('aria-label="Create Persona"')) throw new Error('Create Persona capability was removed');
 
             personaDraftValues = {
-              'sid-precise': { instruction: 'Precise operator draft', signature: 'Precise signature' },
-              'sid-bright': { instruction: 'Bright operator draft', signature: 'Bright signature' },
+              'sid-precise': { instruction: 'Precise operator draft', opener: '' },
+              'sid-bright': { instruction: 'Bright operator draft', opener: '' },
             };
             selectedPersonaKey = 'sid-precise';
             const preciseDraft = renderAutomationPersonaPanel();
@@ -314,6 +314,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         styles = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")
         self.assertIn(".admin-persona-style", styles)
         self.assertIn(".admin-persona-list button:focus-visible", styles)
+        self.assertNotIn(".admin-persona-signature", styles)
 
     def test_automation_router_persona_runtime_explains_unavailable_candidate_handoff(self) -> None:
         self.run_admin_app_script(
@@ -350,13 +351,13 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               return { ok: true, status: 200, json: async () => ({ persona: { enabled: false } }) };
             };
             const form = { dataset: { personaKey: 'sid-bright' }, values: {
-              instruction: 'Warm and direct', opener: 'Hello', signature: 'Best,\\nSid\\nSupport Engineer 2', change_note: 'Refine voice', based_on_version: '1'
+              instruction: 'Warm and direct', opener: 'Hello', change_note: 'Refine voice', based_on_version: '1'
             } };
             await createPersonaDraft(form);
             const draftRequest = requests.find(item => item.url.includes('/drafts'));
             if (!draftRequest.url.endsWith('/account-personas/sid-bright/drafts')) throw new Error('Persona draft used the wrong key');
             const draftBody = JSON.parse(draftRequest.options.body);
-            if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || draftBody.content.signature !== 'Best,\\nSid\\nSupport Engineer 2') throw new Error('Persona draft did not preserve unified voice fields');
+            if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || Object.hasOwn(draftBody.content, 'signature')) throw new Error('Persona draft payload contains unsupported fields');
             if (draftBody.based_on_version !== 1 || draftBody.change_note !== 'Refine voice') throw new Error('Persona draft version contract invalid');
             await runPersonaVersionAction('publish', 'sid-precise', 2);
             if (!requests.some(item => item.url.endsWith('/account-personas/sid-precise/versions/2/publish'))) throw new Error('Persona publish used the wrong key');

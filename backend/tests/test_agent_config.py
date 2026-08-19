@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_SIGNATURE
+from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 from backend.services.agent_config import build_agent_config_payload, build_managed_prompt_catalog
 from backend.services.engineer_plan_agent import ENGINEER_PLAN_SKILLS
 
@@ -58,7 +58,7 @@ class AgentConfigTests(unittest.TestCase):
             self.assertEqual(persona["published_version"], 1)
             self.assertEqual(persona["versions"][0]["content"]["instruction"], preset.content["instruction"])
             self.assertEqual(persona["versions"][0]["content"]["opener"], "")
-            self.assertEqual(persona["versions"][0]["content"]["signature"], DEFAULT_PERSONA_SIGNATURE)
+            self.assertEqual(set(persona["versions"][0]["content"]), {"instruction", "opener"})
 
     def test_catalog_exposes_prompt_skill_and_empty_mcp_contracts(self) -> None:
         payload = build_agent_config_payload([])

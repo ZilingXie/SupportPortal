@@ -22,7 +22,10 @@ from backend.services.automation_routing import (
     automation_metadata,
     is_registered_automation,
 )
-from backend.services.account_admin import AccountPersonaUnavailableError
+from backend.services.account_admin import (
+    AccountPersonaUnavailableError,
+    normalize_account_persona_content,
+)
 from backend.services.account_billing_handlers import account_billing_metadata
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
 from backend.services.account_case_filters import (
@@ -3890,21 +3893,23 @@ class InMemoryTicketRepository:
 
     def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
+        normalized_content = normalize_account_persona_content(content)
         with self._assignment_lock:
             if not key or key in self._account_personas:
                 raise ValueError("persona_key must be unique")
             self._account_personas[key] = {"persona_key": key, "display_name": str(display_name).strip(), "enabled": True, "published_version": None, "created_at": created_at, "updated_at": created_at}
-            return self.create_account_persona_draft(key, content=content, change_note="Initial draft", based_on_version=None, actor_id=actor_id, created_at=created_at)
+            return self.create_account_persona_draft(key, content=normalized_content, change_note="Initial draft", based_on_version=None, actor_id=actor_id, created_at=created_at)
 
     def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
+        normalized_content = normalize_account_persona_content(content)
         with self._assignment_lock:
             if key not in self._account_personas:
                 raise ValueError("persona not found")
             versions = self._account_persona_versions.setdefault(key, [])
             if based_on_version is not None and not any(int(item["version"]) == int(based_on_version) for item in versions):
                 raise ValueError("based_on_version not found")
-            item = {"persona_key": key, "version": max([int(v["version"]) for v in versions] or [0]) + 1, "status": "draft", "content": copy.deepcopy(content), "change_note": str(change_note).strip(), "based_on_version": based_on_version, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
+            item = {"persona_key": key, "version": max([int(v["version"]) for v in versions] or [0]) + 1, "status": "draft", "content": copy.deepcopy(normalized_content), "change_note": str(change_note).strip(), "based_on_version": based_on_version, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
             versions.append(item)
             return copy.deepcopy(item)
 
@@ -3915,6 +3920,7 @@ class InMemoryTicketRepository:
             target = next((item for item in versions if int(item["version"]) == int(version)), None)
             if target is None or target["status"] != "draft":
                 raise ValueError("draft version not found")
+            normalize_account_persona_content(target["content"])
             for item in versions:
                 if item["status"] == "published": item["status"] = "superseded"
             target.update({"status": "published", "published_by": actor_id, "published_at": published_at})
@@ -3926,7 +3932,11 @@ class InMemoryTicketRepository:
         with self._assignment_lock:
             source = next((item for item in self._account_persona_versions.get(key, []) if int(item["version"]) == int(version)), None)
             if source is None: raise ValueError("version not found")
-            draft = self.create_account_persona_draft(key, content=source["content"], change_note=f"Rollback to version {version}", based_on_version=version, actor_id=actor_id, created_at=published_at)
+            rollback_content = normalize_account_persona_content(
+                source["content"],
+                allow_legacy_fields=True,
+            )
+            draft = self.create_account_persona_draft(key, content=rollback_content, change_note=f"Rollback to version {version}", based_on_version=version, actor_id=actor_id, created_at=published_at)
             return self.publish_account_persona_version(key, draft["version"], actor_id=actor_id, published_at=published_at)
 
     def _eligible_account_persona_candidates(self) -> list[dict[str, Any]]:
@@ -15244,18 +15254,20 @@ class PostgresTicketRepository:
 
     def create_account_persona(self, persona_key: str, display_name: str, *, content: dict[str, Any], actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
+        normalized_content = normalize_account_persona_content(content)
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 self._lock_account_persona_registry(cur)
                 try:
                     cur.execute(sql.SQL("INSERT INTO {} (persona_key,display_name,enabled,published_version,created_at,updated_at) VALUES (%s,%s,TRUE,NULL,%s,%s)").format(self._table("support_account_personas")), (key, str(display_name).strip(), created_at, created_at))
                 except psycopg.errors.UniqueViolation as exc: raise ValueError("persona_key must be unique") from exc
-                cur.execute(sql.SQL("INSERT INTO {} (persona_key,version,status,content,change_note,created_by,created_at) VALUES (%s,1,'draft',%s,'Initial draft',%s,%s)").format(self._table("support_account_prompt_versions")), (key, Json(content), actor_id, created_at))
-            return {"persona_key": key, "version": 1, "status": "draft", "content": copy.deepcopy(content), "change_note": "Initial draft", "based_on_version": None, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key,version,status,content,change_note,created_by,created_at) VALUES (%s,1,'draft',%s,'Initial draft',%s,%s)").format(self._table("support_account_prompt_versions")), (key, Json(normalized_content), actor_id, created_at))
+            return {"persona_key": key, "version": 1, "status": "draft", "content": copy.deepcopy(normalized_content), "change_note": "Initial draft", "based_on_version": None, "created_by": actor_id, "created_at": created_at, "published_by": None, "published_at": None}
         return self._run_with_connection_retry("create_account_persona", _operation)
 
     def create_account_persona_draft(self, persona_key: str, *, content: dict[str, Any], change_note: str, based_on_version: int | None, actor_id: str, created_at: str) -> dict[str, Any]:
         key = str(persona_key).strip().lower()
+        normalized_content = normalize_account_persona_content(content)
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 self._lock_account_persona_registry(cur)
@@ -15263,8 +15275,8 @@ class PostgresTicketRepository:
                 if based_on_version is not None:
                     cur.execute(sql.SQL("SELECT 1 FROM {} WHERE persona_key=%s AND version=%s").format(self._table("support_account_prompt_versions")), (key,based_on_version))
                     if cur.fetchone() is None: raise ValueError("based_on_version not found")
-                cur.execute(sql.SQL("INSERT INTO {} (persona_key,version,status,content,change_note,based_on_version,created_by,created_at) VALUES (%s,%s,'draft',%s,%s,%s,%s,%s)").format(self._table("support_account_prompt_versions")), (key,version,Json(content),change_note,based_on_version,actor_id,created_at))
-            return {"persona_key":key,"version":version,"status":"draft","content":copy.deepcopy(content),"change_note":change_note,"based_on_version":based_on_version,"created_by":actor_id,"created_at":created_at,"published_by":None,"published_at":None}
+                cur.execute(sql.SQL("INSERT INTO {} (persona_key,version,status,content,change_note,based_on_version,created_by,created_at) VALUES (%s,%s,'draft',%s,%s,%s,%s,%s)").format(self._table("support_account_prompt_versions")), (key,version,Json(normalized_content),change_note,based_on_version,actor_id,created_at))
+            return {"persona_key":key,"version":version,"status":"draft","content":copy.deepcopy(normalized_content),"change_note":change_note,"based_on_version":based_on_version,"created_by":actor_id,"created_at":created_at,"published_by":None,"published_at":None}
         return self._run_with_connection_retry("create_account_persona_draft", _operation)
 
     def publish_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
@@ -15274,16 +15286,18 @@ class PostgresTicketRepository:
                 self._lock_account_persona_registry(cur)
                 cur.execute(sql.SQL("SELECT content,change_note,based_on_version,created_by,created_at,status FROM {} WHERE persona_key=%s AND version=%s FOR UPDATE").format(self._table("support_account_prompt_versions")),(key,version)); row=cur.fetchone()
                 if row is None or row[5] != "draft": raise ValueError("draft version not found")
+                normalized_content = normalize_account_persona_content(dict(row[0]))
                 cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE persona_key=%s AND status='published'").format(self._table("support_account_prompt_versions")),(key,))
                 cur.execute(sql.SQL("UPDATE {} SET status='published',published_by=%s,published_at=%s WHERE persona_key=%s AND version=%s").format(self._table("support_account_prompt_versions")),(actor_id,published_at,key,version))
                 cur.execute(sql.SQL("UPDATE {} SET published_version=%s,updated_at=%s WHERE persona_key=%s").format(self._table("support_account_personas")),(version,published_at,key))
-            return {"persona_key":key,"version":version,"status":"published","content":dict(row[0]),"change_note":str(row[1]),"based_on_version":row[2],"created_by":str(row[3]),"created_at":_to_iso(row[4]),"published_by":actor_id,"published_at":published_at}
+            return {"persona_key":key,"version":version,"status":"published","content":normalized_content,"change_note":str(row[1]),"based_on_version":row[2],"created_by":str(row[3]),"created_at":_to_iso(row[4]),"published_by":actor_id,"published_at":published_at}
         return self._run_with_connection_retry("publish_account_persona_version", _operation)
 
     def rollback_account_persona_version(self, persona_key: str, version: int, *, actor_id: str, published_at: str) -> dict[str, Any]:
         personas=self.list_account_personas(); persona=next((p for p in personas if p["persona_key"]==str(persona_key).strip().lower()),None); source=next((v for v in (persona or {}).get("versions",[]) if int(v["version"])==int(version)),None)
         if source is None: raise ValueError("version not found")
-        draft=self.create_account_persona_draft(persona_key,content=source["content"],change_note=f"Rollback to version {version}",based_on_version=version,actor_id=actor_id,created_at=published_at)
+        rollback_content=normalize_account_persona_content(source["content"],allow_legacy_fields=True)
+        draft=self.create_account_persona_draft(persona_key,content=rollback_content,change_note=f"Rollback to version {version}",based_on_version=version,actor_id=actor_id,created_at=published_at)
         return self.publish_account_persona_version(persona_key,draft["version"],actor_id=actor_id,published_at=published_at)
 
     def set_account_persona_enabled(self, persona_key: str, enabled: bool) -> dict[str, Any]:

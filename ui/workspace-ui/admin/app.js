@@ -1003,7 +1003,6 @@ async function createPersona(form) {
         content: {
           instruction: String(values.get("instruction") || "").trim(),
           opener: "",
-          signature: String(values.get("signature") || "").trim(),
         },
       }),
     });
@@ -1024,7 +1023,6 @@ async function createPersonaDraft(form) {
   personaDraftValues[personaKey] = {
     instruction: String(values.get("instruction") || ""),
     opener: String(values.get("opener") || ""),
-    signature: String(values.get("signature") || ""),
     change_note: String(values.get("change_note") || ""),
   };
   personaOperationBusy = true;
@@ -1038,7 +1036,6 @@ async function createPersonaDraft(form) {
         content: {
           instruction: values.get("instruction"),
           opener: values.get("opener"),
-          signature: values.get("signature"),
         },
         change_note: values.get("change_note"),
         based_on_version: Number(values.get("based_on_version")) || null,
@@ -1310,7 +1307,6 @@ function renderAutomationPersonaPanel() {
   const draft = {
     instruction: published?.content?.instruction || "",
     opener: published?.content?.opener || "",
-    signature: published?.content?.signature || "",
     change_note: "",
     ...(personaDraftValues[persona.persona_key] || {}),
   };
@@ -1325,8 +1321,9 @@ function renderAutomationPersonaPanel() {
         <p>For the first Account-only customer-facing reply, runtime randomly selects from enabled Personas with a published version and pins that exact Persona version to the case.</p>
         <p>Full reruns clear the assignment so a later reply can select again. Reply-only recovery keeps the pinned assignment. Human Review cases do not receive a Persona.</p>
         <p>If no enabled Persona with a published version is available, the reply moves to Human Review and no customer copy is sent.</p>
+        <p>Automation replies are sent without a signature.</p>
       </div>
-      ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><label><span>Signature</span><textarea name="signature" rows="4" required placeholder="Best,&#10;Sid&#10;Support Engineer 2"></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
+      ${personaCreateOpen ? `<form class="admin-persona-create" data-persona-create-form><label><span>Key</span><input name="persona_key" pattern="[a-z][a-z0-9-]{1,63}" placeholder="persona-key" required /></label><label><span>Name</span><input name="display_name" placeholder="Display name" required /></label><label><span>Instruction</span><textarea name="instruction" rows="4" required></textarea></label><div><button class="btn btn-primary" type="submit" ${personaOperationBusy ? "disabled" : ""}>Create</button><button class="btn btn-ghost" type="button" data-action="toggle-persona-create">Cancel</button></div></form>` : ""}
       <nav class="admin-persona-list" aria-label="Automation Personas">${personas.map(item => {
         const presentation = automationPersonaPresentation(item.persona_key);
         const selected = item.persona_key === persona.persona_key;
@@ -1341,7 +1338,6 @@ function renderAutomationPersonaPanel() {
         <div class="admin-persona-editor-heading"><div><p class="admin-eyebrow">PUBLISHED v${escapeHtml(persona.published_version || "-")}</p><h3>${escapeHtml(persona.display_name)}</h3></div>${renderAgentBadge(persona.enabled ? "Enabled" : "Disabled", persona.enabled ? "is-active" : "is-gated")}</div>
         <label><span>Persona instruction</span><textarea name="instruction" rows="8" required data-persona-draft-field="instruction">${escapeHtml(draft.instruction)}</textarea></label>
         <label><span>Opener</span><input name="opener" value="${escapeHtml(draft.opener)}" data-persona-draft-field="opener" placeholder="Optional opening line" /></label>
-        <label><span>Signature</span><textarea class="admin-persona-signature" name="signature" rows="4" required data-persona-draft-field="signature" placeholder="Best,&#10;Sid&#10;Support Engineer 2">${escapeHtml(draft.signature)}</textarea></label>
         <label><span>Change note</span><input name="change_note" value="${escapeHtml(draft.change_note)}" required maxlength="500" data-persona-draft-field="change_note" /></label>
         <input type="hidden" name="based_on_version" value="${escapeHtml(persona.published_version || "")}" />
         <div class="admin-editor-actions"><button class="btn btn-ghost" type="submit" ${personaOperationBusy ? "disabled" : ""}>Save draft</button>${versions.filter(item => item.status === "draft").map(item => `<button class="btn btn-primary" type="button" data-action="publish-persona" data-persona-key="${escapeHtml(persona.persona_key)}" data-version="${item.version}" ${personaOperationBusy ? "disabled" : ""}>Publish v${item.version}</button>`).join("")}</div>

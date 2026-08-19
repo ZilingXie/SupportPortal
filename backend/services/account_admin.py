@@ -19,7 +19,6 @@ from backend.services.prompts.account_routing import (
     build_account_backend_operation_system_prompt,
     build_account_intent_system_prompt,
 )
-from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.automation_routing import automation_metadata
 
 
@@ -33,10 +32,8 @@ ROUTING_STAGE_DESCRIPTIONS = {
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
-# Kept for compatibility with historical Persona payloads. New Automation
-# replies intentionally ignore signatures.
-DEFAULT_PERSONA_SIGNATURE = "Best,\nSid\nSupport Engineer 2"
 ACCOUNT_PERSONA_PRESET_VERSION = "automation-persona-presets-v1"
+_ACCOUNT_PERSONA_CONTENT_KEYS = frozenset({"instruction", "opener"})
 
 
 class AccountPersonaUnavailableError(RuntimeError):
@@ -55,7 +52,6 @@ class AccountPersonaPreset:
         return {
             "instruction": self.instruction,
             "opener": "",
-            "signature": DEFAULT_PERSONA_SIGNATURE,
         }
 
 
@@ -638,6 +634,26 @@ def routing_config_payload() -> dict[str, Any]:
     }
 
 
+def normalize_account_persona_content(
+    content: dict[str, Any],
+    *,
+    allow_legacy_fields: bool = False,
+) -> dict[str, str]:
+    """Return the supported Persona fields and reject new legacy content."""
+    if not isinstance(content, dict):
+        raise ValueError("persona content must be an object")
+    unsupported = sorted(set(content) - _ACCOUNT_PERSONA_CONTENT_KEYS)
+    if unsupported and not allow_legacy_fields:
+        raise ValueError(f"unsupported persona content fields: {', '.join(unsupported)}")
+    instruction = str(content.get("instruction") or "").strip()
+    if not instruction:
+        raise ValueError("persona instruction is required")
+    return {
+        "instruction": instruction,
+        "opener": str(content.get("opener") or "").strip(),
+    }
+
+
 def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
     content = persona.get("content") if isinstance(persona.get("content"), dict) else {}
     opener = str(content.get("opener") or "").strip()
@@ -649,11 +665,4 @@ def apply_persona_to_customer_reply(reply: str, persona: dict[str, Any]) -> str:
             if salutation
             else f"{opener}\n\n{normalized}"
         )
-    # Historical Persona records may contain signatures, but the current
-    # Automation customer-reply contract never emits a sign-off.
-    styled = ensure_customer_reply_email_style(body=normalized, opener=opener or None, signoff_name="Sid")
-    return re.sub(
-        r"\n\n(?:Best [Rr]egards,|Best [Rr]egards|Regards,|此致)\n[^\n]+\s*$",
-        "",
-        styled,
-    ).rstrip()
+    return normalized.rstrip()

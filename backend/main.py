@@ -38,7 +38,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 import psycopg
 
 from backend.repositories.ticket_repository import (
@@ -1371,14 +1371,21 @@ class AccountIntakeRequest(BaseModel):
     created_by: str | None = Field(default=None, max_length=160)
 
 
+class AccountPersonaContentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instruction: str = Field(min_length=1)
+    opener: str = ""
+
+
 class AccountPersonaCreateRequest(BaseModel):
     persona_key: str = Field(pattern=r"^[a-z][a-z0-9-]{1,63}$")
     display_name: str = Field(min_length=1, max_length=120)
-    content: dict[str, Any]
+    content: AccountPersonaContentRequest
 
 
 class AccountPersonaDraftRequest(BaseModel):
-    content: dict[str, Any]
+    content: AccountPersonaContentRequest
     change_note: str = Field(min_length=1, max_length=500)
     based_on_version: int | None = Field(default=None, ge=1)
 
@@ -11675,7 +11682,7 @@ def create_workspace_admin_account_persona(
 ) -> dict[str, Any]:
     timestamp = now_iso()
     try:
-        version = ticket_repository.create_account_persona(request.persona_key, request.display_name, content=request.content, actor_id=principal.account_id, created_at=timestamp)
+        version = ticket_repository.create_account_persona(request.persona_key, request.display_name, content=request.content.model_dump(), actor_id=principal.account_id, created_at=timestamp)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ticket_repository.record_workspace_audit_event("account_persona_created", actor_id=principal.account_id, target_id=request.persona_key, payload={"version": version["version"]}, created_at=timestamp)
@@ -11690,7 +11697,7 @@ def create_workspace_admin_account_persona_draft(
 ) -> dict[str, Any]:
     timestamp = now_iso()
     try:
-        version = ticket_repository.create_account_persona_draft(persona_key, content=request.content, change_note=request.change_note, based_on_version=request.based_on_version, actor_id=principal.account_id, created_at=timestamp)
+        version = ticket_repository.create_account_persona_draft(persona_key, content=request.content.model_dump(), change_note=request.change_note, based_on_version=request.based_on_version, actor_id=principal.account_id, created_at=timestamp)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ticket_repository.record_workspace_audit_event("account_persona_draft_created", actor_id=principal.account_id, target_id=persona_key, payload={"version": version["version"], "change_note": request.change_note}, created_at=timestamp)

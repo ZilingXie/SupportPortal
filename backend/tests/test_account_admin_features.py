@@ -1123,7 +1123,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             self.assertEqual(catalog[key].display_name, expected_preset["display_name"])
             self.assertEqual(catalog[key].content["instruction"], expected_preset["instruction"])
             self.assertEqual(catalog[key].content["opener"], "")
-            self.assertEqual(catalog[key].content["signature"], "Best,\nSid\nSupport Engineer 2")
+            self.assertEqual(set(catalog[key].content), {"instruction", "opener"})
             self.assertEqual(catalog[key].seed_marker, f"Seeded {expected_preset['display_name']} preset v1")
             self.assertTrue(personas[key]["enabled"])
             self.assertEqual(personas[key]["published_version"], 1)
@@ -1147,7 +1147,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
                 with self.assertRaises(FrozenInstanceError):
                     setattr(preset, attribute, replacement)
 
-        self.assertEqual(set(original_content), {"instruction", "opener", "signature"})
+        self.assertEqual(set(original_content), {"instruction", "opener"})
         original_content["instruction"] = "Mutated instruction"
         self.assertNotEqual(preset.content["instruction"], "Mutated instruction")
 
@@ -1298,14 +1298,19 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(default_persona["display_name"], "Sid Warm")
         self.assertEqual(default_persona["published_version"], 1)
         self.assertEqual(default_persona["versions"][0]["content"], DEFAULT_PERSONA_CONTENT)
-        self.assertEqual(
-            default_persona["versions"][0]["content"]["signature"],
-            "Best,\nSid\nSupport Engineer 2",
-        )
+        with self.assertRaisesRegex(ValueError, "unsupported persona content fields: signoff_name"):
+            self.repository.create_account_persona_draft(
+                DEFAULT_PERSONA_KEY,
+                content={"instruction": "Calm and concise", "signoff_name": "Sid"},
+                change_note="Legacy signoff",
+                based_on_version=1,
+                actor_id="admin-1",
+                created_at="2026-07-21T00:30:00+00:00",
+            )
 
         draft = self.repository.create_account_persona_draft(
             DEFAULT_PERSONA_KEY,
-            content={"instruction": "Calm and concise", "signoff_name": "Sid"},
+            content={"instruction": "Calm and concise", "opener": ""},
             change_note="Calmer reply",
             based_on_version=1,
             actor_id="admin-1",
@@ -1336,11 +1341,13 @@ class AccountAdminFeatureTests(unittest.TestCase):
             {"sid-bright": 1, "sid-precise": 1},
         )
 
+        self.repository._account_persona_versions[DEFAULT_PERSONA_KEY][0]["content"]["signature"] = "Legacy"
         rollback = self.repository.rollback_account_persona_version(
             DEFAULT_PERSONA_KEY, 1, actor_id="admin-1", published_at="2026-07-21T03:00:00+00:00"
         )
         self.assertEqual(rollback["version"], 3)
         self.assertEqual(rollback["status"], "published")
+        self.assertEqual(rollback["content"], DEFAULT_PERSONA_CONTENT)
         personas_after_rollback = {
             item["persona_key"]: item for item in self.repository.list_account_personas()
         }
@@ -1348,7 +1355,33 @@ class AccountAdminFeatureTests(unittest.TestCase):
             [item["version"] for item in personas_after_rollback[DEFAULT_PERSONA_KEY]["versions"]],
             [1, 2, 3],
         )
+        self.assertEqual(
+            personas_after_rollback[DEFAULT_PERSONA_KEY]["versions"][0]["content"]["signature"],
+            "Legacy",
+        )
         self.assertEqual(self.repository.resolve_account_persona("TK-1"), assigned_before_publish)
+
+        legacy_draft = self.repository.create_account_persona_draft(
+            DEFAULT_PERSONA_KEY,
+            content={"instruction": "Legacy draft", "opener": ""},
+            change_note="Legacy draft",
+            based_on_version=rollback["version"],
+            actor_id="admin-1",
+            created_at="2026-07-21T04:00:00+00:00",
+        )
+        self.repository._account_persona_versions[DEFAULT_PERSONA_KEY][-1]["content"]["signature"] = "Legacy"
+        with self.assertRaisesRegex(ValueError, "unsupported persona content fields: signature"):
+            self.repository.publish_account_persona_version(
+                DEFAULT_PERSONA_KEY,
+                legacy_draft["version"],
+                actor_id="admin-1",
+                published_at="2026-07-21T05:00:00+00:00",
+            )
+        after_failed_publish = {
+            item["persona_key"]: item for item in self.repository.list_account_personas()
+        }[DEFAULT_PERSONA_KEY]
+        self.assertEqual(after_failed_publish["published_version"], rollback["version"])
+        self.assertEqual(after_failed_publish["versions"][-1]["status"], "draft")
 
     def test_persona_publish_and_resolve_share_one_atomic_registry_snapshot(self) -> None:
         for persona in self.repository.list_account_personas():
@@ -1521,9 +1554,13 @@ class AccountAdminFeatureTests(unittest.TestCase):
                 "signature": "Best,\nMaya\nSupport Engineer 1",
             },
         }
-        rendered = apply_persona_to_customer_reply("Hi Taylor,\n\nPlease send the transaction ID.\n\nBest Regards,\nSid", persona)
-        self.assertIn("Thanks for contacting the billing team.", rendered)
-        self.assertNotIn("Support Engineer 1", rendered)
+        rendered = apply_persona_to_customer_reply("Hi Taylor,\n\nPlease send the transaction ID.", persona)
+        self.assertEqual(
+            rendered,
+            "Hi Taylor,\n\nThanks for contacting the billing team.\n\nPlease send the transaction ID.",
+        )
+        self.assertNotIn("Best", rendered)
+        self.assertNotIn("Support Engineer", rendered)
 
         saved = self.repository.save_account_reply_execution({
             "execution_id": "reply-1",
@@ -1531,7 +1568,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
             "reply_kind": "missing_fields",
             "persona_key": "concise",
             "persona_version": 4,
-            "effective_prompt": persona["content"],
+            "effective_prompt": {"instruction": "Be concise", "opener": persona["content"]["opener"]},
             "created_at": "2026-07-21T00:00:00+00:00",
         })
         self.assertEqual(saved["persona_version"], 4)

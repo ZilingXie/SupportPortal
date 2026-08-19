@@ -541,8 +541,8 @@ The publication defense is non-destructive: it inspects only the reply tail, nev
 
 | Repair stage | Status | Changed paths | Verification | Local commit | Notes |
 | --- | --- | --- | --- | --- | --- |
-| R0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | repository policy; Project Overview `--write`/`--check`; `git diff --check` passed | recorded in R1 checkpoint | Repair workspace and repository policy verified; karpathy-guidelines read before runtime edits. |
-| R1 | pending | Persona backend/API/repositories/Admin UI and focused tests | pending | pending | Remove Signature configuration, writes, propagation, and generation. |
+| R0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | repository policy; Project Overview `--write`/`--check`; `git diff --check` passed | `485f4fa` | Repair workspace and repository policy verified; karpathy-guidelines read before runtime edits. |
+| R1 | completed | Persona backend/API/repositories/Admin UI and focused tests | 107 passed, 19 environment-dependent PostgreSQL tests skipped; `py_compile` passed | recorded in R2 checkpoint | Removed Signature configuration, new writes, rollback propagation, runtime prompt propagation, and Sid generation; historical JSON remains immutable/read-only. |
 | R2 | pending | Persona renderer/Worker publication fence and focused tests | pending | pending | Replace destructive stripping with tail-only fail-closed validation. |
 | R3 | pending | Enablement completion and reply polarity validators/tests | pending | pending | Reject questions, future/request language, negation, and revoked state. |
 | R4 | pending | Prompt/task/plan/Project Overview records and integrated verification | pending | pending | Record `automation-persona-v10` and final branch evidence. |
@@ -551,4 +551,4 @@ The publication defense is non-destructive: it inspects only the reply tail, nev
 
 ### Repair Resume From Here
 
-Begin R1 in the repair worktree. Remove Signature configuration and generation at the source, then run the focused Persona API/repository/Admin UI tests. Do not run a full rerun until the repair PR is merged, the official stack serves `automation-persona-v10`, and the authenticated preflight confirms zero production/Zendesk-linked Account Cases.
+Begin R2 in the repair worktree. Replace destructive signature stripping with a tail-only assertion and prove signed content cannot reach `publish_account_reply()` or production delivery intent persistence. Do not run a full rerun until the repair PR is merged, the official stack serves `automation-persona-v10`, and the authenticated preflight confirms zero production/Zendesk-linked Account Cases.

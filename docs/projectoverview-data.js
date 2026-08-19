@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T02:28:10Z",
-  "source_base_commit": "3f1f65cb8cbdf86f007ed87ab9a1549fa2c72ddc",
-  "registry_digest": "d81c1f6b3727bf6f54d5bf38b421729f831aa67afa835694783864171c91e155",
+  "generated_at": "2026-08-19T02:43:42Z",
+  "source_base_commit": "485f4fac453ad4f5537b48fe4ca9a36a7ab6bb10",
+  "registry_digest": "ab642ebaa30d33d66ce89e6dfa37d3d12830ff194f85f74dd19995001305c596",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -514,6 +514,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Signature source-removal repair preflight",
           "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
           "result": "Root main and origin/main are synchronized at 3f1f65c; the repair worktree is clean on codex/account-automation-signature-source-removal; repository policy verification passed."
+        },
+        {
+          "type": "test",
+          "label": "Persona Signature source-removal focused suite",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_workspace_admin_ui_contract backend.tests.test_agent_config backend.tests.test_worker.WorkerResilienceTests.test_reply_facts_prepare_pins_persisted_persona_assignment",
+          "result": "107 tests passed with 19 environment-dependent PostgreSQL tests skipped; Persona presets, API validation, repository writes/rollback, Admin UI, Agent Config, and runtime prompt projection are green."
         }
       ],
       "source_refs": [
@@ -4036,7 +4042,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "执行签名源头移除 repair：删除 Persona Signature 配置和生成链路，改为非破坏性 fail-closed 检查，修复完成状态与回复极性后重新部署和运行验收。",
+      "next_action": "进入 repair R2：用非破坏性的尾部签名断言替换自动截断，并在 publish_account_reply 之前 fail closed。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
@@ -4076,6 +4082,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Signature source-removal repair preflight",
           "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
           "result": "Root main and origin/main are synchronized at 3f1f65c; the repair worktree is clean on codex/account-automation-signature-source-removal; repository policy verification passed."
+        },
+        {
+          "type": "test",
+          "label": "Persona Signature source-removal focused suite",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_workspace_admin_ui_contract backend.tests.test_agent_config backend.tests.test_worker.WorkerResilienceTests.test_reply_facts_prepare_pins_persisted_persona_assignment",
+          "result": "107 tests passed with 19 environment-dependent PostgreSQL tests skipped; Persona presets, API validation, repository writes/rollback, Admin UI, Agent Config, and runtime prompt projection are green."
         }
       ],
       "source_refs": [

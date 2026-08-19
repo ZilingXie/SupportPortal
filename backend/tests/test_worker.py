@@ -3752,9 +3752,16 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.resolve_account_persona.assert_not_called()
         self.assertEqual(job["payload"]["persona_key"], "sid-bright")
         self.assertEqual(job["payload"]["persona_version"], 2)
-        self.assertEqual(job["payload"]["effective_prompt"], assignment["content"])
+        self.assertEqual(
+            job["payload"]["effective_prompt"],
+            {"instruction": "Bright", "opener": ""},
+        )
         self.assertEqual(render.call_args.kwargs["persona_assignment"]["persona_key"], "sid-bright")
         self.assertEqual(render.call_args.kwargs["persona_assignment"]["version"], 2)
+        self.assertEqual(
+            render.call_args.kwargs["persona_assignment"]["content"],
+            {"instruction": "Bright", "opener": ""},
+        )
 
     def test_legacy_delayed_reply_pins_persisted_persona_assignment(self) -> None:
         job = {

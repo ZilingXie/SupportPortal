@@ -31,6 +31,7 @@ from backend.services.account_failure_alerts import notify_account_failure
 from backend.services.account_admin import (
     AccountPersonaUnavailableError,
     apply_persona_to_customer_reply,
+    normalize_account_persona_content,
 )
 from backend.services.account_reply_jobs import (
     AccountReplyContractError,
@@ -665,7 +666,10 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                 {
                     "persona_key": persona.get("persona_key"),
                     "persona_version": persona.get("version"),
-                    "effective_prompt": dict(persona.get("content") or {}),
+                    "effective_prompt": normalize_account_persona_content(
+                        dict(persona.get("content") or {}),
+                        allow_legacy_fields=True,
+                    ),
                 }
             )
         if _account_reply_needs_persona_render(payload):
