@@ -3790,3 +3790,25 @@ For each new entry, record:
   - `backend.tests.test_prompt_versioning`: 21 passed (in the runtime image).
   - `backend.tests.test_prompt_versioning_postgres`: 3 passed against the staging Postgres with an isolated schema.
   - `backend.tests.test_deploy_ec2` + `backend.tests.test_production_ui_contract`: 27 passed.
+
+## 2026-08-19 - Account Automation handoff contract retry v11
+
+- Area or subsystem: `/account` Automation Persona generation, Account reply worker failure metadata, and rerun status reporting
+- Prompt or model version: `automation-persona-v11`; model configuration unchanged
+- Summary: Fraud and Account Suspension handoff prompts now require the exact standalone sentence `The relevant team will contact you within 24 hours.` Final reply validation runs inside the existing Account AI four-call budget, so invalid model output can be regenerated without adding nested retries or rewriting customer text.
+- Reason: Rerun job `account-rerun-f53393771ddd47118d4eb821d83c89e9` stopped at `AC-12715` after a successful model response used a natural handoff paraphrase that failed the deterministic Fraud contract. The prior implementation validated only after the retry loop and persisted a generic generation code with a hard-coded attempt count.
+- Affected files or config:
+  - `backend/services/account_ai_execution.py`
+  - `backend/services/automation_persona.py`
+  - `backend/worker.py`
+  - `backend/main.py`
+  - Account AI, Persona, Worker, rerun, dispatch, and UI contract tests
+- Expected behavior change:
+  - Transport failures and response-validation failures share one maximum of four physical model calls.
+  - Invalid, signed, empty, contract-breaking, or forbidden-value output remains fail closed; the application does not append or rewrite the required sentence.
+  - Exhausted Persona failures preserve the specific contract code and real attempt count; unpublished candidate bodies are not persisted.
+  - Terminal failed reruns expose an observed summary of linked reply jobs without mutating historical counters or scheduling work.
+- Verification:
+  - Targeted Account AI, Persona, Worker, rerun fail-fast/recovery, dispatch, and UI suite: 210 tests passed with 29 subtests passed.
+  - Integrated Account Automation suite: 519 tests passed with 19 environment-dependent PostgreSQL tests skipped and 67 subtests passed.
+  - Final integrated and post-merge live-stack evidence is recorded in task `p1-50`.

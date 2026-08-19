@@ -310,6 +310,29 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             "account_rerun_reply_summary_unavailable",
         )
 
+    def test_public_failed_job_observes_linked_reply_jobs_without_mutating_history(self) -> None:
+        historical = {
+            "job_id": "failed-with-replies",
+            "status": "failed",
+            "reply_job_ids": ["reply-published", "reply-manual"],
+            "replies_scheduled": 2,
+        }
+        original = dict(historical)
+        with patch.object(
+            self.repository,
+            "get_account_reply_job",
+            side_effect=[
+                {"job_id": "reply-published", "status": "published"},
+                {"job_id": "reply-manual", "status": "manual_attention"},
+            ],
+        ):
+            public = main._public_account_reroute_job(historical)
+
+        self.assertEqual(public["reply_job_summary"]["source"], "observed")
+        self.assertEqual(public["reply_job_summary"]["published"], 1)
+        self.assertEqual(public["reply_job_summary"]["failed"], 1)
+        self.assertEqual(historical, original)
+
     async def test_api_job_shape_hides_dispatch_and_idempotency_metadata(self) -> None:
         job = await self._enqueue_single(BackgroundTasks())
 

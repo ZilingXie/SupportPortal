@@ -32,7 +32,9 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v10"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v11"
+
+_HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -127,12 +129,12 @@ def customer_first_name(customer_name: Any) -> str:
 class AutomationPersonaError(AccountProcessingFailure):
     """Raised when a customer-facing Automation reply cannot be generated."""
 
-    def __init__(self, code: str, detail: Any = "") -> None:
+    def __init__(self, code: str, detail: Any = "", *, attempt_count: int = 1) -> None:
         # Keep legacy callers' human-readable exception text while retaining a
         # stable normalized failure code for persistence and alerting.
         raw_code = " ".join(str(code or "").split()).strip()
         message_detail = detail or (raw_code if raw_code and raw_code != "_".join(raw_code.lower().split()) else "")
-        super().__init__(code, message_detail, stage="automation_persona")
+        super().__init__(code, message_detail, stage="automation_persona", attempt_count=attempt_count)
 
 
 @dataclass(frozen=True)
@@ -346,6 +348,14 @@ def _reply_clauses(reply: str) -> list[str]:
     ]
 
 
+def _standalone_sentences(reply: str) -> set[str]:
+    return {
+        " ".join(sentence.split())
+        for sentence in re.split(r"(?<=[.!?])[^\S\r\n]+|[\r\n]+", str(reply or ""))
+        if sentence.strip()
+    }
+
+
 def _is_positive_clause(clause: str) -> bool:
     if "?" in clause:
         return False
@@ -381,12 +391,7 @@ def _assert_enablement_submission_contract(reply: str) -> None:
 
 
 def _assert_fraud_handoff_contract(reply: str) -> None:
-    if not _has_positive_clause(
-        reply,
-        r"\bteam\b",
-        r"\b(?:contact|reach\s+out|follow\s+up)\b",
-        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
-    ):
+    if _HANDOFF_COMMITMENT_SENTENCE not in _standalone_sentences(reply):
         raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
 
 
@@ -398,12 +403,7 @@ def _assert_suspension_contact_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
     if "ticket" not in lowered or "email" not in lowered:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    if not _has_positive_clause(
-        reply,
-        r"\bteam\b",
-        r"\b(?:contact|reach\s+out|follow\s+up)\b",
-        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
-    ):
+    if _HANDOFF_COMMITMENT_SENTENCE not in _standalone_sentences(reply):
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
     if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
         reply,
@@ -413,12 +413,7 @@ def _assert_suspension_contact_contract(reply: str) -> None:
 
 
 def _assert_suspension_closing_contract(reply: str) -> None:
-    if not _has_positive_clause(
-        reply,
-        r"\bteam\b",
-        r"\b(?:contact|reach\s+out|follow\s+up)\b",
-        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
-    ):
+    if _HANDOFF_COMMITMENT_SENTENCE not in _standalone_sentences(reply):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
     if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
         reply,
@@ -473,6 +468,32 @@ def validate_account_reply_contract(
     }:
         _assert_ownership_contract(normalized_reply, facts)
     return facts, derived_close
+
+
+def _validated_automation_reply_content(
+    response: Any,
+    *,
+    greeting: str,
+    facts: dict[str, Any],
+    forbidden_values: list[str],
+    account_scope: bool,
+) -> str:
+    reply = str(getattr(response, "text", "") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not reply:
+        raise AutomationPersonaError("automation_persona_empty_response")
+    reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
+    if not reply:
+        raise AutomationPersonaError("automation_persona_empty_response")
+    assert_no_trailing_automation_signature(reply)
+    if account_scope:
+        validate_account_reply_contract(reply, facts)
+    rendered_content = f"{greeting}\n\n{reply}"
+    _assert_no_forbidden_values(
+        rendered_content,
+        forbidden_values,
+        error_code="automation_persona_forbidden_value",
+    )
+    return rendered_content
 
 
 def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
@@ -584,20 +605,22 @@ def render_automation_reply(
         )
     elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
         reply_contract_policy = (
-            "For a Fraud handoff, explicitly say the relevant team will contact or reach out to the customer "
-            "within 24 hours. Do not omit this commitment. "
+            "For a Fraud handoff, include this exact standalone sentence: "
+            f"'{_HANDOFF_COMMITMENT_SENTENCE}' Do not paraphrase or omit it. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION:
         reply_contract_policy = (
             "For the first Account Suspension reply, ask which email is most convenient and whether the email on "
-            "the ticket should be used. Also explain the relevant team will contact the customer within 24 hours, "
+            "the ticket should be used. Include this exact standalone sentence: "
+            f"'{_HANDOFF_COMMITMENT_SENTENCE}' Do not paraphrase it. Also explain that "
             "the ticket will close after confirmed contact and handoff, and the customer may reopen it if nobody "
             "contacts them within 24 hours. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
         reply_contract_policy = (
-            "For an Account Suspension handoff, state the relevant team will contact the customer within 24 hours, "
-            "that the ticket is closing after the handoff, and that the customer may reopen it if nobody contacts "
+            "For an Account Suspension handoff, include this exact standalone sentence: "
+            f"'{_HANDOFF_COMMITMENT_SENTENCE}' Do not paraphrase it. State that the ticket is closing after the "
+            "handoff, and that the customer may reopen it if nobody contacts "
             "them within 24 hours. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
@@ -605,6 +628,18 @@ def render_automation_reply(
             "For completed Enablement, explicitly state that the feature is enabled, activated, provisioned, or "
             "turned on, and explain that the ticket is closing. "
         )
+    validated: dict[str, Any] = {}
+
+    def validate_response(response: Any) -> None:
+        validated["response"] = response
+        validated["content"] = _validated_automation_reply_content(
+            response,
+            greeting=greeting,
+            facts=facts,
+            forbidden_values=forbidden_values,
+            account_scope=account_scope,
+        )
+
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -635,22 +670,21 @@ def render_automation_reply(
                 f"{json.dumps(facts, ensure_ascii=False, sort_keys=True, indent=2)}"
             ),
             stage="automation_persona",
+            validate_response=validate_response,
         )
+    except AutomationPersonaError:
+        raise
+    except AccountProcessingFailure as exc:
+        raise AutomationPersonaError(
+            "automation_persona_generation_failed",
+            exc.detail,
+            attempt_count=exc.attempt_count,
+        ) from exc
     except (LlmInvocationError, ValueError, TypeError) as exc:
         raise AutomationPersonaError("automation_persona_generation_failed") from exc
-
-    reply = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not reply:
-        raise AutomationPersonaError("automation_persona_empty_response")
-    reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
-    if not reply:
-        raise AutomationPersonaError("automation_persona_empty_response")
-    assert_no_trailing_automation_signature(reply)
-    if account_scope:
-        validate_account_reply_contract(reply, facts)
-    content = f"{greeting}\n\n{reply}"
-    _assert_no_forbidden_values(content, forbidden_values, error_code="automation_persona_forbidden_value")
+    if validated.get("response") is not response:
+        validate_response(response)
     return AutomationPersonaResult(
-        content=content,
+        content=str(validated["content"]),
         model=str(response.model_name or profile.model).strip() or profile.model,
     )

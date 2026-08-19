@@ -17,11 +17,19 @@ ACCOUNT_MAX_RETRIES = 3
 class AccountProcessingFailure(RuntimeError, ValueError):
     """A system failure that must stop Account automation and reach human review."""
 
-    def __init__(self, code: str, detail: Any = "", *, stage: str = "account") -> None:
+    def __init__(
+        self,
+        code: str,
+        detail: Any = "",
+        *,
+        stage: str = "account",
+        attempt_count: int = 1,
+    ) -> None:
         normalized_code = "_".join(str(code or "account_processing_failed").strip().lower().split())
         self.code = re.sub(r"[^a-z0-9_.-]+", "_", normalized_code)[:160].strip("_") or "account_processing_failed"
         self.detail = " ".join(str(detail or "").split())[:500]
         self.stage = " ".join(str(stage or "account").split())[:120]
+        self.attempt_count = max(0, int(attempt_count))
         message = self.code if not self.detail else f"{self.code}: {self.detail}"
         super().__init__(message)
 
@@ -73,18 +81,22 @@ def invoke_account_responses_text(
     user_prompt: str,
     extra_payload: dict[str, Any] | None = None,
     stage: str = "account",
+    validate_response: Callable[[LlmTextResult], None] | None = None,
 ) -> LlmTextResult:
-    """Invoke an Account model up to four times without provider/model fallback."""
+    """Invoke and validate an Account response within one four-call budget."""
     pinned = account_profile(profile)
     last_error: Exception | None = None
     for attempt in range(ACCOUNT_MAX_RETRIES + 1):
         try:
-            return invoke_responses_text(
+            response = invoke_responses_text(
                 profile=pinned,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 extra_payload=extra_payload,
             )
+            if validate_response is not None:
+                validate_response(response)
+            return response
         except Exception as exc:
             last_error = exc
             if attempt >= ACCOUNT_MAX_RETRIES:
@@ -96,10 +108,14 @@ def invoke_account_responses_text(
                 ACCOUNT_MAX_RETRIES + 1,
                 exc,
             )
+    if isinstance(last_error, AccountProcessingFailure):
+        last_error.attempt_count = ACCOUNT_MAX_RETRIES + 1
+        raise last_error
     raise AccountProcessingFailure(
         "account_ai_invocation_exhausted",
         _failure_detail(last_error) if last_error else "unknown model invocation failure",
         stage=stage,
+        attempt_count=ACCOUNT_MAX_RETRIES + 1,
     ) from last_error
 
 
@@ -118,6 +134,7 @@ def invoke_account_json_payload(
             "account_ai_missing_credentials",
             "the configured OpenAI Account profile has no primary API key",
             stage=stage,
+            attempt_count=0,
         )
     last_error: Exception | None = None
     for attempt in range(ACCOUNT_MAX_RETRIES + 1):
@@ -147,6 +164,7 @@ def invoke_account_json_payload(
         "account_ai_structured_output_exhausted",
         _failure_detail(last_error) if last_error else "unknown structured output failure",
         stage=stage,
+        attempt_count=ACCOUNT_MAX_RETRIES + 1,
     ) from last_error
 
 

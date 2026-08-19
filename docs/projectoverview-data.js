@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T06:16:25Z",
-  "source_base_commit": "9f2eeeae072038e8d67014f65481498e2a31f7c9",
-  "registry_digest": "aa8b86c357525201d27bea4f613d24bdcd2879c7bb2e7ab82848fb88e9078648",
+  "generated_at": "2026-08-19T06:47:58Z",
+  "source_base_commit": "57f1a03cf4a70c96ce5867811b523fbc70fce70b",
+  "registry_digest": "074069a254c2b2d5dab62d46c5579058548878912514fe18cfcb4855972c3682",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -538,6 +538,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Signature source-removal integrated verification",
           "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_agent_config backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery; python -m py_compile backend/main.py backend/worker.py backend/services/account_admin.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py backend/repositories/ticket_repository.py; node --check ui/workspace-ui/admin/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "478 tests passed with 19 environment-dependent PostgreSQL tests skipped; Python and Node syntax, Feature List, Project Overview, and diff checks passed."
+        },
+        {
+          "type": "test",
+          "label": "Persona v11 bounded validation retry targeted suite",
+          "command": "python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_ui_contract.py",
+          "result": "210 tests passed with 29 subtests passed; transport and validation share four calls, exact Fraud handoff output succeeds on the fourth call, exhausted failures retain their code and attempt count, Worker remains fail closed, and failed rerun summaries are observed without historical writes."
+        },
+        {
+          "type": "test",
+          "label": "Persona v11 integrated Account Automation verification",
+          "command": "python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_account_admin_features.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_workspace_api.py backend/tests/test_account_persona_postgres.py backend/tests/test_agent_config.py backend/tests/test_automation_routing.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_verification_automation.py backend/tests/test_enablement_automation.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_account_ui_contract.py",
+          "result": "519 tests passed with 19 environment-dependent PostgreSQL tests skipped and 67 subtests passed; greeting-prefixed publication validation, Intake, full rerun, reply-only recovery, Persona assignment, and publication fences are green."
         }
       ],
       "source_refs": [
@@ -4220,7 +4232,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "进入 repair R5：finalize 单一 repair PR，重启官方 local_lightweight 栈并验证 build、health、runtime 和 Admin UI marker。",
+      "next_action": "Finalize Persona v11 repair，重启官方 local_lightweight 栈，Resume account-rerun-f53393771ddd47118d4eb821d83c89e9，并读回 child job 与 AC-12715 reply-only 结果。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
@@ -4284,6 +4296,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Signature source-removal integrated verification",
           "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_agent_config backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery; python -m py_compile backend/main.py backend/worker.py backend/services/account_admin.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py backend/repositories/ticket_repository.py; node --check ui/workspace-ui/admin/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "478 tests passed with 19 environment-dependent PostgreSQL tests skipped; Python and Node syntax, Feature List, Project Overview, and diff checks passed."
+        },
+        {
+          "type": "test",
+          "label": "Persona v11 bounded validation retry targeted suite",
+          "command": "python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_ui_contract.py",
+          "result": "210 tests passed with 29 subtests passed; transport and validation share four calls, exact Fraud handoff output succeeds on the fourth call, exhausted failures retain their code and attempt count, Worker remains fail closed, and failed rerun summaries are observed without historical writes."
+        },
+        {
+          "type": "test",
+          "label": "Persona v11 integrated Account Automation verification",
+          "command": "python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_account_admin_features.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_workspace_api.py backend/tests/test_account_persona_postgres.py backend/tests/test_agent_config.py backend/tests/test_automation_routing.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_verification_automation.py backend/tests/test_enablement_automation.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_account_ui_contract.py",
+          "result": "519 tests passed with 19 environment-dependent PostgreSQL tests skipped and 67 subtests passed; greeting-prefixed publication validation, Intake, full rerun, reply-only recovery, Persona assignment, and publication fences are green."
         }
       ],
       "source_refs": [
@@ -4303,6 +4327,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "repair_started",
           "summary": "PR #790 已合并，但验收确认签名仍由运行时生成后清理，且完成状态和回复极性校验仍有缺口；创建独立 repair worktree 从源头移除签名能力。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "persona_v11_repair_started",
+          "summary": "Rerun 在 AC-12715 因 Fraud handoff 自然改写未通过确定性合同而停止；将 exact sentence 校验纳入现有四次 Account AI 调用预算，并保留具体失败码与真实尝试次数。"
         }
       ],
       "legacy_refs": [],

@@ -378,6 +378,10 @@ class AutomationPersonaTests(unittest.TestCase):
             "The relevant team will contact you within 24 hours.",
             facts,
         )
+        validate_account_reply_contract(
+            "Hi Customer,\n\nThe relevant team will contact you within 24 hours.",
+            facts,
+        )
         with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
             validate_account_reply_contract("We received your request and will review it.", facts)
         for invalid_reply in (
@@ -388,6 +392,58 @@ class AutomationPersonaTests(unittest.TestCase):
             with self.subTest(invalid_reply=invalid_reply):
                 with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
                     validate_account_reply_contract(invalid_reply, facts)
+
+        for paraphrase in (
+            "Our fraud specialists will contact you within 24 hours.",
+            "The relevant team has received the request. They will follow up within 24 hours.",
+            "We've sent this to our fraud team, who will be in touch within 24 hours.",
+        ):
+            with self.subTest(paraphrase=paraphrase):
+                with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
+                    validate_account_reply_contract(paraphrase, facts)
+
+    def test_fraud_handoff_validation_retries_then_returns_fourth_valid_body(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        responses = [
+            SimpleNamespace(text="Our fraud specialists will contact you within 24 hours.", model_name="persona-model"),
+            SimpleNamespace(text="They will follow up within 24 hours.", model_name="persona-model"),
+            SimpleNamespace(text="Will the relevant team contact you within 24 hours?", model_name="persona-model"),
+            SimpleNamespace(text="The relevant team will contact you within 24 hours.", model_name="persona-model"),
+        ]
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts={"behavior": "fraud_account", "reply_intent": "fraud_handoff_confirmation"},
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+
+        self.assertEqual(
+            result.content,
+            "Hi Customer,\n\nThe relevant team will contact you within 24 hours.",
+        )
+        self.assertEqual(invoke.call_count, 4)
+
+    def test_fraud_handoff_validation_exhaustion_preserves_contract_code(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Our fraud specialists will contact you within 24 hours.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            with self.assertRaises(AutomationPersonaError) as raised:
+                render_automation_reply(
+                    reply_facts={"behavior": "fraud_account", "reply_intent": "fraud_handoff_confirmation"},
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+
+        self.assertEqual(raised.exception.code, "automation_persona_fraud_handoff_contract_failed")
+        self.assertEqual(raised.exception.attempt_count, 4)
+        self.assertEqual(invoke.call_count, 4)
 
     def test_enablement_submission_requires_sla_and_change_window(self) -> None:
         facts = {
@@ -414,7 +470,7 @@ class AutomationPersonaTests(unittest.TestCase):
         }
         validate_account_reply_contract(
             "Which email is most convenient for you? Should we use the email on this ticket? "
-            "The relevant team will contact you within 24 hours; the ticket will close after handoff, "
+            "The relevant team will contact you within 24 hours. The ticket will close after handoff, "
             "and you can reopen it if nobody contacts you.",
             facts,
         )
