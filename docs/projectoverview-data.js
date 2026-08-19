@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T10:37:30Z",
-  "source_base_commit": "c0741c86cfcc2c4c812bae0ba8ea906687c4deab",
-  "registry_digest": "75401339ccd0bfddf303d46d96e7641ae0764a20e9a89cd219f0064411e2710a",
+  "generated_at": "2026-08-19T10:49:24Z",
+  "source_base_commit": "13a13565953b3e57794b666c77f4599d77feb6a9",
+  "registry_digest": "a30426d4f6a0b25ec7724535d60e56bbfd01bee6443048d2c01a444bb2ec8791",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1297,6 +1297,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account intake profile regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
           "details": "164 全绿：ACCOUNT_DEFAULT_PROCESSING_PROFILE 相关 intake 行为未受访问器复用影响。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official-stack restart & build provenance",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl /health",
+          "details": "PR #800 合并后从根 main（13a13565953b）重启官方栈：deployment 模式、无辅助栈（inspect_single_host_stack_mode 仅报 build 落后，重启后消除）；镜像 tag 与 /health app_build.ref 均为 13a13565953b，status ok、runtime_profile local_lightweight。"
+        },
+        {
+          "type": "deployment",
+          "label": "Admin automated-cases reads live production database",
+          "command": "psql 等价直查 PRODUCTION_TICKET_DB_DSN + bootstrap admin 登录调用 GET /api/workspace/admin/account-automation（及 ?route_status=automated、/api/workspace/admin/metrics）",
+          "details": "production 库直查与 admin API 返回逐条一致：total_account_cases=5、automated_cases=4、not_automated_cases=1、automation_rate=0.8（AC-12839/12865/12864/12838 automated，AC-12807 not_automated）；filtered 调用 total=4 且 metrics 汇总不变；metrics.billing={total:5, automation:4, not_automated:1}。注：用户最初观察到 2 条/1 automated 为更早快照，验证时 production 库已增至 5 条，一致性以实时库为准。"
         }
       ],
       "source_refs": [
@@ -1307,7 +1319,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 4,
-      "done_count": 1,
+      "done_count": 2,
       "blocked_count": 0
     },
     {
@@ -6450,10 +6462,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-76",
       "title": "Workspace Admin 自动化看板切换为读取 production 独立库数据",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "PR #796 将 Run in Production 改为经 /production/account 直写独立 production 库后，staging 侧 /api/workspace/admin/account-automation 与 /api/workspace/admin/metrics 的 billing 部分仍查 staging 库的遗留 production 档案行，导致 admin Automated Cases 与 /production 实际数据不一致。修复：staging api 进程按需懒加载 PRODUCTION_TICKET_DB_DSN 的独立 repository 供这两个查询使用；production 栈自身沿用默认 repository；未配置或与 staging DSN 相同时 fail-closed 返回 503 并说明原因。前端与 API 契约零改动。",
-      "next_action": "实现与目标测试完成后经 finalize 合入 main，再从根 main 重启本地官方栈做 live 验证（admin Automated Cases 显示 production 库 2 条、1 条 automated），补齐证据后收尾。",
+      "next_action": "",
       "acceptance_criteria": [
         "/api/workspace/admin/account-automation 在 staging 栈返回 production 独立库（PRODUCTION_TICKET_DB_DSN）的 account case 数据，metrics 与 /production 实际工单一致。",
         "/api/workspace/admin/metrics 的 billing 部分同样读取 production 独立库；其余指标（engineer/client/accounts）仍读 staging，行为不变。",
@@ -6480,6 +6492,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account intake profile regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
           "details": "164 全绿：ACCOUNT_DEFAULT_PROCESSING_PROFILE 相关 intake 行为未受访问器复用影响。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official-stack restart & build provenance",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl /health",
+          "details": "PR #800 合并后从根 main（13a13565953b）重启官方栈：deployment 模式、无辅助栈（inspect_single_host_stack_mode 仅报 build 落后，重启后消除）；镜像 tag 与 /health app_build.ref 均为 13a13565953b，status ok、runtime_profile local_lightweight。"
+        },
+        {
+          "type": "deployment",
+          "label": "Admin automated-cases reads live production database",
+          "command": "psql 等价直查 PRODUCTION_TICKET_DB_DSN + bootstrap admin 登录调用 GET /api/workspace/admin/account-automation（及 ?route_status=automated、/api/workspace/admin/metrics）",
+          "details": "production 库直查与 admin API 返回逐条一致：total_account_cases=5、automated_cases=4、not_automated_cases=1、automation_rate=0.8（AC-12839/12865/12864/12838 automated，AC-12807 not_automated）；filtered 调用 total=4 且 metrics 汇总不变；metrics.billing={total:5, automation:4, not_automated:1}。注：用户最初观察到 2 条/1 automated 为更早快照，验证时 production 库已增至 5 条，一致性以实时库为准。"
         }
       ],
       "source_refs": [
@@ -6493,6 +6517,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "created",
           "summary": "为 admin 自动化看板数据源切换到 production 独立库创建任务（p2-73 生产环境落地的后续修复）。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "progress",
+          "summary": "完成实现与目标测试（workspace API 26 例含新增 5 例、UI/compose 契约 98 例、account intake 164 例全绿），经 finalize 以 PR #800 squash 合入 main。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "done",
+          "summary": "PR #800 合并入 main（13a13565953b）；根 main 官方栈重启后 live 验证通过：/health 与镜像 build ref 均为 13a13565953b，admin account-automation 与 metrics billing 返回值和 production 独立库逐条一致（5 条、4 automated、1 not_automated）。"
         }
       ],
       "legacy_refs": [],
