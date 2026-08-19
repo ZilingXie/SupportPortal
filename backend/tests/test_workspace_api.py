@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 os.environ.setdefault("WORKSPACE_AUTH_SECRET", "workspace-api-test-secret")
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -26,6 +27,8 @@ class WorkspaceApiTests(unittest.TestCase):
         self.repository = InMemoryTicketRepository()
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
+        self.original_account_production_repository = main._account_production_repository
+        main._account_production_repository = lambda: self.repository
         now = "2026-07-18T00:00:00+00:00"
         self.repository.save_workspace_account(
             {
@@ -41,6 +44,7 @@ class WorkspaceApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         main.ticket_repository = self.original_repository
+        main._account_production_repository = self.original_account_production_repository
 
     def _login(self, email: str, password: str) -> str:
         response = self.client.post(
@@ -356,6 +360,25 @@ class WorkspaceApiTests(unittest.TestCase):
             self.assertEqual(persona["versions"][0]["content"], preset.content)
             self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
 
+    def test_account_admin_endpoints_fail_closed_without_production_dsn(self) -> None:
+        main._account_production_repository = self.original_account_production_repository
+        original_instance = main._account_production_repository_instance
+        main._account_production_repository_instance = None
+        headers = self._admin_headers()
+        try:
+            env = {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging", "PRODUCTION_TICKET_DB_DSN": ""}
+            with patch.dict(os.environ, env):
+                response = self.client.get("/api/workspace/admin/account-automation", headers=headers)
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertIn("PRODUCTION_TICKET_DB_DSN", response.json()["detail"])
+
+                metrics = self.client.get("/api/workspace/admin/metrics", headers=headers)
+                self.assertEqual(metrics.status_code, 503, metrics.text)
+                self.assertIn("PRODUCTION_TICKET_DB_DSN", metrics.json()["detail"])
+        finally:
+            main._account_production_repository_instance = original_instance
+            main._account_production_repository = lambda: self.repository
+
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)
         self._seed_engineer()
@@ -627,6 +650,57 @@ class WorkspaceApiTests(unittest.TestCase):
         token = self._login("admin-1", "admin-password-1")
         with self.client.websocket_connect(f"/ws/workspace?access_token={token}") as websocket:
             websocket.send_text("ping")
+
+
+class AccountProductionRepositoryResolutionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_instance = main._account_production_repository_instance
+        main._account_production_repository_instance = None
+
+    def tearDown(self) -> None:
+        main._account_production_repository_instance = self.original_instance
+
+    def test_production_profile_stack_uses_default_repository(self) -> None:
+        with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}):
+            self.assertIs(main._account_production_repository(), main.ticket_repository)
+
+    def test_staging_stack_opens_production_dsn_singleton(self) -> None:
+        env = {
+            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging",
+            "TICKET_DB_DSN": "postgresql://example.invalid/staging",
+            "PRODUCTION_TICKET_DB_DSN": "postgresql://example.invalid/production",
+        }
+        with patch.dict(os.environ, env), patch.object(main, "PostgresTicketRepository") as repo_cls:
+            first = main._account_production_repository()
+            second = main._account_production_repository()
+            self.assertIs(first, second)
+            self.assertIs(first, repo_cls.return_value)
+            self.assertEqual(repo_cls.call_count, 1)
+            kwargs = repo_cls.call_args.kwargs
+            self.assertEqual(kwargs["dsn"], "postgresql://example.invalid/production")
+            self.assertEqual(kwargs["migration_dsn"], "postgresql://example.invalid/production")
+            self.assertEqual(kwargs["application_name"], "supportportal-api-admin-production")
+
+    def test_staging_stack_without_production_dsn_fails_closed(self) -> None:
+        env = {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging", "PRODUCTION_TICKET_DB_DSN": ""}
+        with patch.dict(os.environ, env):
+            with self.assertRaises(HTTPException) as ctx:
+                main._account_production_repository()
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("PRODUCTION_TICKET_DB_DSN", str(ctx.exception.detail))
+
+    def test_staging_stack_with_dsn_equal_to_staging_fails_closed(self) -> None:
+        shared_dsn = "postgresql://example.invalid/shared"
+        env = {
+            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging",
+            "TICKET_DB_DSN": shared_dsn,
+            "PRODUCTION_TICKET_DB_DSN": shared_dsn,
+        }
+        with patch.dict(os.environ, env):
+            with self.assertRaises(HTTPException) as ctx:
+                main._account_production_repository()
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("PRODUCTION_TICKET_DB_DSN", str(ctx.exception.detail))
 
 
 if __name__ == "__main__":
