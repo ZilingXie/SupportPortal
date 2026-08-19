@@ -348,6 +348,7 @@ PROJECT_OVERVIEW_DATA_JS = DOCS_DIR / "projectoverview-data.js"
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ACCOUNT_DIR = UI_DIR / "account-ui"
+PRODUCTION_DIR = UI_DIR / "production-ui"
 BILLING_RESPONSE_DIR = UI_DIR / "billing-response-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 WORKSPACE_DIR = UI_DIR / "workspace-ui"
@@ -1716,7 +1717,15 @@ app.add_middleware(
 async def disable_account_http_caching(request: Request, call_next: Any) -> Any:
     response = await call_next(request)
     path = request.url.path
-    if path == "/account" or path.startswith("/account/") or path == "/api/account" or path.startswith("/api/account/"):
+    no_store_paths = (
+        "/account",
+        "/api/account",
+        "/production",
+        "/production/api",
+    )
+    if path in no_store_paths or any(
+        path.startswith(f"{prefix}/") for prefix in no_store_paths
+    ):
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -1726,6 +1735,8 @@ if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
 if ACCOUNT_DIR.exists():
     app.mount("/account", StaticFiles(directory=ACCOUNT_DIR, html=True), name="account-ui")
+if PRODUCTION_DIR.exists():
+    app.mount("/production", StaticFiles(directory=PRODUCTION_DIR, html=True), name="production-ui")
 if BILLING_RESPONSE_DIR.exists():
     app.mount("/response", StaticFiles(directory=BILLING_RESPONSE_DIR, html=True), name="billing-response-ui")
 if ENGINEER_DIR.exists():
@@ -4856,6 +4867,27 @@ async def assign_account_case_to_zendesk_ai(
     )
 
 
+def _default_account_processing_profile() -> str:
+    value = str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "").strip().lower()
+    if value in {"", "staging"}:
+        return "staging"
+    if value == "production":
+        return "production"
+    LOGGER.error(
+        "Invalid ACCOUNT_DEFAULT_PROCESSING_PROFILE %r; falling back to staging",
+        value,
+    )
+    return "staging"
+
+
+def _account_intake_zendesk_ticket_id(request: AccountIntakeRequest) -> str | None:
+    value = (
+        str(request.external_id or "").strip()
+        or _zendesk_ticket_id_from_source(request.source)
+    )
+    return value if re.fullmatch(r"\d{1,128}", value) else None
+
+
 async def _create_account_intake_impl(
     request: AccountIntakeRequest,
     http_request: Request | None,
@@ -6066,7 +6098,7 @@ def list_billing_tickets(
     automation_status: str | None = None,
     route_status: str | None = None,
     route_errors: bool = False,
-    processing_profile: str = Query(default="staging", pattern="^(staging|production)$"),
+    processing_profile: str | None = Query(default=None, pattern="^(staging|production)$"),
     route_label: str | None = Query(
         default=None,
         pattern="^(human_review|conversation|agora_technical|security_compliance|agora_non_technical|account_billing|uncertain|automation|automation:(fraud_account|detailed_invoice|enablement|quota)|human_review:unregistered|all)$",
@@ -6102,7 +6134,7 @@ def list_billing_tickets(
         route_status=normalized_automation_status,
         route_errors_only=route_errors,
         route_filter=normalized_route_filter,
-        processing_profile=processing_profile,
+        processing_profile=processing_profile or _default_account_processing_profile(),
     )
     total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
     safe_page = min(requested_page, total_pages)
@@ -9160,8 +9192,17 @@ async def promote_account_case_to_production(
 
 @app.post("/account")
 async def create_account_intake(request: AccountIntakeRequest, http_request: Request) -> dict[str, Any]:
+    processing_profile = _default_account_processing_profile()
+    zendesk_ticket_id = (
+        _account_intake_zendesk_ticket_id(request) if processing_profile == "production" else None
+    )
     try:
-        return await _create_account_intake_impl(request, http_request)
+        return await _create_account_intake_impl(
+            request,
+            http_request,
+            processing_profile=processing_profile,
+            zendesk_ticket_id=zendesk_ticket_id,
+        )
     except AccountProcessingFailure as exc:
         ticket_id = _resolve_account_ticket_id(request)
         ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
@@ -9191,6 +9232,8 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
                 "account_case_id": f"AC-{ticket_id}",
                 "billing_ticket_id": f"AC-{ticket_id}",
                 "client_ticket_id": ticket_id,
+                "processing_profile": processing_profile,
+                "zendesk_ticket_id": zendesk_ticket_id,
                 "source": _serialize_billing_ticket_source(request.source, _normalize_account_source(request.source)),
                 "title": ticket.get("subject") or "Account request",
                 "question": str(request.question or "").strip(),
@@ -9202,6 +9245,9 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
                 "automation_status": "human_review_required",
                 "created_at": ticket.get("created_at") or now_iso(),
             }
+        elif isinstance(account_case, dict):
+            account_case.setdefault("processing_profile", processing_profile)
+            account_case.setdefault("zendesk_ticket_id", zendesk_ticket_id)
         elif isinstance(account_case, dict) and account_case.get("failure_incident_id"):
             return {
                 **account_case,
@@ -9228,6 +9274,17 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
         ticket_id = _resolve_account_ticket_id(request)
         ticket = await async_to_thread(ticket_repository.get_ticket, ticket_id)
         account_case = await async_to_thread(ticket_repository.get_account_case_by_ticket_id, ticket_id)
+        if not isinstance(account_case, dict):
+            account_case = {
+                "account_case_id": f"AC-{ticket_id}",
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "processing_profile": processing_profile,
+                "zendesk_ticket_id": zendesk_ticket_id,
+            }
+        else:
+            account_case.setdefault("processing_profile", processing_profile)
+            account_case.setdefault("zendesk_ticket_id", zendesk_ticket_id)
         return await _persist_account_processing_failure(
             account_case=account_case,
             ticket=ticket,

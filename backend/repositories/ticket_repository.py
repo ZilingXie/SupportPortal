@@ -2734,6 +2734,7 @@ class InMemoryTicketRepository:
             automation_filter=route_status,
             route_errors_only=route_errors_only,
             route_filter=route_filter,
+            processing_profile=processing_profile,
         )
         all_items = self.list_billing_tickets(
             limit=max(1, len(self._billing_tickets)),
@@ -2742,6 +2743,7 @@ class InMemoryTicketRepository:
             automation_filter=route_status,
             route_errors_only=route_errors_only,
             route_filter=None,
+            processing_profile=processing_profile,
         )
         profile = str(processing_profile or "staging").strip().lower()
         if profile not in {"staging", "production"}:

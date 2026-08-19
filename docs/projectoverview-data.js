@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T02:27:28Z",
-  "source_base_commit": "3f1f65cb8cbdf86f007ed87ab9a1549fa2c72ddc",
-  "registry_digest": "cb0661e8bd6ad7f3772d682e48da78f5a0b263332eeda6add845a5f2f16a7ade",
+  "generated_at": "2026-08-19T03:15:30Z",
+  "source_base_commit": "4623389cde87259f8a8f6df4feb077282b54e54e",
+  "registry_digest": "c1b90094c7af6b54ebda1ded8314f5674343c789f98f960bc6deea256cec056c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1142,6 +1142,45 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "p2-27"
       ],
       "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "account-production-environment",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Account Production 独立环境",
+      "goal": "提供与 /account 功能对等但数据与副作用隔离的 /production 独立环境，n8n 可直接将工单转发到 production 数据库并自动投递真实 Zendesk internal comment。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Production UI/deploy contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
+          "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
+        },
+        {
+          "type": "test",
+          "label": "Default processing profile behavior",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
+          "details": "164 全绿，含新增 3 例：ACCOUNT_DEFAULT_PROCESSING_PROFILE=production 时 POST /account 落库 production 档案且 zendesk_ticket_id 取 external_id；未设置 env 时保持 staging 且 zendesk_ticket_id 为空；GET /api/account/cases 默认档案随 env 切换（production 时可见、staging 时不可见）。失败持久化路径同样保留 profile 与 zendesk_ticket_id。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites around changed paths",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_zendesk_comment backend.tests.test_workspace_api backend.tests.test_bootstrap_auto_deploy_ec2",
+          "details": "全绿（86+142+部署契约），证明 Zendesk 投递、publication 事务台账、workspace admin 与部署脚本回归安全。test_workflow_scripts 存在 5 个与本次无关的环境性失败（干净 main 上同样失败，已对照验证）。"
+        }
+      ],
+      "source_refs": [
+        "docs/feature_list.md",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/nginx/supportportal.conf"
+      ],
+      "legacy_ids": [],
+      "status": "active",
       "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
@@ -6004,6 +6043,70 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "project-governance"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-73",
+      "title": "新增 /production 独立环境（独立数据库 + 路径路由 + 无 Run in Production）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "在同一 single-host 部署内新增第二组 api/worker 容器（compose profile production 门控），指向独立数据库 supportportal_production；新增 /production UI（功能与 /account 相同、移除 Run in Production）；nginx 以路径路由 /production、/production/api 与 intake POST /production/account；production 栈 intake 直接以 processing_profile=production 创建工单并沿用现有 delivery 台账自动投递 Zendesk internal comment；/account staging 行为零改动。",
+      "next_action": "合并后从根 main 重启官方栈并做 live 验证（/production 页面 marker、production 容器与队列隔离、n8n 新 URL）；完成后补充 live 证据并收尾任务。",
+      "acceptance_criteria": [
+        "/account（staging）现有功能与 API 行为零改动：未设置 ACCOUNT_DEFAULT_PROCESSING_PROFILE 时所有默认值仍为 staging。",
+        "新增 /production 页面由 api StaticFiles 挂载，功能与 /account 相同，源码中不含 Run in Production（promote-production）相关代码。",
+        "production 栈（ACCOUNT_DEFAULT_PROCESSING_PROFILE=production）下 POST /account intake 以 processing_profile=production 落库，AI 回复经现有 delivery 台账自动写入真实 Zendesk internal comment。",
+        "api_production/worker_query_production/worker_aux_production 仅在 compose profile production 启用，使用独立 TICKET_DB_DSN（PRODUCTION_TICKET_DB_DSN）、独立队列名与事件 channel，与 staging 栈互不串扰。",
+        "nginx 在未启动 production profile 时仍可正常启动（变量 upstream），路径 /production/、/production/api/*、= /production/account 正确转发到 api_production。",
+        "本地官方栈（不启用 production profile）不受影响，现有测试全部通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Production UI/deploy contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
+          "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
+        },
+        {
+          "type": "test",
+          "label": "Default processing profile behavior",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
+          "details": "164 全绿，含新增 3 例：ACCOUNT_DEFAULT_PROCESSING_PROFILE=production 时 POST /account 落库 production 档案且 zendesk_ticket_id 取 external_id；未设置 env 时保持 staging 且 zendesk_ticket_id 为空；GET /api/account/cases 默认档案随 env 切换（production 时可见、staging 时不可见）。失败持久化路径同样保留 profile 与 zendesk_ticket_id。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites around changed paths",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_zendesk_comment backend.tests.test_workspace_api backend.tests.test_bootstrap_auto_deploy_ec2",
+          "details": "全绿（86+142+部署契约），证明 Zendesk 投递、publication 事务台账、workspace admin 与部署脚本回归安全。test_workflow_scripts 存在 5 个与本次无关的环境性失败（干净 main 上同样失败，已对照验证）。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "ui/production-ui",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/nginx/supportportal.conf",
+        "docs/integrations/n8n/zendesk_account_comment_sync.md"
+      ],
+      "created_at": "2026-08-19",
+      "updated_at": "2026-08-19",
+      "history": [
+        {
+          "at": "2026-08-19",
+          "event": "created",
+          "summary": "为 /production 独立环境（独立数据库、路径路由、无 Run in Production）创建任务。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "progress",
+          "summary": "完成实现与目标测试：/production UI、ACCOUNT_DEFAULT_PROCESSING_PROFILE 默认值（含失败持久化路径）、InMemory production 列表过滤修复、compose/nginx/deploy/.env.example 变更与契约/行为测试。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     }
   ],
   "meetings": [
@@ -7182,6 +7285,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 自动化遇到 AI/API、结构化输出、字段处理、Persona 或内部处理链路故障时最多重试 3 次且不使用 fallback；失败会停止客户回复、取消待处理 reply job、转为 human review，并向指定负责人发送脱敏的幂等故障告警。",
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
+        "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动写入真实 Zendesk internal comment。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

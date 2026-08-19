@@ -616,6 +616,73 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNone(case["customer_reply"])
         self.assertIsNone(self.repository.get_latest_account_reply_job(first.json()["ticket_id"]))
 
+    def test_default_processing_profile_env_routes_intake_to_production_profile(self) -> None:
+        with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ):
+            created = self.client.post(
+                "/account",
+                json={
+                    "external_id": "99887766",
+                    "title": "Production environment intake",
+                    "question": "Please enable Media Relay from your end.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        case = self.repository.get_account_case(created.json()["account_case_id"])
+        assert case is not None
+        self.assertEqual(case["processing_profile"], "production")
+        self.assertEqual(case["zendesk_ticket_id"], "99887766")
+
+    def test_intake_defaults_to_staging_without_profile_env(self) -> None:
+        with patch.dict(os.environ), patch.object(main, "dispatch_event", AsyncMock()):
+            os.environ.pop("ACCOUNT_DEFAULT_PROCESSING_PROFILE", None)
+            created = self.client.post(
+                "/account",
+                json={
+                    "external_id": "99887767",
+                    "title": "Staging default intake",
+                    "question": "Please enable Media Relay from your end.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        case = self.repository.get_account_case(created.json()["account_case_id"])
+        assert case is not None
+        self.assertEqual(case["processing_profile"], "staging")
+        self.assertIsNone(case["zendesk_ticket_id"])
+
+    def test_account_case_list_default_profile_follows_env(self) -> None:
+        with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ):
+            created = self.client.post(
+                "/account",
+                json={
+                    "external_id": "99887768",
+                    "title": "Production list default intake",
+                    "question": "Please enable Media Relay from your end.",
+                    "customer_email": "customer@example.com",
+                },
+            )
+        self.assertEqual(created.status_code, 200, created.text)
+
+        with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}):
+            listed_production = self.client.get("/api/account/cases")
+        self.assertEqual(listed_production.status_code, 200, listed_production.text)
+        production_ids = {item["account_case_id"] for item in listed_production.json()["tickets"]}
+        self.assertIn(created.json()["account_case_id"], production_ids)
+
+        with patch.dict(os.environ):
+            os.environ.pop("ACCOUNT_DEFAULT_PROCESSING_PROFILE", None)
+            listed_staging = self.client.get("/api/account/cases")
+        self.assertEqual(listed_staging.status_code, 200, listed_staging.text)
+        staging_ids = {item["account_case_id"] for item in listed_staging.json()["tickets"]}
+        self.assertNotIn(created.json()["account_case_id"], staging_ids)
+
     def test_account_reply_processing_failure_cancels_pending_reply_and_alerts_once(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             created = self.client.post(
