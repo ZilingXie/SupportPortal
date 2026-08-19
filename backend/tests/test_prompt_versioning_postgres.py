@@ -205,6 +205,81 @@ class PromptVersioningPostgresTests(unittest.TestCase):
         self.assertEqual(stale["status"], "draft")
         self.assertIn(retired["prompt_key"], next_candidate["items"])
 
+    def test_sync_release_into_independent_schema(self) -> None:
+        target_schema = f"supportportal_prompt_sync_{uuid4().hex}"
+        target = PostgresTicketRepository(
+            dsn=self.dsn,
+            migration_dsn=self.migration_dsn,
+            schema=target_schema,
+        )
+        self.addCleanup(self._drop_schema_by_name, target_schema)
+        target.initialize()
+
+        draft = self.service.create_draft(
+            "route-system",
+            content="route prompt for cross database sync",
+            change_note="sync payload",
+            based_on_version=self.service.get_prompt("route-system")["active_version"]["version"],
+            actor_id="admin-1",
+            created_at="2026-07-23T05:00:00+00:00",
+        )
+        self.service.schedule(
+            "route-system",
+            draft["version"],
+            actor_id="admin-1",
+            scheduled_at="2026-07-23T05:05:00+00:00",
+        )
+        candidate = self.service.prepare_release(
+            build_ref="sync-build",
+            created_at="2026-07-23T05:10:00+00:00",
+        )
+
+        from backend.scripts.prompt_release import run as run_prompt_release
+
+        payload = run_prompt_release(
+            ["sync", "--release-id", candidate["release_id"], "--target-dsn", "unused-in-test"],
+            repository=self.repository,
+            target_repository=target,
+        )
+        self.assertEqual(payload["sync"]["status"], "candidate")
+        self.assertEqual(payload["validation"]["status"], "loaded")
+        synced = target.get_prompt_release(candidate["release_id"])
+        self.assertIsNotNone(synced)
+        self.assertEqual(synced["items"], candidate["items"])
+        target_active_ids = [
+            release["release_id"]
+            for release in target.list_prompt_releases()
+            if release["status"] == "active"
+        ]
+        self.assertEqual(len(target_active_ids), 1)
+        self.assertNotIn(candidate["release_id"], target_active_ids)
+
+        self.service.activate_release(candidate["release_id"], activated_at="2026-07-23T05:20:00+00:00")
+        payload = run_prompt_release(
+            ["sync", "--release-id", candidate["release_id"], "--target-dsn", "unused-in-test"],
+            repository=self.repository,
+            target_repository=target,
+        )
+        self.assertEqual(payload["sync"]["status"], "active")
+        self.assertEqual(
+            target.get_prompt_release(candidate["release_id"])["status"],
+            "active",
+        )
+        target_prompt = PromptVersionService(target).get_prompt("route-system")
+        self.assertEqual(target_prompt["active_version"]["version"], draft["version"])
+        self.assertEqual(
+            target_prompt["active_version"]["content"],
+            "route prompt for cross database sync",
+        )
+        target.close()
+
+    def _drop_schema_by_name(self, schema: str) -> None:
+        with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

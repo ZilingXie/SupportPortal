@@ -195,6 +195,11 @@ class DeployEc2ScriptTests(unittest.TestCase):
                             print("release-candidate")
                         else:
                             print("release-previous")
+                    elif "sync" in args:
+                        if os.environ.get("FAKE_PROMPT_SYNC_EXIT_CODE") == "1":
+                            print("sync failed", file=sys.stderr)
+                            sys.exit(1)
+                        print('{"ok":true}')
                     elif "fail" in args:
                         print('{"ok":true}')
                     else:
@@ -449,6 +454,75 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(build_call["app_runtime_image"], f"localhost/supportportal-app:{expected_ref}")
         self.assertRegex(str(build_call["app_build_time"]), r"^2026-|^20\d{2}-")
         self.assertIn(f"Build ref: {expected_ref}", result.stdout)
+
+    def test_production_deploy_syncs_candidate_release_to_production_database(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                NGINX_HOST_PORT=18080
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                """
+            ),
+        )
+
+        result = self._run_script("--skip-pull", "--branch", "main")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Synced Prompt Release release-candidate to the /production database.", result.stdout)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        sync_calls = [call for call in docker_calls if "sync" in call["argv"]]
+        self.assertEqual(len(sync_calls), 2)
+        for call in sync_calls:
+            self.assertIn("backend.scripts.prompt_release", call["argv"])
+            self.assertEqual(
+                call["argv"][call["argv"].index("--release-id") + 1],
+                "release-candidate",
+            )
+            self.assertEqual(
+                call["argv"][call["argv"].index("--target-dsn") + 1],
+                "postgresql://ticket:test@db.local/tickets-production",
+            )
+        validate_index = next(index for index, call in enumerate(docker_calls) if "validate" in call["argv"])
+        down_index = next(index for index, call in enumerate(docker_calls) if "down" in call["argv"])
+        activate_index = next(index for index, call in enumerate(docker_calls) if "activate" in call["argv"])
+        first_sync_index, second_sync_index = [
+            index for index, call in enumerate(docker_calls) if "sync" in call["argv"]
+        ]
+        self.assertLess(validate_index, first_sync_index)
+        self.assertLess(first_sync_index, down_index)
+        self.assertLess(down_index, activate_index)
+        self.assertLess(activate_index, second_sync_index)
+
+    def test_production_sync_failure_fails_before_stopping_services(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                NGINX_HOST_PORT=18080
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={"FAKE_PROMPT_SYNC_EXIT_CODE": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Prompt Release production sync failed", result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any("down" in call["argv"] for call in docker_calls))
+        self.assertFalse(any("up" in call["argv"] for call in docker_calls))
 
     def test_up_failure_restores_previous_image_id(self) -> None:
         result = self._run_script(

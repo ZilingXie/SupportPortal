@@ -3767,3 +3767,26 @@ For each new entry, record:
   - Publication-fence suite: 120 tests passed.
   - Polarity and current-state suite: 139 tests passed.
   - The final integrated suite and post-merge official-stack evidence are recorded in task `p1-50` and its implementation Plan.
+
+## 2026-08-19 - Prompt Release cross-database deploy sync
+
+- Area or subsystem: deployment-bound Prompt Release pipeline; `/production` independent database bootstrap
+- Prompt or model version: release ids unchanged (`pr-*`, random per candidate); prompt content unchanged
+- Summary: `deploy_ec2.sh` previously prepared and activated the deployment-bound Prompt Release only in the staging database while passing the same `PROMPT_RELEASE_ID` to the `/production` stack. Because release ids are random, the production database lacked that release row, `api_production` crashed at startup, and the `/production` health gate rolled the whole deploy back. The deploy now replicates the candidate release into the production database (new `prompt_release sync` CLI subcommand and `sync_prompt_release` repository method, content-hash verified and idempotent) before services restart, and re-syncs after activation to align the production release status.
+- Reason: close the recurring operational gap from task `p2-73`: every deploy that freezes a new prompt candidate would otherwise fail the `/production` gate and require a manual seed of the production database.
+- Affected files or config:
+  - `backend/scripts/prompt_release.py`
+  - `backend/repositories/ticket_repository.py`
+  - `deployment/deploy_ec2.sh`
+  - `backend/tests/test_prompt_versioning.py`
+  - `backend/tests/test_prompt_versioning_postgres.py`
+  - `backend/tests/test_deploy_ec2.py`
+  - `backend/tests/test_production_ui_contract.py`
+- Expected behavior change:
+  - Prompt content and model behavior are unchanged; both databases resolve the same immutable release id.
+  - Pre-restart production sync failure aborts the deploy before stopping services; post-activation sync failure logs a WARNING while the candidate release remains deployable.
+  - Deploys without `PRODUCTION_TICKET_DB_DSN` behave exactly as before.
+- Verification:
+  - `backend.tests.test_prompt_versioning`: 21 passed (in the runtime image).
+  - `backend.tests.test_prompt_versioning_postgres`: 3 passed against the staging Postgres with an isolated schema.
+  - `backend.tests.test_deploy_ec2` + `backend.tests.test_production_ui_contract`: 27 passed.

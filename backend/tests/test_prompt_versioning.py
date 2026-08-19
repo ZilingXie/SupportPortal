@@ -351,5 +351,106 @@ class PromptReleaseCliTests(unittest.TestCase):
         self.assertEqual(payload["validation"]["status"], "loaded")
 
 
+class PromptReleaseSyncTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.source = InMemoryTicketRepository()
+        self.source.sync_prompt_catalog(
+            build_managed_prompt_catalog(),
+            actor_id="system",
+            created_at="2026-07-23T00:00:00+00:00",
+        )
+        self.target = InMemoryTicketRepository()
+
+    def _sync_via_cli(self, release_id: str) -> dict:
+        return run_prompt_release(
+            ["sync", "--release-id", release_id, "--target-dsn", "postgresql://sync:test@db.local/target"],
+            repository=self.source,
+            target_repository=self.target,
+        )
+
+    def test_sync_active_release_into_fresh_target(self) -> None:
+        active = self.source.get_active_prompt_release()
+
+        payload = self._sync_via_cli(active["release_id"])
+
+        self.assertTrue(payload["sync"]["created"])
+        self.assertEqual(payload["validation"]["status"], "loaded")
+        self.assertEqual(self.target.get_active_prompt_release()["release_id"], active["release_id"])
+        self.assertEqual(
+            load_prompt_release_snapshot(self.target, active["release_id"]).prompts,
+            load_prompt_release_snapshot(self.source, active["release_id"]).prompts,
+        )
+
+    def test_sync_is_idempotent(self) -> None:
+        active = self.source.get_active_prompt_release()
+        first = self._sync_via_cli(active["release_id"])
+        second = self._sync_via_cli(active["release_id"])
+
+        self.assertTrue(first["sync"]["created"])
+        self.assertFalse(second["sync"]["created"])
+        self.assertEqual(self.target.get_active_prompt_release()["release_id"], active["release_id"])
+
+    def test_sync_candidate_release_then_activation_harmonizes_target_status(self) -> None:
+        prompt = self.source.get_managed_prompt("route-system")
+        draft = self.source.create_prompt_draft(
+            "route-system",
+            content="Updated route prompt for sync",
+            change_note="sync test",
+            based_on_version=prompt["active_version"]["version"],
+            actor_id="admin-1",
+            created_at="2026-07-23T01:00:00+00:00",
+        )
+        self.source.schedule_prompt_version(
+            "route-system",
+            draft["version"],
+            actor_id="admin-1",
+            scheduled_at="2026-07-23T01:05:00+00:00",
+        )
+        candidate = self.source.prepare_prompt_release(
+            build_ref="sync-test",
+            created_at="2026-07-23T02:00:00+00:00",
+        )
+        self.assertTrue(candidate["created"])
+
+        payload = self._sync_via_cli(candidate["release_id"])
+
+        self.assertEqual(payload["sync"]["status"], "candidate")
+        self.assertEqual(payload["validation"]["status"], "loaded")
+        self.assertNotEqual(self.target.get_active_prompt_release()["release_id"], candidate["release_id"])
+        self.assertEqual(
+            load_prompt_release_snapshot(self.target, candidate["release_id"]).prompts["route-system"],
+            "Updated route prompt for sync",
+        )
+
+        self.source.activate_prompt_release(candidate["release_id"], activated_at="2026-07-23T02:10:00+00:00")
+        payload = self._sync_via_cli(candidate["release_id"])
+
+        self.assertEqual(payload["sync"]["status"], "active")
+        self.assertEqual(self.target.get_active_prompt_release()["release_id"], candidate["release_id"])
+        self.assertEqual(self.target.get_managed_prompt("route-system")["active_version"]["version"], draft["version"])
+
+    def test_sync_rejects_content_hash_mismatch(self) -> None:
+        active = self.source.get_active_prompt_release()
+        self._sync_via_cli(active["release_id"])
+        key = sorted(active["items"])[0]
+        forged = {
+            **active,
+            "release_id": "pr-forged000000",
+            "items": {key: active["items"][key]},
+        }
+        versions = [
+            {
+                "prompt_key": key,
+                "version": active["items"][key],
+                "content": "tampered",
+                "content_sha256": "0" * 64,
+                "status": "active",
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, "content hash mismatch"):
+            self.target.sync_prompt_release(forged, versions)
+
+
 if __name__ == "__main__":
     unittest.main()
