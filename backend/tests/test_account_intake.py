@@ -4967,7 +4967,6 @@ class AccountIntakeApiTests(unittest.TestCase):
             content={
                 "instruction": "SECRET PERSONA PROMPT",
                 "opener": "Hello",
-                "signature": "Best,\nSid",
             },
             change_note="Persona detail contract",
             based_on_version=1,
@@ -4989,7 +4988,6 @@ class AccountIntakeApiTests(unittest.TestCase):
             content={
                 "instruction": "New published voice",
                 "opener": "Hi",
-                "signature": "Regards,\nSid",
             },
             change_note="Supersede assigned version",
             based_on_version=2,

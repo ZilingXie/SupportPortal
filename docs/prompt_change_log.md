@@ -3741,3 +3741,29 @@ For each new entry, record:
   - Invalid or conflicting intent/content, legacy Fraud closing jobs, and signed output fail closed or enter Human Review without publishing.
 - Verification:
   - `211` tests passed in the Stage 3 full-rerun/recovery suite; the Stage 4 integrated targeted suite and documentation checks are recorded in the task Plan after completion.
+
+## 2026-08-19 - Account Automation signature source removal v10
+
+- Area or subsystem: `/account` Automation Persona configuration, generation, reply validation, and publication fence
+- Prompt or model version: `automation-persona-v10`; model configuration unchanged
+- Summary: Removed Signature and legacy signoff fields from new Persona configuration and runtime generation. The model now receives an explicit unsigned-body contract, the application adds only the greeting, and a non-destructive tail guard rejects signed output before publication instead of deleting generated text.
+- Reason: Acceptance testing showed that v9 still generated the configured Sid signature and then scanned the reply to remove it. Signature-free output must be enforced at its source, while final validation remains a narrow fail-closed safety boundary.
+- Affected files or config:
+  - `backend/services/account_admin.py`
+  - `backend/services/automation_persona.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `ui/workspace-ui/admin/app.js`
+  - `ui/workspace-ui/admin/styles.css`
+  - Account Persona, Workspace Admin/API, Worker, and reply-contract tests
+- Expected behavior change:
+  - New Persona writes accept only `instruction` and optional `opener`; historical Signature JSON stays readable but cannot propagate through drafts, publishes, rollbacks, assignments, or jobs.
+  - Account Automation replies are generated without a greeting, signoff, name, title, or signature; the application adds only the configured greeting.
+  - Signed output is not rewritten. It moves to Human Review before `publish_account_reply()` and before any production Zendesk delivery intent can be persisted.
+  - Questions, future/request language, negated customer commitments, and revoked Enablement states cannot satisfy positive handoff, completion, SLA, or closure contracts.
+- Verification:
+  - Focused source-removal suite: 107 tests passed, with 19 environment-dependent PostgreSQL tests skipped.
+  - Publication-fence suite: 120 tests passed.
+  - Polarity and current-state suite: 139 tests passed.
+  - The final integrated suite and post-merge official-stack evidence are recorded in task `p1-50` and its implementation Plan.

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T03:00:08Z",
-  "source_base_commit": "714171255754a9d6d224da290d7be4e3426ad533",
-  "registry_digest": "33f231965aee642feb4904550c589b496f90b0a78ca33dfa5aa3f705070d9740",
+  "generated_at": "2026-08-19T03:03:00Z",
+  "source_base_commit": "f0adee41e74b46b4b3aa529f7ebffddd209ae433",
+  "registry_digest": "37ae3e639acd0fb5677bff1d35243daa90091615d564c69116c9df255dcd42cf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -532,6 +532,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account reply polarity and Enablement current-state validation",
           "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_automation_persona.py backend/tests/test_worker.py; git diff --check",
           "result": "139 tests passed; questions, requests, future activation, negated commitments, and revoked Enablement states no longer satisfy completion, handoff, SLA, or closure contracts."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal integrated verification",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_agent_config backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery; python -m py_compile backend/main.py backend/worker.py backend/services/account_admin.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py backend/repositories/ticket_repository.py; node --check ui/workspace-ui/admin/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "478 tests passed with 19 environment-dependent PostgreSQL tests skipped; Python and Node syntax, Feature List, Project Overview, and diff checks passed."
         }
       ],
       "source_refs": [
@@ -4054,7 +4060,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "进入 repair R4：记录 automation-persona-v10 prompt 变更并运行完整 Account Automation 集成验证。",
+      "next_action": "进入 repair R5：finalize 单一 repair PR，重启官方 local_lightweight 栈并验证 build、health、runtime 和 Admin UI marker。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
@@ -4112,6 +4118,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account reply polarity and Enablement current-state validation",
           "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_automation_persona.py backend/tests/test_worker.py; git diff --check",
           "result": "139 tests passed; questions, requests, future activation, negated commitments, and revoked Enablement states no longer satisfy completion, handoff, SLA, or closure contracts."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal integrated verification",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_agent_config backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery; python -m py_compile backend/main.py backend/worker.py backend/services/account_admin.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py backend/repositories/ticket_repository.py; node --check ui/workspace-ui/admin/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "478 tests passed with 19 environment-dependent PostgreSQL tests skipped; Python and Node syntax, Feature List, Project Overview, and diff checks passed."
         }
       ],
       "source_refs": [
