@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T06:47:58Z",
-  "source_base_commit": "57f1a03cf4a70c96ce5867811b523fbc70fce70b",
-  "registry_digest": "074069a254c2b2d5dab62d46c5579058548878912514fe18cfcb4855972c3682",
+  "generated_at": "2026-08-19T10:37:30Z",
+  "source_base_commit": "c0741c86cfcc2c4c812bae0ba8ea906687c4deab",
+  "registry_digest": "75401339ccd0bfddf303d46d96e7641ae0764a20e9a89cd219f0064411e2710a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1279,6 +1279,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Post-merge live stack verification",
           "command": "./deployment/deploy_ec2.sh --skip-pull（根 main 9f2eeea）",
           "details": "官方栈重启成功：部署日志在 validate 后与 activate 后各出现一次 Synced Prompt Release pr-52b4eed80337 to the /production database；/health 内外均 ok 且 app_build.ref=9f2eeeae0720 与合并 main 一致；/production 页面门禁通过并返回 Account Production 标题；api_production/worker_query_production/worker_aux_production 稳定运行，api_production 日志 prompt_runtime_loaded release_id=pr-52b4eed80337，production worker 无 ERROR。"
+        },
+        {
+          "type": "test",
+          "label": "Workspace admin API + production repository resolution",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_workspace_api",
+          "details": "26 全绿，含新增 5 例：endpoint 级 fail-closed（staging 无 PRODUCTION_TICKET_DB_DSN 时 account-automation 与 metrics 均 503 且 detail 指明原因）、production 栈沿用默认 repository、staging 栈懒加载 PRODUCTION_TICKET_DB_DSN 单例（构造参数断言）、DSN 缺失 fail-closed、DSN 与 staging 相同 fail-closed。"
+        },
+        {
+          "type": "test",
+          "label": "UI/compose contract regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_workspace_admin_ui_contract backend.tests.test_single_host_compose",
+          "details": "98 全绿：admin UI 契约（含 automated-cases 拉取 /api/workspace/admin/account-automation?route_status=automated 不变）、production/account UI 契约、compose 契约均不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Account intake profile regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
+          "details": "164 全绿：ACCOUNT_DEFAULT_PROCESSING_PROFILE 相关 intake 行为未受访问器复用影响。"
         }
       ],
       "source_refs": [
@@ -1288,7 +1306,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 3,
+      "task_count": 4,
       "done_count": 1,
       "blocked_count": 0
     },
@@ -6420,6 +6438,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "done",
           "summary": "PR #797 合并入 main；根 main 官方栈重启后 live 验证通过（两次 release 同步日志、build ref 一致、/production 门禁与页面 marker、production 容器健康）。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-76",
+      "title": "Workspace Admin 自动化看板切换为读取 production 独立库数据",
+      "status": "active",
+      "owner": "zac",
+      "summary": "PR #796 将 Run in Production 改为经 /production/account 直写独立 production 库后，staging 侧 /api/workspace/admin/account-automation 与 /api/workspace/admin/metrics 的 billing 部分仍查 staging 库的遗留 production 档案行，导致 admin Automated Cases 与 /production 实际数据不一致。修复：staging api 进程按需懒加载 PRODUCTION_TICKET_DB_DSN 的独立 repository 供这两个查询使用；production 栈自身沿用默认 repository；未配置或与 staging DSN 相同时 fail-closed 返回 503 并说明原因。前端与 API 契约零改动。",
+      "next_action": "实现与目标测试完成后经 finalize 合入 main，再从根 main 重启本地官方栈做 live 验证（admin Automated Cases 显示 production 库 2 条、1 条 automated），补齐证据后收尾。",
+      "acceptance_criteria": [
+        "/api/workspace/admin/account-automation 在 staging 栈返回 production 独立库（PRODUCTION_TICKET_DB_DSN）的 account case 数据，metrics 与 /production 实际工单一致。",
+        "/api/workspace/admin/metrics 的 billing 部分同样读取 production 独立库；其余指标（engineer/client/accounts）仍读 staging，行为不变。",
+        "production 栈（ACCOUNT_DEFAULT_PROCESSING_PROFILE=production）访问同一 endpoint 时沿用默认 repository，行为不变。",
+        "staging 栈未配置 PRODUCTION_TICKET_DB_DSN 或其与 TICKET_DB_DSN 相同时，两个 endpoint fail-closed 返回 503 且 detail 指明原因，不静默回退 staging 遗留数据。",
+        "workspace admin 前端与 endpoint 契约零改动；现有 workspace/admin 测试回归通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Workspace admin API + production repository resolution",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_workspace_api",
+          "details": "26 全绿，含新增 5 例：endpoint 级 fail-closed（staging 无 PRODUCTION_TICKET_DB_DSN 时 account-automation 与 metrics 均 503 且 detail 指明原因）、production 栈沿用默认 repository、staging 栈懒加载 PRODUCTION_TICKET_DB_DSN 单例（构造参数断言）、DSN 缺失 fail-closed、DSN 与 staging 相同 fail-closed。"
+        },
+        {
+          "type": "test",
+          "label": "UI/compose contract regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_workspace_admin_ui_contract backend.tests.test_single_host_compose",
+          "details": "98 全绿：admin UI 契约（含 automated-cases 拉取 /api/workspace/admin/account-automation?route_status=automated 不变）、production/account UI 契约、compose 契约均不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Account intake profile regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
+          "details": "164 全绿：ACCOUNT_DEFAULT_PROCESSING_PROFILE 相关 intake 行为未受访问器复用影响。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/tests/test_workspace_api.py"
+      ],
+      "created_at": "2026-08-19",
+      "updated_at": "2026-08-19",
+      "history": [
+        {
+          "at": "2026-08-19",
+          "event": "created",
+          "summary": "为 admin 自动化看板数据源切换到 production 独立库创建任务（p2-73 生产环境落地的后续修复）。"
         }
       ],
       "legacy_refs": [],

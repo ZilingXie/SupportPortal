@@ -47,6 +47,7 @@ from backend.repositories.ticket_repository import (
     AccountRerouteLeaseLostError,
     AccountRerunRevisionConflictError,
     InMemoryTicketRepository,
+    PostgresTicketRepository,
     TicketRepository,
     create_ticket_repository,
 )
@@ -4882,6 +4883,42 @@ def _default_account_processing_profile() -> str:
         value,
     )
     return "staging"
+
+
+_account_production_repository_instance: PostgresTicketRepository | None = None
+_ACCOUNT_PRODUCTION_REPOSITORY_LOCK = threading.Lock()
+
+
+def _account_production_repository() -> TicketRepository:
+    """Return the repository holding production account-case rows.
+
+    The production stack already targets the production database through the
+    default repository; the staging stack opens PRODUCTION_TICKET_DB_DSN
+    lazily so workspace-admin automation views report live production data
+    instead of legacy staging rows. Missing or ambiguous configuration fails
+    closed instead of silently falling back to staging data.
+    """
+    global _account_production_repository_instance
+    if _default_account_processing_profile() == "production":
+        return ticket_repository
+    production_dsn = (os.getenv("PRODUCTION_TICKET_DB_DSN") or "").strip()
+    if not production_dsn or production_dsn == (os.getenv("TICKET_DB_DSN") or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "PRODUCTION_TICKET_DB_DSN is not configured (or equals TICKET_DB_DSN); "
+                "workspace admin account-automation data requires the production ticket database."
+            ),
+        )
+    with _ACCOUNT_PRODUCTION_REPOSITORY_LOCK:
+        if _account_production_repository_instance is None:
+            _account_production_repository_instance = PostgresTicketRepository(
+                dsn=production_dsn,
+                schema=(os.getenv("TICKET_DB_SCHEMA") or "supportportal").strip() or "supportportal",
+                migration_dsn=production_dsn,
+                application_name="supportportal-api-admin-production",
+            )
+    return _account_production_repository_instance
 
 
 def _account_intake_zendesk_ticket_id(request: AccountIntakeRequest) -> str | None:
@@ -11093,7 +11130,7 @@ def get_workspace_admin_metrics(
     engineer_cases = ticket_repository.list_engineer_case_headers()
     accounts = ticket_repository.list_workspace_accounts()
     client_tickets = ticket_repository.list_tickets(include_messages=False)
-    billing_tickets = ticket_repository.list_billing_tickets(
+    billing_tickets = _account_production_repository().list_billing_tickets(
         limit=10000,
         processing_profile="production",
     )
@@ -11234,7 +11271,7 @@ def get_workspace_admin_account_automation(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
     return account_automation_payload(
-        ticket_repository,
+        _account_production_repository(),
         page=page,
         page_size=page_size,
         route_status=route_status,
