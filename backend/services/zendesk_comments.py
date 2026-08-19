@@ -13,6 +13,9 @@ from typing import Any
 
 ZENDESK_TICKET_API_BASE = "https://agoraio.zendesk.com/api/v2/tickets"
 ZENDESK_BASIC_AUTH_ENV = "zendesk_basic_auth"
+# This Zendesk workspace marks these checkbox fields as required-on-solve; the
+# API rejects a solving PUT without them (422 RecordInvalid).
+ZENDESK_SOLVE_REQUIRED_CHECKBOX_FIELDS = ("36379228408724",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +280,8 @@ def add_ticket_comment(
     if solve:
         # solved (not closed) keeps the requester able to reopen by replying.
         ticket_payload["status"] = "solved"
+        for field_id in ZENDESK_SOLVE_REQUIRED_CHECKBOX_FIELDS:
+            ticket_payload[f"field_{field_id}"] = True
     request = urllib.request.Request(
         url,
         data=json.dumps({"ticket": ticket_payload}, ensure_ascii=False).encode("utf-8"),
