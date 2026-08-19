@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-75",
   "title": "部署时把候选 Prompt Release 同步到 /production 库",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "修复 #795 遗留的部署缺口：deploy_ec2.sh 只对 staging 库执行 prompt_release prepare/activate，但 PROMPT_RELEASE_ID 同时下发给 production 栈；release id 为随机 UUID，/production 独立库没有同 id 的 release 行时 api_production 启动即崩并触发整栈回滚。新增 prompt_release CLI sync 子命令（--release-id/--target-dsn，幂等，按内容哈希校验）与仓库层 sync_prompt_release（Protocol/InMemory/Postgres），部署脚本在 validate 之后、activate 之后各同步一次：前者是服务启动前的硬门禁（失败即中止且不停栈），后者把 production 库的 release 状态对齐为 active（失败仅告警，candidate 状态仍可部署）。",
-  "next_action": "合并后从根 main 重启官方栈并做 live 验证（部署日志出现两次 release 同步、/production 门禁通过、production 库 current 与 staging 一致），完成后收尾。",
+  "next_action": "",
   "acceptance_criteria": [
     "prompt_release CLI 新增 sync 子命令：以 staging 库为源、--target-dsn 指定目标库，幂等复制 release 行、items 与被引用版本行（内容哈希不一致时报错拒绝），目标库无该 id 时插入、有则保持；源 release 为 active 时把目标对齐为 active；完成后在目标库执行与启动时相同的 validate。",
     "仓库层 sync_prompt_release 在 Protocol、InMemoryTicketRepository、PostgresTicketRepository 三处实现；Postgres 实现使用独立 advisory lock 与单事务，遵守 one-active release/one-active version 唯一索引。",
@@ -38,6 +38,12 @@
       "label": "Syntax gates",
       "command": "bash -n deployment/deploy_ec2.sh",
       "details": "部署脚本语法检查通过。"
+    },
+    {
+      "type": "test",
+      "label": "Post-merge live stack verification",
+      "command": "./deployment/deploy_ec2.sh --skip-pull（根 main 9f2eeea）",
+      "details": "官方栈重启成功：部署日志在 validate 后与 activate 后各出现一次 Synced Prompt Release pr-52b4eed80337 to the /production database；/health 内外均 ok 且 app_build.ref=9f2eeeae0720 与合并 main 一致；/production 页面门禁通过并返回 Account Production 标题；api_production/worker_query_production/worker_aux_production 稳定运行，api_production 日志 prompt_runtime_loaded release_id=pr-52b4eed80337，production worker 无 ERROR。"
     }
   ],
   "source_refs": [
@@ -61,6 +67,11 @@
       "at": "2026-08-19",
       "event": "progress",
       "summary": "完成实现与目标测试：仓库层 sync_prompt_release（Protocol/InMemory/Postgres）、CLI sync 子命令、deploy_ec2.sh 双点接线与失败契约，单元/PG 集成/部署契约测试全绿。"
+    },
+    {
+      "at": "2026-08-19",
+      "event": "done",
+      "summary": "PR #797 合并入 main；根 main 官方栈重启后 live 验证通过（两次 release 同步日志、build ref 一致、/production 门禁与页面 marker、production 容器健康）。"
     }
   ],
   "legacy_refs": [],
