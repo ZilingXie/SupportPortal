@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T03:16:13Z",
-  "source_base_commit": "e22c2d186046ddfb7c1da7008ed73063e164fc75",
-  "registry_digest": "7ab37823784b5b099849d9af13eee2004c7a2a5bc3797a10465c4903de9718bc",
+  "generated_at": "2026-08-19T05:50:45Z",
+  "source_base_commit": "1d2bae7f2fccfc4d4546ebab9f80cfbb08d13298",
+  "registry_digest": "a7afae1fa0f97ece47d7d2ce87c57a1b82f6d19f173c90ef7944b0caf73be79c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1219,6 +1219,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Regression suites around changed paths",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_zendesk_comment backend.tests.test_workspace_api backend.tests.test_bootstrap_auto_deploy_ec2",
           "details": "全绿（86+142+部署契约），证明 Zendesk 投递、publication 事务台账、workspace admin 与部署脚本回归安全。test_workflow_scripts 存在 5 个与本次无关的环境性失败（干净 main 上同样失败，已对照验证）。"
+        },
+        {
+          "type": "test",
+          "label": "Forward contract (UI + backend removal + nginx)",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_production_ui_contract",
+          "details": "42 全绿：account-ui 含 forwardAccountCaseToProduction/PRODUCTION_FORWARD_TIMEOUT_MS=300_000/POST /production/account/超时提示 Open /production//幂等 toast/无 Zendesk 号就地产错；account-ui 与 backend/main.py 均断言无 promote-production 残留；nginx intake location 断言 proxy_read_timeout 300s。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites around removed endpoint",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_reply_publication_postgres backend.tests.test_workspace_api backend.tests.test_repository_configuration backend.tests.test_single_host_compose",
+          "details": "435 通过、8 跳过（无活库的 Postgres 集成用例，与改动前一致）：intake/rerun、Zendesk 投递与发布台账、workspace admin、compose 契约均不受 promote 端点删除影响。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "python3 -m py_compile backend/main.py && node --check ui/account-ui/app.js && git diff --check",
+          "details": "后端编译、前端 JS 语法、空白检查全部通过。"
         }
       ],
       "source_refs": [
@@ -1228,7 +1246,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 1,
+      "task_count": 2,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -6211,6 +6229,63 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-74",
+      "title": "/account Run in Production 重构为转发 production intake",
+      "status": "active",
+      "owner": "zac",
+      "summary": "移除 staging 库内 promote-production 端点与 PRD-* 晋级逻辑；/account 的 Run in Production 按钮改为以 n8n 同款五字段 intake 直连 POST /production/account，由 production 栈完成完整路由并在命中已注册 Automation 时自动写入 Zendesk internal comment。nginx intake 路由超时提升到 300s 匹配前端等待。",
+      "next_action": "合并后从根 main 重启官方栈并做 live 验证（/account 转发按钮新契约、/production 页面 marker），完成后收尾。",
+      "acceptance_criteria": [
+        "account-ui 的 Run in Production 按钮直接 POST /production/account（同源 n8n 同款 intake），载荷含 external_id/title/question/customer_email/customer_name/source/created_by；未关联数字 Zendesk 号的 Case 拒绝转发并就地报错。",
+        "转发成功与幂等重放（idempotent_replay）分别有明确 toast；超时提示指向 /production/ 而非 PRD-* Case。",
+        "后端不再存在 POST /api/account/cases/{id}/promote-production 端点及其专属辅助（_production_rule_release/_production_zendesk_ticket_id/snapshot 导入）；rerun、metrics、intake 等共享路径零改动。",
+        "nginx location = /production/account 的 proxy_read_timeout 为 300s。",
+        "契约测试覆盖新前端契约并断言 account-ui 与 backend/main.py 无 promote-production 残留；test_worker/test_account_intake 等回归套件全绿。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Forward contract (UI + backend removal + nginx)",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_production_ui_contract",
+          "details": "42 全绿：account-ui 含 forwardAccountCaseToProduction/PRODUCTION_FORWARD_TIMEOUT_MS=300_000/POST /production/account/超时提示 Open /production//幂等 toast/无 Zendesk 号就地产错；account-ui 与 backend/main.py 均断言无 promote-production 残留；nginx intake location 断言 proxy_read_timeout 300s。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites around removed endpoint",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_reply_publication_postgres backend.tests.test_workspace_api backend.tests.test_repository_configuration backend.tests.test_single_host_compose",
+          "details": "435 通过、8 跳过（无活库的 Postgres 集成用例，与改动前一致）：intake/rerun、Zendesk 投递与发布台账、workspace admin、compose 契约均不受 promote 端点删除影响。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "python3 -m py_compile backend/main.py && node --check ui/account-ui/app.js && git diff --check",
+          "details": "后端编译、前端 JS 语法、空白检查全部通过。"
+        }
+      ],
+      "source_refs": [
+        "ui/account-ui/app.js",
+        "backend/main.py",
+        "deployment/nginx/supportportal.conf",
+        "backend/tests/test_account_ui_contract.py"
+      ],
+      "created_at": "2026-08-19",
+      "updated_at": "2026-08-19",
+      "history": [
+        {
+          "at": "2026-08-19",
+          "event": "created",
+          "summary": "将 /account 的 Run in Production 从 staging 库内晋级重构为转发到 /production 独立环境。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     }
   ],
   "meetings": [
@@ -7390,6 +7465,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动写入真实 Zendesk internal comment。",
+        "/account 的 Run in Production 按钮改为将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk internal comment 投递；staging 库内晋级（PRD Case）逻辑已移除。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

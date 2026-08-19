@@ -52,16 +52,23 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("reroute-modal", styles)
         self.assertIn("reroute-progress", styles)
 
-    def test_production_promotion_uses_long_timeout_and_explains_server_continuation(self) -> None:
+    def test_production_forward_posts_to_production_intake_with_long_timeout(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
 
-        self.assertIn("const PRODUCTION_PROMOTION_TIMEOUT_MS = 300_000;", app_source)
-        promotion_start = app_source.index("async function promoteAccountCaseToProduction")
-        promotion_end = app_source.index("\nfunction renderZendeskOwnershipConfirmation", promotion_start)
-        promotion_source = app_source[promotion_start:promotion_end]
-        self.assertIn("timeoutMs: PRODUCTION_PROMOTION_TIMEOUT_MS", promotion_source)
-        self.assertIn("The request may still be running on the server", promotion_source)
-        self.assertIn("check for a PRD-* Production Case", promotion_source)
+        self.assertIn("const PRODUCTION_FORWARD_TIMEOUT_MS = 300_000;", app_source)
+        self.assertIn("const DEFAULT_FETCH_TIMEOUT_MS = 25_000;", app_source)
+        forward_start = app_source.index("async function forwardAccountCaseToProduction")
+        forward_end = app_source.index("\nfunction renderZendeskOwnershipConfirmation", forward_start)
+        forward_source = app_source[forward_start:forward_end]
+        self.assertIn('accountFetch(', forward_source)
+        self.assertIn('"/production/account"', forward_source)
+        self.assertIn("timeoutMs: PRODUCTION_FORWARD_TIMEOUT_MS", forward_source)
+        self.assertIn("external_id: externalId", forward_source)
+        self.assertIn("item.zendesk_ticket_id", forward_source)
+        self.assertIn("Case is not linked to a Zendesk ticket.", forward_source)
+        self.assertIn("The request may still be running on the server", forward_source)
+        self.assertIn("Open /production/ to check the case.", forward_source)
+        self.assertIn("Case already exists in the production environment", forward_source)
 
     def test_account_app_contains_exact_case_search_and_single_case_rerun(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -525,17 +532,17 @@ class AccountUiContractTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_production_promotion_uses_long_timeout_and_explains_server_continuation(self) -> None:
+    def test_production_forward_contract_has_no_promote_remnants(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
-        promotion_start = app_source.index("async function promoteAccountCaseToProduction")
-        promotion_end = app_source.index("\nfunction renderZendeskOwnershipConfirmation", promotion_start)
-        promotion_source = app_source[promotion_start:promotion_end]
+        main_source = Path("backend/main.py").read_text(encoding="utf-8")
 
-        self.assertIn("const DEFAULT_FETCH_TIMEOUT_MS = 25_000;", app_source)
-        self.assertIn("const PRODUCTION_PROMOTION_TIMEOUT_MS = 300_000;", app_source)
-        self.assertIn("timeoutMs: PRODUCTION_PROMOTION_TIMEOUT_MS", promotion_source)
-        self.assertIn("request may still be running on the server", promotion_source)
-        self.assertIn("check for a PRD-* Production Case", promotion_source)
+        self.assertNotIn("promote-production", app_source)
+        self.assertNotIn("promoteAccountCaseToProduction", app_source)
+        self.assertNotIn("PRODUCTION_PROMOTION_TIMEOUT_MS", app_source)
+        self.assertIn("renderProductionForwardAction", app_source)
+        self.assertIn("data-action=\"forward-production\"", app_source)
+        self.assertNotIn("promote-production", main_source)
+        self.assertNotIn("async def promote_account_case_to_production", main_source)
 
     def test_account_app_contains_filter_state_and_reply_composer(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

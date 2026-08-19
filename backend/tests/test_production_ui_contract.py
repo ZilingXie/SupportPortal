@@ -135,6 +135,11 @@ class ProductionDeploymentContractTests(unittest.TestCase):
         self.assertIn("location /production/api/ {", nginx)
         self.assertIn("rewrite ^/production(/api/.*)$ $1 break;", nginx)
         self.assertIn("location /production/ {", nginx)
+        intake_block = nginx[
+            nginx.index("location = /production/account {") :
+            nginx.index("location /production/api/ {")
+        ]
+        self.assertIn("proxy_read_timeout 300s;", intake_block)
 
     def test_deploy_script_gates_production_profile_on_dsn(self) -> None:
         deploy = Path("deployment/deploy_ec2.sh").read_text(encoding="utf-8")
