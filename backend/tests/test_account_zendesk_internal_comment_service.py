@@ -76,7 +76,7 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
     def test_worker_and_account_admin_share_one_api_write_and_persisted_result(self) -> None:
         self._create_delivery()
         with patch(
-            "backend.services.account_zendesk_internal_comment.add_internal_comment",
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment",
             return_value=ZendeskCommentResult(comment_id="comment-shared", status_code=200),
         ) as add_comment:
             first = deliver_account_ai_message_as_internal_comment(
@@ -102,6 +102,8 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
         add_comment.assert_called_once_with(
             ticket_id="12838",
             body="The persisted Production answer.",
+            public=False,
+            solve=False,
         )
 
         delivery = self.repository.list_account_zendesk_comment_deliveries(
@@ -126,8 +128,8 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
             claimed_at="2026-08-19T00:01:00+00:00",
         )
         with patch(
-            "backend.services.account_zendesk_internal_comment.find_private_internal_comment",
-            return_value=ZendeskCommentResult(comment_id="comment-audited", status_code=200),
+            "backend.services.account_zendesk_internal_comment.read_ticket_comment_audit",
+            return_value=(ZendeskCommentResult(comment_id="comment-audited", status_code=200), False),
         ) as find_comment:
             result = reconcile_account_ai_message_internal_comment(
                 repository=self.repository,
@@ -141,6 +143,7 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
         find_comment.assert_called_once_with(
             ticket_id="12838",
             body="The persisted Production answer.",
+            public=False,
         )
         delivery = self.repository.list_account_zendesk_comment_deliveries(
             statuses=("delivered",),
@@ -156,10 +159,10 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
             claimed_at="2026-08-19T00:01:00+00:00",
         )
         with patch(
-            "backend.services.account_zendesk_internal_comment.find_private_internal_comment",
-            return_value=None,
+            "backend.services.account_zendesk_internal_comment.read_ticket_comment_audit",
+            return_value=(None, False),
         ), patch(
-            "backend.services.account_zendesk_internal_comment.add_internal_comment"
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment"
         ) as add_comment:
             unknown = reconcile_account_ai_message_internal_comment(
                 repository=self.repository,
@@ -205,7 +208,7 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
         )
 
         with patch(
-            "backend.services.account_zendesk_internal_comment.add_internal_comment"
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment"
         ) as add_comment:
             result = deliver_account_ai_message_as_internal_comment(
                 repository=self.repository,

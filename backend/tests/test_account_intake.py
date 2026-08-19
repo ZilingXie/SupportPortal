@@ -6323,6 +6323,53 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["missing_fields"], [])
         self.assertIn("company_information", bt["collected_fields"])
 
+    def test_fraud_followup_with_missing_fields_queues_missing_info_reply(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_fraud_account_route_result()
+        ):
+            create_response = self.client.post(
+                "/account",
+                json={
+                    "title": "Suspicious activity verification",
+                    "question": (
+                        "The fraud review asks us to submit company, contact, use case, and payment "
+                        "information to verify and restore our account."
+                    ),
+                    "customer_email": "customer@example.com",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 200)
+        create_payload = create_response.json()
+        bt_id = create_payload["billing_ticket_id"]
+        self.assertTrue(len(create_payload["missing_fields"]) > 0)
+
+        # Partial answer: company only, so fraud fields are still incomplete.
+        with patch.object(
+            main, "decide_account_route", return_value=_fraud_account_route_result()
+        ):
+            reply_response = self.client.post(
+                f"/api/account/billing-tickets/{bt_id}/reply",
+                json={"message": "Company name: Acme Corp."},
+            )
+
+        self.assertEqual(reply_response.status_code, 200, reply_response.text)
+        reply_payload = reply_response.json()
+        # The missing-information ask must queue instead of failing on the
+        # fraud handoff intent conflict.
+        self.assertEqual(reply_payload["automation_status"], "automation")
+        self.assertEqual(reply_payload["ai_reply_status"], "queued")
+        self.assertTrue(len(reply_payload["missing_fields"]) > 0)
+        job = self.repository.get_latest_account_reply_job(create_payload["ticket_id"])
+        assert job is not None
+        facts = job["payload"].get("reply_facts") or {}
+        self.assertEqual(facts.get("reply_intent"), "request_missing_information")
+        # The canonical intent is the missing-information ask, not the fraud
+        # handoff confirmation, so no intent conflict and no close flag.
+        self.assertEqual(job["payload"].get("reply_intent"), "request_missing_information")
+        self.assertNotIn("close_after_publish", job["payload"])
+        self.assertTrue(len(job["payload"]["asked_field_keys"]) > 0)
+
     def test_billing_automation_reply_sends_internal_email_when_fields_complete(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
             main, "decide_account_route", return_value=_fraud_account_route_result()
@@ -6858,6 +6905,8 @@ class AccountIntakeApiTests(unittest.TestCase):
     def test_production_account_reply_delay_is_sampled_once(self) -> None:
         with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}), patch.object(
             main, "dispatch_event", AsyncMock()
+        ), patch.object(
+            main, "_apply_production_ownership_gate", return_value=True
         ), patch.object(
             main, "account_reply_delay_seconds_for_profile", return_value=417
         ) as delay:

@@ -12,8 +12,8 @@ from typing import Any, Literal
 from backend.repositories.ticket_repository import TicketRepository
 from backend.services.zendesk_comments import (
     ZendeskCommentError,
-    add_internal_comment,
-    find_private_internal_comment,
+    add_ticket_comment,
+    read_ticket_comment_audit,
 )
 
 
@@ -257,6 +257,7 @@ def _persist_result(
     idempotency_key: str,
     payload: dict[str, Any],
     recorded_at: str,
+    close_local_ticket: bool = False,
 ) -> AccountZendeskCommentResult:
     try:
         persisted = repository.record_account_zendesk_internal_comment_result(
@@ -266,6 +267,7 @@ def _persist_result(
             idempotency_key=idempotency_key,
             result_payload=payload,
             recorded_at=recorded_at,
+            close_local_ticket=close_local_ticket,
         )
     except Exception as exc:
         raise AccountZendeskInternalCommentError(
@@ -329,8 +331,21 @@ def deliver_account_ai_message_as_internal_comment(
     actor_id: str,
     trigger: AccountZendeskCommentTrigger,
     retry_failed: bool = False,
+    public_comment: bool = False,
+    solve_ticket: bool = False,
 ) -> AccountZendeskCommentResult:
-    """Write the persisted AI message once through the Zendesk API."""
+    """Write the persisted AI message once through the Zendesk API.
+
+    ``public_comment`` selects a customer-visible Zendesk comment instead of the
+    default private internal note; ``solve_ticket`` additionally solves the ticket
+    in the same PUT and is only valid together with ``public_comment``.
+    """
+    if solve_ticket and not public_comment:
+        raise AccountZendeskInternalCommentError(
+            "account_zendesk_comment_visibility_invalid",
+            "Solving the ticket requires a public customer reply",
+            status_code=422,
+        )
     account_case, message, ticket_id, zendesk_ticket_id = _message_target(
         repository,
         account_case_id=account_case_id,
@@ -394,9 +409,11 @@ def deliver_account_ai_message_as_internal_comment(
                 return existing
 
     try:
-        zendesk_result = add_internal_comment(
+        zendesk_result = add_ticket_comment(
             ticket_id=zendesk_ticket_id,
             body=str(message.get("content") or "").strip(),
+            public=bool(public_comment),
+            solve=bool(solve_ticket),
         )
     except ZendeskCommentError as exc:
         payload = _result_payload(
@@ -434,6 +451,7 @@ def deliver_account_ai_message_as_internal_comment(
         idempotency_key=idempotency_key,
         payload=payload,
         recorded_at=_utc_now(),
+        close_local_ticket=bool(solve_ticket),
     )
 
 
@@ -444,6 +462,8 @@ def reconcile_account_ai_message_internal_comment(
     message_id: str,
     actor_id: str,
     trigger: AccountZendeskCommentTrigger,
+    public_comment: bool = False,
+    solve_ticket: bool = False,
 ) -> AccountZendeskCommentResult:
     """Audit a possibly completed Zendesk write without issuing another PUT."""
     _account_case, message, ticket_id, zendesk_ticket_id = _message_target(
@@ -472,7 +492,11 @@ def reconcile_account_ai_message_internal_comment(
             )
     body = str(message.get("content") or "").strip()
     try:
-        comment = find_private_internal_comment(ticket_id=zendesk_ticket_id, body=body)
+        comment, solved_seen = read_ticket_comment_audit(
+            ticket_id=zendesk_ticket_id,
+            body=body,
+            public=bool(public_comment),
+        )
     except ZendeskCommentError as exc:
         payload = _result_payload(
             status="outcome_unknown",
@@ -483,14 +507,21 @@ def reconcile_account_ai_message_internal_comment(
             error_code=exc.error_code,
         )
     else:
+        status = "added" if comment is not None else "outcome_unknown"
+        error_code = None if comment is not None else "zendesk_comment_not_found"
+        if comment is not None and solve_ticket and not solved_seen:
+            # The comment exists but the ticket was never solved; the solve half of
+            # the write is unverified, so the delivery stays reconcilable.
+            status = "outcome_unknown"
+            error_code = "zendesk_ticket_status_unverified"
         payload = _result_payload(
-            status="added" if comment is not None else "outcome_unknown",
+            status=status,
             account_case_id=normalized_case_id,
             message_id=normalized_message_id,
             actor_id=normalized_actor_id,
             trigger=trigger,
             comment_id=comment.comment_id if comment is not None else None,
-            error_code=None if comment is not None else "zendesk_comment_not_found",
+            error_code=error_code,
         )
     return _persist_result(
         repository,
@@ -500,6 +531,7 @@ def reconcile_account_ai_message_internal_comment(
         idempotency_key=idempotency_key,
         payload=payload,
         recorded_at=_utc_now(),
+        close_local_ticket=bool(solve_ticket),
     )
 
 

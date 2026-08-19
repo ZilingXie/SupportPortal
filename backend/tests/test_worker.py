@@ -150,6 +150,18 @@ def _build_ticket(
     }
 
 
+def _ownership_assigned():
+    from backend.services.account_automation_ownership import OwnershipGateResult
+
+    return OwnershipGateResult(
+        eligible=True,
+        state="assigned",
+        assignee_id="48557297720084",
+        group_id="27216254064148",
+        updated_at="2026-08-19T00:00:00+00:00",
+    )
+
+
 def _zendesk_result(
     *,
     status: str = "added",
@@ -260,9 +272,11 @@ class WorkerResilienceTests(unittest.TestCase):
             message_id="reply-1",
             actor_id="system:production-account-reply",
             trigger="production_worker",
+            public_comment=False,
+            solve_ticket=False,
         )
 
-    def test_queued_delivery_is_claimed_once_and_written_as_private_comment(self) -> None:
+    def test_queued_delivery_is_claimed_once_and_written_as_public_comment(self) -> None:
         repository = Mock()
         repository.get_account_case_by_ticket_id.return_value = {
             "account_case_id": "AC-QUEUED",
@@ -274,8 +288,14 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.claim_account_zendesk_comment_delivery.return_value = {
             "claimed": True,
             "status": "pending",
+            "is_public": True,
+            "target_status": None,
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=_ownership_assigned(),
+        ), patch.object(
             worker,
             "deliver_account_ai_message_as_internal_comment",
             return_value=_zendesk_result(comment_id="comment-queued"),
@@ -298,6 +318,8 @@ class WorkerResilienceTests(unittest.TestCase):
             actor_id="system:production-account-reply",
             trigger="production_worker",
             retry_failed=False,
+            public_comment=True,
+            solve_ticket=False,
         )
 
     def test_pending_delivery_uses_audit_readback_without_put(self) -> None:
@@ -330,6 +352,8 @@ class WorkerResilienceTests(unittest.TestCase):
             message_id="1372",
             actor_id="system:production-account-reply",
             trigger="production_worker",
+            public_comment=False,
+            solve_ticket=False,
         )
 
     def test_staging_or_missing_external_ticket_never_creates_delivery(self) -> None:
@@ -417,6 +441,10 @@ class WorkerResilienceTests(unittest.TestCase):
         ]
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
+            "ensure_production_automation_ownership",
+            return_value=_ownership_assigned(),
+        ), patch.object(
+            worker,
             "deliver_account_ai_message_as_internal_comment",
             return_value=_zendesk_result(comment_id="comment-once"),
         ) as deliver:
@@ -443,6 +471,10 @@ class WorkerResilienceTests(unittest.TestCase):
             "status": "pending",
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=_ownership_assigned(),
+        ), patch.object(
             worker,
             "deliver_account_ai_message_as_internal_comment",
             return_value=_zendesk_result(
@@ -2398,17 +2430,20 @@ class WorkerResilienceTests(unittest.TestCase):
         event_payload = commit["events"][0]["payload"]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
 
-    def test_enablement_explicit_completion_closes_after_unsigned_customer_reply(self) -> None:
+    def test_enablement_explicit_completion_queues_closing_reply_job(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ENABLEMENT-DONE",
             "billing_ticket_id": "AC-TK-ENABLEMENT-DONE",
             "client_ticket_id": "TK-ENABLEMENT-DONE",
             "automation_handler": "enablement",
             "automation_status": "automation",
+            "processing_profile": "production",
             "collected_fields": {"requested_feature": "media_relay"},
+            "internal_email_payload": {"delivery_key": "enablement-delivery-1"},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ENABLEMENT-DONE",
@@ -2421,18 +2456,23 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "_render_case_persona_reply",
-            return_value="Hi Customer,\n\nThe feature is enabled, and this ticket is closing.",
-        ):
+            "create_account_reply_job",
+            return_value={"job_id": "account-reply-completion-1"},
+        ) as create_job:
             handled = worker.handle_enablement_request_reply(reply)
 
         self.assertEqual(handled, "completed")
-        commit = repository.commit_automation_reply_result.call_args.kwargs
-        self.assertTrue(commit["close_after_publish"])
+        create_job.assert_called_once()
+        job_kwargs = create_job.call_args.kwargs
         self.assertEqual(
-            commit["assistant_message"]["content"],
-            "Hi Customer,\n\nThe feature is enabled, and this ticket is closing.",
+            job_kwargs["reply_intent"], "enablement_completed_and_close"
         )
+        self.assertTrue(job_kwargs["close_after_publish"])
+        self.assertEqual(job_kwargs["automation_delivery_key"], "enablement-delivery-1")
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertIsNone(commit["assistant_message"])
+        self.assertNotIn("close_after_publish", commit)
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "automation")
 
     def test_enablement_non_completion_reply_does_not_close(self) -> None:
         repository = Mock()
@@ -2464,7 +2504,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertEqual(handled, "completed")
         commit = repository.commit_automation_reply_result.call_args.kwargs
-        self.assertFalse(commit["close_after_publish"])
+        self.assertNotIn("close_after_publish", commit)
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
 
     def test_enablement_completion_detection_requires_current_positive_state(self) -> None:

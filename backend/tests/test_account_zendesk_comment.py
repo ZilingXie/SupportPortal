@@ -82,7 +82,7 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
         message_id = message["message_id"]
 
         with patch(
-            "backend.services.account_zendesk_internal_comment.add_internal_comment",
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment",
             return_value=ZendeskCommentResult(comment_id="comment-12807", status_code=200),
         ) as add_comment:
             first = self.client.post(
@@ -99,7 +99,7 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
         self.assertEqual(first.json()["comment_id"], "comment-12807")
         self.assertEqual(replay.status_code, 200, replay.text)
         self.assertTrue(replay.json()["idempotent_replay"])
-        add_comment.assert_called_once_with(ticket_id="12807", body=self.marker)
+        add_comment.assert_called_once_with(ticket_id="12807", body=self.marker, public=False, solve=False)
 
         saved_detail = self.repository.get_account_case_details(["AC-12807"])["AC-12807"]
         saved_message = next(
@@ -125,7 +125,7 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
         message_id = message["message_id"]
 
         with patch(
-            "backend.services.account_zendesk_internal_comment.add_internal_comment",
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment",
             side_effect=ZendeskCommentError(
                 "outcome_unknown",
                 error_code="zendesk_comment_visibility_unverified",
@@ -141,7 +141,7 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
         self.assertEqual(first.status_code, 409, first.text)
         self.assertEqual(second.status_code, 409, second.text)
         self.assertIn("result is unknown", first.text)
-        add_comment.assert_called_once_with(ticket_id="12807", body=self.marker)
+        add_comment.assert_called_once_with(ticket_id="12807", body=self.marker, public=False, solve=False)
 
         saved_detail = self.repository.get_account_case_details(["AC-12807"])["AC-12807"]
         saved_message = next(

@@ -122,6 +122,11 @@ from backend.services.internal_email_payload import (
     InternalEmailRecipientResolutionError,
     resolve_account_internal_email_recipient,
 )
+from backend.services.account_automation_ownership import (
+    OWNERSHIP_EVENT_TYPE,
+    ensure_production_automation_ownership,
+    ownership_gate_eligible,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     AUTOMATED_ROUTE_STATUS,
@@ -848,6 +853,48 @@ def _account_reply_job_public(job: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _apply_production_ownership_gate(
+    account_case: dict[str, Any],
+    timestamp: str,
+) -> bool:
+    """Run the authoritative AI-ownership gate; False means fail-closed."""
+    if not ownership_gate_eligible(account_case):
+        return True
+    ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    result = ensure_production_automation_ownership(
+        account_case,
+        mode="gate",
+        updated_at=timestamp,
+    )
+    ticket_repository.record_event(
+        ticket_id or None,
+        OWNERSHIP_EVENT_TYPE,
+        {
+            "account_case_id": str(
+                account_case.get("account_case_id")
+                or account_case.get("billing_ticket_id")
+                or ""
+            ),
+            "state": result.state,
+            "assignee_id": result.assignee_id,
+            "group_id": result.group_id,
+            "failure_code": result.failure_code,
+            "created_at": timestamp,
+        },
+    )
+    if not result.fail_closed:
+        ticket_repository.save_account_case(account_case)
+        return True
+    account_case["automation_status"] = "human_review_required"
+    account_case["policy_decision"] = "zendesk_ownership_gate_failed"
+    account_case["not_automated_reason"] = (
+        f"zendesk_ownership_gate:{result.failure_code or 'unknown'}"
+    )
+    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
+    ticket_repository.save_account_case(account_case)
+    return False
+
+
 def _create_account_reply_job(
     *,
     ticket_id: str,
@@ -1500,6 +1547,7 @@ class ZendeskCommentSnapshotRequest(BaseModel):
     source_updated_at: str = Field(min_length=1, max_length=64)
     snapshot_complete: bool
     comments: list[dict[str, Any]] = Field(max_length=10_000)
+    trigger_comment_id: str | None = Field(default=None, max_length=128)
 
 
 class AssetUploadIntentRequest(BaseModel):
@@ -5306,6 +5354,15 @@ async def _create_account_intake_impl(
     )
     asked_field_keys = list(missing_fields) if missing_fields and not internal_email_payload else []
     reply_job = None
+    if is_automation_route and not await async_to_thread(
+        _apply_production_ownership_gate, billing_ticket, timestamp
+    ):
+        # Ownership gate failed closed: no reply job, no internal email, no
+        # Zendesk comment until a human resolves the case.
+        assistant_reply_facts = None
+        billing_email_attempt = None
+        response_status = "human_review_required"
+        execution_reason_code = "zendesk_ownership_gate_failed"
     if is_automation_route and assistant_reply_facts and (asked_field_keys or route == "account_suspension"):
         try:
             reply_job = await async_to_thread(
@@ -6107,6 +6164,12 @@ async def sync_zendesk_account_comments(
     unresolved_author_count = sum(
         1 for comment in snapshot.comments if comment.author_kind == "unknown"
     )
+    trigger = await _process_zendesk_comment_trigger(
+        account_case=account_case,
+        snapshot=snapshot,
+        trigger_comment_id=str(getattr(request, "trigger_comment_id", "") or "").strip()
+        or None,
+    )
     return {
         "status": status or "synced",
         "is_account_case": True,
@@ -6117,7 +6180,133 @@ async def sync_zendesk_account_comments(
         "source_updated_at": result.get("source_updated_at"),
         "synced_at": result.get("synced_at"),
         "comments_revision": result.get("comments_revision"),
+        **trigger,
     }
+
+
+_ZENDESK_COMMENT_TRIGGER_IDEMPOTENCY_SCOPE = "zendesk_customer_comment_trigger"
+_ZENDESK_COMMENT_TRIGGER_IGNORED_CASE_STATUSES = frozenset(
+    {"human_review_required", "human_review", "closed"}
+)
+
+
+async def _process_zendesk_comment_trigger(
+    *,
+    account_case: dict[str, Any],
+    snapshot: Any,
+    trigger_comment_id: str | None,
+) -> dict[str, Any]:
+    """Feed one new public customer Zendesk comment into the automation loop.
+
+    Projection sync stays the source of truth for display; this trigger only
+    decides whether the automation state machine should also consume the
+    comment, and it is idempotent per Zendesk comment id.
+    """
+    ignored: dict[str, Any] = {"trigger_status": "ignored_no_trigger"}
+    if not trigger_comment_id:
+        return ignored
+    trigger_comment = next(
+        (
+            comment
+            for comment in snapshot.comments
+            if str(comment.zendesk_comment_id) == trigger_comment_id
+        ),
+        None,
+    )
+    if trigger_comment is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "trigger_comment_missing",
+                "message": "trigger_comment_id is not present in the snapshot",
+            },
+        )
+
+    def _ignored(reason: str) -> dict[str, Any]:
+        return {"trigger_status": reason, "trigger_comment_id": trigger_comment_id}
+
+    if trigger_comment.author_kind == "agent":
+        return _ignored("ignored_agent_comment")
+    if trigger_comment.author_kind in {"system", "unknown"}:
+        return _ignored("ignored_non_customer_author")
+    if not bool(trigger_comment.is_public):
+        return _ignored("ignored_private_comment")
+    if not str(trigger_comment.body or "").strip():
+        return _ignored("ignored_empty_comment")
+    if bool(trigger_comment.is_initial):
+        return _ignored("ignored_initial_comment")
+
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    automation_status = str(account_case.get("automation_status") or "").strip().lower()
+
+    # Claim the comment id before the case-state checks: a replay must return
+    # the first run's recorded outcome even if the case state moved on.
+    claim = await async_to_thread(
+        ticket_repository.begin_idempotent_request,
+        _ZENDESK_COMMENT_TRIGGER_IDEMPOTENCY_SCOPE,
+        f"{account_case_id}:{trigger_comment_id}",
+        created_at=now_iso(),
+        retry_failed=True,
+    )
+    async def _complete(trigger_payload: dict[str, Any]) -> dict[str, Any]:
+        await async_to_thread(
+            ticket_repository.complete_idempotent_request,
+            _ZENDESK_COMMENT_TRIGGER_IDEMPOTENCY_SCOPE,
+            f"{account_case_id}:{trigger_comment_id}",
+            response_payload=trigger_payload,
+            updated_at=now_iso(),
+        )
+        return trigger_payload
+
+    if not bool(claim.get("created")):
+        existing_state = str(claim.get("state") or "").strip().lower()
+        if existing_state == "completed":
+            payload = claim.get("response_payload")
+            if isinstance(payload, dict):
+                return dict(payload)
+        return _ignored("already_processing")
+
+    if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
+        return await _complete(_ignored("ignored_non_production_case"))
+    if not is_registered_automation(
+        route_family=account_case.get("route_family"),
+        execution_action=account_case.get("execution_action")
+        or account_case.get("route"),
+    ):
+        return await _complete(_ignored("ignored_unregistered_automation"))
+    if automation_status in _ZENDESK_COMMENT_TRIGGER_IGNORED_CASE_STATUSES:
+        return await _complete(_ignored("ignored_inactive_case"))
+    case_created_at = str(account_case.get("created_at") or "").strip()
+    if case_created_at and str(trigger_comment.created_at or "") <= case_created_at:
+        return await _complete(_ignored("ignored_pre_intake_comment"))
+
+    try:
+        processed = await _process_account_customer_reply(
+            billing_ticket_id=account_case_id,
+            message=str(trigger_comment.body or "").strip(),
+            source="zendesk-comment",
+            message_source_id=trigger_comment_id,
+        )
+    except HTTPException as exc:
+        return await _complete(
+            {
+                "trigger_status": "failed",
+                "trigger_comment_id": trigger_comment_id,
+                "error": str(exc.detail),
+            }
+        )
+
+    return await _complete(
+        {
+            "trigger_status": "processed",
+            "trigger_comment_id": trigger_comment_id,
+            "internal_email_status": str(processed.get("internal_email_send_status") or "") or None,
+            "ai_reply_status": processed.get("ai_reply_status"),
+            "ai_reply_scheduled_for": processed.get("ai_reply_scheduled_for"),
+        }
+    )
 
 
 @app.get("/api/account/cases", dependencies=[Depends(require_workspace_admin)])
@@ -9197,6 +9386,21 @@ async def _reply_to_billing_ticket_impl(
     billing_ticket_id: str,
     request: BillingReplyRequest,
 ) -> dict[str, Any]:
+    return await _process_account_customer_reply(
+        billing_ticket_id=billing_ticket_id,
+        message=str(request.message or ""),
+        source="account-ui",
+        message_source_id=None,
+    )
+
+
+async def _process_account_customer_reply(
+    *,
+    billing_ticket_id: str,
+    message: str,
+    source: str,
+    message_source_id: str | None = None,
+) -> dict[str, Any]:
     billing_ticket = await _load_account_billing_ticket(billing_ticket_id)
 
     client_ticket_id = str(billing_ticket.get("client_ticket_id") or "").strip()
@@ -9207,7 +9411,7 @@ async def _reply_to_billing_ticket_impl(
     if canonical_ticket is None:
         raise HTTPException(status_code=404, detail="linked support ticket not found")
 
-    customer_message = str(request.message or "").strip()
+    customer_message = str(message or "").strip()
     if not customer_message:
         raise HTTPException(status_code=400, detail="message is required")
 
@@ -9215,13 +9419,26 @@ async def _reply_to_billing_ticket_impl(
     initial_message_count = len(canonical_ticket.get("messages", [])) if isinstance(canonical_ticket.get("messages"), list) else 0
 
     # Append customer reply to canonical ticket messages.
-    customer_msg = {
+    customer_msg: dict[str, Any] = {
         "role": "customer",
         "content": customer_message,
         "created_at": timestamp,
         "content_format": "plaintext",
-        "source": "account-ui",
+        "source": str(source or "account-ui").strip() or "account-ui",
     }
+    normalized_source_id = str(message_source_id or "").strip()
+    if normalized_source_id:
+        customer_msg["external_id"] = normalized_source_id
+        duplicate = any(
+            isinstance(existing, dict)
+            and str(existing.get("external_id") or "").strip() == normalized_source_id
+            for existing in canonical_ticket.get("messages", [])
+        )
+        if duplicate:
+            view_model = _build_account_ticket_view_model(billing_ticket)
+            view_model["messages"] = canonical_ticket.get("messages", [])
+            view_model["support_ticket_status"] = canonical_ticket.get("status")
+            return {**billing_ticket, **view_model}
     canonical_ticket.setdefault("messages", []).append(customer_msg)
     canonical_ticket["updated_at"] = timestamp
     assistant_reply = ""
@@ -9255,6 +9472,24 @@ async def _reply_to_billing_ticket_impl(
         if isinstance(billing_ticket.get("automation_context"), dict)
         else {}
     )
+
+    # Automated follow-ups stay gated on AI ownership; a fail-closed or
+    # human-reassigned case records the customer message but stops automation.
+    if not await async_to_thread(_apply_production_ownership_gate, billing_ticket, timestamp):
+        await async_to_thread(
+            ticket_repository.cancel_pending_account_reply_jobs,
+            client_ticket_id,
+            updated_at=timestamp,
+        )
+        await async_to_thread(ticket_repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        return {
+            **billing_ticket,
+            **_build_account_ticket_view_model(billing_ticket),
+            "messages": canonical_ticket.get("messages", []),
+            "support_ticket_status": canonical_ticket.get("status"),
+            "ai_reply_status": None,
+        }
 
     # Suspension is a two-stage workflow. Consume the customer's confirmation
     # here so it cannot fall through into the generic route/extraction path.
@@ -9835,6 +10070,9 @@ async def _reply_to_billing_ticket_impl(
 
     reply_job = None
     if automation_attempt is not None and (requested_field_keys or reply_ready):
+        followup_action = str(
+            billing_ticket.get("execution_action") or billing_ticket.get("route") or ""
+        ).strip()
         try:
             reply_job = await async_to_thread(
                 _create_account_reply_job,
@@ -9849,12 +10087,14 @@ async def _reply_to_billing_ticket_impl(
                     if not requested_field_keys
                     else None
                 ),
-                close_after_publish=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "account_suspension",
+                # Closing/handoff intents describe the completed handoff; a
+                # missing-information ask must keep its nested intent only.
+                close_after_publish=bool(reply_ready and followup_action == "account_suspension"),
                 reply_intent=(
                     "fraud_handoff_confirmation"
-                    if str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "fraud_account"
+                    if reply_ready and followup_action == "fraud_account"
                     else "account_suspension_handoff_and_close"
-                    if str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip() == "account_suspension"
+                    if reply_ready and followup_action == "account_suspension"
                     else None
                 ),
             )

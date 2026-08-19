@@ -114,6 +114,42 @@ def _request(
         raise _assignment_error("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
 
 
+def read_ticket_assignment(
+    *,
+    ticket_id: str,
+    timeout_seconds: float = 15.0,
+) -> tuple[str | None, str | None]:
+    """Read the current assignee and group of a ticket without writing."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_ticket_id:
+        raise _assignment_error("permanent", error_code="zendesk_assignment_input_invalid")
+    try:
+        timeout = float(timeout_seconds)
+    except (TypeError, ValueError):
+        timeout = 15.0
+    if timeout <= 0:
+        timeout = 15.0
+    ticket_payload, _ = _request(
+        method="GET",
+        url=f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json",
+        timeout_seconds=timeout,
+    )
+    ticket = ticket_payload.get("ticket") if isinstance(ticket_payload.get("ticket"), dict) else {}
+    assignee_id = str(ticket.get("assignee_id") or "").strip() or None
+    group_id = str(ticket.get("group_id") or "").strip() or None
+    return assignee_id, group_id
+
+
+def configured_ai_assignee_id(*, timeout_seconds: float = 15.0) -> str:
+    """Resolve the configured AI agent user id without touching a ticket."""
+    expected_email = _configured_assignee_email()
+    assignee_id, _user = _resolve_configured_assignee(
+        expected_email=expected_email,
+        timeout_seconds=timeout_seconds,
+    )
+    return assignee_id
+
+
 def assign_ticket_to_configured_ai(
     *,
     ticket_id: str,

@@ -63,6 +63,7 @@ _ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS = (
     "zendesk_comment_id",
     "failure_code",
     "confirmed_at",
+    "target_status",
     "created_at",
     "updated_at",
 )
@@ -2011,6 +2012,7 @@ class TicketRepository(Protocol):
         idempotency_key: str,
         result_payload: dict[str, Any],
         recorded_at: str,
+        close_local_ticket: bool = False,
     ) -> dict[str, Any]:
         ...
 
@@ -2261,6 +2263,8 @@ class TicketRepository(Protocol):
         zendesk_ticket_id: str,
         idempotency_key: str,
         created_at: str,
+        is_public: bool = False,
+        target_status: str | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -2282,6 +2286,15 @@ class TicketRepository(Protocol):
         statuses: tuple[str, ...],
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        ...
+
+    def requeue_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        requeued_at: str,
+    ) -> dict[str, Any] | None:
         ...
 
     def complete_account_zendesk_comment_delivery(
@@ -2577,8 +2590,13 @@ class InMemoryTicketRepository:
         zendesk_ticket_id: str,
         idempotency_key: str,
         created_at: str,
+        is_public: bool = False,
+        target_status: str | None = None,
     ) -> dict[str, Any]:
         key = (str(account_case_id).strip(), str(message_id).strip())
+        normalized_target_status = str(target_status or "").strip().lower() or None
+        if normalized_target_status not in (None, "solved"):
+            raise ValueError("invalid Zendesk comment delivery target status")
         with self._assignment_lock:
             existing = self._account_zendesk_comment_deliveries.get(key)
             if existing is not None:
@@ -2586,9 +2604,10 @@ class InMemoryTicketRepository:
             delivery = {
                 "account_case_id": key[0], "message_id": key[1],
                 "zendesk_ticket_id": str(zendesk_ticket_id).strip(),
-                "idempotency_key": str(idempotency_key).strip(), "is_public": False,
+                "idempotency_key": str(idempotency_key).strip(), "is_public": bool(is_public),
                 "status": "queued", "zendesk_comment_id": None, "failure_code": None,
-                "confirmed_at": None, "created_at": created_at, "updated_at": created_at,
+                "confirmed_at": None, "target_status": normalized_target_status,
+                "created_at": created_at, "updated_at": created_at,
             }
             self._account_zendesk_comment_deliveries[key] = delivery
             return {**copy.deepcopy(delivery), "created": True}
@@ -2672,6 +2691,23 @@ class InMemoryTicketRepository:
                 "confirmed_at": completed_at if status == "delivered" else None,
                 "updated_at": completed_at,
             })
+            return copy.deepcopy(delivery)
+
+    def requeue_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        requeued_at: str,
+    ) -> dict[str, Any] | None:
+        key = (str(account_case_id).strip(), str(message_id).strip())
+        with self._assignment_lock:
+            delivery = self._account_zendesk_comment_deliveries.get(key)
+            if delivery is None:
+                return None
+            if str(delivery.get("status") or "").strip().lower() == "pending":
+                delivery["status"] = "queued"
+                delivery["updated_at"] = requeued_at
             return copy.deepcopy(delivery)
 
     def list_account_cases(
@@ -3713,26 +3749,6 @@ class InMemoryTicketRepository:
                     superseded_at=published_at,
                 )
             ticket["updated_at"] = published_at
-            if payload.get("close_after_publish"):
-                ticket["status"] = "resolved"
-                ticket["closed_at"] = published_at
-            if billing_ticket is not None:
-                billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
-                billing_ticket["updated_at"] = published_at
-                if (
-                    payload.get("close_after_publish")
-                    and str(billing_ticket.get("automation_handler") or "").strip()
-                    == "account_suspension"
-                ):
-                    context = billing_ticket.get("automation_context")
-                    context = dict(context) if isinstance(context, dict) else {}
-                    workflow = context.get("account_suspension_contact_workflow")
-                    if isinstance(workflow, dict):
-                        workflow = dict(workflow)
-                        workflow.update({"state": "closed", "updated_at": published_at})
-                        context["account_suspension_contact_workflow"] = workflow
-                        billing_ticket["automation_context"] = context
-                self.save_billing_ticket(billing_ticket)
             delivery = None
             account_case_id = str(
                 (billing_ticket or {}).get("account_case_id")
@@ -3745,7 +3761,7 @@ class InMemoryTicketRepository:
             zendesk_ticket_id = str(
                 (billing_ticket or {}).get("zendesk_ticket_id") or ""
             ).strip()
-            if (
+            production_delivery_eligible = bool(
                 billing_ticket is not None
                 and processing_profile == "production"
                 and account_case_id
@@ -3755,7 +3771,35 @@ class InMemoryTicketRepository:
                     execution_action=(billing_ticket or {}).get("execution_action")
                     or (billing_ticket or {}).get("route"),
                 )
-            ):
+            )
+            # A production public closing reply defers the local close until the
+            # Zendesk solved readback confirms the external transition.
+            defer_local_close = bool(
+                payload.get("close_after_publish")
+                and production_delivery_eligible
+            )
+            if payload.get("close_after_publish") and not defer_local_close:
+                ticket["status"] = "resolved"
+                ticket["closed_at"] = published_at
+            if billing_ticket is not None:
+                billing_ticket["customer_reply"] = str(message.get("content") or content).strip()
+                billing_ticket["updated_at"] = published_at
+                if (
+                    payload.get("close_after_publish")
+                    and not defer_local_close
+                    and str(billing_ticket.get("automation_handler") or "").strip()
+                    == "account_suspension"
+                ):
+                    context = billing_ticket.get("automation_context")
+                    context = dict(context) if isinstance(context, dict) else {}
+                    workflow = context.get("account_suspension_contact_workflow")
+                    if isinstance(workflow, dict):
+                        workflow = dict(workflow)
+                        workflow.update({"state": "closed", "updated_at": published_at})
+                        context["account_suspension_contact_workflow"] = workflow
+                        billing_ticket["automation_context"] = context
+                self.save_billing_ticket(billing_ticket)
+            if production_delivery_eligible:
                 message_id = str(message.get("message_id") or "").strip()
                 delivery = self.create_account_zendesk_comment_delivery(
                     account_case_id=account_case_id,
@@ -3763,6 +3807,8 @@ class InMemoryTicketRepository:
                     zendesk_ticket_id=zendesk_ticket_id,
                     idempotency_key=f"production-zendesk-comment:{account_case_id}:{message_id}",
                     created_at=published_at,
+                    is_public=True,
+                    target_status="solved" if payload.get("close_after_publish") else None,
                 )
             self.save_account_reply_execution(reply_execution)
             saved_job = copy.deepcopy(job)
@@ -5259,6 +5305,7 @@ class InMemoryTicketRepository:
         idempotency_key: str,
         result_payload: dict[str, Any],
         recorded_at: str,
+        close_local_ticket: bool = False,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_ticket_id = str(ticket_id or "").strip()
@@ -5348,6 +5395,26 @@ class InMemoryTicketRepository:
                             "updated_at": recorded_at,
                         }
                     )
+            if (
+                close_local_ticket
+                and normalized_status == "added"
+                and delivery is not None
+                and str(delivery.get("target_status") or "").strip().lower() == "solved"
+                and str(ticket.get("status") or "").strip().lower() != "resolved"
+            ):
+                ticket["status"] = "resolved"
+                ticket["closed_at"] = recorded_at
+                ticket["updated_at"] = recorded_at
+                case = self._billing_tickets.get(normalized_case_id)
+                if isinstance(case, dict) and str(case.get("automation_handler") or "").strip() == "account_suspension":
+                    context = case.get("automation_context")
+                    context = dict(context) if isinstance(context, dict) else {}
+                    workflow = context.get("account_suspension_contact_workflow")
+                    if isinstance(workflow, dict):
+                        workflow = dict(workflow)
+                        workflow.update({"state": "closed", "updated_at": recorded_at})
+                        context["account_suspension_contact_workflow"] = workflow
+                        case["automation_context"] = context
             return {
                 "audit_persisted": message_updated,
                 "delivery": copy.deepcopy(delivery) if delivery is not None else None,
@@ -6701,11 +6768,17 @@ class PostgresTicketRepository:
         zendesk_ticket_id: str,
         idempotency_key: str,
         created_at: str,
+        is_public: bool = False,
+        target_status: str | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_message_id = str(message_id or "").strip()
         normalized_ticket_id = str(zendesk_ticket_id or "").strip()
         normalized_key = str(idempotency_key or "").strip()
+        normalized_is_public = bool(is_public)
+        normalized_target_status = str(target_status or "").strip().lower() or None
+        if normalized_target_status not in (None, "solved"):
+            raise ValueError("invalid Zendesk comment delivery target status")
         if not all((normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key)):
             raise ValueError("account case, message, Zendesk ticket, and idempotency key are required")
 
@@ -6713,19 +6786,19 @@ class PostgresTicketRepository:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,FALSE,'queued',%s,%s) "
+                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, target_status, created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s) "
                         "ON CONFLICT (account_case_id, message_id) DO NOTHING "
-                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
                     ).format(self._table("support_account_zendesk_comment_deliveries")),
-                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, created_at, created_at),
+                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, normalized_is_public, normalized_target_status, created_at, created_at),
                 )
                 row = cur.fetchone()
                 created = row is not None
                 if row is None:
                     cur.execute(
                         sql.SQL(
-                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at "
+                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at "
                             "FROM {} WHERE account_case_id = %s AND message_id = %s"
                         ).format(self._table("support_account_zendesk_comment_deliveries")),
                         (normalized_case_id, normalized_message_id),
@@ -6760,7 +6833,7 @@ class PostgresTicketRepository:
             raise ValueError("account case and message are required")
         columns = (
             "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
-            "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+            "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
         )
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
@@ -6820,7 +6893,7 @@ class PostgresTicketRepository:
         safe_limit = max(1, min(int(limit), 500))
         columns = (
             "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
-            "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+            "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
         )
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
@@ -6863,9 +6936,9 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "UPDATE {} SET status = %s, zendesk_comment_id = %s, failure_code = %s, "
-                        "confirmed_at = CASE WHEN %s = 'delivered' THEN %s ELSE NULL END, updated_at = %s "
+                        "confirmed_at = CASE WHEN %s = 'delivered' THEN %s::timestamptz ELSE NULL END, updated_at = %s "
                         "WHERE account_case_id = %s AND message_id = %s AND status <> 'delivered' "
-                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
                     ).format(self._table("support_account_zendesk_comment_deliveries")),
                     (
                         normalized_status,
@@ -6882,7 +6955,7 @@ class PostgresTicketRepository:
                 if row is None:
                     cur.execute(
                         sql.SQL(
-                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at "
+                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at "
                             "FROM {} WHERE account_case_id = %s AND message_id = %s"
                         ).format(self._table("support_account_zendesk_comment_deliveries")),
                         (
@@ -6895,6 +6968,46 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry(
             "complete_account_zendesk_comment_delivery", _operation
+        )
+
+    def requeue_account_zendesk_comment_delivery(
+        self,
+        *,
+        account_case_id: str,
+        message_id: str,
+        requeued_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_case_id or not normalized_message_id:
+            raise ValueError("account case and message are required")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status = 'queued', updated_at = %s "
+                        "WHERE account_case_id = %s AND message_id = %s AND status = 'pending' "
+                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
+                        "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (requeued_at, normalized_case_id, normalized_message_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
+                            "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at "
+                            "FROM {} WHERE account_case_id = %s AND message_id = %s"
+                        ).format(self._table("support_account_zendesk_comment_deliveries")),
+                        (normalized_case_id, normalized_message_id),
+                    )
+                    row = cur.fetchone()
+                return _account_zendesk_comment_delivery_from_row(row)
+
+        return self._run_with_connection_retry(
+            "requeue_account_zendesk_comment_delivery", _operation
         )
 
     def get_account_case_details(
@@ -9488,9 +9601,10 @@ class PostgresTicketRepository:
                         "CREATE TABLE IF NOT EXISTS {} ("
                         "account_case_id TEXT NOT NULL REFERENCES {}(account_case_id) ON DELETE CASCADE, "
                         "message_id TEXT NOT NULL, zendesk_ticket_id TEXT NOT NULL, "
-                        "idempotency_key TEXT NOT NULL UNIQUE, is_public BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_public = FALSE), "
+                        "idempotency_key TEXT NOT NULL UNIQUE, is_public BOOLEAN NOT NULL DEFAULT FALSE, "
                         "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')), "
                         "zendesk_comment_id TEXT, failure_code TEXT, confirmed_at TIMESTAMPTZ, "
+                        "target_status TEXT, "
                         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
                         "PRIMARY KEY (account_case_id, message_id)"
                         ")"
@@ -9515,6 +9629,30 @@ class PostgresTicketRepository:
                         "CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed'))"
                     ).format(zendesk_delivery_table)
                 )
+                # Production automated replies became public Zendesk comments; the
+                # is_public=FALSE guard is obsolete and must drop on existing installs.
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} DROP CONSTRAINT IF EXISTS "
+                        "support_account_zendesk_comment_deliveries_is_public_check"
+                    ).format(zendesk_delivery_table)
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS target_status TEXT"
+                    ).format(zendesk_delivery_table)
+                )
+                cur.execute(
+                    "SELECT 1 FROM pg_constraint WHERE conname = 'support_account_zendesk_comment_deliveries_target_status_check'"
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        sql.SQL(
+                            "ALTER TABLE {} ADD CONSTRAINT "
+                            "support_account_zendesk_comment_deliveries_target_status_check "
+                            "CHECK (target_status IS NULL OR target_status = 'solved')"
+                        ).format(zendesk_delivery_table)
+                    )
                 cur.execute(
                     sql.SQL(
                         """
@@ -11831,6 +11969,7 @@ class PostgresTicketRepository:
         idempotency_key: str,
         result_payload: dict[str, Any],
         recorded_at: str,
+        close_local_ticket: bool = False,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_ticket_id = str(ticket_id or "").strip()
@@ -11922,7 +12061,7 @@ class PostgresTicketRepository:
 
                 delivery_columns = (
                     "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
-                    "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                    "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
                 )
                 cur.execute(
                     sql.SQL(
@@ -11938,7 +12077,7 @@ class PostgresTicketRepository:
                     cur.execute(
                         sql.SQL(
                             "UPDATE {} SET status=%s, zendesk_comment_id=%s, failure_code=%s, "
-                            "confirmed_at=CASE WHEN %s='delivered' THEN %s ELSE NULL END, updated_at=%s "
+                            "confirmed_at=CASE WHEN %s='delivered' THEN %s::timestamptz ELSE NULL END, updated_at=%s "
                             "WHERE account_case_id=%s AND message_id=%s"
                         ).format(self._table("support_account_zendesk_comment_deliveries")),
                         (
@@ -11961,6 +12100,30 @@ class PostgresTicketRepository:
                             "confirmed_at": recorded_at if target_status == "delivered" else None,
                             "updated_at": recorded_at,
                         }
+                    )
+                if (
+                    close_local_ticket
+                    and normalized_status == "added"
+                    and delivery is not None
+                    and str(delivery.get("target_status") or "").strip().lower() == "solved"
+                ):
+                    # Production closing reply: the Zendesk solved readback is
+                    # confirmed, so the local close happens in this same transaction.
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='resolved',closed_at=%s,updated_at=%s "
+                            "WHERE ticket_id=%s AND status<>'resolved'"
+                        ).format(self._table("support_tickets")),
+                        (recorded_at, recorded_at, normalized_ticket_id),
+                    )
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET automation_context=jsonb_set("
+                            "COALESCE(automation_context,'{}'::jsonb), "
+                            "'{account_suspension_contact_workflow,state}', '\"closed\"'::jsonb, true), "
+                            "updated_at=%s WHERE client_ticket_id=%s AND automation_handler='account_suspension'"
+                        ).format(self._table("support_account_cases")),
+                        (recorded_at, normalized_ticket_id),
                     )
                 return {
                     "audit_persisted": message_updated,
@@ -15375,15 +15538,15 @@ class PostgresTicketRepository:
                 ):
                     delivery_columns = (
                         "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
-                        "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                        "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
                     )
                     delivery_case_id = str(delivery_case_row[0] or "").strip()
                     delivery_ticket_id = str(delivery_case_row[2] or "").strip()
                     delivery_key = f"production-zendesk-comment:{delivery_case_id}:{message_id}"
                     cur.execute(
                         sql.SQL(
-                            "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, created_at, updated_at) "
-                            "VALUES (%s,%s,%s,%s,FALSE,'queued',%s,%s) "
+                            "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, target_status, created_at, updated_at) "
+                            "VALUES (%s,%s,%s,%s,TRUE,'queued',%s,%s,%s) "
                             "ON CONFLICT (account_case_id, message_id) DO NOTHING "
                             "RETURNING " + delivery_columns
                         ).format(self._table("support_account_zendesk_comment_deliveries")),
@@ -15392,6 +15555,7 @@ class PostgresTicketRepository:
                             str(message_id),
                             delivery_ticket_id,
                             delivery_key,
+                            "solved" if payload.get("close_after_publish") else None,
                             published_at,
                             published_at,
                         ),
@@ -15448,7 +15612,10 @@ class PostgresTicketRepository:
                     ).format(self._table("support_account_cases")),
                     (effective_content, published_at, ticket_id),
                 )
-                if payload.get("close_after_publish"):
+                if payload.get("close_after_publish") and not (
+                    delivery is not None
+                    and str(delivery.get("target_status") or "").strip().lower() == "solved"
+                ):
                     cur.execute(
                         sql.SQL(
                             "UPDATE {} SET status='resolved',closed_at=%s,updated_at=%s WHERE ticket_id=%s"

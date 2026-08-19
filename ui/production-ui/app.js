@@ -141,12 +141,7 @@ const state = {
   zendeskCommentPendingMessageId: "",
   zendeskCommentError: "",
   zendeskCommentErrorMessageId: "",
-  zendeskAssignmentPendingCaseId: "",
-  zendeskAssignmentError: "",
-  zendeskAssignmentErrorCaseId: "",
-  zendeskAssignment: null,
   zendeskOwnershipConfirmationOpen: false,
-  zendeskAssignmentTargetSnapshot: null,
 };
 
 let accessToken = readStorage(ACCOUNT_ACCESS_TOKEN_KEY, "");
@@ -1910,35 +1905,6 @@ function renderPersonaAssignment(item) {
   return `<div class="meta-row persona-assignment"><span class="meta-label">Persona</span><span class="meta-value persona-assignment__value"><strong>${escapeHtml(displayName)}</strong><span class="persona-version-badge">${escapeHtml(versionLabel)}</span>${presentation ? `<span class="persona-style-badge persona-style-badge--${presentation.styleKey}">${presentation.style}</span>` : ""}</span></div>`;
 }
 
-function renderZendeskAssignmentAction(item, caseId, ticketNumber) {
-  const sourceTicketId = zendeskTicketId(item?.source);
-  const numericTicketId = /^\d+$/.test(String(ticketNumber || "").trim())
-    ? String(ticketNumber).trim()
-    : "";
-  const linked = Boolean(sourceTicketId || numericTicketId);
-  const isPending = state.zendeskAssignmentPendingCaseId === caseId;
-  const assigned = state.zendeskAssignment?.caseId === caseId
-    && state.zendeskAssignment.status === "assigned";
-  const assignmentPayload = assigned ? state.zendeskAssignment.payload || {} : {};
-  const finalGroupId = String(assignmentPayload.group_id || item?.zendesk_ai_assignment?.group_id || "").trim();
-  const groupChanged = Boolean(assignmentPayload.group_changed);
-  const error = state.zendeskAssignmentErrorCaseId === caseId
-    ? state.zendeskAssignmentError
-    : "";
-  if (assigned) {
-    return `<div class="zendesk-assignment-action zendesk-assignment-action--assigned" role="status"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span><strong>AI owns this ticket</strong>${finalGroupId ? `<span class="zendesk-assignment-group">Group ${escapeHtml(finalGroupId)}</span>` : ""}${groupChanged ? `<span class="zendesk-assignment-group zendesk-assignment-group--changed">Zendesk moved the ticket to the AI Agent group</span>` : ""}</span></div>`;
-  }
-  return `
-    <div class="zendesk-assignment-action">
-      <button class="ghost-button zendesk-assignment-button" type="button" data-action="open-zendesk-ownership-confirmation" aria-label="Take ownership of this Zendesk ticket as AI" ${!linked || isPending ? "disabled" : ""}>
-        <span class="material-symbols-outlined" aria-hidden="true">${isPending ? "progress_activity" : "smart_toy"}</span>
-        ${isPending ? "Taking ownership..." : "Take ownership as AI"}
-      </button>
-      ${!linked ? `<span class="zendesk-assignment-hint">No Zendesk ticket linked</span>` : ""}
-      ${error ? `<span class="zendesk-assignment-error" role="alert">${escapeHtml(error)}</span>` : ""}
-    </div>
-  `;
-}
 
 function renderDetailView() {
   const item = state.activeItem;
@@ -1986,7 +1952,6 @@ function renderDetailView() {
         </div>
         <div class="detail-header__actions">
           ${renderClassificationBadges(item)}
-          ${renderZendeskAssignmentAction(item, accountCaseId, ticketNumber)}
           <button
             class="danger-button detail-rerun-button"
             type="button"
@@ -2284,62 +2249,7 @@ async function addMessageAsZendeskInternalComment(messageId) {
   }
 }
 
-async function assignAccountCaseToAi() {
-  const item = state.activeItem;
-  const caseId = accountCaseIdentifier(item);
-  if (!item || !caseId || state.zendeskAssignmentPendingCaseId) return;
-  const ticketNumber = accountTicketNumber(item);
-  const linked = Boolean(zendeskTicketId(item?.source) || /^\d+$/.test(String(ticketNumber || "").trim()));
-  if (!linked) return;
-  state.zendeskAssignmentPendingCaseId = caseId;
-  state.zendeskAssignmentError = "";
-  state.zendeskAssignmentErrorCaseId = "";
-  render();
-  try {
-    const response = await accountFetch(
-      `/api/account/cases/${encodeURIComponent(caseId)}/zendesk-ai-assignment`,
-      { method: "POST", cache: "no-store" },
-    );
-    const payload = await readResponsePayload(response);
-    if (!response.ok) {
-      throw new Error(responseErrorMessage(payload, "Could not take ownership of the Zendesk ticket."));
-    }
-    state.zendeskAssignment = { caseId, status: "assigned", payload };
-    state.activeItem = { ...state.activeItem, zendesk_ai_assignment: payload };
-    cacheDetail(state.activeItem);
-    showToast(payload.already_assigned ? "AI already owns this ticket" : "AI now owns this ticket");
-  } catch (error) {
-    state.zendeskAssignmentError = error instanceof Error
-      ? error.message
-      : "Could not assign the case to AI.";
-    state.zendeskAssignmentErrorCaseId = caseId;
-  } finally {
-    state.zendeskAssignmentPendingCaseId = "";
-    render();
-  }
-}
 
-function renderZendeskOwnershipConfirmation() {
-  if (!state.zendeskOwnershipConfirmationOpen) return "";
-  const snapshot = state.zendeskAssignmentTargetSnapshot || {};
-  return `
-    <div class="reroute-modal-backdrop" data-action="close-zendesk-ownership-confirmation">
-      <section class="reroute-modal zendesk-ownership-modal" role="dialog" aria-modal="true" aria-labelledby="zendesk-ownership-dialog-title" data-zendesk-ownership-dialog>
-        <div class="reroute-modal__heading">
-          <span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>
-          <div>
-            <h2 id="zendesk-ownership-dialog-title">Take ownership as AI?</h2>
-            <p>Zendesk will make the configured AI Agent the owner of Ticket #${escapeHtml(snapshot.ticketNumber || "")}. Zendesk may move this ticket to the AI Agent's default group.</p>
-          </div>
-        </div>
-        <div class="reroute-modal__actions">
-          <button class="ghost-button" type="button" data-action="close-zendesk-ownership-confirmation">Cancel</button>
-          <button class="primary-button" type="button" data-action="confirm-zendesk-ownership" ${state.zendeskAssignmentPendingCaseId ? "disabled" : ""}>Take ownership</button>
-        </div>
-      </section>
-    </div>
-  `;
-}
 
 function renderRerouteStatus() {
   const job = state.rerouteJob;
@@ -2592,8 +2502,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && state.zendeskOwnershipConfirmationOpen) {
     state.zendeskOwnershipConfirmationOpen = false;
-    state.zendeskAssignmentTargetSnapshot = null;
-    render();
+      render();
   }
 });
 
@@ -2714,33 +2623,6 @@ function bind() {
   document.querySelectorAll("[data-action='add-zendesk-internal-comment']").forEach((el) => {
     el.addEventListener("click", () => {
       void addMessageAsZendeskInternalComment(el.dataset.messageId || "");
-    });
-  });
-  document.querySelectorAll("[data-action='open-zendesk-ownership-confirmation']").forEach((el) => {
-    el.addEventListener("click", () => {
-      if (!state.activeItem || state.zendeskAssignmentPendingCaseId) return;
-      state.zendeskAssignmentTargetSnapshot = {
-        caseId: accountCaseIdentifier(state.activeItem),
-        ticketNumber: accountTicketNumber(state.activeItem),
-      };
-      state.zendeskOwnershipConfirmationOpen = true;
-      render();
-      document.querySelector("[data-zendesk-ownership-dialog] [data-action='confirm-zendesk-ownership']")?.focus();
-    });
-  });
-  document.querySelectorAll("[data-action='close-zendesk-ownership-confirmation']").forEach((el) => {
-    el.addEventListener("click", (event) => {
-      if (event.currentTarget.classList.contains("reroute-modal-backdrop") && event.target.closest("[data-zendesk-ownership-dialog]")) return;
-      state.zendeskOwnershipConfirmationOpen = false;
-      state.zendeskAssignmentTargetSnapshot = null;
-      render();
-    });
-  });
-  document.querySelectorAll("[data-action='confirm-zendesk-ownership']").forEach((el) => {
-    el.addEventListener("click", () => {
-      state.zendeskOwnershipConfirmationOpen = false;
-      state.zendeskAssignmentTargetSnapshot = null;
-      void assignAccountCaseToAi();
     });
   });
   document.querySelectorAll("[data-action='submit-route-correction']").forEach((el) => {

@@ -348,3 +348,175 @@ class AccountZendeskCommentIntegrationApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZendeskCommentTriggerTests(unittest.TestCase):
+    """trigger_comment_id turns a projection sync into an automation trigger."""
+
+    def setUp(self) -> None:
+        self.repository = InMemoryTicketRepository()
+        self.repository.initialize()
+        self.ticket_id = "12838"
+        self.case_id = "AC-12838"
+        self.repository.save_ticket(
+            {
+                "ticket_id": self.ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable Media Relay.",
+                        "created_at": "2026-08-19T08:00:00Z",
+                    }
+                ],
+                "created_at": "2026-08-19T08:00:00Z",
+                "updated_at": "2026-08-19T08:00:00Z",
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": self.case_id,
+                "billing_ticket_id": self.case_id,
+                "client_ticket_id": self.ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable Media Relay.",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12838",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "automation_handler": "enablement",
+                "route_status": "automated",
+                "automation_status": "automation",
+                "collected_fields": {},
+                "missing_fields": ["app_id"],
+                "created_at": "2026-08-19T08:00:30Z",
+            }
+        )
+        self.original_repository = main.ticket_repository
+        main.ticket_repository = self.repository
+        self.client = TestClient(main.app)
+        self.token_patcher = patch.dict(
+            os.environ,
+            {"ZENDESK_ACCOUNT_SYNC_TOKEN": "test-sync-token"},
+            clear=False,
+        )
+        self.token_patcher.start()
+        self.ownership_patcher = patch.object(
+            main,
+            "_apply_production_ownership_gate",
+            return_value=True,
+        )
+        self.ownership_patcher.start()
+        self.sync_url = "/api/integrations/zendesk/account-cases/12838/comments"
+        self.headers = {"X-Zendesk-Account-Sync-Token": "test-sync-token"}
+
+    def tearDown(self) -> None:
+        self.ownership_patcher.stop()
+        self.token_patcher.stop()
+        main.ticket_repository = self.original_repository
+        self.client.close()
+
+    def _initial_comment(self):
+        return {
+            "id": "52661000",
+            "public": True,
+            "body": "Please enable Media Relay.",
+            "created_at": "2026-08-19T07:00:00Z",
+            "author": {"id": "31116634341396", "name": "Customer", "role": "end-user"},
+        }
+
+    def _customer_comment(self, **overrides):
+        comment = {
+            "id": "52661001",
+            "public": True,
+            "body": "My app id is 4b7634a0d0f1418b8135918292f6a507.",
+            "created_at": "2026-08-19T09:00:00Z",
+            "author": {"id": "31116634341396", "name": "Customer", "role": "end-user"},
+        }
+        comment.update(overrides)
+        return comment
+
+    def _sync(self, comments, trigger_comment_id=None):
+        payload = snapshot_payload(*comments)
+        if trigger_comment_id is not None:
+            payload["trigger_comment_id"] = trigger_comment_id
+        return self.client.put(self.sync_url, headers=self.headers, json=payload)
+
+    def test_customer_public_comment_triggers_reply_flow_once(self) -> None:
+        response = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["trigger_status"], "processed")
+
+        messages = self.repository.get_ticket(self.ticket_id)["messages"]
+        ingested = [
+            message
+            for message in messages
+            if message.get("external_id") == "52661001"
+        ]
+        self.assertEqual(len(ingested), 1)
+
+        replay = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["trigger_status"], "processed")
+        messages_after = self.repository.get_ticket(self.ticket_id)["messages"]
+        ingested_after = [
+            message
+            for message in messages_after
+            if message.get("external_id") == "52661001"
+        ]
+        self.assertEqual(len(ingested_after), 1)
+
+    def test_agent_comment_is_ignored_without_trigger(self) -> None:
+        comment = self._customer_comment(
+            body="Internal update from the AI agent.",
+            author={"id": "48557297720084", "name": "AI Support Agent", "role": "agent"},
+        )
+        response = self._sync([comment], trigger_comment_id="52661001")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["trigger_status"], "ignored_agent_comment")
+        messages = self.repository.get_ticket(self.ticket_id)["messages"]
+        self.assertFalse(
+            any(message.get("external_id") == "52661001" for message in messages)
+        )
+
+    def test_private_customer_comment_is_ignored(self) -> None:
+        response = self._sync(
+            [self._initial_comment(), self._customer_comment(public=False)],
+            trigger_comment_id="52661001",
+        )
+        self.assertEqual(response.json()["trigger_status"], "ignored_private_comment")
+
+    def test_initial_comment_is_ignored(self) -> None:
+        response = self._sync(
+            [self._customer_comment(is_initial=True)],
+            trigger_comment_id="52661001",
+        )
+        self.assertEqual(response.json()["trigger_status"], "ignored_initial_comment")
+
+    def test_pre_intake_comment_is_ignored(self) -> None:
+        response = self._sync(
+            [self._initial_comment(), self._customer_comment(created_at="2026-08-19T07:59:00Z")],
+            trigger_comment_id="52661001",
+        )
+        self.assertEqual(response.json()["trigger_status"], "ignored_pre_intake_comment")
+
+    def test_non_production_case_is_ignored(self) -> None:
+        case = self.repository.get_account_case(self.case_id)
+        case["processing_profile"] = "staging"
+        self.repository.save_account_case(case)
+        response = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
+        self.assertEqual(response.json()["trigger_status"], "ignored_non_production_case")
+
+    def test_missing_trigger_comment_id_is_projection_only(self) -> None:
+        response = self._sync([self._customer_comment()])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["trigger_status"], "ignored_no_trigger")
+        messages = self.repository.get_ticket(self.ticket_id)["messages"]
+        self.assertFalse(
+            any(message.get("external_id") == "52661001" for message in messages)
+        )
+
+    def test_unknown_trigger_comment_id_is_rejected(self) -> None:
+        response = self._sync([self._customer_comment()], trigger_comment_id="99999")
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"]["code"], "trigger_comment_missing")

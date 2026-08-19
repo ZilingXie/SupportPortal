@@ -19,6 +19,7 @@ ZENDESK_BASIC_AUTH_ENV = "zendesk_basic_auth"
 class ZendeskCommentResult:
     comment_id: str | None
     status_code: int
+    ticket_status: str | None = None
 
 
 class ZendeskCommentError(RuntimeError):
@@ -70,6 +71,13 @@ def _comment_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _ticket_status_from_payload(payload: dict[str, Any]) -> str | None:
+    ticket = payload.get("ticket") if isinstance(payload.get("ticket"), dict) else None
+    if ticket is None:
+        return None
+    return str(ticket.get("status") or "").strip().lower() or None
+
+
 def _decode_json_response(response: Any) -> dict[str, Any]:
     try:
         raw = response.read()
@@ -99,19 +107,17 @@ def _zendesk_request_error(exc: urllib.error.HTTPError) -> ZendeskCommentError:
     return ZendeskCommentError(category, status_code=status_code, error_code="zendesk_http_error")
 
 
-def find_private_internal_comment(
+def _http_status_category(status_code: int) -> str:
+    return "retryable" if status_code in {408, 425, 429} or status_code >= 500 else "permanent"
+
+
+def _fetch_ticket_audits(
     *,
     ticket_id: str,
-    body: str,
-    timeout_seconds: float = 15.0,
-) -> ZendeskCommentResult | None:
-    """Read recent ticket audits and locate the exact private comment without writing."""
-    normalized_ticket_id = str(ticket_id or "").strip()
-    normalized_body = str(body or "").strip()
-    if not normalized_ticket_id or not normalized_body:
-        raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    timeout_seconds: float,
+) -> tuple[int, list[dict[str, Any]]]:
     url = (
-        f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}/audits.json"
+        f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(str(ticket_id), safe='')}/audits.json"
     )
     request = urllib.request.Request(
         url,
@@ -122,8 +128,9 @@ def find_private_internal_comment(
         with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
             status_code = int(getattr(response, "status", 200) or 200)
             if status_code < 200 or status_code >= 300:
-                category = "retryable" if status_code in {408, 425, 429} or status_code >= 500 else "permanent"
-                raise ZendeskCommentError(category, status_code=status_code, error_code="zendesk_http_error")
+                raise ZendeskCommentError(
+                    _http_status_category(status_code), status_code=status_code, error_code="zendesk_http_error"
+                )
             payload = _decode_json_response(response)
     except ZendeskCommentError:
         raise
@@ -131,8 +138,47 @@ def find_private_internal_comment(
         raise _zendesk_request_error(exc) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_audit_read_outcome_unknown") from exc
-
     audits = payload.get("audits") if isinstance(payload.get("audits"), list) else []
+    return status_code, audits
+
+
+def _audit_contains_solved_change(audits: list[dict[str, Any]]) -> bool:
+    for audit in audits:
+        events = audit.get("events") if isinstance(audit, dict) and isinstance(audit.get("events"), list) else []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            if (
+                str(event.get("type") or "").strip().lower() == "change"
+                and str(event.get("field_name") or "").strip().lower() == "status"
+                and str(event.get("value") or "").strip().lower() == "solved"
+            ):
+                return True
+    return False
+
+
+def read_ticket_comment_audit(
+    *,
+    ticket_id: str,
+    body: str,
+    public: bool = False,
+    timeout_seconds: float = 15.0,
+) -> tuple[ZendeskCommentResult | None, bool]:
+    """Locate the exact comment in ticket audits and report whether a solved change exists.
+
+    The solved flag distinguishes "solve never happened" from "solved then reopened
+    by the requester", so a later reopen does not break delivery reconciliation.
+    """
+    normalized_ticket_id = str(ticket_id or "").strip()
+    normalized_body = str(body or "").strip()
+    expected_public = bool(public)
+    if not normalized_ticket_id or not normalized_body:
+        raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    status_code, audits = _fetch_ticket_audits(
+        ticket_id=normalized_ticket_id,
+        timeout_seconds=timeout_seconds,
+    )
+    solved_seen = _audit_contains_solved_change(audits)
     for audit in audits:
         events = audit.get("events") if isinstance(audit, dict) and isinstance(audit.get("events"), list) else []
         for event in reversed(events):
@@ -140,27 +186,100 @@ def find_private_internal_comment(
                 continue
             if (
                 str(event.get("type") or "").strip().lower() == "comment"
-                and event.get("public") is False
+                and event.get("public") is expected_public
                 and str(event.get("body") or "").strip() == normalized_body
             ):
                 comment_id = str(event.get("id") or "").strip() or None
-                return ZendeskCommentResult(comment_id=comment_id, status_code=status_code)
-    return None
+                return (
+                    ZendeskCommentResult(comment_id=comment_id, status_code=status_code),
+                    solved_seen,
+                )
+    return None, solved_seen
 
 
-def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 15.0) -> ZendeskCommentResult:
+def find_ticket_comment(
+    *,
+    ticket_id: str,
+    body: str,
+    public: bool = False,
+    timeout_seconds: float = 15.0,
+) -> ZendeskCommentResult | None:
+    """Read recent ticket audits and locate the exact comment with the expected visibility."""
+    comment, _solved_seen = read_ticket_comment_audit(
+        ticket_id=ticket_id,
+        body=body,
+        public=public,
+        timeout_seconds=timeout_seconds,
+    )
+    return comment
+
+
+def find_private_internal_comment(
+    *,
+    ticket_id: str,
+    body: str,
+    timeout_seconds: float = 15.0,
+) -> ZendeskCommentResult | None:
+    return find_ticket_comment(
+        ticket_id=ticket_id,
+        body=body,
+        public=False,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def get_ticket_status(*, ticket_id: str, timeout_seconds: float = 15.0) -> str | None:
+    """Read the current Zendesk ticket status without writing."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_ticket_id:
+        raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"Authorization": _basic_auth_header(), "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+            if status_code < 200 or status_code >= 300:
+                raise ZendeskCommentError(
+                    _http_status_category(status_code), status_code=status_code, error_code="zendesk_http_error"
+                )
+            payload = _decode_json_response(response)
+    except ZendeskCommentError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise _zendesk_request_error(exc) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
+    return _ticket_status_from_payload(payload)
+
+
+def add_ticket_comment(
+    *,
+    ticket_id: str,
+    body: str,
+    public: bool = False,
+    solve: bool = False,
+    timeout_seconds: float = 15.0,
+) -> ZendeskCommentResult:
     normalized_ticket_id = str(ticket_id or "").strip()
     normalized_body = str(body or "").strip()
+    expected_public = bool(public)
     if not normalized_ticket_id or not normalized_body:
         raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
     timeout = _request_timeout(timeout_seconds)
     url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
+    ticket_payload: dict[str, Any] = {
+        "comment": {"body": normalized_body, "public": expected_public}
+    }
+    if solve:
+        # solved (not closed) keeps the requester able to reopen by replying.
+        ticket_payload["status"] = "solved"
     request = urllib.request.Request(
         url,
-        data=json.dumps(
-            {"ticket": {"comment": {"body": normalized_body, "public": False}}},
-            ensure_ascii=False,
-        ).encode("utf-8"),
+        data=json.dumps({"ticket": ticket_payload}, ensure_ascii=False).encode("utf-8"),
         method="PUT",
         headers={
             "Authorization": _basic_auth_header(),
@@ -172,8 +291,9 @@ def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 
         with urllib.request.urlopen(request, timeout=timeout) as response:
             status_code = int(getattr(response, "status", 200) or 200)
             if status_code < 200 or status_code >= 300:
-                category = "retryable" if status_code in {408, 425, 429} or status_code >= 500 else "permanent"
-                raise ZendeskCommentError(category, status_code=status_code, error_code="zendesk_http_error")
+                raise ZendeskCommentError(
+                    _http_status_category(status_code), status_code=status_code, error_code="zendesk_http_error"
+                )
             payload = _decode_json_response(response)
     except ZendeskCommentError:
         raise
@@ -183,8 +303,25 @@ def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
 
     comment = _comment_event(payload)
-    if not isinstance(comment, dict) or comment.get("public") is not False:
+    if not isinstance(comment, dict) or comment.get("public") is not expected_public:
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_comment_visibility_unverified")
+    ticket_status = _ticket_status_from_payload(payload)
+    if solve and ticket_status != "solved":
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_status_unverified")
     comment_id = comment.get("id")
     normalized_comment_id = str(comment_id).strip() if comment_id is not None else None
-    return ZendeskCommentResult(comment_id=normalized_comment_id or None, status_code=status_code)
+    return ZendeskCommentResult(
+        comment_id=normalized_comment_id or None,
+        status_code=status_code,
+        ticket_status=ticket_status,
+    )
+
+
+def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 15.0) -> ZendeskCommentResult:
+    return add_ticket_comment(
+        ticket_id=ticket_id,
+        body=body,
+        public=False,
+        solve=False,
+        timeout_seconds=timeout_seconds,
+    )

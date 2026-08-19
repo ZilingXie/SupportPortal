@@ -105,6 +105,11 @@
       "at": "2026-08-19",
       "event": "persona_v11_repair_started",
       "summary": "Rerun 在 AC-12715 因 Fraud handoff 自然改写未通过确定性合同而停止；将 exact sentence 校验纳入现有四次 Account AI 调用预算，并保留具体失败码与真实尝试次数。"
+    },
+    {
+      "at": "2026-08-19",
+      "event": "followup_intent_repair",
+      "summary": "修复 fraud follow-up intent 冲突：_reply_to_billing_ticket_impl 的 top-level reply_intent 与 close_after_publish 仅在字段收齐且内部邮件成功（reply_ready）时传入，追问场景沿用 nested request_missing_information；同批新增 missing-information 禁止 24h/SLA 承诺句的确定性校验 fence。"
     }
   ],
   "legacy_refs": [],

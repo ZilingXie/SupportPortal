@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-51",
+  "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
+  "status": "active",
+  "owner": "zac",
+  "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
+  "next_action": "Finalize 合入 main 后执行 DB 迁移、EC2 部署与四个测试 ticket 的 live 验收矩阵。",
+  "acceptance_criteria": [
+    "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
+    "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
+    "suspension closing 与 enablement completion 使用同一 PUT 附带 status=solved，Zendesk 确认 solved 后本地才在一个事务内关闭；其他 intent 不关单。",
+    "n8n 评论同步快照带 trigger_comment_id 时，新的客户公开评论触发与 admin reply 相同的状态机；agent/private/unknown/初始描述/重放不触发、不产生重复副作用。",
+    "fraud follow-up 缺信息时正常追问且不含 24h 承诺句；信息齐全后 handoff 回复保留精确独立句；enablement completion 走标准 reply job 与公开投递。",
+    "全部 AI 回复无签名；confirmed_at timestamptz 修复后 postgres 真库能把 delivery 确认为 delivered。",
+    "四个测试 ticket（12864/12865/12839/12838）live 验收矩阵通过并记录 public comment ID。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Task worktree preflight",
+      "command": "git status --short --branch; git worktree list",
+      "result": "Worktree production-automated-public-replies created from clean main 8a746a7 on branch codex/production-automated-public-replies."
+    },
+    {
+      "type": "test",
+      "label": "Targeted automation and Zendesk delivery suite",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_zendesk_assignment.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_account_zendesk_comment.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_automation_persona.py backend/tests/test_account_verification_automation.py backend/tests/test_enablement_automation.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_account_ui_contract.py backend/tests/test_production_ui_contract.py backend/tests/test_repository_configuration.py backend/tests/test_workspace_api.py backend/tests/test_account_reply_version_fence.py backend/tests/test_zendesk_comments.py backend/tests/test_zendesk_public_comment.py backend/tests/test_account_automation_ownership.py",
+      "result": "623 passed, 8 skipped (PostgreSQL opt-in), 56 subtests passed."
+    },
+    {
+      "type": "test",
+      "label": "PostgreSQL integration (isolated schema) including the confirmed_at timestamptz regression",
+      "command": "RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_reply_publication_postgres.py",
+      "result": "8 passed. The record_account_zendesk_internal_comment_result test fails on main with psycopg DatatypeMismatch and passes in this worktree, confirming the confirmed_at::timestamptz fix against real PostgreSQL."
+    },
+    {
+      "type": "test",
+      "label": "Static and registry checks",
+      "command": ".venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/account_automation_ownership.py backend/services/account_zendesk_internal_comment.py backend/services/zendesk_comments.py backend/services/zendesk_ticket_assignment.py backend/services/automation_persona.py; node --check ui/account-ui/app.js; node --check ui/production-ui/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+      "result": "All checks passed."
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_routing.py",
+    "backend/services/zendesk_comments.py",
+    "backend/services/account_zendesk_internal_comment.py",
+    "backend/services/zendesk_ticket_assignment.py",
+    "backend/repositories/ticket_repository.py",
+    "backend/worker.py",
+    "docs/integrations/n8n/zendesk_account_comment_sync.md"
+  ],
+  "created_at": "2026-08-19",
+  "updated_at": "2026-08-19",
+  "history": [
+    {
+      "at": "2026-08-19",
+      "event": "started",
+      "summary": "诊断确认：production 投递契约为 private comment、无自动 Take Ownership、n8n 同步仅投影不触发自动化；ledger confirmed_at 存在 timestamptz 类型 bug 导致对账死循环；fraud follow-up 存在 intent 冲突导致追问无法排队。计划经用户批准后开工。"
+    },
+    {
+      "at": "2026-08-19",
+      "event": "implementation_complete",
+      "summary": "完成代码与测试：自动 Ownership gate（intake/回复核心/投递前三点接入、fail-closed、人工改派停止）、公开评论投递与 target_status=solved 同 PUT、本地关闭延后到 solved 确认的原子事务、Enablement completion 改标准 reply job、fraud follow-up intent 修复、missing-info 24h fence、confirmed_at timestamptz 修复、n8n trigger_comment_id 触发器与幂等、UI 按钮移除。"
+    }
+  ],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "zendesk-connection"
+}
