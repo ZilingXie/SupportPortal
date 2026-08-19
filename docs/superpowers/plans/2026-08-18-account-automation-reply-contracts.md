@@ -524,4 +524,31 @@ Report `状态：已完成` only when:
 
 ## Resume From Here
 
-Start Stage 5 in the existing task worktree. Do not recreate the branch or worktree. Stage 4 is green with 368 targeted tests and all static/registry checks; commit the updated Task/Plan metadata, then recheck ownership and run the exact `finalize_task_to_main.sh` command from this Plan. After merge, restart and validate the official stack before the single Stage 6 full rerun.
+PR `#790` was squash-merged to `main` as `3f1f65c`, and the original task worktree/branch were removed. Acceptance review then found that Signature remained a configured capability and the runtime still generated a Sid signature before deleting it. The original implementation is therefore superseded by the repair addendum below; do not recreate or reuse the original branch.
+
+## Repair Addendum - Signature Source Removal
+
+- Repair branch: `codex/account-automation-signature-source-removal`
+- Repair worktree: `/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/account-automation-signature-source-removal`
+- Repair base: `3f1f65cb8cbdf86f007ed87ab9a1549fa2c72ddc`
+- Strategy: local stage commits followed by one repair PR
+
+The repair removes Signature as an Account Persona capability instead of generating and then deleting it. New Persona content supports only `instruction` and optional `opener`; historical version JSON remains immutable, while new writes, publishes, and rollbacks cannot propagate `signature` or `signoff_name`. Runtime content is projected to supported fields only.
+
+The publication defense is non-destructive: it inspects only the reply tail, never truncates body text, and moves a signed reply to Human Review before `publish_account_reply()` or production delivery intent persistence. The same repair closes the demonstrated polarity gaps where questions, revoked Enablement states, or negated customer commitments could satisfy a positive completion contract.
+
+### Repair Stage Log
+
+| Repair stage | Status | Changed paths | Verification | Local commit | Notes |
+| --- | --- | --- | --- | --- | --- |
+| R0 | completed | `docs/project/tasks/p1-50.json`, `docs/projectoverview-data.js`, this plan | repository policy; Project Overview `--write`/`--check`; `git diff --check` passed | `485f4fa` | Repair workspace and repository policy verified; karpathy-guidelines read before runtime edits. |
+| R1 | completed | Persona backend/API/repositories/Admin UI and focused tests | 107 passed, 19 environment-dependent PostgreSQL tests skipped; `py_compile` passed | `a697a18` | Removed Signature configuration, new writes, rollback propagation, runtime prompt propagation, and Sid generation; historical JSON remains immutable/read-only. |
+| R2 | completed | `backend/services/automation_persona.py`, `backend/worker.py`, `backend/tests/test_automation_persona.py`, `backend/tests/test_worker.py`, Task/Overview records, this plan | `python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker` (120 passed); `py_compile`; Project Overview `--write`/`--check`; `git diff --check` passed | `7141712` | Removed destructive stripping. Tail-only validation rejects signed output without rewriting reply content; Worker tests prove signed output reaches Human Review before `publish_account_reply()`, while ordinary body uses of best/regards remain unchanged. |
+| R3 | completed | `backend/services/automation_persona.py`, `backend/worker.py`, `backend/tests/test_automation_persona.py`, `backend/tests/test_worker.py`, Task/Overview records, this plan | `python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_reply_version_fence backend.tests.test_worker` (139 passed); `py_compile`; Project Overview `--write`/`--check`; `git diff --check` passed | `f0adee4` | Enablement completion now follows the latest explicit state; questions, requests, future activation, negated commitments, and revoked states fail positive contracts. |
+| R4 | completed | `backend/tests/test_account_intake.py`, `docs/prompt_change_log.md`, Task/Overview records, this plan | Integrated suite: 478 passed, 19 environment-dependent PostgreSQL tests skipped; Python/Node syntax, Feature List, Project Overview `--write`/`--check`, and `git diff --check` passed | recorded after this checkpoint | Recorded `automation-persona-v10`; updated the remaining Account Intake test fixture to the new Persona schema. Branch is ready for one repair PR. |
+| R5 | pending | one repair PR and official-stack verification | pending | n/a | Finalize, restart, verify health/build/runtime/UI markers. |
+| R6 | pending | runtime only | pending | n/a | One full rerun and Cases `12839`, `12571`, `12744`; production-linked count must be zero before POST. |
+
+### Repair Resume From Here
+
+Begin R5 by running `finalize_task_to_main.sh` for the repair branch with the complete integrated suite as its verification command. After merge and root-main synchronization, restart the official `local_lightweight` stack and verify health/build/runtime/Admin UI markers before any R6 POST. Do not run a full rerun until the authenticated preflight confirms zero production/Zendesk-linked Account Cases.

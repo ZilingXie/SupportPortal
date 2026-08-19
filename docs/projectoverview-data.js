@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T03:15:30Z",
-  "source_base_commit": "4623389cde87259f8a8f6df4feb077282b54e54e",
-  "registry_digest": "c1b90094c7af6b54ebda1ded8314f5674343c789f98f960bc6deea256cec056c",
+  "generated_at": "2026-08-19T03:16:13Z",
+  "source_base_commit": "e22c2d186046ddfb7c1da7008ed73063e164fc75",
+  "registry_digest": "7ab37823784b5b099849d9af13eee2004c7a2a5bc3797a10465c4903de9718bc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -508,6 +508,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account Automation static and registry checks",
           "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal repair preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Root main and origin/main are synchronized at 3f1f65c; the repair worktree is clean on codex/account-automation-signature-source-removal; repository policy verification passed."
+        },
+        {
+          "type": "test",
+          "label": "Persona Signature source-removal focused suite",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_workspace_admin_ui_contract backend.tests.test_agent_config backend.tests.test_worker.WorkerResilienceTests.test_reply_facts_prepare_pins_persisted_persona_assignment",
+          "result": "107 tests passed with 19 environment-dependent PostgreSQL tests skipped; Persona presets, API validation, repository writes/rollback, Admin UI, Agent Config, and runtime prompt projection are green."
+        },
+        {
+          "type": "test",
+          "label": "Non-destructive signed reply publication fence",
+          "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_worker.py; git diff --check",
+          "result": "120 tests passed; signed generated replies move to Human Review before publish_account_reply, unsigned replies remain unchanged, and Python compilation and diff checks passed."
+        },
+        {
+          "type": "test",
+          "label": "Account reply polarity and Enablement current-state validation",
+          "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_automation_persona.py backend/tests/test_worker.py; git diff --check",
+          "result": "139 tests passed; questions, requests, future activation, negated commitments, and revoked Enablement states no longer satisfy completion, handoff, SLA, or closure contracts."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal integrated verification",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_agent_config backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery; python -m py_compile backend/main.py backend/worker.py backend/services/account_admin.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py backend/repositories/ticket_repository.py; node --check ui/workspace-ui/admin/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "478 tests passed with 19 environment-dependent PostgreSQL tests skipped; Python and Node syntax, Feature List, Project Overview, and diff checks passed."
         }
       ],
       "source_refs": [
@@ -521,7 +551,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 9,
-      "done_count": 7,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -880,6 +910,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "8 skipped without RUN_POSTGRES_INTEGRATION=1; no external Zendesk writes"
         },
         {
+          "type": "pr",
+          "number": 792,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/792",
+          "label": "PR #792"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official single-host stack verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "result": "official_project=deployment; image, health, and runtime build ref 4623389cde87 matched; auxiliary_stack_present=false"
+        },
+        {
+          "type": "deployment",
+          "label": "Single-case Production Zendesk private-comment recovery",
+          "result": "AC-PRD-12838 / Zendesk ticket 12838 / message 1372 had no local ledger or prior private-comment readback; the /account Admin API returned added with comment 52663858132628, local idempotency and message meta persisted, and Zendesk audits read back the same private comment"
+        },
+        {
           "type": "test",
           "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
           "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
@@ -949,7 +996,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 6,
-      "done_count": 4,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -2367,10 +2414,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-18",
       "title": "完成 AI 回复写回 Zendesk：internal comment",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "Production 注册 Automation 的 Account AI 回复可幂等写回 Zendesk private internal comment，并以只读 audit 回查处理未知投递结果。",
-      "next_action": "Run implementation review, finalize the task, restart the official stack, and verify health/build provenance before the single-case audit recovery.",
+      "next_action": "已完成实现、合并后官方栈验证，以及 AC-PRD-12838 / message 1372 的单条 audit-first private comment 写回和 Zendesk readback。",
       "acceptance_criteria": [
         "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。",
         "Production 注册 Automation 的已发布 Account AI reply 与 queued Zendesk delivery intent 在同一 publication transaction 内持久化。",
@@ -2435,6 +2482,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PostgreSQL publication and shared Zendesk result persistence integration coverage",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_account_reply_publication_postgres.py",
           "result": "8 skipped without RUN_POSTGRES_INTEGRATION=1; no external Zendesk writes"
+        },
+        {
+          "type": "pr",
+          "number": 792,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/792",
+          "label": "PR #792"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official single-host stack verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "result": "official_project=deployment; image, health, and runtime build ref 4623389cde87 matched; auxiliary_stack_present=false"
+        },
+        {
+          "type": "deployment",
+          "label": "Single-case Production Zendesk private-comment recovery",
+          "result": "AC-PRD-12838 / Zendesk ticket 12838 / message 1372 had no local ledger or prior private-comment readback; the /account Admin API returned added with comment 52663858132628, local idempotency and message meta persisted, and Zendesk audits read back the same private comment"
         }
       ],
       "source_refs": [
@@ -2507,6 +2571,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "production_account_zendesk_contract_unification_implemented",
           "summary": "完成共享 API-backed internal-comment service：/account 管理动作、Production worker 和 audit reconciliation 读取同一持久化 AI message，复用同一幂等记录并写回 message meta；Production delivery ledger 保持 queued/pending/delivered/outcome_unknown 的 fail-closed 状态。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "production_account_zendesk_contract_verified",
+          "summary": "PR #792 合并后的 official deployment 栈 provenance、/account Production marker 和 AC-PRD-12838 单条 audit-first private comment 写回均已验证；Zendesk comment 52663858132628 通过 audits readback 确认。"
         }
       ],
       "legacy_refs": [
@@ -4100,15 +4169,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-50",
       "title": "统一 Account Automation 客户回复与 Rerun 契约",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "进入 Stage 5：创建单一 implementation PR，合并后重启官方栈，并在 Stage 6 执行一次 full rerun 和三 Case live validation。",
+      "next_action": "进入 repair R5：finalize 单一 repair PR，重启官方 local_lightweight 栈并验证 build、health、runtime 和 Admin UI marker。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
         "enablement 客户提交确认包含最长 24 小时激活时间和 Monday-Friday 变更窗口；只有真实内部回复明确表示已启用后才通知客户并关闭，否定回复不关闭。",
-        "所有 AI 客户回复不包含尾部签名；签名清理不能误删正文中的普通 best 或 regards。",
+        "Account Persona 不再配置、持久化或生成签名；发布前只做非破坏性的尾部签名检查，不能误删正文中的普通 best 或 regards。",
         "Intake、full rerun 和 reply-only recovery 使用同一 canonical reply intent 和关闭判定；intent 冲突、旧 Fraud 关闭契约或无效回复 fail closed 或进入 Human Review。",
         "未通过最终 content/intent 校验的回复不会调用 publish_account_reply，也不会创建 production Zendesk delivery intent。"
       ],
@@ -4137,6 +4206,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account Automation static and registry checks",
           "command": "python -m py_compile backend/main.py backend/worker.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "Python compilation, feature-list validation, Project Overview generation/check, and diff whitespace validation passed."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal repair preflight",
+          "command": "git status --short --branch; git branch -vv; git worktree list --porcelain; scripts/workflow/bootstrap_main_repo_policy.sh --verify-only",
+          "result": "Root main and origin/main are synchronized at 3f1f65c; the repair worktree is clean on codex/account-automation-signature-source-removal; repository policy verification passed."
+        },
+        {
+          "type": "test",
+          "label": "Persona Signature source-removal focused suite",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_workspace_admin_ui_contract backend.tests.test_agent_config backend.tests.test_worker.WorkerResilienceTests.test_reply_facts_prepare_pins_persisted_persona_assignment",
+          "result": "107 tests passed with 19 environment-dependent PostgreSQL tests skipped; Persona presets, API validation, repository writes/rollback, Admin UI, Agent Config, and runtime prompt projection are green."
+        },
+        {
+          "type": "test",
+          "label": "Non-destructive signed reply publication fence",
+          "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_worker.py; git diff --check",
+          "result": "120 tests passed; signed generated replies move to Human Review before publish_account_reply, unsigned replies remain unchanged, and Python compilation and diff checks passed."
+        },
+        {
+          "type": "test",
+          "label": "Account reply polarity and Enablement current-state validation",
+          "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_automation_persona.py backend/tests/test_worker.py; git diff --check",
+          "result": "139 tests passed; questions, requests, future activation, negated commitments, and revoked Enablement states no longer satisfy completion, handoff, SLA, or closure contracts."
+        },
+        {
+          "type": "test",
+          "label": "Signature source-removal integrated verification",
+          "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_admin_ui_contract backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_agent_config backend.tests.test_automation_routing backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_account_verification_automation backend.tests.test_enablement_automation backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_account_rerun_recovery; python -m py_compile backend/main.py backend/worker.py backend/services/account_admin.py backend/services/automation_persona.py backend/services/account_reply_jobs.py backend/services/account_suspension_automation.py backend/services/account_full_reroute.py backend/repositories/ticket_repository.py; node --check ui/workspace-ui/admin/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "478 tests passed with 19 environment-dependent PostgreSQL tests skipped; Python and Node syntax, Feature List, Project Overview, and diff checks passed."
         }
       ],
       "source_refs": [
@@ -4145,12 +4244,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/prompt_change_log.md"
       ],
       "created_at": "2026-08-18",
-      "updated_at": "2026-08-18",
+      "updated_at": "2026-08-19",
       "history": [
         {
           "at": "2026-08-18",
           "event": "started",
           "summary": "创建任务并完成 Stage 0 工作区、仓库策略和实现前置规则检查；尚未声明运行时完成。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "repair_started",
+          "summary": "PR #790 已合并，但验收确认签名仍由运行时生成后清理，且完成状态和回复极性校验仍有缺口；创建独立 repair worktree 从源头移除签名能力。"
         }
       ],
       "legacy_refs": [],

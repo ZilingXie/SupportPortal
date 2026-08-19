@@ -31,6 +31,7 @@ from backend.services.account_failure_alerts import notify_account_failure
 from backend.services.account_admin import (
     AccountPersonaUnavailableError,
     apply_persona_to_customer_reply,
+    normalize_account_persona_content,
 )
 from backend.services.account_reply_jobs import (
     AccountReplyContractError,
@@ -58,9 +59,9 @@ from backend.services.automation_persona import (
     AutomationPersonaError,
     build_account_automation_reply_facts,
     build_automation_reply_facts,
+    assert_no_trailing_automation_signature,
     extract_automation_resolution_facts,
     render_automation_reply,
-    strip_trailing_automation_signature,
     validate_account_reply_contract,
 )
 from backend.services.account_automation_reconciliation import (
@@ -666,7 +667,10 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
                 {
                     "persona_key": persona.get("persona_key"),
                     "persona_version": persona.get("version"),
-                    "effective_prompt": dict(persona.get("content") or {}),
+                    "effective_prompt": normalize_account_persona_content(
+                        dict(persona.get("content") or {}),
+                        allow_legacy_fields=True,
+                    ),
                 }
             )
         if _account_reply_needs_persona_render(payload):
@@ -928,8 +932,8 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         return
 
     if existing_message is None:
-        content = strip_trailing_automation_signature(content)
         try:
+            assert_no_trailing_automation_signature(content)
             if (
                 isinstance(payload.get("reply_facts"), dict)
                 and payload.get("reply_facts")
@@ -1439,27 +1443,31 @@ def _render_case_persona_reply(
 
 
 def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
-    """Accept only a completed enablement statement, not a plan or request."""
-    positive = re.compile(r"\b(?:enabled|activated|provisioned|turned\s+on)\b")
-    negative = re.compile(
-        r"\b(?:not|never|cannot|can't|couldn't|unable\s+to|failed\s+to|will\s+not|won't)\b"
-        r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
-        r"|\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
-        r"[^.!?\n]{0,60}\b(?:not\s+possible|failed|unsuccessful|unavailable)\b",
-        flags=re.IGNORECASE,
+    """Return the latest explicit current enablement state in the note."""
+    positive = re.compile(r"\b(?:enabled|activated|provisioned|turned\s+on)\b", re.IGNORECASE)
+    revoked = re.compile(
+        r"\b(?:disabled|deactivated|deprovisioned|turned\s+off)\b"
+        r"|\bno\s+longer\s+(?:enabled|activated|provisioned|turned\s+on)\b",
+        re.IGNORECASE,
     )
-    future_or_request = re.compile(
-        r"\b(?:will|would|may|might|can|could|should|please|need\s+to|trying\s+to|plan\s+to|request(?:ed)?\s+to)\b"
+    negative_or_future = re.compile(
+        r"\b(?:not|never|cannot|can't|couldn't|unable\s+to|failed\s+to|will|would|may|might|"
+        r"could|should|please|need\s+to|trying\s+to|plan\s+to|request(?:ed)?\s+to)\b"
         r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b",
-        flags=re.IGNORECASE,
+        re.IGNORECASE,
     )
-    for sentence in re.split(r"[.!?\n]+", str(note or "")):
-        if not positive.search(sentence):
+    completed = False
+    for clause in re.split(r"(?<=[.!?])\s+|[;\n]+|\bbut\b", str(note or ""), flags=re.IGNORECASE):
+        if revoked.search(clause):
+            completed = False
             continue
-        if negative.search(sentence) or future_or_request.search(sentence):
+        if not positive.search(clause):
             continue
-        return True
-    return False
+        if "?" in clause or negative_or_future.search(clause):
+            completed = False
+            continue
+        completed = True
+    return completed
 
 
 def _process_claimed_account_reply_jobs(
@@ -2205,9 +2213,9 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             source_facts=[note], resolution_status="completed",
             save_case=ticket_repository.save_account_case, persist_failure=False,
         )
-        customer_reply = strip_trailing_automation_signature(customer_reply)
-        if enablement_completed:
-            try:
+        try:
+            assert_no_trailing_automation_signature(customer_reply)
+            if enablement_completed:
                 validate_account_reply_contract(
                     customer_reply,
                     {
@@ -2217,14 +2225,14 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                     top_level_reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
                     close_after_publish=True,
                 )
-            except AutomationPersonaError as exc:
-                _mark_account_case_for_human_review(
-                    account_case,
-                    reason=str(exc),
-                    timestamp=now_iso(),
-                    policy_decision="automation_persona_human_review",
-                )
-                customer_reply = ""
+        except AutomationPersonaError as exc:
+            _mark_account_case_for_human_review(
+                account_case,
+                reason=str(exc),
+                timestamp=now_iso(),
+                policy_decision="automation_persona_human_review",
+            )
+            customer_reply = ""
         timestamp = now_iso()
         source = f"{handler}_reply_email"
         case_id = account_case.get("account_case_id") or account_case.get("billing_ticket_id")

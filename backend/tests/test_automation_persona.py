@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from backend.services.automation_persona import (
     AutomationPersonaError,
+    assert_no_trailing_automation_signature,
     build_account_automation_reply_facts,
     build_automation_reply_facts,
     customer_first_name,
@@ -271,7 +272,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertEqual(result.model, "persona-model")
         self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
         self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
-        self.assertIn("Do not write a greeting or signature", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("Do not write a greeting, signoff", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("Hi Jack,", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
         self.assertNotIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
@@ -327,7 +328,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(result.content, "Hi Customer,\n\nThe request is complete.")
 
-    def test_trailing_signature_is_removed_but_body_words_are_preserved(self) -> None:
+    def test_trailing_signature_is_rejected_without_rewriting_body(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text="This is the best next step for the request.\n\nBest,\nSid\nSupport Engineer 2",
@@ -336,14 +337,37 @@ class AutomationPersonaTests(unittest.TestCase):
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ):
-            result = render_automation_reply(
-                reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
-                persona_assignment={"content": {"instruction": "Warm"}},
-            )
+            with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_signature_forbidden"):
+                render_automation_reply(
+                    reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                )
 
-        self.assertIn("This is the best next step", result.content)
-        self.assertNotIn("Best,\nSid", result.content)
-        self.assertNotIn("Support Engineer 2", result.content)
+        body = "This is the best next step with regards to the current request.\n\nThanks for your patience while we review it."
+        assert_no_trailing_automation_signature(body)
+        self.assertEqual(
+            body,
+            "This is the best next step with regards to the current request.\n\nThanks for your patience while we review it.",
+        )
+
+        for signed_reply in (
+            "Update complete.\n\nBest, Sid",
+            "Update complete.\n\nRegards,",
+            "Update complete.\n\n此致\nSid",
+        ):
+            with self.subTest(signed_reply=signed_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_signature_forbidden"):
+                    assert_no_trailing_automation_signature(signed_reply)
+
+    def test_signature_guard_only_inspects_the_reply_tail(self) -> None:
+        body = (
+            "Thanks\n"
+            "we reviewed the request details and confirmed the expected behavior.\n"
+            "The next step is to validate the configuration.\n"
+            "We will keep you posted when that validation is complete.\n"
+            "No action is required from you now."
+        )
+        assert_no_trailing_automation_signature(body)
 
     def test_fraud_handoff_requires_relevant_team_and_24_hours(self) -> None:
         facts = {
@@ -356,6 +380,14 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
             validate_account_reply_contract("We received your request and will review it.", facts)
+        for invalid_reply in (
+            "The relevant team will not contact you within 24 hours.",
+            "We cannot guarantee the relevant team will contact you within 24 hours.",
+            "Will the relevant team contact you within 24 hours?",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
+                    validate_account_reply_contract(invalid_reply, facts)
 
     def test_enablement_submission_requires_sla_and_change_window(self) -> None:
         facts = {
@@ -369,6 +401,11 @@ class AutomationPersonaTests(unittest.TestCase):
             "window is Monday-Friday.",
             facts,
         )
+        with self.assertRaisesRegex(AutomationPersonaError, "enablement_submission_contract_failed"):
+            validate_account_reply_contract(
+                "Activation will not happen within 24 hours; changes occur Monday-Friday.",
+                facts,
+            )
 
     def test_suspension_contact_contract_requires_email_close_and_reopen_terms(self) -> None:
         facts = {
@@ -383,6 +420,37 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
             validate_account_reply_contract("Please share an email address.", facts)
+        for invalid_reply in (
+            "Which email is best for you, including the email on this ticket? The relevant team will not contact "
+            "you within 24 hours; this ticket will close, and you can reopen it.",
+            "Which email is best for you, including the email on this ticket? Can the relevant team contact you "
+            "within 24 hours? This ticket will close, and you can reopen it.",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
+                    validate_account_reply_contract(invalid_reply, facts)
+
+    def test_completion_contract_requires_positive_enablement_and_closure(self) -> None:
+        facts = {
+            "behavior": "enablement",
+            "reply_intent": "enablement_completed_and_close",
+        }
+        validate_account_reply_contract(
+            "The feature is enabled, and this ticket is closing.",
+            facts,
+            close_after_publish=True,
+        )
+        for invalid_reply in (
+            "The feature is not enabled, but this ticket is closing.",
+            "The feature is enabled, but this ticket will not close.",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
+                    validate_account_reply_contract(
+                        invalid_reply,
+                        facts,
+                        close_after_publish=True,
+                    )
 
     def test_conflicting_intents_and_legacy_fraud_close_are_rejected(self) -> None:
         with self.assertRaisesRegex(AutomationPersonaError, "account_reply_intent_conflict"):

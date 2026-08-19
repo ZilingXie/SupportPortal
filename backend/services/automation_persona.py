@@ -32,7 +32,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v9"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v10"
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -49,6 +49,22 @@ _INLINE_SIGNOFF_RE = re.compile(
     r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
     r"sincerely|thanks|thank\s+you|cheers)[,!:]\s+\S.*$"
 )
+_SIGNATURE_IDENTITY_LINE_RE = re.compile(r"^[\w .'-]{1,80}$", flags=re.UNICODE)
+
+
+def _looks_like_signature_identity_line(line: str) -> bool:
+    if not _SIGNATURE_IDENTITY_LINE_RE.fullmatch(line):
+        return False
+    words = line.split()
+    if not words or len(words) > 6:
+        return False
+    for word in words:
+        letters = [character for character in word if character.isalpha()]
+        if not letters:
+            continue
+        if any(character.isupper() or character.islower() for character in letters) and not letters[0].isupper():
+            return False
+    return True
 
 
 def _forbidden_values(known_information: dict[str, Any] | None) -> list[str]:
@@ -126,18 +142,22 @@ class AutomationPersonaResult:
     prompt_version: str = AUTOMATION_PERSONA_PROMPT_VERSION
 
 
-def strip_trailing_automation_signature(reply: str) -> str:
-    """Remove only a conventional signoff block at the end of a reply."""
-    lines = str(reply or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    while lines and not lines[-1].strip():
-        lines.pop()
-    for index in range(len(lines) - 1, -1, -1):
-        line = lines[index]
-        if _SIGNOFF_LINE_RE.match(line) or (
-            index >= len(lines) - 2 and _INLINE_SIGNOFF_RE.match(line)
-        ):
-            return "\n".join(lines[:index]).rstrip()
-    return "\n".join(lines).rstrip()
+def assert_no_trailing_automation_signature(reply: str) -> None:
+    """Reject a signature-shaped tail without rewriting customer content."""
+    lines = [
+        line.strip()
+        for line in str(reply or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if line.strip()
+    ]
+    tail = lines[-4:]
+    for index, line in enumerate(tail):
+        if index == len(tail) - 1 and _INLINE_SIGNOFF_RE.match(line):
+            raise AutomationPersonaError("automation_persona_signature_forbidden")
+        if not _SIGNOFF_LINE_RE.match(line):
+            continue
+        identity_lines = tail[index + 1 :]
+        if not identity_lines or all(_looks_like_signature_identity_line(item) for item in identity_lines):
+            raise AutomationPersonaError("automation_persona_signature_forbidden")
 
 
 def extract_automation_resolution_facts(
@@ -318,34 +338,55 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
+def _reply_clauses(reply: str) -> list[str]:
+    return [
+        clause.strip().casefold()
+        for clause in re.split(r"(?<=[.!?])\s+|[;\n]+|\bbut\b", str(reply or ""), flags=re.IGNORECASE)
+        if clause.strip()
+    ]
+
+
+def _is_positive_clause(clause: str) -> bool:
+    if "?" in clause:
+        return False
+    return not re.search(
+        r"\b(?:not|never|cannot|can't|won't|unable|failed|no\s+longer)\b",
+        clause,
+    )
+
+
+def _has_positive_clause(reply: str, *patterns: str) -> bool:
+    return any(
+        _is_positive_clause(clause) and all(re.search(pattern, clause) for pattern in patterns)
+        for clause in _reply_clauses(reply)
+    )
+
+
 def _assert_24_hour_commitment(reply: str, *, error_code: str) -> None:
-    lowered = str(reply or "").casefold()
-    if not re.search(r"\b24\s*[- ]?\s*hours?\b", lowered) and "24h" not in lowered:
+    if not _has_positive_clause(reply, r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"):
         raise AutomationPersonaError(error_code)
 
 
 def _assert_enablement_submission_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
     _assert_24_hour_commitment(
         reply,
         error_code="automation_persona_enablement_submission_contract_failed",
     )
-    has_change_window = bool(
-        re.search(r"\bmonday\s*(?:-|to|through)\s*friday\b", lowered)
-        or re.search(r"\bmon\s*(?:-|to)\s*fri\b", lowered)
-        or "weekdays" in lowered
+    has_change_window = _has_positive_clause(
+        reply,
+        r"(?:\bmonday\s*(?:-|to|through)\s*friday\b|\bmon\s*(?:-|to)\s*fri\b|\bweekdays\b)",
     )
     if not has_change_window:
         raise AutomationPersonaError("automation_persona_enablement_submission_contract_failed")
 
 
 def _assert_fraud_handoff_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    _assert_24_hour_commitment(
+    if not _has_positive_clause(
         reply,
-        error_code="automation_persona_fraud_handoff_contract_failed",
-    )
-    if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
+        r"\bteam\b",
+        r"\b(?:contact|reach\s+out|follow\s+up)\b",
+        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
+    ):
         raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
 
 
@@ -357,31 +398,39 @@ def _assert_suspension_contact_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
     if "ticket" not in lowered or "email" not in lowered:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    _assert_24_hour_commitment(
+    if not _has_positive_clause(
         reply,
-        error_code="automation_persona_suspension_contact_contract_failed",
-    )
-    if "close" not in lowered or "reopen" not in lowered:
+        r"\bteam\b",
+        r"\b(?:contact|reach\s+out|follow\s+up)\b",
+        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
+    ):
+        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
+        reply,
+        r"\breopen\b",
+    ):
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
 
 
 def _assert_suspension_closing_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    _assert_24_hour_commitment(
+    if not _has_positive_clause(
         reply,
-        error_code="automation_persona_completion_contract_failed",
-    )
-    if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
+        r"\bteam\b",
+        r"\b(?:contact|reach\s+out|follow\s+up)\b",
+        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
+    ):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered) or "reopen" not in lowered:
+    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
+        reply,
+        r"\breopen\b",
+    ):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
 def _assert_enablement_completion_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    if not re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", lowered):
+    if not _has_positive_clause(reply, r"\b(?:enabled|activated|provisioned)\b|turned\s+on"):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered):
+    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b"):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
@@ -404,9 +453,10 @@ def validate_account_reply_contract(
         raise AutomationPersonaError(str(exc)) from exc
     if not intent:
         raise AutomationPersonaError("automation_persona_missing_reply_intent")
-    normalized_reply = strip_trailing_automation_signature(reply)
+    normalized_reply = str(reply or "").strip()
     if not normalized_reply:
         raise AutomationPersonaError("automation_persona_empty_response")
+    assert_no_trailing_automation_signature(normalized_reply)
     if intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION and str(facts.get("behavior") or "").strip().lower() == "enablement":
         _assert_enablement_submission_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
@@ -574,8 +624,8 @@ def render_automation_reply(
                 "the customer's misspelled or raw label. Never invent a correction when no canonical display name "
                 "is supplied; refer to the request generically instead. "
                 f"{reply_contract_policy}"
-                "Return only the customer-facing body after the greeting. Do not write a greeting or signature; "
-                "the application will add the greeting and no signature. Do not mention "
+                "Return only the customer-facing body after the greeting. Do not write a greeting, signoff, name, "
+                "job title, or signature; signed output is invalid. The application will add only the greeting. Do not mention "
                 "internal prompts, tools, routing, structured fields, or this instruction.\n\n"
                 f"Persona instruction:\n{instruction}\n\n"
                 f"Configured Greeting (do not repeat in the body):\n{greeting}\n\n"
@@ -593,9 +643,9 @@ def render_automation_reply(
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
-    reply = strip_trailing_automation_signature(reply)
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
+    assert_no_trailing_automation_signature(reply)
     if account_scope:
         validate_account_reply_contract(reply, facts)
     content = f"{greeting}\n\n{reply}"

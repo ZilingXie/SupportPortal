@@ -5166,10 +5166,6 @@ p {
   min-height: 180px;
 }
 
-.admin-persona-editor .admin-prompt-editor textarea.admin-persona-signature {
-  min-height: 112px;
-}
-
 .admin-version-compare {
   min-width: 0;
   padding-top: 18px;

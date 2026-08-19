@@ -378,6 +378,60 @@ class AccountPersonaPostgresTests(unittest.TestCase):
             self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
             self.assertEqual(persona["versions"][0]["content"], preset.content)
 
+    def test_legacy_signature_cannot_be_written_or_republished_and_rollback_is_clean(self) -> None:
+        self._create_persona_tables()
+        self._insert_legacy_persona(DEFAULT_PERSONA_KEY, enabled=True)
+        self._ensure_presets()
+
+        with self.assertRaisesRegex(ValueError, "unsupported persona content fields: signature"):
+            self.repository.create_account_persona_draft(
+                DEFAULT_PERSONA_KEY,
+                content={"instruction": "Admin voice", "opener": "", "signature": "Legacy"},
+                change_note="Legacy signature",
+                based_on_version=2,
+                actor_id="admin-1",
+                created_at="2026-08-07T00:00:00+00:00",
+            )
+
+        draft = self.repository.create_account_persona_draft(
+            DEFAULT_PERSONA_KEY,
+            content={"instruction": "Admin voice", "opener": ""},
+            change_note="Clean draft",
+            based_on_version=2,
+            actor_id="admin-1",
+            created_at="2026-08-07T00:01:00+00:00",
+        )
+        with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET content=%s WHERE persona_key=%s AND version=%s").format(
+                        sql.Identifier(self.schema, "support_account_prompt_versions")
+                    ),
+                    (
+                        Json({"instruction": "Admin voice", "opener": "", "signature": "Legacy"}),
+                        DEFAULT_PERSONA_KEY,
+                        draft["version"],
+                    ),
+                )
+        with self.assertRaisesRegex(ValueError, "unsupported persona content fields: signature"):
+            self.repository.publish_account_persona_version(
+                DEFAULT_PERSONA_KEY,
+                draft["version"],
+                actor_id="admin-1",
+                published_at="2026-08-07T00:02:00+00:00",
+            )
+
+        rollback = self.repository.rollback_account_persona_version(
+            DEFAULT_PERSONA_KEY,
+            1,
+            actor_id="admin-1",
+            published_at="2026-08-07T00:03:00+00:00",
+        )
+        self.assertEqual(rollback["content"], {"instruction": "Legacy voice", "opener": ""})
+        persona = self._personas()[DEFAULT_PERSONA_KEY]
+        self.assertEqual(persona["versions"][0]["content"]["signature"], "Legacy")
+        self.assertNotIn("signature", persona["versions"][-1]["content"])
+
     def test_legacy_default_history_receives_one_marked_warm_version(self) -> None:
         self._create_persona_tables()
         self._insert_legacy_persona(DEFAULT_PERSONA_KEY)
@@ -436,7 +490,7 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         self._ensure_presets()
         draft = self.repository.create_account_persona_draft(
             DEFAULT_PERSONA_KEY,
-            content={"instruction": "Admin voice", "opener": "", "signature": "Best,\nSid\nSupport Engineer 2"},
+            content={"instruction": "Admin voice", "opener": ""},
             change_note="Admin publication",
             based_on_version=1,
             actor_id="admin-1",
@@ -977,7 +1031,6 @@ class AccountPersonaPostgresTests(unittest.TestCase):
         draft_content = {
             "instruction": "Admin voice",
             "opener": "",
-            "signature": "Best,\nSid\nSupport Engineer 2",
         }
         draft = self.repository.create_account_persona_draft(
             DEFAULT_PERSONA_KEY,
