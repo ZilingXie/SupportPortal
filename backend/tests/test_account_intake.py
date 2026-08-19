@@ -6345,8 +6345,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(len(create_payload["missing_fields"]) > 0)
 
         # Partial answer: company only, so fraud fields are still incomplete.
+        def _gate_with_ownership(account_case, timestamp):
+            context = dict(account_case.get("automation_context") or {})
+            context["zendesk_ownership"] = {"state": "assigned", "assignee_id": "48557297720084"}
+            account_case["automation_context"] = context
+            return True
+
         with patch.object(
             main, "decide_account_route", return_value=_fraud_account_route_result()
+        ), patch.object(
+            main, "_apply_production_ownership_gate", side_effect=_gate_with_ownership
         ):
             reply_response = self.client.post(
                 f"/api/account/billing-tickets/{bt_id}/reply",
@@ -6355,6 +6363,13 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(reply_response.status_code, 200, reply_response.text)
         reply_payload = reply_response.json()
+        # The ownership gate result must survive the automation attempt merge.
+        stored_case = self.repository.get_account_case(bt_id)
+        assert stored_case is not None
+        self.assertEqual(
+            (stored_case.get("automation_context") or {}).get("zendesk_ownership", {}).get("state"),
+            "assigned",
+        )
         # The missing-information ask must queue instead of failing on the
         # fraud handoff intent conflict.
         self.assertEqual(reply_payload["automation_status"], "automation")

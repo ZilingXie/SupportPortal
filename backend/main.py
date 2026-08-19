@@ -10005,13 +10005,19 @@ async def _process_account_customer_reply(
         current_classification["handler_binding_status"] = "active" if missing_fields else "completed"
         if automation_attempt.get("internal_email_to_send"):
             current_classification["handler_binding_status"] = "completed"
+        merged_automation_context = dict(
+            automation_attempt.get("automation_context") or prior_automation_context
+        )
+        ownership_state = (billing_ticket.get("automation_context") or {}).get("zendesk_ownership")
+        if isinstance(ownership_state, dict):
+            merged_automation_context["zendesk_ownership"] = ownership_state
         billing_ticket.update(
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             customer_reply=None,
             internal_email_payload=automation_attempt["internal_email_payload"],
             route_classification=current_classification,
-            automation_context=dict(automation_attempt.get("automation_context") or prior_automation_context),
+            automation_context=merged_automation_context,
         )
         same_automation = (
             prior_action == str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip()
