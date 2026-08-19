@@ -2346,14 +2346,14 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
             "_render_case_persona_reply",
-            return_value="Hi Customer,\n\nThe request is complete.\n\nBest,\nSid",
+            return_value="Hi Customer,\n\nThe request is complete.",
         ) as render:
             self.assertTrue(worker.handle_enablement_request_reply(reply))
 
         self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature"], "media_relay")
         self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature_label"], "channel media rele")
 
-    def test_handle_enablement_request_reply_notifies_customer_without_assuming_success(self) -> None:
+    def test_handle_enablement_request_reply_rejects_signed_generated_content(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
@@ -2390,21 +2390,14 @@ class WorkerResilienceTests(unittest.TestCase):
 
         self.assertTrue(handled)
         commit = repository.commit_automation_reply_result.call_args.kwargs
-        assistant_message = commit["assistant_message"]
-        self.assertEqual(assistant_message["source"], "enablement_reply_email")
-        self.assertEqual(
-            assistant_message["content"],
-            "Hi there,\n\nPlease add a payment method before activation.",
-        )
-        self.assertNotIn("Best Regards", assistant_message["content"])
-        self.assertNotIn("Sid", assistant_message["content"])
-        self.assertNotIn("has been enabled", assistant_message["content"])
-        self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
-        self.assertEqual(len(commit["events"]), 2)
+        self.assertIsNone(commit["assistant_message"])
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "human_review_required")
+        self.assertEqual(commit["account_case_updates"]["policy_decision"], "automation_persona_human_review")
+        self.assertEqual(len(commit["events"]), 1)
         event_payload = commit["events"][0]["payload"]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
 
-    def test_enablement_explicit_completion_closes_after_sanitized_customer_reply(self) -> None:
+    def test_enablement_explicit_completion_closes_after_unsigned_customer_reply(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
@@ -2428,7 +2421,7 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
             "_render_case_persona_reply",
-            return_value="Hi Customer,\n\nThe feature is enabled, and this ticket is closing.\n\nBest,\nSid",
+            return_value="Hi Customer,\n\nThe feature is enabled, and this ticket is closing.",
         ):
             handled = worker.handle_enablement_request_reply(reply)
 
@@ -2473,6 +2466,25 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertFalse(commit["close_after_publish"])
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
 
+    def test_enablement_completion_detection_requires_current_positive_state(self) -> None:
+        invalid_notes = (
+            "Is Media Relay enabled?",
+            "Please enable Media Relay.",
+            "Media Relay will be enabled tomorrow.",
+            "Media Relay was enabled but is now disabled.",
+            "Media Relay was enabled. It has since been turned off.",
+        )
+        for note in invalid_notes:
+            with self.subTest(note=note):
+                self.assertFalse(worker._enablement_reply_explicitly_confirms_completion(note))
+
+        for note in (
+            "Media Relay is enabled.",
+            "We have activated Media Relay.",
+        ):
+            with self.subTest(note=note):
+                self.assertTrue(worker._enablement_reply_explicitly_confirms_completion(note))
+
     def test_enablement_reply_subject_accepts_numeric_zendesk_ticket_id(self) -> None:
         self.assertEqual(
             worker._ticket_id_from_billing_reply_subject(
@@ -2504,7 +2516,7 @@ class WorkerResilienceTests(unittest.TestCase):
             subject="Re: [Quota Request] RTC, RTM, Chat - Ticket 12512",
             body_text="The requested limits are approved for the event window.",
         )
-        generated_reply = "Hi there,\n\nThe requested limits are approved for the event window.\n\nBest Regards,\nSid"
+        generated_reply = "Hi there,\n\nThe requested limits are approved for the event window."
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "_render_case_persona_reply", return_value=generated_reply,
@@ -3791,9 +3803,16 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.resolve_account_persona.assert_not_called()
         self.assertEqual(job["payload"]["persona_key"], "sid-bright")
         self.assertEqual(job["payload"]["persona_version"], 2)
-        self.assertEqual(job["payload"]["effective_prompt"], assignment["content"])
+        self.assertEqual(
+            job["payload"]["effective_prompt"],
+            {"instruction": "Bright", "opener": ""},
+        )
         self.assertEqual(render.call_args.kwargs["persona_assignment"]["persona_key"], "sid-bright")
         self.assertEqual(render.call_args.kwargs["persona_assignment"]["version"], 2)
+        self.assertEqual(
+            render.call_args.kwargs["persona_assignment"]["content"],
+            {"instruction": "Bright", "opener": ""},
+        )
 
     def test_legacy_delayed_reply_pins_persisted_persona_assignment(self) -> None:
         job = {
@@ -4353,6 +4372,57 @@ class WorkerResilienceTests(unittest.TestCase):
                 {
                     "role": "customer",
                     "content": "Please enable the feature.",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_account_case_by_ticket_id.return_value = None
+        repository.transition_claimed_account_reply_to_human_review.return_value = {
+            **job,
+            "status": "human_review",
+        }
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker._publish_account_reply_job(job)
+
+        repository.publish_account_reply.assert_not_called()
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+        self.assertEqual(
+            repository.transition_claimed_account_reply_to_human_review.call_args.kwargs["policy_decision"],
+            "account_reply_contract_human_review",
+        )
+
+    def test_signed_account_content_moves_to_human_review_before_publish(self) -> None:
+        job = {
+            "job_id": "account-reply-signed-content",
+            "ticket_id": "TK-SIGNED-CONTENT",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:01:00+00:00",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "fraud_account",
+                    "reply_intent": "fraud_handoff_confirmation",
+                },
+                "generated_content": (
+                    "The relevant team will contact you within 24 hours.\n\n"
+                    "Best,\nSid\nSupport Engineer 2"
+                ),
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-SIGNED-CONTENT",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "I need help with a fraudulent account.",
                     "created_at": "2026-03-22T00:00:00+00:00",
                 }
             ],

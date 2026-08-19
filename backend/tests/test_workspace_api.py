@@ -17,7 +17,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
-from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_SIGNATURE
+from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 from backend.services.workspace_auth import hash_workspace_password
 
 
@@ -353,7 +353,7 @@ class WorkspaceApiTests(unittest.TestCase):
             self.assertEqual(persona["display_name"], preset.display_name)
             self.assertTrue(persona["enabled"])
             self.assertEqual(persona["published_version"], 1)
-            self.assertEqual(persona["versions"][0]["content"]["signature"], DEFAULT_PERSONA_SIGNATURE)
+            self.assertEqual(persona["versions"][0]["content"], preset.content)
             self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
 
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
@@ -387,10 +387,7 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(set(personas), {"default-support", "sid-bright", "sid-precise"})
         self.assertTrue(all(item["enabled"] and item["published_version"] == 1 for item in personas.values()))
         self.assertTrue(
-            all(
-                item["versions"][0]["content"]["signature"] == DEFAULT_PERSONA_SIGNATURE
-                for item in personas.values()
-            )
+            all(set(item["versions"][0]["content"]) == {"instruction", "opener"} for item in personas.values())
         )
         self.assertNotIn("OPENAI_API_KEY", response.text)
 
@@ -439,22 +436,48 @@ class WorkspaceApiTests(unittest.TestCase):
 
     def test_account_persona_api_publishes_and_rolls_back_without_overwriting_history(self) -> None:
         headers = self._admin_headers()
+        create_rejected = self.client.post(
+            "/api/workspace/admin/account-personas",
+            headers=headers,
+            json={
+                "persona_key": "legacy-signature",
+                "display_name": "Legacy Signature",
+                "content": {"instruction": "Direct", "signoff_name": "Sid"},
+            },
+        )
+        self.assertEqual(create_rejected.status_code, 422, create_rejected.text)
+
+        rejected = self.client.post(
+            "/api/workspace/admin/account-personas/default-support/drafts",
+            headers=headers,
+            json={
+                "content": {"instruction": "Direct", "signature": "Best,\nSid"},
+                "change_note": "Legacy signature",
+                "based_on_version": 1,
+            },
+        )
+        self.assertEqual(rejected.status_code, 422, rejected.text)
+
         draft = self.client.post(
             "/api/workspace/admin/account-personas/default-support/drafts",
             headers=headers,
             json={
-                "content": {"instruction": "Direct", "signature": "Best,\nSid\nSupport Engineer 2"},
-                "change_note": "Direct voice and signature",
+                "content": {"instruction": "Direct", "opener": "Thanks for contacting us."},
+                "change_note": "Direct voice",
                 "based_on_version": 1,
             },
         )
         self.assertEqual(draft.status_code, 200, draft.text)
-        self.assertEqual(draft.json()["version"]["content"]["signature"], "Best,\nSid\nSupport Engineer 2")
+        self.assertEqual(
+            draft.json()["version"]["content"],
+            {"instruction": "Direct", "opener": "Thanks for contacting us."},
+        )
         version = draft.json()["version"]["version"]
         published = self.client.post(
             f"/api/workspace/admin/account-personas/default-support/versions/{version}/publish", headers=headers
         )
         self.assertEqual(published.status_code, 200, published.text)
+        self.repository._account_persona_versions["default-support"][0]["content"]["signature"] = "Legacy"
         rollback = self.client.post(
             "/api/workspace/admin/account-personas/default-support/versions/1/rollback", headers=headers
         )
@@ -467,6 +490,11 @@ class WorkspaceApiTests(unittest.TestCase):
         }
         versions = personas["default-support"]["versions"]
         self.assertEqual([item["version"] for item in versions], [1, 2, 3])
+        self.assertEqual(versions[0]["content"]["signature"], "Legacy")
+        self.assertEqual(
+            versions[2]["content"],
+            {"instruction": ACCOUNT_PERSONA_PRESETS[2].instruction, "opener": ""},
+        )
 
     def test_environment_config_api_never_returns_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
