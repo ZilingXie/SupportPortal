@@ -256,6 +256,144 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
             [],
         )
 
+    def test_production_publication_persists_queued_zendesk_delivery(self) -> None:
+        with self._isolated_repository(
+            application_name="supportportal-production-delivery-intent-test",
+        ) as (repository, _schema, _runtime_dsn):
+            ticket_id = "PRD-PG-DELIVERY-1"
+            job_id = "account-reply-pg-delivery-1"
+            job = _seed_publishable_reply(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            account_case = repository.get_account_case_by_ticket_id(ticket_id)
+            assert account_case is not None
+            account_case.update(
+                processing_profile="production",
+                zendesk_ticket_id="12838",
+            )
+            repository.save_account_case(account_case)
+
+            result = repository.publish_account_reply(
+                job,
+                content="The feature is now enabled.",
+                payload=dict(job["payload"]),
+                published_at="2026-08-08T02:02:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "enablement",
+                },
+            )
+
+            self.assertEqual(result["delivery"]["status"], "queued")
+            self.assertEqual(result["delivery"]["message_id"], result["message_id"])
+            deliveries = repository.list_account_zendesk_comment_deliveries(
+                statuses=("queued",),
+                limit=10,
+            )
+            self.assertEqual(len(deliveries), 1)
+            self.assertEqual(deliveries[0]["account_case_id"], f"AC-{ticket_id}")
+            self.assertEqual(deliveries[0]["zendesk_ticket_id"], "12838")
+
+    def test_postgres_comment_result_updates_message_meta_and_preserves_delivered_state(self) -> None:
+        with self._isolated_repository(
+            application_name="supportportal-zendesk-result-persistence-test",
+        ) as (repository, _schema, _runtime_dsn):
+            ticket_id = "PRD-PG-DELIVERY-2"
+            job_id = "account-reply-pg-delivery-2"
+            job = _seed_publishable_reply(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            account_case = repository.get_account_case_by_ticket_id(ticket_id)
+            assert account_case is not None
+            account_case.update(
+                processing_profile="production",
+                zendesk_ticket_id="12838",
+            )
+            repository.save_account_case(account_case)
+            published = repository.publish_account_reply(
+                job,
+                content="The feature is now enabled.",
+                payload=dict(job["payload"]),
+                published_at="2026-08-08T02:02:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "enablement",
+                },
+            )
+            message_id = str(published["message_id"])
+            case_id = f"AC-{ticket_id}"
+            idempotency_key = f"{case_id}:{message_id}"
+            repository.begin_idempotent_request(
+                "account_zendesk_internal_comment",
+                idempotency_key,
+                created_at="2026-08-08T02:03:00+00:00",
+            )
+
+            persisted = repository.record_account_zendesk_internal_comment_result(
+                account_case_id=case_id,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                idempotency_key=idempotency_key,
+                result_payload={
+                    "status": "added",
+                    "account_case_id": case_id,
+                    "message_id": message_id,
+                    "actor_id": "system:production-account-reply",
+                    "trigger": "production_worker",
+                    "comment_id": "comment-pg-2",
+                },
+                recorded_at="2026-08-08T02:03:01+00:00",
+            )
+
+            self.assertTrue(persisted["audit_persisted"])
+            message = next(
+                item
+                for item in repository.get_ticket(ticket_id)["messages"]
+                if item["message_id"] == message_id
+            )
+            self.assertEqual(
+                message["meta"]["zendesk_internal_comment"]["comment_id"],
+                "comment-pg-2",
+            )
+            self.assertEqual(
+                repository.list_account_zendesk_comment_deliveries(
+                    statuses=("delivered",),
+                    limit=10,
+                )[0]["zendesk_comment_id"],
+                "comment-pg-2",
+            )
+
+            stale = repository.record_account_zendesk_internal_comment_result(
+                account_case_id=case_id,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                idempotency_key=idempotency_key,
+                result_payload={
+                    "status": "outcome_unknown",
+                    "account_case_id": case_id,
+                    "message_id": message_id,
+                    "actor_id": "system:production-account-reply",
+                    "trigger": "production_worker",
+                    "error_code": "stale-audit",
+                },
+                recorded_at="2026-08-08T02:03:02+00:00",
+            )
+
+            self.assertFalse(stale["audit_persisted"])
+            self.assertEqual(
+                repository.list_account_zendesk_comment_deliveries(
+                    statuses=("delivered",),
+                    limit=10,
+                )[0]["zendesk_comment_id"],
+                "comment-pg-2",
+            )
+
     def test_publish_first_completes_before_reset_cleanup(self) -> None:
         application_name = "supportportal-publish-first-race-test"
         with self._isolated_repository(

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-18T15:07:31Z",
-  "source_base_commit": "7f157626a9cc955546033f7d3ece631b730860aa",
-  "registry_digest": "8204a4d58066c67c76d9532ea7c9dcad2623d7852153a343dcb4227f84231c20",
+  "generated_at": "2026-08-19T02:27:28Z",
+  "source_base_commit": "3f1f65cb8cbdf86f007ed87ab9a1549fa2c72ddc",
+  "registry_digest": "cb0661e8bd6ad7f3772d682e48da78f5a0b263332eeda6add845a5f2f16a7ade",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -869,6 +869,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Shared API-backed Account/Zendesk service, production publication, PostgreSQL contract, and UI timeout regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_account_zendesk_comment.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py backend/tests/test_account_ui_contract.py",
+          "result": "308 passed, 4 warnings, 22 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL publication and shared Zendesk result persistence integration coverage",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_account_reply_publication_postgres.py",
+          "result": "8 skipped without RUN_POSTGRES_INTEGRATION=1; no external Zendesk writes"
+        },
+        {
+          "type": "test",
           "label": "Account Zendesk comment, PostgreSQL and UI contract tests",
           "command": "uv run --with-requirements requirements.base.txt python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_ui_contract"
         },
@@ -937,7 +949,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 6,
-      "done_count": 5,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -2316,10 +2328,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-18",
       "title": "完成 AI 回复写回 Zendesk：internal comment",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "Production 注册 Automation 的 Account AI 回复可幂等写回 Zendesk private internal comment，并以只读 audit 回查处理未知投递结果。",
-      "next_action": "",
+      "next_action": "Run implementation review, finalize the task, restart the official stack, and verify health/build provenance before the single-case audit recovery.",
       "acceptance_criteria": [
         "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。",
         "Production 注册 Automation 的已发布 Account AI reply 与 queued Zendesk delivery intent 在同一 publication transaction 内持久化。",
@@ -2372,13 +2384,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Full Zendesk, Worker, Repository, Workspace API, Account Admin, and Account UI regression suite",
           "command": "source /Users/xieziling/Desktop/personal_proj/SupportPortal/.env && /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_account_zendesk_comment.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py backend/tests/test_account_ui_contract.py -q",
           "result": "297 passed, 4 warnings, 22 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "Shared API-backed Account/Zendesk service, production publication, PostgreSQL contract, and UI timeout regression suite",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_repository_configuration.py backend/tests/test_zendesk_comments.py backend/tests/test_account_zendesk_comment.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py backend/tests/test_workspace_api.py backend/tests/test_account_admin_features.py backend/tests/test_account_ui_contract.py",
+          "result": "308 passed, 4 warnings, 22 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL publication and shared Zendesk result persistence integration coverage",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_account_reply_publication_postgres.py",
+          "result": "8 skipped without RUN_POSTGRES_INTEGRATION=1; no external Zendesk writes"
         }
       ],
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-18",
+      "updated_at": "2026-08-19",
       "history": [
         {
           "at": "2026-08-16",
@@ -2434,6 +2458,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-18",
           "event": "production_publication_delivery_intent_implemented",
           "summary": "Production registered Automation 的 reply publication 已与 queued Zendesk delivery intent 绑定；worker 支持 queued claim 与 poller recovery，pending/outcome_unknown 维持 audit-only，Run in Production 使用 300 秒专用 timeout。目标与完整回归通过，待合并后官方栈和合成 Zendesk 验收。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "production_account_zendesk_contract_unification_started",
+          "summary": "只读核对发现 Production worker 直接调用 Zendesk transport，未复用 /account 的产品级幂等记录和 message meta；AC-PRD-12838 的 AI message 1372 没有 delivery ledger、幂等记录或 private comment。开始抽取共享 API-backed internal-comment service，并统一三套结果状态。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "production_account_zendesk_contract_unification_implemented",
+          "summary": "完成共享 API-backed internal-comment service：/account 管理动作、Production worker 和 audit reconciliation 读取同一持久化 AI message，复用同一幂等记录并写回 message meta；Production delivery ledger 保持 queued/pending/delivered/outcome_unknown 的 fail-closed 状态。"
         }
       ],
       "legacy_refs": [
