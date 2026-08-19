@@ -338,34 +338,55 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
+def _reply_clauses(reply: str) -> list[str]:
+    return [
+        clause.strip().casefold()
+        for clause in re.split(r"(?<=[.!?])\s+|[;\n]+|\bbut\b", str(reply or ""), flags=re.IGNORECASE)
+        if clause.strip()
+    ]
+
+
+def _is_positive_clause(clause: str) -> bool:
+    if "?" in clause:
+        return False
+    return not re.search(
+        r"\b(?:not|never|cannot|can't|won't|unable|failed|no\s+longer)\b",
+        clause,
+    )
+
+
+def _has_positive_clause(reply: str, *patterns: str) -> bool:
+    return any(
+        _is_positive_clause(clause) and all(re.search(pattern, clause) for pattern in patterns)
+        for clause in _reply_clauses(reply)
+    )
+
+
 def _assert_24_hour_commitment(reply: str, *, error_code: str) -> None:
-    lowered = str(reply or "").casefold()
-    if not re.search(r"\b24\s*[- ]?\s*hours?\b", lowered) and "24h" not in lowered:
+    if not _has_positive_clause(reply, r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"):
         raise AutomationPersonaError(error_code)
 
 
 def _assert_enablement_submission_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
     _assert_24_hour_commitment(
         reply,
         error_code="automation_persona_enablement_submission_contract_failed",
     )
-    has_change_window = bool(
-        re.search(r"\bmonday\s*(?:-|to|through)\s*friday\b", lowered)
-        or re.search(r"\bmon\s*(?:-|to)\s*fri\b", lowered)
-        or "weekdays" in lowered
+    has_change_window = _has_positive_clause(
+        reply,
+        r"(?:\bmonday\s*(?:-|to|through)\s*friday\b|\bmon\s*(?:-|to)\s*fri\b|\bweekdays\b)",
     )
     if not has_change_window:
         raise AutomationPersonaError("automation_persona_enablement_submission_contract_failed")
 
 
 def _assert_fraud_handoff_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    _assert_24_hour_commitment(
+    if not _has_positive_clause(
         reply,
-        error_code="automation_persona_fraud_handoff_contract_failed",
-    )
-    if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
+        r"\bteam\b",
+        r"\b(?:contact|reach\s+out|follow\s+up)\b",
+        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
+    ):
         raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
 
 
@@ -377,31 +398,39 @@ def _assert_suspension_contact_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
     if "ticket" not in lowered or "email" not in lowered:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    _assert_24_hour_commitment(
+    if not _has_positive_clause(
         reply,
-        error_code="automation_persona_suspension_contact_contract_failed",
-    )
-    if "close" not in lowered or "reopen" not in lowered:
+        r"\bteam\b",
+        r"\b(?:contact|reach\s+out|follow\s+up)\b",
+        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
+    ):
+        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
+        reply,
+        r"\breopen\b",
+    ):
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
 
 
 def _assert_suspension_closing_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    _assert_24_hour_commitment(
+    if not _has_positive_clause(
         reply,
-        error_code="automation_persona_completion_contract_failed",
-    )
-    if "team" not in lowered or not re.search(r"\b(?:contact|reach\s+out|follow\s+up)\b", lowered):
+        r"\bteam\b",
+        r"\b(?:contact|reach\s+out|follow\s+up)\b",
+        r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)",
+    ):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered) or "reopen" not in lowered:
+    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
+        reply,
+        r"\breopen\b",
+    ):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
 def _assert_enablement_completion_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    if not re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", lowered):
+    if not _has_positive_clause(reply, r"\b(?:enabled|activated|provisioned)\b|turned\s+on"):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if not re.search(r"\bclos(?:e|ed|ing|es)\b", lowered):
+    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b"):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 

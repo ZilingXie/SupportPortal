@@ -380,6 +380,14 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
             validate_account_reply_contract("We received your request and will review it.", facts)
+        for invalid_reply in (
+            "The relevant team will not contact you within 24 hours.",
+            "We cannot guarantee the relevant team will contact you within 24 hours.",
+            "Will the relevant team contact you within 24 hours?",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
+                    validate_account_reply_contract(invalid_reply, facts)
 
     def test_enablement_submission_requires_sla_and_change_window(self) -> None:
         facts = {
@@ -393,6 +401,11 @@ class AutomationPersonaTests(unittest.TestCase):
             "window is Monday-Friday.",
             facts,
         )
+        with self.assertRaisesRegex(AutomationPersonaError, "enablement_submission_contract_failed"):
+            validate_account_reply_contract(
+                "Activation will not happen within 24 hours; changes occur Monday-Friday.",
+                facts,
+            )
 
     def test_suspension_contact_contract_requires_email_close_and_reopen_terms(self) -> None:
         facts = {
@@ -407,6 +420,37 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
             validate_account_reply_contract("Please share an email address.", facts)
+        for invalid_reply in (
+            "Which email is best for you, including the email on this ticket? The relevant team will not contact "
+            "you within 24 hours; this ticket will close, and you can reopen it.",
+            "Which email is best for you, including the email on this ticket? Can the relevant team contact you "
+            "within 24 hours? This ticket will close, and you can reopen it.",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
+                    validate_account_reply_contract(invalid_reply, facts)
+
+    def test_completion_contract_requires_positive_enablement_and_closure(self) -> None:
+        facts = {
+            "behavior": "enablement",
+            "reply_intent": "enablement_completed_and_close",
+        }
+        validate_account_reply_contract(
+            "The feature is enabled, and this ticket is closing.",
+            facts,
+            close_after_publish=True,
+        )
+        for invalid_reply in (
+            "The feature is not enabled, but this ticket is closing.",
+            "The feature is enabled, but this ticket will not close.",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
+                    validate_account_reply_contract(
+                        invalid_reply,
+                        facts,
+                        close_after_publish=True,
+                    )
 
     def test_conflicting_intents_and_legacy_fraud_close_are_rejected(self) -> None:
         with self.assertRaisesRegex(AutomationPersonaError, "account_reply_intent_conflict"):

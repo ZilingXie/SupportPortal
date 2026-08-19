@@ -1420,27 +1420,31 @@ def _render_case_persona_reply(
 
 
 def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
-    """Accept only a completed enablement statement, not a plan or request."""
-    positive = re.compile(r"\b(?:enabled|activated|provisioned|turned\s+on)\b")
-    negative = re.compile(
-        r"\b(?:not|never|cannot|can't|couldn't|unable\s+to|failed\s+to|will\s+not|won't)\b"
-        r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
-        r"|\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b"
-        r"[^.!?\n]{0,60}\b(?:not\s+possible|failed|unsuccessful|unavailable)\b",
-        flags=re.IGNORECASE,
+    """Return the latest explicit current enablement state in the note."""
+    positive = re.compile(r"\b(?:enabled|activated|provisioned|turned\s+on)\b", re.IGNORECASE)
+    revoked = re.compile(
+        r"\b(?:disabled|deactivated|deprovisioned|turned\s+off)\b"
+        r"|\bno\s+longer\s+(?:enabled|activated|provisioned|turned\s+on)\b",
+        re.IGNORECASE,
     )
-    future_or_request = re.compile(
-        r"\b(?:will|would|may|might|can|could|should|please|need\s+to|trying\s+to|plan\s+to|request(?:ed)?\s+to)\b"
+    negative_or_future = re.compile(
+        r"\b(?:not|never|cannot|can't|couldn't|unable\s+to|failed\s+to|will|would|may|might|"
+        r"could|should|please|need\s+to|trying\s+to|plan\s+to|request(?:ed)?\s+to)\b"
         r"[^.!?\n]{0,60}\b(?:enable|enabled|activate|activated|provision|provisioned|turn(?:ed)?\s+on)\b",
-        flags=re.IGNORECASE,
+        re.IGNORECASE,
     )
-    for sentence in re.split(r"[.!?\n]+", str(note or "")):
-        if not positive.search(sentence):
+    completed = False
+    for clause in re.split(r"(?<=[.!?])\s+|[;\n]+|\bbut\b", str(note or ""), flags=re.IGNORECASE):
+        if revoked.search(clause):
+            completed = False
             continue
-        if negative.search(sentence) or future_or_request.search(sentence):
+        if not positive.search(clause):
             continue
-        return True
-    return False
+        if "?" in clause or negative_or_future.search(clause):
+            completed = False
+            continue
+        completed = True
+    return completed
 
 
 def _process_claimed_account_reply_jobs(

@@ -2427,6 +2427,25 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertFalse(commit["close_after_publish"])
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
 
+    def test_enablement_completion_detection_requires_current_positive_state(self) -> None:
+        invalid_notes = (
+            "Is Media Relay enabled?",
+            "Please enable Media Relay.",
+            "Media Relay will be enabled tomorrow.",
+            "Media Relay was enabled but is now disabled.",
+            "Media Relay was enabled. It has since been turned off.",
+        )
+        for note in invalid_notes:
+            with self.subTest(note=note):
+                self.assertFalse(worker._enablement_reply_explicitly_confirms_completion(note))
+
+        for note in (
+            "Media Relay is enabled.",
+            "We have activated Media Relay.",
+        ):
+            with self.subTest(note=note):
+                self.assertTrue(worker._enablement_reply_explicitly_confirms_completion(note))
+
     def test_enablement_reply_subject_accepts_numeric_zendesk_ticket_id(self) -> None:
         self.assertEqual(
             worker._ticket_id_from_billing_reply_subject(
