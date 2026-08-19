@@ -7,19 +7,16 @@ import argparse
 import copy
 import getpass
 import json
-import random
 from datetime import datetime, timezone
 from typing import Any, Sequence
 from uuid import uuid4
 
 from backend.repositories.ticket_repository import create_ticket_repository
-from backend.services.account_reply_jobs import create_account_reply_job
+from backend.services.account_reply_jobs import (
+    account_reply_delay_seconds_for_profile,
+    create_account_reply_job,
+)
 from backend.services.automation_persona import customer_first_name
-
-
-ACCOUNT_REPLY_DELAY_MIN_SECONDS = 6 * 60
-ACCOUNT_REPLY_DELAY_MAX_SECONDS = 10 * 60
-_RANDOM = random.SystemRandom()
 
 
 def _now_iso() -> str:
@@ -96,18 +93,13 @@ def apply_repair(
     customer_name: str,
     *,
     repaired_at: str | None = None,
-    delay_seconds: int | None = None,
 ) -> dict[str, Any]:
     normalized_name = _normalize_customer_name(customer_name)
     context = _load_repair_context(repository, ticket_id)
     timestamp = repaired_at or _now_iso()
-    delay = (
-        int(delay_seconds)
-        if delay_seconds is not None
-        else _RANDOM.randint(ACCOUNT_REPLY_DELAY_MIN_SECONDS, ACCOUNT_REPLY_DELAY_MAX_SECONDS)
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(context["account_case"].get("processing_profile") or "staging")
     )
-    if delay < ACCOUNT_REPLY_DELAY_MIN_SECONDS or delay > ACCOUNT_REPLY_DELAY_MAX_SECONDS:
-        raise ValueError("reply delay must be between 360 and 600 seconds")
     persona = repository.resolve_published_account_persona(context["ticket_id"])
 
     account_case = copy.deepcopy(context["account_case"])
@@ -129,7 +121,7 @@ def apply_repair(
         ticket_id=context["ticket_id"],
         trigger_message_created_at=context["trigger_message_created_at"],
         created_at=timestamp,
-        delay_seconds=delay,
+        delay_seconds=delay_seconds,
         draft_content="",
         reply_facts=reply_facts,
         asked_field_keys=list(payload.get("asked_field_keys") or []),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.account_reply_jobs import (
@@ -10,6 +11,9 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_PERSONA_V8_PREPARING,
     ACCOUNT_REPLY_PERSONA_V8_QUEUED,
     ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+    ACCOUNT_REPLY_DELAY_MAX_SECONDS,
+    ACCOUNT_REPLY_DELAY_MIN_SECONDS,
+    account_reply_delay_seconds_for_profile,
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
     create_account_reply_job,
@@ -18,6 +22,32 @@ from backend.services.account_reply_jobs import (
 
 
 class AccountReplyVersionFenceTests(unittest.TestCase):
+    def test_staging_reply_delay_is_zero_without_random_sampling(self) -> None:
+        with patch(
+            "backend.services.account_reply_jobs._ACCOUNT_REPLY_RANDOM.randint",
+            side_effect=AssertionError("staging must not sample a reply delay"),
+        ) as randint:
+            self.assertEqual(account_reply_delay_seconds_for_profile("staging"), 0)
+            self.assertEqual(account_reply_delay_seconds_for_profile(""), 0)
+
+        randint.assert_not_called()
+
+    def test_production_reply_delay_is_sampled_once_within_contract(self) -> None:
+        with patch(
+            "backend.services.account_reply_jobs._ACCOUNT_REPLY_RANDOM.randint",
+            return_value=417,
+        ) as randint:
+            self.assertEqual(account_reply_delay_seconds_for_profile("production"), 417)
+
+        randint.assert_called_once_with(
+            ACCOUNT_REPLY_DELAY_MIN_SECONDS,
+            ACCOUNT_REPLY_DELAY_MAX_SECONDS,
+        )
+
+    def test_unknown_processing_profile_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "processing_profile must be staging or production"):
+            account_reply_delay_seconds_for_profile("preview")
+
     def test_new_persona_job_is_invisible_to_legacy_worker_statuses(self) -> None:
         repository = InMemoryTicketRepository()
         job = create_account_reply_job(

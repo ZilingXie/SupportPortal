@@ -594,12 +594,12 @@ function formatMessageTimestamp(value) {
 function renderAiReplyState(item) {
   const status = String(item?.ai_reply_status || "");
   if (!status || status === "published" || status === "cancelled") return "";
-  const scheduled = formatMessageTimestamp(item.ai_reply_scheduled_for);
+  const queuedAt = formatMessageTimestamp(item.ai_reply_scheduled_for);
   if (ACTIVE_AI_REPLY_STATUSES.has(status)) {
     return `
       <div class="ai-reply-state" role="status" aria-live="polite">
         <span class="ai-reply-state__pulse" aria-hidden="true"></span>
-        <span><strong>AI reply scheduled</strong><span>${escapeHtml(scheduled)}</span></span>
+        <span><strong>AI reply queued</strong><span>Publishing as soon as preparation completes. Queued ${escapeHtml(queuedAt)}.</span></span>
       </div>
     `;
   }
@@ -2513,7 +2513,7 @@ function renderRerouteConfirmation() {
               <li>Engineer, manual, and internal messages are included and cannot be recovered.</li>
               <li>The current route review and correction will be reset.</li>
               <li>Automation may send a new internal email.</li>
-              <li>A new Account-only reply will be scheduled with the standard 6-10 minute delay.</li>
+              <li>A new Account-only reply will be queued for publication as soon as preparation completes.</li>
               <li>Independent audit records will be retained.</li>
             </ul>`
           : `<ul>

@@ -38,6 +38,7 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
                 "account_case_id": "AC-12619",
                 "billing_ticket_id": "AC-12619",
                 "client_ticket_id": "12619",
+                "processing_profile": "staging",
                 "title": "Synthetic request",
                 "question": "Synthetic request",
                 "customer_name": None,
@@ -102,13 +103,12 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
         self.assertEqual(self.repository.get_account_case_by_ticket_id("12619"), before_case)
         self.assertEqual(self.repository.get_account_reply_job("pending-job")["status"], "persona_scheduled")
 
-    def test_apply_updates_only_identity_and_queues_delayed_replacement(self) -> None:
+    def test_apply_updates_only_identity_and_queues_immediate_staging_replacement(self) -> None:
         result = repair.apply_repair(
             self.repository,
             "#12619",
             "Alice Smith",
             repaired_at="2026-08-05T01:00:00+00:00",
-            delay_seconds=360,
         )
 
         account_case = self.repository.get_account_case_by_ticket_id("12619")
@@ -124,7 +124,7 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
 
         replacement = self.repository.get_account_reply_job(result["replacement_reply_job_id"])
         self.assertEqual(replacement["status"], "persona_v8_queued")
-        self.assertEqual(replacement["scheduled_for"], "2026-08-05T01:06:00+00:00")
+        self.assertEqual(replacement["scheduled_for"], "2026-08-05T01:00:00+00:00")
         self.assertEqual(replacement["payload"]["reply_facts"]["customer_first_name"], "Alice")
         self.assertEqual(replacement["payload"]["asked_field_keys"], ["app_id", "requested_feature"])
         self.assertEqual(
@@ -154,7 +154,6 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
                 "12619",
                 "Alice Smith",
                 repaired_at="2026-08-05T01:00:00+00:00",
-                delay_seconds=360,
             )
 
         replacement = self.repository.get_account_reply_job(result["replacement_reply_job_id"])
@@ -175,6 +174,27 @@ class RepairAccountCustomerNameTests(unittest.TestCase):
             },
         )
         chooser.assert_not_called()
+
+    def test_apply_keeps_production_replacement_delay(self) -> None:
+        account_case = self.repository.get_account_case_by_ticket_id("12619")
+        assert account_case is not None
+        account_case["processing_profile"] = "production"
+        self.repository.save_account_case(account_case)
+
+        with patch.object(
+            repair, "account_reply_delay_seconds_for_profile", return_value=417
+        ) as delay:
+            result = repair.apply_repair(
+                self.repository,
+                "12619",
+                "Alice Smith",
+                repaired_at="2026-08-05T01:00:00+00:00",
+            )
+
+        replacement = self.repository.get_account_reply_job(result["replacement_reply_job_id"])
+        assert replacement is not None
+        self.assertEqual(replacement["scheduled_for"], "2026-08-05T01:06:57+00:00")
+        delay.assert_called_once_with("production")
 
     def test_cli_reads_name_without_echo_and_does_not_print_it(self) -> None:
         output = io.StringIO()

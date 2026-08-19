@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 import importlib.util
 import os
 from pathlib import Path
@@ -2550,6 +2551,7 @@ class WorkerResilienceTests(unittest.TestCase):
         account_case = {
             "account_case_id": "AC-12495",
             "client_ticket_id": "12495",
+            "processing_profile": "staging",
             "automation_handler": "enablement",
             "missing_fields": [],
             "collected_fields": {
@@ -2607,9 +2609,42 @@ class WorkerResilienceTests(unittest.TestCase):
             "enablement:AC-12495:v1",
         )
         self.assertEqual(reply_job["trigger_message_created_at"], "2026-07-23T23:59:00+00:00")
+        self.assertEqual(reply_job["scheduled_for"], reply_job["created_at"])
         self.assertNotIn("it enablement", reply_job["payload"]["draft_content"])
         self.assertEqual(account_case["internal_email_send_status"], "sent")
         self.assertTrue(account_case["internal_email_payload"]["customer_confirmation_queued"])
+
+    def test_enablement_confirmation_keeps_production_reply_delay(self) -> None:
+        account_case = {
+            "account_case_id": "AC-PRODUCTION-CONFIRMATION",
+            "client_ticket_id": "99887770",
+            "processing_profile": "production",
+            "collected_fields": {"requested_feature": "media_relay"},
+            "internal_email_payload": {"delivery_key": "enablement:AC-PRODUCTION-CONFIRMATION:v1"},
+        }
+        repository = Mock()
+        repository.get_ticket.return_value = {
+            "ticket_id": "99887770",
+            "messages": [{
+                "role": "customer",
+                "content": "Please enable Media Relay.",
+                "created_at": "2026-08-19T00:00:00+00:00",
+            }],
+        }
+        repository.get_latest_account_reply_job.return_value = None
+        repository.resolve_account_persona.return_value = None
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "account_reply_delay_seconds_for_profile", return_value=417
+        ) as delay:
+            created = worker._queue_enablement_submission_confirmation(account_case)
+
+        self.assertTrue(created)
+        reply_job = repository.save_account_reply_job.call_args.args[0]
+        created_at = datetime.fromisoformat(reply_job["created_at"])
+        scheduled_for = datetime.fromisoformat(reply_job["scheduled_for"])
+        self.assertEqual((scheduled_for - created_at).total_seconds(), 417)
+        delay.assert_called_once_with("production")
 
     def test_enablement_delivery_retry_replaces_malformed_cancelled_confirmation(self) -> None:
         account_case = {

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T10:37:30Z",
-  "source_base_commit": "c0741c86cfcc2c4c812bae0ba8ea906687c4deab",
-  "registry_digest": "75401339ccd0bfddf303d46d96e7641ae0764a20e9a89cd219f0064411e2710a",
+  "generated_at": "2026-08-19T10:54:11Z",
+  "source_base_commit": "13a13565953b3e57794b666c77f4599d77feb6a9",
+  "registry_digest": "c6efeda0afc81064a921b034677415fa86975cf0f815cb6b62e4613c7d72b725",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1297,6 +1297,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account intake profile regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_intake",
           "details": "164 全绿：ACCOUNT_DEFAULT_PROCESSING_PROFILE 相关 intake 行为未受访问器复用影响。"
+        },
+        {
+          "type": "test",
+          "label": "Environment-specific Account reply timing and UI contracts",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_reply_version_fence backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_repair_account_customer_name backend.tests.test_account_ui_contract backend.tests.test_production_ui_contract",
+          "details": "314 tests 全绿：staging intake、Enablement worker 补偿与 customer-name repair 的 reply job 立即到期；production 三条路径保持 360-600 秒采样；非法 profile 明确失败；staging UI 改为 queued/immediate，production UI 保留 scheduled/6-10 分钟。"
+        },
+        {
+          "type": "test",
+          "label": "Changed Python and JavaScript syntax",
+          "command": "python -m py_compile backend/main.py backend/worker.py backend/services/account_reply_jobs.py backend/scripts/repair_account_customer_name.py && node --check ui/account-ui/app.js && node --check ui/production-ui/app.js",
+          "details": "四个 Python 文件编译通过，两套 Account UI JavaScript 语法检查通过。"
         }
       ],
       "source_refs": [
@@ -1306,7 +1318,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 4,
+      "task_count": 5,
       "done_count": 1,
       "blocked_count": 0
     },
@@ -6493,6 +6505,63 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "created",
           "summary": "为 admin 自动化看板数据源切换到 production 独立库创建任务（p2-73 生产环境落地的后续修复）。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-77",
+      "title": "/account 取消人为回复延迟并仅在 production 保留 6-10 分钟节奏",
+      "status": "active",
+      "owner": "zac",
+      "summary": "将 Account reply job 的人为延迟按 processing_profile 收敛：staging /account 新回复立即到期，production 继续为每个 job 随机采样 360-600 秒；持久化 job、Persona preparation、幂等 claim、新消息取消和 Zendesk delivery 流程保持不变。",
+      "next_action": "目标测试通过；经 finalize 合入 main 后重启官方栈，验证 staging=0 秒、production=360-600 秒和两套 UI marker。",
+      "acceptance_criteria": [
+        "staging /account 创建的所有新 Account reply job 不再增加 6-10 分钟人为等待，scheduled_for 立即到期；回复仍经持久化 job 和异步 worker 发布。",
+        "production 环境的正常 intake/rerun、Enablement worker 补偿确认和 customer-name repair replacement job 均继续按每个 job 随机 360-600 秒调度。",
+        "processing_profile 缺失按 staging 处理，非法值明确失败；不新增配置、feature flag、数据库字段或迁移。",
+        "staging UI 明确显示回复 queued 并在 preparation 完成后发布；production UI 保留 scheduled 和 6-10 分钟说明。",
+        "现有 reply job 的状态、scheduled_for API 字段、Persona version fence、幂等 claim、新消息取消、失败处理和 Zendesk delivery 契约无回归。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Environment-specific Account reply timing and UI contracts",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_reply_version_fence backend.tests.test_account_intake backend.tests.test_worker backend.tests.test_repair_account_customer_name backend.tests.test_account_ui_contract backend.tests.test_production_ui_contract",
+          "details": "314 tests 全绿：staging intake、Enablement worker 补偿与 customer-name repair 的 reply job 立即到期；production 三条路径保持 360-600 秒采样；非法 profile 明确失败；staging UI 改为 queued/immediate，production UI 保留 scheduled/6-10 分钟。"
+        },
+        {
+          "type": "test",
+          "label": "Changed Python and JavaScript syntax",
+          "command": "python -m py_compile backend/main.py backend/worker.py backend/services/account_reply_jobs.py backend/scripts/repair_account_customer_name.py && node --check ui/account-ui/app.js && node --check ui/production-ui/app.js",
+          "details": "四个 Python 文件编译通过，两套 Account UI JavaScript 语法检查通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/account_reply_jobs.py",
+        "backend/main.py",
+        "backend/worker.py",
+        "backend/scripts/repair_account_customer_name.py",
+        "ui/account-ui"
+      ],
+      "created_at": "2026-08-19",
+      "updated_at": "2026-08-19",
+      "history": [
+        {
+          "at": "2026-08-19",
+          "event": "created",
+          "summary": "按环境拆分 Account reply timing：staging 取消人为延迟，production 保留 6-10 分钟随机节奏。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "progress",
+          "summary": "共享延迟策略、API/worker/repair 接线与 UI 文案完成；314 个目标测试及 Python/JavaScript 语法检查通过。"
         }
       ],
       "legacy_refs": [],
