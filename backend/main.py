@@ -240,13 +240,10 @@ from backend.services.account_case_filters import (
 )
 from backend.services.agent_config import build_agent_config_payload
 from backend.services.prompt_runtime import (
-    PromptRuntimeSnapshot,
-    current_prompt_runtime_snapshot,
     initialize_prompt_runtime,
     initialize_prompt_runtime_from_environment,
     prompt_runtime_info,
     resolve_system_prompt,
-    use_prompt_runtime_snapshot,
 )
 from backend.services.prompt_versioning import PromptVersionService
 from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
@@ -9056,145 +9053,6 @@ async def _notify_account_rerun_failure(
         now=now_iso(),
     )
     return _account_rerun_alert_status(alert)
-
-
-def _production_rule_release(snapshot: PromptRuntimeSnapshot) -> dict[str, Any]:
-    return {
-        "release_id": snapshot.release_id,
-        "source": snapshot.source,
-        "prompts": copy.deepcopy(snapshot.prompts),
-    }
-
-
-def _production_zendesk_ticket_id(account_case: dict[str, Any]) -> str:
-    explicit = str(account_case.get("zendesk_ticket_id") or "").strip()
-    if explicit:
-        return explicit
-    from_source = _zendesk_ticket_id_from_source(account_case.get("source"))
-    if from_source:
-        return from_source
-    external_id = str(account_case.get("external_id") or "").strip()
-    return external_id if external_id.isdigit() else ""
-
-
-@app.post(
-    "/api/account/cases/{account_case_id}/promote-production",
-)
-async def promote_account_case_to_production(
-    account_case_id: str,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
-) -> dict[str, Any]:
-    """Run an independently persisted production pass after staging review."""
-    staging_case_id = str(account_case_id or "").strip()
-    if not staging_case_id:
-        raise HTTPException(status_code=422, detail="account case id is required")
-
-    bundles = await async_to_thread(ticket_repository.get_account_case_details, [staging_case_id])
-    bundle = bundles.get(staging_case_id)
-    staging_case = bundle.get("account_case") if isinstance(bundle, dict) else None
-    staging_ticket = bundle.get("ticket") if isinstance(bundle, dict) else None
-    if not isinstance(staging_case, dict):
-        raise HTTPException(status_code=404, detail="account case not found")
-    if str(staging_case.get("processing_profile") or "staging").strip().lower() != "staging":
-        raise HTTPException(status_code=409, detail="only staging cases can be promoted")
-
-    zendesk_ticket_id = _production_zendesk_ticket_id(staging_case)
-    if not zendesk_ticket_id:
-        raise HTTPException(status_code=400, detail="staging case is not linked to a Zendesk ticket")
-    existing = await async_to_thread(
-        ticket_repository.get_account_case_by_zendesk_ticket_id,
-        zendesk_ticket_id,
-        processing_profile="production",
-    )
-    if isinstance(existing, dict):
-        return {
-            "status": "already_promoted",
-            "idempotent_replay": True,
-            "account_case_id": existing.get("account_case_id"),
-            "ticket_id": existing.get("client_ticket_id"),
-            "zendesk_ticket_id": zendesk_ticket_id,
-            "processing_profile": "production",
-        }
-
-    production_ticket_id = f"PRD-{zendesk_ticket_id}"
-    snapshot = current_prompt_runtime_snapshot()
-    rule_release = _production_rule_release(snapshot)
-    requester_email = str(
-        staging_case.get("customer_email")
-        or (staging_ticket or {}).get("requester")
-        or (staging_ticket or {}).get("customer_id")
-        or ""
-    ).strip()
-    request = AccountIntakeRequest(
-        title=str(staging_case.get("title") or ""),
-        question=str(staging_case.get("question") or ""),
-        customer_email=requester_email or None,
-        customer_name=(
-            str(staging_case.get("customer_name") or "").strip() or None
-        ),
-        external_id=zendesk_ticket_id,
-        source=staging_case.get("source"),
-        created_by=f"production-review:{principal.account_id}",
-    )
-    intake_payload = {
-        "customer_name": request.customer_name,
-        "customer_email": request.customer_email,
-        "source_account_case_id": staging_case_id,
-    }
-    try:
-        with use_prompt_runtime_snapshot(snapshot):
-            result = await _create_account_intake_impl(
-                request,
-                None,
-                ticket_id_override=production_ticket_id,
-                processing_profile="production",
-                origin_staging_case_id=staging_case_id,
-                zendesk_ticket_id=zendesk_ticket_id,
-                rule_release=rule_release,
-                idempotency_scope="account_production_intake",
-                intake_payload=intake_payload,
-            )
-    except AccountProcessingFailure as exc:
-        production_ticket = await async_to_thread(ticket_repository.get_ticket, production_ticket_id)
-        production_case = await async_to_thread(
-            ticket_repository.get_account_case_by_ticket_id, production_ticket_id
-        )
-        if not isinstance(production_case, dict):
-            production_case = {
-                "account_case_id": f"AC-{production_ticket_id}",
-                "billing_ticket_id": f"AC-{production_ticket_id}",
-                "client_ticket_id": production_ticket_id,
-                "processing_profile": "production",
-                "zendesk_ticket_id": zendesk_ticket_id,
-                "origin_staging_case_id": staging_case_id,
-                "rule_release": rule_release,
-                "source": _serialize_billing_ticket_source(
-                    staging_case.get("source"),
-                    _normalize_account_source(staging_case.get("source")),
-                ),
-                "external_id": zendesk_ticket_id,
-                "created_by": f"production-review:{principal.account_id}",
-                "customer_name": str(staging_case.get("customer_name") or "").strip() or None,
-                "title": str(staging_case.get("title") or "Account request"),
-                "question": str(staging_case.get("question") or ""),
-            }
-        result = await _persist_account_processing_failure(
-            account_case=production_case,
-            ticket=production_ticket,
-            failure=exc,
-            idempotency_key=zendesk_ticket_id,
-            idempotency_scope="account_production_intake",
-        )
-    return {
-        **result,
-        "processing_profile": "production",
-        "origin_staging_case_id": staging_case_id,
-        "zendesk_ticket_id": zendesk_ticket_id,
-        "rule_release": {
-            "release_id": snapshot.release_id,
-            "source": snapshot.source,
-        },
-    }
 
 
 @app.post("/account")

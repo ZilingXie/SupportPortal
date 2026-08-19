@@ -30,7 +30,7 @@ const ACCOUNT_ACCOUNT_KEY = "supportportal_account_workspace_account";
 
 const PAGE_SIZE = 10;
 const DEFAULT_FETCH_TIMEOUT_MS = 25_000;
-const PRODUCTION_PROMOTION_TIMEOUT_MS = 300_000;
+const PRODUCTION_FORWARD_TIMEOUT_MS = 300_000;
 const SUMMARY_FRESH_MS = 30_000;
 const DETAIL_FRESH_MS = 60_000;
 const CACHE_HARD_EXPIRY_MS = 5 * 60_000;
@@ -144,9 +144,9 @@ const state = {
   zendeskAssignmentPendingCaseId: "",
   zendeskAssignmentError: "",
   zendeskAssignmentErrorCaseId: "",
-  productionPromotionPendingCaseId: "",
-  productionPromotionError: "",
-  productionPromotionErrorCaseId: "",
+  productionForwardPendingCaseId: "",
+  productionForwardError: "",
+  productionForwardErrorCaseId: "",
   zendeskAssignment: null,
   zendeskOwnershipConfirmationOpen: false,
   zendeskAssignmentTargetSnapshot: null,
@@ -1938,11 +1938,11 @@ function renderZendeskAssignmentAction(item, caseId, ticketNumber) {
   `;
 }
 
-function renderProductionPromotionAction(item, caseId) {
+function renderProductionForwardAction(item, caseId) {
   if (String(item?.processing_profile || "staging").trim().toLowerCase() !== "staging") return "";
-  const pending = state.productionPromotionPendingCaseId === caseId;
-  const error = state.productionPromotionErrorCaseId === caseId ? state.productionPromotionError : "";
-  return `<div class="production-promotion-action"><button class="ghost-button production-promotion-button" type="button" data-action="promote-production" ${pending ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span>${pending ? "Running in Production..." : "Run in Production"}</button>${error ? `<span class="production-promotion-error" role="alert">${escapeHtml(error)}</span>` : ""}</div>`;
+  const pending = state.productionForwardPendingCaseId === caseId;
+  const error = state.productionForwardErrorCaseId === caseId ? state.productionForwardError : "";
+  return `<div class="production-promotion-action"><button class="ghost-button production-promotion-button" type="button" data-action="forward-production" ${pending ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span>${pending ? "Running in Production..." : "Run in Production"}</button>${error ? `<span class="production-promotion-error" role="alert">${escapeHtml(error)}</span>` : ""}</div>`;
 }
 
 function renderDetailView() {
@@ -1991,7 +1991,7 @@ function renderDetailView() {
         </div>
         <div class="detail-header__actions">
           ${renderClassificationBadges(item)}
-          ${renderProductionPromotionAction(item, accountCaseId)}
+          ${renderProductionForwardAction(item, accountCaseId)}
           ${renderZendeskAssignmentAction(item, accountCaseId, ticketNumber)}
           <button
             class="danger-button detail-rerun-button"
@@ -2325,43 +2325,59 @@ async function assignAccountCaseToAi() {
   }
 }
 
-async function promoteAccountCaseToProduction() {
+async function forwardAccountCaseToProduction() {
   const item = state.activeItem;
   const caseId = accountCaseIdentifier(item);
-  if (!item || !caseId || state.productionPromotionPendingCaseId) return;
-  state.productionPromotionPendingCaseId = caseId;
-  state.productionPromotionError = "";
-  state.productionPromotionErrorCaseId = "";
+  if (!item || !caseId || state.productionForwardPendingCaseId) return;
+  const externalId = String(
+    item.zendesk_ticket_id
+      || item.external_id
+      || zendeskTicketId(safeSourceLink(item.source))
+      || "",
+  ).trim();
+  if (!externalId) {
+    state.productionForwardError = "Case is not linked to a Zendesk ticket.";
+    state.productionForwardErrorCaseId = caseId;
+    render();
+    return;
+  }
+  state.productionForwardPendingCaseId = caseId;
+  state.productionForwardError = "";
+  state.productionForwardErrorCaseId = "";
   render();
   try {
+    const adminEmail = String(state.currentAccount?.email || "").trim();
     const response = await accountFetch(
-      `/api/account/cases/${encodeURIComponent(caseId)}/promote-production`,
+      "/production/account",
       {
         method: "POST",
         cache: "no-store",
-        timeoutMs: PRODUCTION_PROMOTION_TIMEOUT_MS,
+        headers: { "Content-Type": "application/json" },
+        timeoutMs: PRODUCTION_FORWARD_TIMEOUT_MS,
+        body: JSON.stringify({
+          external_id: externalId,
+          title: String(item.title || "").trim(),
+          question: String(item.question || "").trim(),
+          customer_email: String(item.customer_email || item.requester || item.customer_id || "").trim() || null,
+          customer_name: String(item.customer_name || "").trim() || null,
+          source: item.source || null,
+          created_by: adminEmail ? `account-forward:${adminEmail}` : "account-forward",
+        }),
       },
     );
     const payload = await readResponsePayload(response);
-    if (!response.ok) throw new Error(responseErrorMessage(payload, "Could not run this case in Production."));
-    const productionCaseId = String(payload.account_case_id || payload.billing_ticket_id || payload.ticket_id || "").trim();
-    const productionDetail = productionCaseId ? await fetchTicketDetail(productionCaseId, { force: true }) : null;
-    if (productionDetail) {
-      state.activeItem = productionDetail;
-      state.view = "detail";
-      cacheDetail(productionDetail);
-    }
-    invalidateSummaryCache();
-    await fetchTickets({ force: true });
-    showToast(payload.idempotent_replay ? "Production run already exists" : "Production run started");
+    if (!response.ok) throw new Error(responseErrorMessage(payload, "Could not send this case to the production environment."));
+    showToast(payload.idempotent_replay
+      ? "Case already exists in the production environment"
+      : "Case sent to the production environment");
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Could not run this case in Production.";
-    state.productionPromotionError = errorMessage.startsWith("Request timed out after ")
-      ? `${errorMessage}. The request may still be running on the server. Refresh and check for a PRD-* Production Case.`
+    const errorMessage = error instanceof Error ? error.message : "Could not send this case to the production environment.";
+    state.productionForwardError = errorMessage.startsWith("Request timed out after ")
+      ? `${errorMessage}. The request may still be running on the server. Open /production/ to check the case.`
       : errorMessage;
-    state.productionPromotionErrorCaseId = caseId;
+    state.productionForwardErrorCaseId = caseId;
   } finally {
-    state.productionPromotionPendingCaseId = "";
+    state.productionForwardPendingCaseId = "";
     render();
   }
 }
@@ -2763,8 +2779,8 @@ function bind() {
       void addMessageAsZendeskInternalComment(el.dataset.messageId || "");
     });
   });
-  document.querySelectorAll("[data-action='promote-production']").forEach((el) => {
-    el.addEventListener("click", () => void promoteAccountCaseToProduction());
+  document.querySelectorAll("[data-action='forward-production']").forEach((el) => {
+    el.addEventListener("click", () => void forwardAccountCaseToProduction());
   });
   document.querySelectorAll("[data-action='open-zendesk-ownership-confirmation']").forEach((el) => {
     el.addEventListener("click", () => {

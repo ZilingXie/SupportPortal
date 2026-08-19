@@ -48,6 +48,7 @@
 - Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - /production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动写入真实 Zendesk internal comment。
+- /account 的 Run in Production 按钮改为将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk internal comment 投递；staging 库内晋级（PRD Case）逻辑已移除。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
