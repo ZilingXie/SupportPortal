@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p1-18",
   "title": "完成 AI 回复写回 Zendesk：internal comment",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "Production 注册 Automation 的 Account AI 回复可幂等写回 Zendesk private internal comment，并以只读 audit 回查处理未知投递结果。",
-  "next_action": "Run implementation review, finalize the task, restart the official stack, and verify health/build provenance before the single-case audit recovery.",
+  "next_action": "已完成实现、合并后官方栈验证，以及 AC-PRD-12838 / message 1372 的单条 audit-first private comment 写回和 Zendesk readback。",
   "acceptance_criteria": [
     "Admin 可将 Account AI 消息作为 public=false internal comment 写入关联 Zendesk Ticket，并记录幂等结果。",
     "Production 注册 Automation 的已发布 Account AI reply 与 queued Zendesk delivery intent 在同一 publication transaction 内持久化。",
@@ -70,6 +70,23 @@
       "label": "PostgreSQL publication and shared Zendesk result persistence integration coverage",
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_account_reply_publication_postgres.py",
       "result": "8 skipped without RUN_POSTGRES_INTEGRATION=1; no external Zendesk writes"
+    },
+    {
+      "type": "pr",
+      "number": 792,
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/792",
+      "label": "PR #792"
+    },
+    {
+      "type": "deployment",
+      "label": "Post-merge official single-host stack verification",
+      "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+      "result": "official_project=deployment; image, health, and runtime build ref 4623389cde87 matched; auxiliary_stack_present=false"
+    },
+    {
+      "type": "deployment",
+      "label": "Single-case Production Zendesk private-comment recovery",
+      "result": "AC-PRD-12838 / Zendesk ticket 12838 / message 1372 had no local ledger or prior private-comment readback; the /account Admin API returned added with comment 52663858132628, local idempotency and message meta persisted, and Zendesk audits read back the same private comment"
     }
   ],
   "source_refs": [
@@ -142,6 +159,11 @@
       "at": "2026-08-19",
       "event": "production_account_zendesk_contract_unification_implemented",
       "summary": "完成共享 API-backed internal-comment service：/account 管理动作、Production worker 和 audit reconciliation 读取同一持久化 AI message，复用同一幂等记录并写回 message meta；Production delivery ledger 保持 queued/pending/delivered/outcome_unknown 的 fail-closed 状态。"
+    },
+    {
+      "at": "2026-08-19",
+      "event": "production_account_zendesk_contract_verified",
+      "summary": "PR #792 合并后的 official deployment 栈 provenance、/account Production marker 和 AC-PRD-12838 单条 audit-first private comment 写回均已验证；Zendesk comment 52663858132628 通过 audits readback 确认。"
     }
   ],
   "legacy_refs": [
