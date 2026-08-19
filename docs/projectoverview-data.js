@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T05:50:45Z",
-  "source_base_commit": "1d2bae7f2fccfc4d4546ebab9f80cfbb08d13298",
-  "registry_digest": "a7afae1fa0f97ece47d7d2ce87c57a1b82f6d19f173c90ef7944b0caf73be79c",
+  "generated_at": "2026-08-19T06:11:29Z",
+  "source_base_commit": "4e715ad6cbe794e84994e39fd2e35d7657c4a9d8",
+  "registry_digest": "9dfd9b82a207e6f9715d59598bac9c9cd07fcde077e742d508dc401a9f950d2b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1237,6 +1237,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/main.py && node --check ui/account-ui/app.js && git diff --check",
           "details": "后端编译、前端 JS 语法、空白检查全部通过。"
+        },
+        {
+          "type": "test",
+          "label": "Sync unit tests (InMemory + CLI)",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy python3 -m unittest backend.tests.test_prompt_versioning（应用镜像内执行）",
+          "details": "21 全绿，含新增 4 例：active release 同步进全新目标库并成为唯一 active；重复同步幂等（created=false）；candidate 同步后源端 activate 再同步可在目标端对齐 active 并切换 active version；内容哈希不匹配被拒绝。"
+        },
+        {
+          "type": "test",
+          "label": "Postgres integration (independent schema)",
+          "command": "RUN_PROMPT_POSTGRES_TEST=true TICKET_DB_DSN=\u003cstaging> TICKET_DB_MIGRATION_DSN=\u003cmigration> python3 -m unittest backend.tests.test_prompt_versioning_postgres（应用镜像内执行）",
+          "details": "3 全绿，含新增 1 例：在独立 schema 中验证 candidate 同步、唯一 active 不变、源端 activate 后目标端状态与 active version 内容对齐；临时 schema 用后即删。"
+        },
+        {
+          "type": "test",
+          "label": "Deploy script contract",
+          "command": "python3 -m unittest backend.tests.test_deploy_ec2 backend.tests.test_production_ui_contract",
+          "details": "27 全绿，含新增 2 例：启用 production profile 的成功部署在 validate 后（down 前）与 activate 后各记录一次 sync 调用且参数正确；sync 失败时部署非零退出且未发生 down/up（运行栈不受影响）；契约测试断言 deploy 脚本含 sync 接线。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "bash -n deployment/deploy_ec2.sh",
+          "details": "部署脚本语法检查通过。"
         }
       ],
       "source_refs": [
@@ -1246,7 +1270,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 2,
+      "task_count": 3,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -6279,6 +6303,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "created",
           "summary": "将 /account 的 Run in Production 从 staging 库内晋级重构为转发到 /production 独立环境。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-75",
+      "title": "部署时把候选 Prompt Release 同步到 /production 库",
+      "status": "active",
+      "owner": "zac",
+      "summary": "修复 #795 遗留的部署缺口：deploy_ec2.sh 只对 staging 库执行 prompt_release prepare/activate，但 PROMPT_RELEASE_ID 同时下发给 production 栈；release id 为随机 UUID，/production 独立库没有同 id 的 release 行时 api_production 启动即崩并触发整栈回滚。新增 prompt_release CLI sync 子命令（--release-id/--target-dsn，幂等，按内容哈希校验）与仓库层 sync_prompt_release（Protocol/InMemory/Postgres），部署脚本在 validate 之后、activate 之后各同步一次：前者是服务启动前的硬门禁（失败即中止且不停栈），后者把 production 库的 release 状态对齐为 active（失败仅告警，candidate 状态仍可部署）。",
+      "next_action": "合并后从根 main 重启官方栈并做 live 验证（部署日志出现两次 release 同步、/production 门禁通过、production 库 current 与 staging 一致），完成后收尾。",
+      "acceptance_criteria": [
+        "prompt_release CLI 新增 sync 子命令：以 staging 库为源、--target-dsn 指定目标库，幂等复制 release 行、items 与被引用版本行（内容哈希不一致时报错拒绝），目标库无该 id 时插入、有则保持；源 release 为 active 时把目标对齐为 active；完成后在目标库执行与启动时相同的 validate。",
+        "仓库层 sync_prompt_release 在 Protocol、InMemoryTicketRepository、PostgresTicketRepository 三处实现；Postgres 实现使用独立 advisory lock 与单事务，遵守 one-active release/one-active version 唯一索引。",
+        "deploy_ec2.sh 在 prompt release validate 成功后（停止服务前）执行 production 库同步，失败则标记 candidate 失败、清理回滚镜像并以非零退出（运行栈不受影响）；activate 成功后再次同步对齐 active 状态，失败输出 WARNING（candidate 仍可部署）；production profile 未启用时不执行同步。",
+        "旧行为零回归：未设置 PRODUCTION_TICKET_DB_DSN 时部署流程与之前完全一致。",
+        "单元测试（InMemory + CLI 注入双仓库）、真实 Postgres 集成测试（独立 schema 模拟独立库）与部署脚本契约测试覆盖上述行为。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Sync unit tests (InMemory + CLI)",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy python3 -m unittest backend.tests.test_prompt_versioning（应用镜像内执行）",
+          "details": "21 全绿，含新增 4 例：active release 同步进全新目标库并成为唯一 active；重复同步幂等（created=false）；candidate 同步后源端 activate 再同步可在目标端对齐 active 并切换 active version；内容哈希不匹配被拒绝。"
+        },
+        {
+          "type": "test",
+          "label": "Postgres integration (independent schema)",
+          "command": "RUN_PROMPT_POSTGRES_TEST=true TICKET_DB_DSN=\u003cstaging> TICKET_DB_MIGRATION_DSN=\u003cmigration> python3 -m unittest backend.tests.test_prompt_versioning_postgres（应用镜像内执行）",
+          "details": "3 全绿，含新增 1 例：在独立 schema 中验证 candidate 同步、唯一 active 不变、源端 activate 后目标端状态与 active version 内容对齐；临时 schema 用后即删。"
+        },
+        {
+          "type": "test",
+          "label": "Deploy script contract",
+          "command": "python3 -m unittest backend.tests.test_deploy_ec2 backend.tests.test_production_ui_contract",
+          "details": "27 全绿，含新增 2 例：启用 production profile 的成功部署在 validate 后（down 前）与 activate 后各记录一次 sync 调用且参数正确；sync 失败时部署非零退出且未发生 down/up（运行栈不受影响）；契约测试断言 deploy 脚本含 sync 接线。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "bash -n deployment/deploy_ec2.sh",
+          "details": "部署脚本语法检查通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/scripts/prompt_release.py",
+        "backend/repositories/ticket_repository.py",
+        "deployment/deploy_ec2.sh",
+        "backend/tests/test_prompt_versioning.py",
+        "backend/tests/test_prompt_versioning_postgres.py",
+        "backend/tests/test_deploy_ec2.py",
+        "backend/tests/test_production_ui_contract.py"
+      ],
+      "created_at": "2026-08-19",
+      "updated_at": "2026-08-19",
+      "history": [
+        {
+          "at": "2026-08-19",
+          "event": "created",
+          "summary": "为 /production 库的 prompt release 部署同步缺口创建任务：新增 sync 子命令与部署接线。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "progress",
+          "summary": "完成实现与目标测试：仓库层 sync_prompt_release（Protocol/InMemory/Postgres）、CLI sync 子命令、deploy_ec2.sh 双点接线与失败契约，单元/PG 集成/部署契约测试全绿。"
         }
       ],
       "legacy_refs": [],

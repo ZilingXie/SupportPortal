@@ -153,6 +153,16 @@ class ProductionDeploymentContractTests(unittest.TestCase):
         self.assertIn('"${COMPOSE_PROFILE_ARGS[@]}" build', deploy)
         self.assertIn('production_page_url="http://127.0.0.1:${host_port}/production/"', deploy)
 
+    def test_deploy_script_syncs_prompt_release_to_production_database(self) -> None:
+        deploy = Path("deployment/deploy_ec2.sh").read_text(encoding="utf-8")
+
+        self.assertIn("sync_candidate_prompt_release_to_production", deploy)
+        self.assertIn(
+            'sync --release-id "${CANDIDATE_PROMPT_RELEASE_ID}" --target-dsn "${target_dsn}"',
+            deploy,
+        )
+        self.assertIn("Prompt Release production sync failed", deploy)
+
     def test_env_example_documents_production_dsn(self) -> None:
         env_example = Path(".env.example").read_text(encoding="utf-8")
 

@@ -278,6 +278,20 @@ activate_candidate_prompt_release() {
   return 1
 }
 
+sync_candidate_prompt_release_to_production() {
+  if [[ ${#COMPOSE_PROFILE_ARGS[@]} -eq 0 ]]; then
+    return 0
+  fi
+  local target_dsn
+  target_dsn="$(resolve_env_value PRODUCTION_TICKET_DB_DSN)"
+  [[ -n "${target_dsn}" ]] || fail "PRODUCTION_TICKET_DB_DSN disappeared while the production profile was enabled"
+  if ! run_prompt_release_command sync --release-id "${CANDIDATE_PROMPT_RELEASE_ID}" --target-dsn "${target_dsn}" >/dev/null; then
+    return 1
+  fi
+  log "Synced Prompt Release ${CANDIDATE_PROMPT_RELEASE_ID} to the /production database."
+  return 0
+}
+
 verify_prompt_runtime_services() {
   local service container_id actual_release
   for service in api rag_api rag_worker worker_query worker_aux; do
@@ -608,6 +622,13 @@ main() {
     fail "Prompt Release validation failed; the running stack was not stopped"
   fi
 
+  if ! sync_candidate_prompt_release_to_production; then
+    mark_candidate_prompt_release_failed "Prompt Release production sync failed" || true
+    cleanup_rollback_image
+    ROLLBACK_IMAGE=""
+    fail "Prompt Release production sync failed for ${CANDIDATE_PROMPT_RELEASE_ID}; the running stack was not stopped"
+  fi
+
   log "Stopping services..."
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" down; then
     show_compose_diagnostics
@@ -672,6 +693,10 @@ main() {
     mark_candidate_prompt_release_failed "Prompt Release activation failed" || true
     restore_previous_stack "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
     fail "Prompt Release activation failed for ${CANDIDATE_PROMPT_RELEASE_ID}"
+  fi
+
+  if ! sync_candidate_prompt_release_to_production; then
+    log "WARNING: post-activation Prompt Release production sync failed; the /production database keeps release ${CANDIDATE_PROMPT_RELEASE_ID} as a deployable candidate."
   fi
 
   cleanup_rollback_image

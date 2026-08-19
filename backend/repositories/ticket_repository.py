@@ -359,6 +359,7 @@ _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
 _SCHEMA_BOOTSTRAP_ADVISORY_LOCK = (842918, 1)
+_PROMPT_RELEASE_SYNC_ADVISORY_LOCK = (842918, 3)
 # Namespace 842918 key 4 is reserved for Persona registry writes.
 _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK = (842918, 4)
 # Namespace 842918 key 5 serializes Account rerun admission across API processes.
@@ -1969,6 +1970,7 @@ class TicketRepository(Protocol):
     def get_active_prompt_release(self) -> dict[str, Any] | None: ...
     def get_prompt_release(self, release_id: str) -> dict[str, Any] | None: ...
     def list_prompt_releases(self, limit: int = 50) -> list[dict[str, Any]]: ...
+    def sync_prompt_release(self, release: dict[str, Any], versions: list[dict[str, Any]]) -> dict[str, Any]: ...
 
     def begin_idempotent_request(
         self,
@@ -4335,6 +4337,92 @@ class InMemoryTicketRepository:
     def get_prompt_release(self, release_id: str) -> dict[str, Any] | None:
         release = self._prompt_releases.get(str(release_id or "").strip())
         return copy.deepcopy(release) if release else None
+
+    def sync_prompt_release(self, release: dict[str, Any], versions: list[dict[str, Any]]) -> dict[str, Any]:
+        with self._assignment_lock:
+            normalized_release_id = str(release.get("release_id") or "").strip()
+            if not normalized_release_id:
+                raise ValueError("release_id is required")
+            status = str(release.get("status") or "").strip()
+            if status not in {"candidate", "active"}:
+                raise ValueError(f"cannot sync a prompt release with status {status or 'unknown'}")
+            items = {str(key): int(version) for key, version in dict(release.get("items") or {}).items()}
+
+            versions_created = 0
+            versions_matched = 0
+            for row in versions:
+                key = str(row.get("prompt_key") or "").strip()
+                version = int(row.get("version") or 0)
+                if not key or version < 1 or items.get(key) != version:
+                    raise ValueError(f"synced version does not match the release items: {key} v{version}")
+                definition = self._prompt_definitions.get(key)
+                if definition is None or definition.get("retired_at"):
+                    raise ValueError(f"prompt definition missing or retired for synced version: {key}")
+                content_sha256 = str(row.get("content_sha256") or "").strip()
+                if not content_sha256:
+                    raise ValueError(f"content_sha256 is required for synced version: {key} v{version}")
+                existing = next((item for item in self._prompt_versions.get(key, []) if int(item["version"]) == version), None)
+                if existing is not None:
+                    if str(existing.get("content_sha256")) != content_sha256:
+                        raise ValueError(f"content hash mismatch for synced version: {key} v{version}")
+                    versions_matched += 1
+                    continue
+                row_status = str(row.get("status") or "draft")
+                if row_status == "active":
+                    for item in self._prompt_versions.get(key, []):
+                        if item.get("status") == "active":
+                            item.update({"status": "superseded"})
+                elif row_status == "scheduled":
+                    for item in self._prompt_versions.get(key, []):
+                        if item.get("status") == "scheduled":
+                            item.update({"status": "draft", "scheduled_by": None, "scheduled_at": None})
+                self._prompt_versions.setdefault(key, []).append({
+                    "prompt_key": key,
+                    "version": version,
+                    "content": str(row.get("content") or ""),
+                    "content_sha256": content_sha256,
+                    "status": row_status,
+                    "based_on_version": row.get("based_on_version"),
+                    "change_note": str(row.get("change_note") or "Synced from another deployment database"),
+                    "created_by": str(row.get("created_by") or "system"),
+                    "created_at": row.get("created_at"),
+                    "scheduled_by": row.get("scheduled_by"),
+                    "scheduled_at": row.get("scheduled_at"),
+                    "activated_at": row.get("activated_at"),
+                })
+                versions_created += 1
+
+            for key, version in items.items():
+                if not any(int(item["version"]) == version for item in self._prompt_versions.get(key, [])):
+                    raise ValueError(f"synced release is missing {key} v{version}")
+
+            existing_release = self._prompt_releases.get(normalized_release_id)
+            created = existing_release is None
+            if created:
+                if status == "active":
+                    for item in self._prompt_releases.values():
+                        if item.get("status") == "active":
+                            item.update({"status": "superseded"})
+                previous_release_id = str(release.get("previous_release_id") or "").strip() or None
+                if previous_release_id and previous_release_id not in self._prompt_releases:
+                    previous_release_id = None
+                self._prompt_releases[normalized_release_id] = {
+                    "release_id": normalized_release_id,
+                    "build_ref": str(release.get("build_ref") or "unknown"),
+                    "status": status,
+                    "previous_release_id": previous_release_id,
+                    "created_at": release.get("created_at"),
+                    "activated_at": release.get("activated_at"),
+                    "failure_reason": None,
+                    "items": dict(items),
+                }
+            return {
+                "release_id": normalized_release_id,
+                "status": status,
+                "created": created,
+                "versions_created": versions_created,
+                "versions_matched": versions_matched,
+            }
 
     def list_prompt_releases(self, limit: int = 50) -> list[dict[str, Any]]:
         releases = sorted(self._prompt_releases.values(), key=lambda item: str(item["created_at"]), reverse=True)
@@ -16152,6 +16240,114 @@ class PostgresTicketRepository:
                 rows = cur.fetchall()
                 return [self._prompt_release_from_row(cur, row) for row in rows]
         return self._run_with_connection_retry("list_prompt_releases", _operation)
+
+    def sync_prompt_release(self, release: dict[str, Any], versions: list[dict[str, Any]]) -> dict[str, Any]:
+        normalized_release_id = str(release.get("release_id") or "").strip()
+        if not normalized_release_id:
+            raise ValueError("release_id is required")
+        status = str(release.get("status") or "").strip()
+        if status not in {"candidate", "active"}:
+            raise ValueError(f"cannot sync a prompt release with status {status or 'unknown'}")
+        items = {str(key): int(version) for key, version in dict(release.get("items") or {}).items()}
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT pg_advisory_xact_lock(%s, %s)"), _PROMPT_RELEASE_SYNC_ADVISORY_LOCK)
+                versions_created = 0
+                versions_matched = 0
+                for row in versions:
+                    key = str(row.get("prompt_key") or "").strip()
+                    version = int(row.get("version") or 0)
+                    if not key or version < 1 or items.get(key) != version:
+                        raise ValueError(f"synced version does not match the release items: {key} v{version}")
+                    content_sha256 = str(row.get("content_sha256") or "").strip()
+                    if not content_sha256:
+                        raise ValueError(f"content_sha256 is required for synced version: {key} v{version}")
+                    cur.execute(
+                        sql.SQL("SELECT content_sha256 FROM {} WHERE prompt_key=%s AND version=%s").format(self._table("support_prompt_versions")),
+                        (key, version),
+                    )
+                    existing_row = cur.fetchone()
+                    if existing_row is not None:
+                        if str(existing_row[0]) != content_sha256:
+                            raise ValueError(f"content hash mismatch for synced version: {key} v{version}")
+                        versions_matched += 1
+                        continue
+                    row_status = str(row.get("status") or "draft")
+                    if row_status == "active":
+                        cur.execute(
+                            sql.SQL("UPDATE {} SET status='superseded' WHERE prompt_key=%s AND status='active'").format(self._table("support_prompt_versions")),
+                            (key,),
+                        )
+                    elif row_status == "scheduled":
+                        cur.execute(
+                            sql.SQL("UPDATE {} SET status='draft',scheduled_by=NULL,scheduled_at=NULL WHERE prompt_key=%s AND status='scheduled'").format(self._table("support_prompt_versions")),
+                            (key,),
+                        )
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (prompt_key,version,content,content_sha256,status,based_on_version,change_note,created_by,created_at,scheduled_by,scheduled_at,activated_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                        ).format(self._table("support_prompt_versions")),
+                        (
+                            key,
+                            version,
+                            str(row.get("content") or ""),
+                            content_sha256,
+                            row_status,
+                            row.get("based_on_version"),
+                            str(row.get("change_note") or "Synced from another deployment database"),
+                            str(row.get("created_by") or "system"),
+                            row.get("created_at"),
+                            row.get("scheduled_by"),
+                            row.get("scheduled_at"),
+                            row.get("activated_at"),
+                        ),
+                    )
+                    versions_created += 1
+
+                for key, version in items.items():
+                    cur.execute(
+                        sql.SQL("SELECT 1 FROM {} WHERE prompt_key=%s AND version=%s").format(self._table("support_prompt_versions")),
+                        (key, version),
+                    )
+                    if cur.fetchone() is None:
+                        raise ValueError(f"synced release is missing {key} v{version}")
+
+                cur.execute(
+                    sql.SQL("SELECT status FROM {} WHERE release_id=%s FOR UPDATE").format(self._table("support_prompt_releases")),
+                    (normalized_release_id,),
+                )
+                release_row = cur.fetchone()
+                created = release_row is None
+                if created:
+                    if status == "active":
+                        cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_releases")))
+                    previous_release_id = str(release.get("previous_release_id") or "").strip() or None
+                    if previous_release_id:
+                        cur.execute(
+                            sql.SQL("SELECT 1 FROM {} WHERE release_id=%s").format(self._table("support_prompt_releases")),
+                            (previous_release_id,),
+                        )
+                        if cur.fetchone() is None:
+                            previous_release_id = None
+                    cur.execute(
+                        sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason) VALUES (%s,%s,%s,%s,%s,%s,NULL)").format(self._table("support_prompt_releases")),
+                        (normalized_release_id, str(release.get("build_ref") or "unknown"), status, previous_release_id, release.get("created_at"), release.get("activated_at")),
+                    )
+                    for key, version in items.items():
+                        cur.execute(
+                            sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) VALUES (%s,%s,%s)").format(self._table("support_prompt_release_items")),
+                            (normalized_release_id, key, version),
+                        )
+                return {
+                    "release_id": normalized_release_id,
+                    "status": status,
+                    "created": created,
+                    "versions_created": versions_created,
+                    "versions_matched": versions_matched,
+                }
+        return self._run_with_connection_retry("sync_prompt_release", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:
