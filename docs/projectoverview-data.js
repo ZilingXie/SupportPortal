@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T02:43:42Z",
-  "source_base_commit": "485f4fac453ad4f5537b48fe4ca9a36a7ab6bb10",
-  "registry_digest": "ab642ebaa30d33d66ce89e6dfa37d3d12830ff194f85f74dd19995001305c596",
+  "generated_at": "2026-08-19T02:54:28Z",
+  "source_base_commit": "a697a18a035f42ee35989eb0fb7e5bca3f440885",
+  "registry_digest": "5afa4e6394e5e7b1850508faf345bd2476b63bf00eb4a29fe84ba840a5e65a0c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -520,6 +520,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona Signature source-removal focused suite",
           "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_workspace_admin_ui_contract backend.tests.test_agent_config backend.tests.test_worker.WorkerResilienceTests.test_reply_facts_prepare_pins_persisted_persona_assignment",
           "result": "107 tests passed with 19 environment-dependent PostgreSQL tests skipped; Persona presets, API validation, repository writes/rollback, Admin UI, Agent Config, and runtime prompt projection are green."
+        },
+        {
+          "type": "test",
+          "label": "Non-destructive signed reply publication fence",
+          "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_worker.py; git diff --check",
+          "result": "120 tests passed; signed generated replies move to Human Review before publish_account_reply, unsigned replies remain unchanged, and Python compilation and diff checks passed."
         }
       ],
       "source_refs": [
@@ -4042,7 +4048,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "统一 fraud_account、enablement 和 account_suspension 的客户回复内容、内部交接顺序、关闭条件以及 Intake、full rerun 和 recovery 的一致行为。",
-      "next_action": "进入 repair R2：用非破坏性的尾部签名断言替换自动截断，并在 publish_account_reply 之前 fail closed。",
+      "next_action": "进入 repair R3：修复 Enablement 完成判定与 Account 回复契约的疑问、未来、否定和状态撤销语义。",
       "acceptance_criteria": [
         "fraud_account 在内部邮件确认发送成功后，客户回复明确说明 relevant team 将在 24 小时内联系，且不会自动关闭工单。",
         "account_suspension 首次回复询问首选联系邮箱及是否使用工单邮箱，说明 24 小时联系、关闭和 24 小时后可 reopen；仅在明确确认、内部邮件成功和 closing reply 持久发布后关闭。",
@@ -4088,6 +4094,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona Signature source-removal focused suite",
           "command": "python -m unittest backend.tests.test_account_admin_features backend.tests.test_workspace_api backend.tests.test_account_persona_postgres backend.tests.test_workspace_admin_ui_contract backend.tests.test_agent_config backend.tests.test_worker.WorkerResilienceTests.test_reply_facts_prepare_pins_persisted_persona_assignment",
           "result": "107 tests passed with 19 environment-dependent PostgreSQL tests skipped; Persona presets, API validation, repository writes/rollback, Admin UI, Agent Config, and runtime prompt projection are green."
+        },
+        {
+          "type": "test",
+          "label": "Non-destructive signed reply publication fence",
+          "command": "python -m unittest backend.tests.test_automation_persona backend.tests.test_account_reply_version_fence backend.tests.test_worker; python -m py_compile backend/services/automation_persona.py backend/worker.py backend/tests/test_worker.py; git diff --check",
+          "result": "120 tests passed; signed generated replies move to Human Review before publish_account_reply, unsigned replies remain unchanged, and Python compilation and diff checks passed."
         }
       ],
       "source_refs": [

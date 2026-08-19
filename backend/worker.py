@@ -59,9 +59,9 @@ from backend.services.automation_persona import (
     AutomationPersonaError,
     build_account_automation_reply_facts,
     build_automation_reply_facts,
+    assert_no_trailing_automation_signature,
     extract_automation_resolution_facts,
     render_automation_reply,
-    strip_trailing_automation_signature,
     validate_account_reply_contract,
 )
 from backend.services.account_automation_reconciliation import (
@@ -931,8 +931,8 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         return
 
     if existing_message is None:
-        content = strip_trailing_automation_signature(content)
         try:
+            assert_no_trailing_automation_signature(content)
             if (
                 isinstance(payload.get("reply_facts"), dict)
                 and payload.get("reply_facts")
@@ -2186,9 +2186,9 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             source_facts=[note], resolution_status="completed",
             save_case=ticket_repository.save_account_case, persist_failure=False,
         )
-        customer_reply = strip_trailing_automation_signature(customer_reply)
-        if enablement_completed:
-            try:
+        try:
+            assert_no_trailing_automation_signature(customer_reply)
+            if enablement_completed:
                 validate_account_reply_contract(
                     customer_reply,
                     {
@@ -2198,14 +2198,14 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                     top_level_reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
                     close_after_publish=True,
                 )
-            except AutomationPersonaError as exc:
-                _mark_account_case_for_human_review(
-                    account_case,
-                    reason=str(exc),
-                    timestamp=now_iso(),
-                    policy_decision="automation_persona_human_review",
-                )
-                customer_reply = ""
+        except AutomationPersonaError as exc:
+            _mark_account_case_for_human_review(
+                account_case,
+                reason=str(exc),
+                timestamp=now_iso(),
+                policy_decision="automation_persona_human_review",
+            )
+            customer_reply = ""
         timestamp = now_iso()
         source = f"{handler}_reply_email"
         case_id = account_case.get("account_case_id") or account_case.get("billing_ticket_id")
