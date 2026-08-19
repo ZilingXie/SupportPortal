@@ -1025,6 +1025,79 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("'queued'", rendered_queries)
         self.assertEqual(connection.commit_count, 1)
 
+    def test_postgres_internal_comment_result_persists_message_meta_and_delivery(self) -> None:
+        delivery_row = (
+            "AC-ZENDESK-RESULT",
+            "42",
+            "12838",
+            "production-zendesk-comment:AC-ZENDESK-RESULT:42",
+            False,
+            "pending",
+            None,
+            None,
+            None,
+            datetime(2026, 8, 18, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 0, 3, tzinfo=timezone.utc),
+        )
+
+        class _ZendeskResultCursor(_ReusableCursor):
+            def __init__(self) -> None:
+                super().__init__()
+                self._last_sql = ""
+                self.rowcount = 0
+
+            def execute(self, *args, **kwargs) -> None:
+                super().execute(*args, **kwargs)
+                query = args[0]
+                self._last_sql = query.as_string() if hasattr(query, "as_string") else str(query)
+                self.rowcount = 1
+
+            def fetchone(self):
+                if "SELECT state FROM" in self._last_sql:
+                    return ("processing",)
+                if "SELECT meta FROM" in self._last_sql:
+                    return ({},)
+                if "SELECT account_case_id, message_id" in self._last_sql:
+                    return delivery_row
+                return None
+
+        cursor = _ZendeskResultCursor()
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _operation_name, action: action(connection),
+        ):
+            result = repository.record_account_zendesk_internal_comment_result(
+                account_case_id="AC-ZENDESK-RESULT",
+                ticket_id="TK-ZENDESK-RESULT",
+                message_id="42",
+                idempotency_key="AC-ZENDESK-RESULT:42",
+                result_payload={
+                    "status": "added",
+                    "account_case_id": "AC-ZENDESK-RESULT",
+                    "message_id": "42",
+                    "actor_id": "system:production-account-reply",
+                    "trigger": "production_worker",
+                    "comment_id": "comment-42",
+                },
+                recorded_at="2026-08-18T00:03:01+00:00",
+            )
+
+        self.assertTrue(result["audit_persisted"])
+        rendered_queries = "\n".join(
+            query.as_string() if hasattr(query, "as_string") else str(query)
+            for args, _kwargs in cursor.executed
+            for query in [args[0]]
+        )
+        self.assertIn("support_idempotency_records", rendered_queries)
+        self.assertIn("support_ticket_messages", rendered_queries)
+        self.assertIn("support_account_zendesk_comment_deliveries", rendered_queries)
+        self.assertIn("status=%s", rendered_queries)
+        self.assertEqual(connection.commit_count, 1)
+
     def test_postgres_zendesk_delivery_claim_only_transitions_queued_rows(self) -> None:
         delivery_row = (
             "AC-ZENDESK-CLAIM",
