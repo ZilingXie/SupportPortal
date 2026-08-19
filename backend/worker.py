@@ -74,6 +74,11 @@ from backend.services.account_automation_delivery import (
     is_rerun_owned_delivery,
 )
 from backend.services.automation_routing import is_registered_automation
+from backend.services.account_zendesk_internal_comment import (
+    AccountZendeskInternalCommentError,
+    deliver_account_ai_message_as_internal_comment,
+    reconcile_account_ai_message_internal_comment,
+)
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -121,11 +126,6 @@ from backend.services.client_ticket_agent_runtime import (
 from backend.services.product_selection import resolve_support_product_context
 from backend.services.prompt_runtime import initialize_prompt_runtime
 from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
-from backend.services.zendesk_comments import (
-    ZendeskCommentError,
-    add_internal_comment,
-    find_private_internal_comment,
-)
 from backend.services.rag_executor import build_worker_rag_executor
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -146,6 +146,7 @@ TICKET_LOOKUP_RETRY_MAX = 6
 TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
+PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID = "system:production-account-reply"
 
 
 def _account_reply_needs_persona_render(payload: dict[str, Any]) -> bool:
@@ -981,15 +982,13 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         published_at=published_at,
         reply_execution=reply_execution,
     )
-    persisted_content = str(published_reply.get("content") or "").strip()
-    if not persisted_content:
+    if not str(published_reply.get("content") or "").strip():
         return
     message_id = str(published_reply.get("message_id") or "").strip() or job_id
     _deliver_production_account_reply_to_zendesk(
         ticket_id=ticket_id,
         message_id=message_id,
         job_id=job_id,
-        content=persisted_content,
     )
 
 
@@ -998,7 +997,6 @@ def _deliver_production_account_reply_to_zendesk(
     ticket_id: str,
     message_id: str | None = None,
     job_id: str | None = None,
-    content: str,
 ) -> None:
     """Write one published production reply as a Zendesk internal comment."""
     effective_message_id = str(message_id or job_id or "").strip()
@@ -1056,8 +1054,6 @@ def _deliver_production_account_reply_to_zendesk(
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
                 message_id=effective_message_id,
-                zendesk_ticket_id=zendesk_ticket_id,
-                content=content,
             )
         elif delivery_status == "missing":
             LOGGER.error(
@@ -1071,15 +1067,19 @@ def _deliver_production_account_reply_to_zendesk(
         return
 
     try:
-        result = add_internal_comment(ticket_id=zendesk_ticket_id, body=content)
-    except ZendeskCommentError as exc:
-        if exc.category == "outcome_unknown":
+        result = deliver_account_ai_message_as_internal_comment(
+            repository=ticket_repository,
+            account_case_id=account_case_id,
+            message_id=effective_message_id,
+            actor_id=PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID,
+            trigger="production_worker",
+            retry_failed=False,
+        )
+    except AccountZendeskInternalCommentError as exc:
+        if exc.outcome_unknown:
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
                 message_id=effective_message_id,
-                zendesk_ticket_id=zendesk_ticket_id,
-                content=content,
-                fallback_failure_code=exc.error_code,
             )
         else:
             ticket_repository.complete_account_zendesk_comment_delivery(
@@ -1087,7 +1087,7 @@ def _deliver_production_account_reply_to_zendesk(
                 message_id=effective_message_id,
                 status="failed",
                 zendesk_comment_id=None,
-                failure_code=exc.error_code,
+                failure_code=exc.code,
                 completed_at=now_iso(),
             )
         LOGGER.warning(
@@ -1097,9 +1097,9 @@ def _deliver_production_account_reply_to_zendesk(
             ticket_id,
             account_case_id,
             effective_message_id,
-            "outcome_unknown" if exc.category == "outcome_unknown" else "failed",
-            exc.error_code,
-            exc.category,
+            "outcome_unknown" if exc.outcome_unknown else "failed",
+            exc.code,
+            "outcome_unknown" if exc.outcome_unknown else "permanent",
         )
     except Exception:
         ticket_repository.complete_account_zendesk_comment_delivery(
@@ -1119,22 +1119,42 @@ def _deliver_production_account_reply_to_zendesk(
             effective_message_id,
         )
     else:
-        ticket_repository.complete_account_zendesk_comment_delivery(
-            account_case_id=account_case_id,
-            message_id=effective_message_id,
-            status="delivered",
-            zendesk_comment_id=result.comment_id,
-            failure_code=None,
-            completed_at=now_iso(),
-        )
-        LOGGER.info(
-            "production_zendesk_delivery_completed job_id=%s ticket_id=%s account_case_id=%s "
-            "message_id=%s delivery_status=delivered failure_code=none",
-            effective_job_id,
-            ticket_id,
-            account_case_id,
-            effective_message_id,
-        )
+        if result.status == "in_progress":
+            LOGGER.info(
+                "production_zendesk_delivery_deferred job_id=%s ticket_id=%s account_case_id=%s "
+                "message_id=%s delivery_status=in_progress failure_code=none",
+                effective_job_id,
+                ticket_id,
+                account_case_id,
+                effective_message_id,
+            )
+        elif result.status == "outcome_unknown":
+            _reconcile_production_zendesk_delivery(
+                account_case_id=account_case_id,
+                message_id=effective_message_id,
+            )
+        elif result.status == "failed":
+            LOGGER.warning(
+                "production_zendesk_delivery_failed job_id=%s ticket_id=%s account_case_id=%s "
+                "message_id=%s delivery_status=failed failure_code=%s retryable=%s",
+                effective_job_id,
+                ticket_id,
+                account_case_id,
+                effective_message_id,
+                result.error_code or "none",
+                result.retryable,
+            )
+        else:
+            LOGGER.info(
+                "production_zendesk_delivery_completed job_id=%s ticket_id=%s account_case_id=%s "
+                "message_id=%s delivery_status=%s failure_code=%s",
+                effective_job_id,
+                ticket_id,
+                account_case_id,
+                effective_message_id,
+                result.status,
+                result.error_code or "none",
+            )
 
 
 def _account_reply_message_for_delivery(
@@ -1209,7 +1229,6 @@ def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
             ticket_id=ticket_id,
             message_id=message_id,
             job_id=str(meta.get("account_reply_job_id") or "").strip() or message_id,
-            content=str(message.get("content") or "").strip(),
         )
 
 
@@ -1217,30 +1236,34 @@ def _reconcile_production_zendesk_delivery(
     *,
     account_case_id: str,
     message_id: str,
-    zendesk_ticket_id: str,
-    content: str,
-    fallback_failure_code: str = "zendesk_delivery_outcome_unknown",
 ) -> None:
     """Confirm a possibly successful write with a read-only audit query; never resend it."""
     try:
-        result = find_private_internal_comment(ticket_id=zendesk_ticket_id, body=content)
-    except ZendeskCommentError as exc:
+        result = reconcile_account_ai_message_internal_comment(
+            repository=ticket_repository,
+            account_case_id=account_case_id,
+            message_id=message_id,
+            actor_id=PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID,
+            trigger="production_worker",
+        )
+    except AccountZendeskInternalCommentError as exc:
         ticket_repository.complete_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
             message_id=message_id,
-            status="outcome_unknown",
+            status="outcome_unknown" if exc.outcome_unknown else "failed",
             zendesk_comment_id=None,
-            failure_code=exc.error_code,
+            failure_code=exc.code,
             completed_at=now_iso(),
         )
         return
-    ticket_repository.complete_account_zendesk_comment_delivery(
-        account_case_id=account_case_id,
-        message_id=message_id,
-        status="delivered" if result is not None else "outcome_unknown",
-        zendesk_comment_id=result.comment_id if result is not None else None,
-        failure_code=None if result is not None else fallback_failure_code,
-        completed_at=now_iso(),
+    LOGGER.info(
+        "production_zendesk_delivery_reconciled account_case_id=%s message_id=%s "
+        "delivery_status=%s comment_id=%s failure_code=%s",
+        account_case_id,
+        message_id,
+        result.status,
+        result.comment_id or "none",
+        result.error_code or "none",
     )
 
 

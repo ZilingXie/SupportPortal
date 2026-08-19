@@ -82,7 +82,7 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
         message_id = message["message_id"]
 
         with patch(
-            "backend.main.add_internal_comment",
+            "backend.services.account_zendesk_internal_comment.add_internal_comment",
             return_value=ZendeskCommentResult(comment_id="comment-12807", status_code=200),
         ) as add_comment:
             first = self.client.post(
@@ -125,7 +125,7 @@ class AccountZendeskCommentApiTests(unittest.TestCase):
         message_id = message["message_id"]
 
         with patch(
-            "backend.main.add_internal_comment",
+            "backend.services.account_zendesk_internal_comment.add_internal_comment",
             side_effect=ZendeskCommentError(
                 "outcome_unknown",
                 error_code="zendesk_comment_visibility_unverified",

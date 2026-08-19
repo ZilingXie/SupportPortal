@@ -52,6 +52,17 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("reroute-modal", styles)
         self.assertIn("reroute-progress", styles)
 
+    def test_production_promotion_uses_long_timeout_and_explains_server_continuation(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("const PRODUCTION_PROMOTION_TIMEOUT_MS = 300_000;", app_source)
+        promotion_start = app_source.index("async function promoteAccountCaseToProduction")
+        promotion_end = app_source.index("\nfunction renderZendeskOwnershipConfirmation", promotion_start)
+        promotion_source = app_source[promotion_start:promotion_end]
+        self.assertIn("timeoutMs: PRODUCTION_PROMOTION_TIMEOUT_MS", promotion_source)
+        self.assertIn("The request may still be running on the server", promotion_source)
+        self.assertIn("check for a PRD-* Production Case", promotion_source)
+
     def test_account_app_contains_exact_case_search_and_single_case_rerun(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")

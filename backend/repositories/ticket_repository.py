@@ -2000,6 +2000,18 @@ class TicketRepository(Protocol):
     ) -> None:
         ...
 
+    def record_account_zendesk_internal_comment_result(
+        self,
+        *,
+        account_case_id: str,
+        ticket_id: str,
+        message_id: str,
+        idempotency_key: str,
+        result_payload: dict[str, Any],
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        ...
+
     def claim_account_case_rerun(
         self,
         job: dict[str, Any],
@@ -2649,6 +2661,8 @@ class InMemoryTicketRepository:
             delivery = self._account_zendesk_comment_deliveries.get(key)
             if delivery is None:
                 return None
+            if str(delivery.get("status") or "").strip().lower() == "delivered":
+                return copy.deepcopy(delivery)
             delivery.update({
                 "status": str(status).strip(),
                 "zendesk_comment_id": str(zendesk_comment_id or "").strip() or None,
@@ -5146,6 +5160,109 @@ class InMemoryTicketRepository:
                 }
             )
 
+    def record_account_zendesk_internal_comment_result(
+        self,
+        *,
+        account_case_id: str,
+        ticket_id: str,
+        message_id: str,
+        idempotency_key: str,
+        result_payload: dict[str, Any],
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+        if not all((normalized_case_id, normalized_ticket_id, normalized_message_id, normalized_key)):
+            raise ValueError("account case, ticket, message, and idempotency key are required")
+        if not isinstance(result_payload, dict):
+            raise ValueError("result payload is required")
+
+        normalized_status = str(result_payload.get("status") or "failed").strip().lower()
+        if normalized_status not in {"added", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Zendesk internal comment result status")
+        idempotency_key_tuple = ("account_zendesk_internal_comment", normalized_key)
+        delivery_key = (normalized_case_id, normalized_message_id)
+        with self._assignment_lock:
+            idempotency_record = self._idempotency_records.get(idempotency_key_tuple)
+            if not isinstance(idempotency_record, dict):
+                raise ValueError("idempotency request was not started")
+
+            current_state = str(idempotency_record.get("state") or "").strip().lower()
+            if normalized_status == "added":
+                if current_state != "completed":
+                    idempotency_record.update(
+                        {
+                            "state": "completed",
+                            "response_payload": copy.deepcopy(result_payload),
+                            "updated_at": recorded_at,
+                        }
+                    )
+            elif current_state != "completed":
+                idempotency_record.update(
+                    {
+                        "state": "failed",
+                        "response_payload": copy.deepcopy(result_payload),
+                        "updated_at": recorded_at,
+                    }
+                )
+
+            ticket = self._tickets.get(normalized_ticket_id)
+            message_updated = False
+            if isinstance(ticket, dict) and isinstance(ticket.get("messages"), list):
+                for index, message in enumerate(ticket["messages"]):
+                    if not isinstance(message, dict):
+                        continue
+                    candidate_ids = {
+                        str(message.get("message_id") or "").strip(),
+                        str(message.get("id") or "").strip(),
+                        f"{normalized_ticket_id}:{index}",
+                    }
+                    if normalized_message_id not in candidate_ids:
+                        continue
+                    current_meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+                    current_comment = current_meta.get("zendesk_internal_comment")
+                    current_comment_status = (
+                        str(current_comment.get("status") or "").strip().lower()
+                        if isinstance(current_comment, dict)
+                        else ""
+                    )
+                    if normalized_status == "added" or current_comment_status != "added":
+                        message_meta = copy.deepcopy(result_payload)
+                        message_meta["updated_at"] = recorded_at
+                        if normalized_status == "added":
+                            message_meta["added_at"] = recorded_at
+                        current_meta["zendesk_internal_comment"] = message_meta
+                        message["meta"] = current_meta
+                        message["message_id"] = normalized_message_id
+                        ticket["updated_at"] = recorded_at
+                        message_updated = True
+                    break
+
+            delivery = self._account_zendesk_comment_deliveries.get(delivery_key)
+            if delivery is not None:
+                delivery_status = str(delivery.get("status") or "").strip().lower()
+                if delivery_status != "delivered":
+                    target_status = (
+                        "delivered"
+                        if normalized_status == "added"
+                        else normalized_status
+                    )
+                    delivery.update(
+                        {
+                            "status": target_status,
+                            "zendesk_comment_id": str(result_payload.get("comment_id") or "").strip() or None,
+                            "failure_code": str(result_payload.get("error_code") or "").strip() or None,
+                            "confirmed_at": recorded_at if target_status == "delivered" else None,
+                            "updated_at": recorded_at,
+                        }
+                    )
+            return {
+                "audit_persisted": message_updated,
+                "delivery": copy.deepcopy(delivery) if delivery is not None else None,
+            }
+
     def claim_account_case_rerun(
         self,
         job: dict[str, Any],
@@ -6657,7 +6774,7 @@ class PostgresTicketRepository:
                     sql.SQL(
                         "UPDATE {} SET status = %s, zendesk_comment_id = %s, failure_code = %s, "
                         "confirmed_at = CASE WHEN %s = 'delivered' THEN %s ELSE NULL END, updated_at = %s "
-                        "WHERE account_case_id = %s AND message_id = %s "
+                        "WHERE account_case_id = %s AND message_id = %s AND status <> 'delivered' "
                         "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
                     ).format(self._table("support_account_zendesk_comment_deliveries")),
                     (
@@ -6672,6 +6789,18 @@ class PostgresTicketRepository:
                     ),
                 )
                 row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at "
+                            "FROM {} WHERE account_case_id = %s AND message_id = %s"
+                        ).format(self._table("support_account_zendesk_comment_deliveries")),
+                        (
+                            str(account_case_id or "").strip(),
+                            str(message_id or "").strip(),
+                        ),
+                    )
+                    row = cur.fetchone()
                 return _account_zendesk_comment_delivery_from_row(row)
 
         return self._run_with_connection_retry(
@@ -11602,6 +11731,156 @@ class PostgresTicketRepository:
                         raise ValueError("idempotency request was not started")
 
         self._run_with_connection_retry("fail_idempotent_request", _operation)
+
+    def record_account_zendesk_internal_comment_result(
+        self,
+        *,
+        account_case_id: str,
+        ticket_id: str,
+        message_id: str,
+        idempotency_key: str,
+        result_payload: dict[str, Any],
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_ticket_id = str(ticket_id or "").strip()
+        normalized_message_id = str(message_id or "").strip()
+        normalized_key = str(idempotency_key or "").strip()
+        if not all((normalized_case_id, normalized_ticket_id, normalized_message_id, normalized_key)):
+            raise ValueError("account case, ticket, message, and idempotency key are required")
+        if not isinstance(result_payload, dict):
+            raise ValueError("result payload is required")
+        normalized_status = str(result_payload.get("status") or "failed").strip().lower()
+        if normalized_status not in {"added", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Zendesk internal comment result status")
+        message_meta = copy.deepcopy(result_payload)
+        message_meta["updated_at"] = recorded_at
+        if normalized_status == "added":
+            message_meta["added_at"] = recorded_at
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT state FROM {} WHERE scope=%s AND idempotency_key=%s FOR UPDATE"
+                    ).format(self._table("support_idempotency_records")),
+                    ("account_zendesk_internal_comment", normalized_key),
+                )
+                idempotency_row = cur.fetchone()
+                if idempotency_row is None:
+                    raise ValueError("idempotency request was not started")
+                current_idempotency_state = str(idempotency_row[0] or "").strip().lower()
+                if normalized_status == "added":
+                    if current_idempotency_state != "completed":
+                        cur.execute(
+                            sql.SQL(
+                                "UPDATE {} SET state='completed', response_payload=%s, updated_at=%s "
+                                "WHERE scope=%s AND idempotency_key=%s"
+                            ).format(self._table("support_idempotency_records")),
+                            (
+                                Json(result_payload),
+                                recorded_at,
+                                "account_zendesk_internal_comment",
+                                normalized_key,
+                            ),
+                        )
+                elif current_idempotency_state != "completed":
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET state='failed', response_payload=%s, updated_at=%s "
+                            "WHERE scope=%s AND idempotency_key=%s"
+                        ).format(self._table("support_idempotency_records")),
+                        (
+                            Json(result_payload),
+                            recorded_at,
+                            "account_zendesk_internal_comment",
+                            normalized_key,
+                        ),
+                    )
+
+                message_updated = False
+                try:
+                    numeric_message_id = int(normalized_message_id)
+                except (TypeError, ValueError):
+                    numeric_message_id = 0
+                if numeric_message_id > 0:
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT meta FROM {} WHERE id=%s AND ticket_id=%s FOR UPDATE"
+                        ).format(self._table("support_ticket_messages")),
+                        (numeric_message_id, normalized_ticket_id),
+                    )
+                    message_row = cur.fetchone()
+                    if message_row is not None:
+                        current_meta = message_row[0] if isinstance(message_row[0], dict) else {}
+                        current_comment = current_meta.get("zendesk_internal_comment")
+                        current_comment_status = (
+                            str(current_comment.get("status") or "").strip().lower()
+                            if isinstance(current_comment, dict)
+                            else ""
+                        )
+                        if normalized_status == "added" or current_comment_status != "added":
+                            merged_meta = copy.deepcopy(current_meta)
+                            merged_meta["zendesk_internal_comment"] = message_meta
+                            cur.execute(
+                                sql.SQL("UPDATE {} SET meta=%s WHERE id=%s AND ticket_id=%s").format(
+                                    self._table("support_ticket_messages")
+                                ),
+                                (Json(merged_meta), numeric_message_id, normalized_ticket_id),
+                            )
+                            message_updated = cur.rowcount == 1
+
+                delivery_columns = (
+                    "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
+                    "status, zendesk_comment_id, failure_code, confirmed_at, created_at, updated_at"
+                )
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + delivery_columns + " FROM {} "
+                        "WHERE account_case_id=%s AND message_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (normalized_case_id, normalized_message_id),
+                )
+                delivery_row = cur.fetchone()
+                delivery = _account_zendesk_comment_delivery_from_row(delivery_row)
+                if delivery is not None and str(delivery.get("status") or "").strip().lower() != "delivered":
+                    target_status = "delivered" if normalized_status == "added" else normalized_status
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status=%s, zendesk_comment_id=%s, failure_code=%s, "
+                            "confirmed_at=CASE WHEN %s='delivered' THEN %s ELSE NULL END, updated_at=%s "
+                            "WHERE account_case_id=%s AND message_id=%s"
+                        ).format(self._table("support_account_zendesk_comment_deliveries")),
+                        (
+                            target_status,
+                            str(result_payload.get("comment_id") or "").strip() or None,
+                            str(result_payload.get("error_code") or "").strip() or None,
+                            target_status,
+                            recorded_at,
+                            recorded_at,
+                            normalized_case_id,
+                            normalized_message_id,
+                        ),
+                    )
+                    delivery = dict(delivery)
+                    delivery.update(
+                        {
+                            "status": target_status,
+                            "zendesk_comment_id": str(result_payload.get("comment_id") or "").strip() or None,
+                            "failure_code": str(result_payload.get("error_code") or "").strip() or None,
+                            "confirmed_at": recorded_at if target_status == "delivered" else None,
+                            "updated_at": recorded_at,
+                        }
+                    )
+                return {
+                    "audit_persisted": message_updated,
+                    "delivery": delivery,
+                }
+
+        return self._run_with_connection_retry(
+            "record_account_zendesk_internal_comment_result",
+            _operation,
+        )
 
     def claim_account_case_rerun(
         self,

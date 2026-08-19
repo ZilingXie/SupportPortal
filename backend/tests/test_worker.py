@@ -23,7 +23,7 @@ from backend.repositories.ticket_repository import (
 )
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
-from backend.services.zendesk_comments import ZendeskCommentError, ZendeskCommentResult
+from backend.services.account_zendesk_internal_comment import AccountZendeskCommentResult
 
 if importlib.util.find_spec("redis") is None:
     redis_module = types.ModuleType("redis")
@@ -149,6 +149,25 @@ def _build_ticket(
     }
 
 
+def _zendesk_result(
+    *,
+    status: str = "added",
+    comment_id: str | None = "comment-1",
+    retryable: bool = False,
+    error_code: str | None = None,
+) -> AccountZendeskCommentResult:
+    return AccountZendeskCommentResult(
+        status=status,
+        account_case_id="AC-TEST",
+        message_id="1372",
+        actor_id="system:production-account-reply",
+        trigger="production_worker",
+        comment_id=comment_id,
+        retryable=retryable,
+        error_code=error_code,
+    )
+
+
 class WorkerResilienceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.task = {
@@ -203,14 +222,14 @@ class WorkerResilienceTests(unittest.TestCase):
             "execution_action": "detailed_invoice",
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "add_internal_comment"
-        ) as add_comment:
+            worker, "deliver_account_ai_message_as_internal_comment"
+        ) as deliver:
             worker._deliver_production_account_reply_to_zendesk(
-                ticket_id="PRD-12807", job_id="reply-1", content="Private reply"
+                ticket_id="PRD-12807", job_id="reply-1"
             )
 
         repository.claim_account_zendesk_comment_delivery.assert_not_called()
-        add_comment.assert_not_called()
+        deliver.assert_not_called()
 
     def test_existing_unknown_delivery_uses_readback_without_resending(self) -> None:
         repository = Mock()
@@ -226,20 +245,20 @@ class WorkerResilienceTests(unittest.TestCase):
             "status": "outcome_unknown",
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "add_internal_comment"
-        ) as add_comment, patch.object(
-            worker, "find_private_internal_comment",
-            return_value=ZendeskCommentResult(comment_id="comment-1", status_code=200),
-        ) as find_comment:
+            worker,
+            "reconcile_account_ai_message_internal_comment",
+            return_value=_zendesk_result(),
+        ) as reconcile:
             worker._deliver_production_account_reply_to_zendesk(
-                ticket_id="PRD-12807", job_id="reply-1", content="Private reply"
+                ticket_id="PRD-12807", job_id="reply-1"
             )
 
-        add_comment.assert_not_called()
-        find_comment.assert_called_once_with(ticket_id="12807", body="Private reply")
-        self.assertEqual(
-            repository.complete_account_zendesk_comment_delivery.call_args.kwargs["status"],
-            "delivered",
+        reconcile.assert_called_once_with(
+            repository=repository,
+            account_case_id="AC-1",
+            message_id="reply-1",
+            actor_id="system:production-account-reply",
+            trigger="production_worker",
         )
 
     def test_queued_delivery_is_claimed_once_and_written_as_private_comment(self) -> None:
@@ -257,14 +276,13 @@ class WorkerResilienceTests(unittest.TestCase):
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "add_internal_comment",
-            return_value=ZendeskCommentResult(comment_id="comment-queued", status_code=200),
-        ) as add_comment:
+            "deliver_account_ai_message_as_internal_comment",
+            return_value=_zendesk_result(comment_id="comment-queued"),
+        ) as deliver:
             worker._deliver_production_account_reply_to_zendesk(
                 ticket_id="PRD-12838",
                 message_id="1372",
                 job_id="reply-queued",
-                content="The feature is enabled.",
             )
 
         repository.claim_account_zendesk_comment_delivery.assert_called_once_with(
@@ -272,20 +290,13 @@ class WorkerResilienceTests(unittest.TestCase):
             message_id="1372",
             claimed_at=unittest.mock.ANY,
         )
-        add_comment.assert_called_once_with(
-            ticket_id="12838",
-            body="The feature is enabled.",
-        )
-        self.assertEqual(
-            repository.complete_account_zendesk_comment_delivery.call_args.kwargs,
-            {
-                "account_case_id": "AC-QUEUED",
-                "message_id": "1372",
-                "status": "delivered",
-                "zendesk_comment_id": "comment-queued",
-                "failure_code": None,
-                "completed_at": unittest.mock.ANY,
-            },
+        deliver.assert_called_once_with(
+            repository=repository,
+            account_case_id="AC-QUEUED",
+            message_id="1372",
+            actor_id="system:production-account-reply",
+            trigger="production_worker",
+            retry_failed=False,
         )
 
     def test_pending_delivery_uses_audit_readback_without_put(self) -> None:
@@ -302,24 +313,22 @@ class WorkerResilienceTests(unittest.TestCase):
             "status": "pending",
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "add_internal_comment"
-        ) as add_comment, patch.object(
             worker,
-            "find_private_internal_comment",
-            return_value=ZendeskCommentResult(comment_id="comment-pending", status_code=200),
-        ) as find_comment:
+            "reconcile_account_ai_message_internal_comment",
+            return_value=_zendesk_result(comment_id="comment-pending"),
+        ) as reconcile:
             worker._deliver_production_account_reply_to_zendesk(
                 ticket_id="PRD-12838",
                 message_id="1372",
                 job_id="reply-pending",
-                content="The feature is enabled.",
             )
 
-        add_comment.assert_not_called()
-        find_comment.assert_called_once_with(ticket_id="12838", body="The feature is enabled.")
-        self.assertEqual(
-            repository.complete_account_zendesk_comment_delivery.call_args.kwargs["status"],
-            "delivered",
+        reconcile.assert_called_once_with(
+            repository=repository,
+            account_case_id="AC-PENDING",
+            message_id="1372",
+            actor_id="system:production-account-reply",
+            trigger="production_worker",
         )
 
     def test_staging_or_missing_external_ticket_never_creates_delivery(self) -> None:
@@ -342,17 +351,16 @@ class WorkerResilienceTests(unittest.TestCase):
             repository = Mock()
             repository.get_account_case_by_ticket_id.return_value = case
             with patch.object(worker, "ticket_repository", repository), patch.object(
-                worker, "add_internal_comment"
-            ) as add_comment:
+                worker, "deliver_account_ai_message_as_internal_comment"
+            ) as deliver:
                 worker._deliver_production_account_reply_to_zendesk(
                     ticket_id="PRD-CASE",
                     message_id="1372",
                     job_id="reply-case",
-                    content="The feature is enabled.",
                 )
 
             repository.claim_account_zendesk_comment_delivery.assert_not_called()
-            add_comment.assert_not_called()
+            deliver.assert_not_called()
 
     def test_reply_poller_recovers_queued_delivery_after_publication_worker_stops(self) -> None:
         repository = Mock()
@@ -391,7 +399,6 @@ class WorkerResilienceTests(unittest.TestCase):
             ticket_id="PRD-RECOVER",
             message_id="1372",
             job_id="reply-recover",
-            content="The feature is enabled.",
         )
 
     def test_delivery_is_not_put_twice_after_first_completion(self) -> None:
@@ -409,18 +416,50 @@ class WorkerResilienceTests(unittest.TestCase):
         ]
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "add_internal_comment",
-            return_value=ZendeskCommentResult(comment_id="comment-once", status_code=200),
-        ) as add_comment:
+            "deliver_account_ai_message_as_internal_comment",
+            return_value=_zendesk_result(comment_id="comment-once"),
+        ) as deliver:
             for _ in range(2):
                 worker._deliver_production_account_reply_to_zendesk(
                     ticket_id="PRD-12838",
                     message_id="1372",
                     job_id="reply-idempotent",
-                    content="The feature is enabled.",
                 )
 
-        add_comment.assert_called_once()
+        deliver.assert_called_once()
+
+    def test_failed_service_result_is_logged_as_failed_delivery(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-FAILED-RESULT",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12838",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+        }
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "deliver_account_ai_message_as_internal_comment",
+            return_value=_zendesk_result(
+                status="failed",
+                comment_id=None,
+                retryable=True,
+                error_code="zendesk_http_error",
+            ),
+        ), patch.object(worker.LOGGER, "warning") as warning:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-FAILED-RESULT",
+                message_id="1372",
+                job_id="reply-failed-result",
+            )
+
+        self.assertTrue(warning.called)
+        self.assertIn("production_zendesk_delivery_failed", warning.call_args.args[0])
+        self.assertIn("delivery_status=failed", warning.call_args.args[0])
 
     def test_worker_rag_executor_uses_extended_timeout_and_recovery_window(self) -> None:
         detail = worker.RagTicketAnswerDetail(
