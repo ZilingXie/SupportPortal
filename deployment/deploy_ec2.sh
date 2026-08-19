@@ -21,6 +21,7 @@ PREVIOUS_BUILD_TIME=""
 PREVIOUS_PROMPT_RELEASE_ID=""
 CANDIDATE_PROMPT_RELEASE_ID=""
 CANDIDATE_PROMPT_RELEASE_CREATED="false"
+COMPOSE_PROFILE_ARGS=()
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -124,6 +125,22 @@ export_env_value() {
   export "${key}"
 }
 
+resolve_compose_profile_args() {
+  local production_dsn staging_dsn
+  COMPOSE_PROFILE_ARGS=()
+  production_dsn="$(resolve_env_value PRODUCTION_TICKET_DB_DSN)"
+  if [[ -z "${production_dsn}" ]]; then
+    log "PRODUCTION_TICKET_DB_DSN not set; the /production environment services stay disabled."
+    return 0
+  fi
+  staging_dsn="$(resolve_env_value TICKET_DB_DSN)"
+  if [[ -n "${staging_dsn}" && "${production_dsn}" == "${staging_dsn}" ]]; then
+    fail "PRODUCTION_TICKET_DB_DSN must differ from TICKET_DB_DSN; refusing to point the /production environment at the staging database"
+  fi
+  COMPOSE_PROFILE_ARGS=(--profile production)
+  log "PRODUCTION_TICKET_DB_DSN detected; enabling compose profile production (/production environment)."
+}
+
 prepare_build_metadata() {
   export_env_value APP_BUILD_REF "$(git rev-parse --short=12 HEAD)"
   export_env_value APP_BUILD_TIME "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -205,8 +222,8 @@ restore_previous_stack() {
   export_env_value PROMPT_RELEASE_ID "${PREVIOUS_PROMPT_RELEASE_ID}"
   export_env_value PROMPT_RELEASE_REQUIRED "$([[ -n "${PREVIOUS_PROMPT_RELEASE_ID}" ]] && printf true || printf false)"
 
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
-  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --no-build \
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" down >/dev/null 2>&1 || true
+  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" up -d --no-build \
     && wait_for_http_ok "Restored internal" "${internal_url}" "${timeout_seconds}" "${retry_interval_seconds}"; then
     log "Restored previous image ${PREVIOUS_IMAGE:-${PREVIOUS_IMAGE_ID}}."
     return 0
@@ -529,6 +546,7 @@ main() {
   fi
 
   prepare_compose_env
+  resolve_compose_profile_args
 
   local current_branch target_branch
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -570,7 +588,7 @@ main() {
   fi
 
   log "Pre-building services before restart..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build; then
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" build; then
     show_compose_diagnostics
     cleanup_rollback_image
     ROLLBACK_IMAGE=""
@@ -591,14 +609,14 @@ main() {
   fi
 
   log "Stopping services..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down; then
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" down; then
     show_compose_diagnostics
     mark_candidate_prompt_release_failed "docker compose down failed" || true
     restore_previous_stack "http://127.0.0.1:${host_port}/health" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
     fail "docker compose down failed; rollback image retained: ${ROLLBACK_IMAGE:-unavailable}"
   fi
   log "Starting services (detached)..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d; then
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" up -d; then
     show_compose_diagnostics
     mark_candidate_prompt_release_failed "docker compose up failed" || true
     restore_previous_stack "http://127.0.0.1:${host_port}/health" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
@@ -615,6 +633,18 @@ main() {
     mark_candidate_prompt_release_failed "internal health check failed" || true
     restore_previous_stack "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
     fail "Internal health check failed after ${health_timeout_seconds}s: ${internal_url}"
+  fi
+
+  if [[ ${#COMPOSE_PROFILE_ARGS[@]} -gt 0 ]]; then
+    local production_page_url
+    production_page_url="http://127.0.0.1:${host_port}/production/"
+    log "Checking production environment page: ${production_page_url}"
+    if ! wait_for_http_ok "Production page" "${production_page_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
+      show_compose_diagnostics
+      mark_candidate_prompt_release_failed "production environment page check failed" || true
+      restore_previous_stack "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
+      fail "Production environment page check failed after ${health_timeout_seconds}s: ${production_page_url}"
+    fi
   fi
 
   log "Verifying Prompt Release across all Prompt runtime services..."

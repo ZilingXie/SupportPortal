@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "function_id": "account-production-environment",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "Account Production 独立环境",
+  "goal": "提供与 /account 功能对等但数据与副作用隔离的 /production 独立环境，n8n 可直接将工单转发到 production 数据库并自动投递真实 Zendesk internal comment。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "docs/feature_list.md",
+    "deployment/docker-compose.single-host.yml",
+    "deployment/nginx/supportportal.conf"
+  ],
+  "legacy_ids": []
+}

@@ -519,6 +519,219 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  api_production:
+    profiles:
+      - production
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
+    env_file:
+      - ../.env
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+      - ../.msgraph:/app/.msgraph
+      - ../.env:/run/supportportal/environment-config.env:ro
+    command:
+      - uvicorn
+      - backend.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "${API_WORKERS:-2}"
+    environment:
+      SUPPORTPORTAL_ENV_CONFIG_PATH: /run/supportportal/environment-config.env
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+      PROMPT_RELEASE_ID: ${PROMPT_RELEASE_ID:-}
+      PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
+      PROMPT_RUNTIME_SERVICE: api-production
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}
+      HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}
+      NO_PROXY: ${SUPPORTPORTAL_NO_PROXY:-localhost,127.0.0.1,api,rag_api,redis}
+      ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-5.6-luna}
+      ACCOUNT_ROUTE_BASE_URL: ${ACCOUNT_ROUTE_BASE_URL:-}
+      ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-xhigh}
+      ACCOUNT_ROUTE_TIMEOUT_SECONDS: ${ACCOUNT_ROUTE_TIMEOUT_SECONDS:-120}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_FALLBACK_MODEL: ${DEEPSEEK_FALLBACK_MODEL:-deepseek-v4-pro}
+      DEEPSEEK_FALLBACK_ENABLED: ${DEEPSEEK_FALLBACK_ENABLED:-true}
+      TICKET_DB_DSN: ${PRODUCTION_TICKET_DB_DSN:-}
+      TICKET_DB_APPLICATION_NAME: supportportal-api-production
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-3}
+      TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-4}
+      TICKET_DB_POOL_TIMEOUT_SECONDS: ${TICKET_DB_POOL_TIMEOUT_SECONDS:-15}
+      TICKET_DB_POOL_MAX_LIFETIME_SECONDS: ${TICKET_DB_POOL_MAX_LIFETIME_SECONDS:-1800}
+      TICKET_DB_POOL_MAX_IDLE_SECONDS: ${TICKET_DB_POOL_MAX_IDLE_SECONDS:-300}
+      ACCOUNT_DEFAULT_PROCESSING_PROFILE: production
+      WORKSPACE_AUTH_SECRET: ${WORKSPACE_AUTH_SECRET:-supportportal-local-workspace-auth-secret}
+      WORKSPACE_BOOTSTRAP_ADMIN_ID: ${WORKSPACE_BOOTSTRAP_ADMIN_ID:-}
+      WORKSPACE_BOOTSTRAP_ADMIN_NAME: ${WORKSPACE_BOOTSTRAP_ADMIN_NAME:-Workspace Admin}
+      WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD: ${WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD:-}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks_bge_m3_1024}
+      PGVECTOR_DIM: ${PGVECTOR_DIM:-1024}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: support.events.production
+      TICKET_QUERY_QUEUE_NAME: support.ticket_queries.production
+      TICKET_AUX_QUEUE_NAME: support.ticket_aux.production
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
+      RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
+      RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
+    depends_on:
+      redis:
+        condition: service_healthy
+      rag_api:
+        condition: service_started
+    restart: unless-stopped
+
+  worker_query_production:
+    profiles:
+      - production
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
+    env_file:
+      - ../.env
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    command:
+      - python
+      - -m
+      - backend.worker
+    environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+      PROMPT_RELEASE_ID: ${PROMPT_RELEASE_ID:-}
+      PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
+      PROMPT_RUNTIME_SERVICE: worker_query_production
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}
+      HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}
+      NO_PROXY: ${SUPPORTPORTAL_NO_PROXY:-localhost,127.0.0.1,api,rag_api,redis}
+      ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-5.6-luna}
+      ACCOUNT_ROUTE_BASE_URL: ${ACCOUNT_ROUTE_BASE_URL:-}
+      ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-xhigh}
+      ACCOUNT_ROUTE_TIMEOUT_SECONDS: ${ACCOUNT_ROUTE_TIMEOUT_SECONDS:-120}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_FALLBACK_MODEL: ${DEEPSEEK_FALLBACK_MODEL:-deepseek-v4-pro}
+      DEEPSEEK_FALLBACK_ENABLED: ${DEEPSEEK_FALLBACK_ENABLED:-true}
+      TICKET_DB_DSN: ${PRODUCTION_TICKET_DB_DSN:-}
+      TICKET_DB_APPLICATION_NAME: supportportal-worker-query-production
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-2}
+      TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-4}
+      TICKET_DB_POOL_TIMEOUT_SECONDS: ${TICKET_DB_POOL_TIMEOUT_SECONDS:-15}
+      TICKET_DB_POOL_MAX_LIFETIME_SECONDS: ${TICKET_DB_POOL_MAX_LIFETIME_SECONDS:-1800}
+      TICKET_DB_POOL_MAX_IDLE_SECONDS: ${TICKET_DB_POOL_MAX_IDLE_SECONDS:-300}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks_bge_m3_1024}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: support.events.production
+      TICKET_QUERY_QUEUE_NAME: support.ticket_queries.production
+      TICKET_AUX_QUEUE_NAME: support.ticket_aux.production
+      WORKER_TASK_TYPES: ${WORKER_QUERY_TASK_TYPES:-ticket_query}
+      ACCOUNT_REPLY_POLLER_ENABLED: "false"
+      ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "false"
+      AUTOMATION_REPLY_POLL_ENABLED: "false"
+      BILLING_AUTOMATION_REPLY_POLL_ENABLED: "false"
+      WORKER_CONCURRENCY: ${WORKER_QUERY_CONCURRENCY:-2}
+      ENGINEER_ASSIGNMENT_POLLER_ENABLED: "false"
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
+      RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
+      RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
+      SENTIMENT_PROVIDER: ${WORKER_SENTIMENT_PROVIDER:-legacy}
+      SENTIMENT_MODEL_ID: ${SENTIMENT_MODEL_ID:-j-hartmann/emotion-english-distilroberta-base}
+      SENTIMENT_MIN_CONFIDENCE: ${SENTIMENT_MIN_CONFIDENCE:-0.45}
+    depends_on:
+      redis:
+        condition: service_healthy
+      rag_api:
+        condition: service_started
+    restart: unless-stopped
+
+  worker_aux_production:
+    profiles:
+      - production
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
+    env_file:
+      - ../.env
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+      - ../.msgraph:/app/.msgraph
+    command:
+      - python
+      - -m
+      - backend.worker
+    environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+      PROMPT_RELEASE_ID: ${PROMPT_RELEASE_ID:-}
+      PROMPT_RELEASE_REQUIRED: ${PROMPT_RELEASE_REQUIRED:-false}
+      PROMPT_RUNTIME_SERVICE: worker_aux_production
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
+      RUNTIME_SCHEMA_MODE: ${RUNTIME_SCHEMA_MODE:-bootstrap}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HTTP_PROXY: ${SUPPORTPORTAL_HTTP_PROXY:-}
+      HTTPS_PROXY: ${SUPPORTPORTAL_HTTPS_PROXY:-}
+      NO_PROXY: ${SUPPORTPORTAL_NO_PROXY:-localhost,127.0.0.1,api,rag_api,redis}
+      ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-5.6-luna}
+      ACCOUNT_ROUTE_BASE_URL: ${ACCOUNT_ROUTE_BASE_URL:-}
+      ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-xhigh}
+      ACCOUNT_ROUTE_TIMEOUT_SECONDS: ${ACCOUNT_ROUTE_TIMEOUT_SECONDS:-120}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_FALLBACK_MODEL: ${DEEPSEEK_FALLBACK_MODEL:-deepseek-v4-pro}
+      DEEPSEEK_FALLBACK_ENABLED: ${DEEPSEEK_FALLBACK_ENABLED:-true}
+      TICKET_DB_DSN: ${PRODUCTION_TICKET_DB_DSN:-}
+      TICKET_DB_APPLICATION_NAME: supportportal-worker-aux-production
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-1}
+      TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-2}
+      TICKET_DB_POOL_TIMEOUT_SECONDS: ${TICKET_DB_POOL_TIMEOUT_SECONDS:-15}
+      TICKET_DB_POOL_MAX_LIFETIME_SECONDS: ${TICKET_DB_POOL_MAX_LIFETIME_SECONDS:-1800}
+      TICKET_DB_POOL_MAX_IDLE_SECONDS: ${TICKET_DB_POOL_MAX_IDLE_SECONDS:-300}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks_bge_m3_1024}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: support.events.production
+      TICKET_QUERY_QUEUE_NAME: support.ticket_queries.production
+      TICKET_AUX_QUEUE_NAME: support.ticket_aux.production
+      WORKER_TASK_TYPES: ${WORKER_AUX_TASK_TYPES:-ticket_message_sentiment}
+      ACCOUNT_REPLY_POLLER_ENABLED: "true"
+      ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "true"
+      WORKER_CONCURRENCY: ${WORKER_AUX_CONCURRENCY:-1}
+      ENGINEER_ASSIGNMENT_POLLER_ENABLED: "false"
+      AUTOMATION_PERSONA_MODEL: ${AUTOMATION_PERSONA_MODEL:-gpt-5.4-mini}
+      AUTOMATION_PERSONA_REASONING_EFFORT: ${AUTOMATION_PERSONA_REASONING_EFFORT:-low}
+      AUTOMATION_PERSONA_TEMPERATURE: ${AUTOMATION_PERSONA_TEMPERATURE:-0.4}
+      AUTOMATION_PERSONA_TIMEOUT_SECONDS: ${AUTOMATION_PERSONA_TIMEOUT_SECONDS:-8}
+      AUTOMATION_PERSONA_MAX_RETRIES: ${AUTOMATION_PERSONA_MAX_RETRIES:-1}
+      AUTOMATION_REPLY_POLL_ENABLED: ${AUTOMATION_REPLY_POLL_ENABLED:-true}
+      AUTOMATION_REPLY_POLL_INTERVAL_SECONDS: ${AUTOMATION_REPLY_POLL_INTERVAL_SECONDS:-}
+      AUTOMATION_REPLY_POLL_MAX_MESSAGES: ${AUTOMATION_REPLY_POLL_MAX_MESSAGES:-}
+      BILLING_AUTOMATION_REPLY_POLL_ENABLED: ${BILLING_AUTOMATION_REPLY_POLL_ENABLED:-false}
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
+      RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
+      RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
+      SENTIMENT_PROVIDER: ${WORKER_SENTIMENT_PROVIDER:-legacy}
+      SENTIMENT_MODEL_ID: ${SENTIMENT_MODEL_ID:-j-hartmann/emotion-english-distilroberta-base}
+      SENTIMENT_MIN_CONFIDENCE: ${SENTIMENT_MIN_CONFIDENCE:-0.45}
+    depends_on:
+      redis:
+        condition: service_healthy
+      rag_api:
+        condition: service_started
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
