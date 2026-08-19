@@ -946,7 +946,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(len(deliveries), 1)
         self.assertEqual(deliveries[0]["message_id"], result["message_id"])
-        self.assertFalse(deliveries[0]["is_public"])
+        self.assertTrue(deliveries[0]["is_public"])
+        self.assertIsNone(deliveries[0]["target_status"])
 
     def test_postgres_publication_persists_queued_delivery_with_message_id(self) -> None:
         published_at = datetime(2026, 8, 18, tzinfo=timezone.utc)

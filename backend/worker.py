@@ -48,6 +48,7 @@ from backend.services.account_reply_jobs import (
     account_reply_delay_seconds_for_profile,
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
+    create_account_reply_job,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
@@ -75,6 +76,10 @@ from backend.services.account_automation_delivery import (
     is_rerun_owned_delivery,
 )
 from backend.services.automation_routing import is_registered_automation
+from backend.services.account_automation_ownership import (
+    OWNERSHIP_STATE_HUMAN_REASSIGNED,
+    ensure_production_automation_ownership,
+)
 from backend.services.account_zendesk_internal_comment import (
     AccountZendeskInternalCommentError,
     deliver_account_ai_message_as_internal_comment,
@@ -1000,7 +1005,7 @@ def _deliver_production_account_reply_to_zendesk(
     message_id: str | None = None,
     job_id: str | None = None,
 ) -> None:
-    """Write one published production reply as a Zendesk internal comment."""
+    """Write one published production reply to Zendesk with its ledger visibility."""
     effective_message_id = str(message_id or job_id or "").strip()
     effective_job_id = str(job_id or "").strip() or effective_message_id
     account_case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
@@ -1051,11 +1056,17 @@ def _deliver_production_account_reply_to_zendesk(
         claimed_at=now_iso(),
     )
     delivery_status = str(claim.get("status") or "").strip().lower()
+    delivery_is_public = bool(claim.get("is_public"))
+    delivery_solve = (
+        str(claim.get("target_status") or "").strip().lower() == "solved"
+    )
     if not bool(claim.get("claimed")):
         if delivery_status in {"pending", "outcome_unknown"}:
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
                 message_id=effective_message_id,
+                public_comment=delivery_is_public,
+                solve_ticket=delivery_solve,
             )
         elif delivery_status == "missing":
             LOGGER.error(
@@ -1068,6 +1079,52 @@ def _deliver_production_account_reply_to_zendesk(
             )
         return
 
+    # Read-only ownership confirmation right before the public write: a ticket a
+    # human took over must not receive further automated replies.
+    ownership = ensure_production_automation_ownership(
+        account_case,
+        mode="verify",
+        updated_at=now_iso(),
+    )
+    if ownership.state == OWNERSHIP_STATE_HUMAN_REASSIGNED:
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=effective_message_id,
+            status="failed",
+            zendesk_comment_id=None,
+            failure_code="zendesk_ownership_human_reassigned",
+            completed_at=now_iso(),
+        )
+        LOGGER.warning(
+            "production_zendesk_delivery_stopped job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s delivery_status=failed failure_code=zendesk_ownership_human_reassigned "
+            "assignee_id=%s",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+            ownership.assignee_id or "unknown",
+        )
+        return
+    if not ownership.confirmed:
+        # Transient ownership read failure: undo the claim so the next drain
+        # retries instead of reconciling a comment that was never written.
+        ticket_repository.requeue_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=effective_message_id,
+            requeued_at=now_iso(),
+        )
+        LOGGER.warning(
+            "production_zendesk_delivery_verify_failed job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s failure_code=%s",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+            ownership.failure_code or "unknown",
+        )
+        return
+
     try:
         result = deliver_account_ai_message_as_internal_comment(
             repository=ticket_repository,
@@ -1076,12 +1133,16 @@ def _deliver_production_account_reply_to_zendesk(
             actor_id=PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID,
             trigger="production_worker",
             retry_failed=False,
+            public_comment=delivery_is_public,
+            solve_ticket=delivery_solve,
         )
     except AccountZendeskInternalCommentError as exc:
         if exc.outcome_unknown:
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
                 message_id=effective_message_id,
+                public_comment=delivery_is_public,
+                solve_ticket=delivery_solve,
             )
         else:
             ticket_repository.complete_account_zendesk_comment_delivery(
@@ -1134,6 +1195,8 @@ def _deliver_production_account_reply_to_zendesk(
             _reconcile_production_zendesk_delivery(
                 account_case_id=account_case_id,
                 message_id=effective_message_id,
+                public_comment=delivery_is_public,
+                solve_ticket=delivery_solve,
             )
         elif result.status == "failed":
             LOGGER.warning(
@@ -1149,13 +1212,15 @@ def _deliver_production_account_reply_to_zendesk(
         else:
             LOGGER.info(
                 "production_zendesk_delivery_completed job_id=%s ticket_id=%s account_case_id=%s "
-                "message_id=%s delivery_status=%s failure_code=%s",
+                "message_id=%s delivery_status=%s failure_code=%s is_public=%s target_status=%s",
                 effective_job_id,
                 ticket_id,
                 account_case_id,
                 effective_message_id,
                 result.status,
                 result.error_code or "none",
+                delivery_is_public,
+                claim.get("target_status") or "none",
             )
 
 
@@ -1238,6 +1303,8 @@ def _reconcile_production_zendesk_delivery(
     *,
     account_case_id: str,
     message_id: str,
+    public_comment: bool = False,
+    solve_ticket: bool = False,
 ) -> None:
     """Confirm a possibly successful write with a read-only audit query; never resend it."""
     try:
@@ -1247,6 +1314,8 @@ def _reconcile_production_zendesk_delivery(
             message_id=message_id,
             actor_id=PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID,
             trigger="production_worker",
+            public_comment=public_comment,
+            solve_ticket=solve_ticket,
         )
     except AccountZendeskInternalCommentError as exc:
         ticket_repository.complete_account_zendesk_comment_delivery(
@@ -2176,6 +2245,106 @@ def handle_billing_request_reply(reply: Any) -> str:
         raise
 
 
+def _queue_enablement_completion_reply_job(
+    *,
+    reply_key: str,
+    owner_token: str,
+    account_case: dict[str, Any],
+    client_ticket_id: str,
+    note: str,
+    known_information: dict[str, Any],
+    message_id: str,
+    handler: str,
+) -> str:
+    """Queue the enablement completion as a standard Account reply job.
+
+    The completion reply must flow through the normal publication pipeline so
+    production cases deliver it as a public Zendesk comment and close (local and
+    solved) only after the delivery readback confirms it.
+    """
+    timestamp = now_iso()
+    source = f"{handler}_reply_email"
+    case_id = (
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    )
+    try:
+        persona_assignment = ticket_repository.resolve_account_persona(client_ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=str(exc),
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        manual_event = {
+            "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+            "account_case_id": case_id, "automation_reply_message_id": message_id,
+            "reason": str(account_case.get("not_automated_reason") or str(exc)),
+            "created_at": timestamp, "source": source,
+        }
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=None, account_case_updates=account_case,
+            events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+            completed_at=timestamp,
+        )
+        ticket_repository.save_account_case(account_case)
+        return "completed" if committed else "in_progress"
+    enriched_information = {
+        **dict(known_information or {}),
+        "ticket_id": client_ticket_id,
+        "account_case_id": str(case_id),
+        "customer_email": str(account_case.get("customer_email") or "").strip(),
+    }
+    reply_facts = build_automation_reply_facts(
+        behavior=handler,
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        known_information=enriched_information,
+        source_facts=[note],
+        resolution_status="completed",
+        customer_name=str(account_case.get("customer_name") or ""),
+    )
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    job = create_account_reply_job(
+        ticket_repository,
+        ticket_id=client_ticket_id,
+        trigger_message_created_at=timestamp,
+        created_at=timestamp,
+        delay_seconds=delay_seconds,
+        reply_facts=reply_facts,
+        persona_assignment=(persona_assignment or None),
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        close_after_publish=True,
+        automation_delivery_key=str(
+            (account_case.get("internal_email_payload") or {}).get("delivery_key") or ""
+        ),
+    )
+    resolution_event = {
+        "event": f"{handler}_internal_resolution_received", "account_case_id": case_id,
+        "ticket_id": client_ticket_id, "note": note, "created_at": timestamp,
+        "source": source, "automation_reply_message_id": message_id,
+    }
+    queued_event = {
+        "event": f"{handler}_completion_reply_job_queued", "account_case_id": case_id,
+        "ticket_id": client_ticket_id, "reply_job_id": str(job.get("job_id") or ""),
+        "created_at": timestamp, "source": source,
+        "automation_reply_message_id": message_id,
+    }
+    committed = ticket_repository.commit_automation_reply_result(
+        reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+        assistant_message=None,
+        account_case_updates={"automation_status": "automation", "updated_at": timestamp},
+        events=[{"event_type": resolution_event["event"], "payload": resolution_event},
+                {"event_type": queued_event["event"], "payload": queued_event}],
+        completed_at=timestamp,
+    )
+    return "completed" if committed else "in_progress"
+
+
 def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
@@ -2208,11 +2377,18 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             if handler == "enablement"
             else False
         )
-        reply_intent = (
-            ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE
-            if enablement_completed
-            else "resolution_update"
-        )
+        if enablement_completed:
+            return _queue_enablement_completion_reply_job(
+                reply_key=reply_key,
+                owner_token=owner_token,
+                account_case=account_case,
+                client_ticket_id=client_ticket_id,
+                note=note,
+                known_information=known_information,
+                message_id=message_id,
+                handler=handler,
+            )
+        reply_intent = "resolution_update"
         customer_reply = _render_case_persona_reply(
             ticket_id=client_ticket_id, case=account_case, behavior=handler,
             reply_intent=reply_intent, known_information=known_information,
@@ -2221,16 +2397,6 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
         )
         try:
             assert_no_trailing_automation_signature(customer_reply)
-            if enablement_completed:
-                validate_account_reply_contract(
-                    customer_reply,
-                    {
-                        "behavior": "enablement",
-                        "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
-                    },
-                    top_level_reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
-                    close_after_publish=True,
-                )
         except AutomationPersonaError as exc:
             _mark_account_case_for_human_review(
                 account_case,
@@ -2273,7 +2439,6 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                                   "updated_at": timestamp},
             events=[{"event_type": resolution_name, "payload": resolution_event},
                     {"event_type": followup_name, "payload": followup_event}], completed_at=timestamp,
-            close_after_publish=enablement_completed,
         )
         return "completed" if committed else "in_progress"
     except Exception as exc:

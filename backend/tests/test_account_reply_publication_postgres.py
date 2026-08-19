@@ -357,8 +357,9 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
                 for item in repository.get_ticket(ticket_id)["messages"]
                 if item["message_id"] == message_id
             )
+            # Message meta keys are flattened onto the message payload.
             self.assertEqual(
-                message["meta"]["zendesk_internal_comment"]["comment_id"],
+                message["zendesk_internal_comment"]["comment_id"],
                 "comment-pg-2",
             )
             self.assertEqual(

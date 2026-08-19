@@ -113,11 +113,12 @@ CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
     message_id TEXT NOT NULL,
     zendesk_ticket_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
-    is_public BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_public = FALSE),
+    is_public BOOLEAN NOT NULL DEFAULT FALSE,
     status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')),
     zendesk_comment_id TEXT,
     failure_code TEXT,
     confirmed_at TIMESTAMPTZ,
+    target_status TEXT CHECK (target_status IS NULL OR target_status = 'solved'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (account_case_id, message_id)

@@ -3812,3 +3812,15 @@ For each new entry, record:
   - Targeted Account AI, Persona, Worker, rerun fail-fast/recovery, dispatch, and UI suite: 210 tests passed with 29 subtests passed.
   - Integrated Account Automation suite: 519 tests passed with 19 environment-dependent PostgreSQL tests skipped and 67 subtests passed.
   - Final integrated and post-merge live-stack evidence is recorded in task `p1-50`.
+
+## 2026-08-19 — Automation Persona missing-information publication fence
+
+- Change type: Persona 校验行为（prompt 版本不变，仍为 automation-persona-v11）。
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/tests/test_automation_persona.py`
+- Expected behavior change:
+  - `request_missing_information` 回复新增确定性合同：禁止独立句 "The relevant team will contact you within 24 hours." 及任何数字时长承诺（如 within 2 days）；命中即转 Human Review，不做剪裁。
+  - 追问类回复保持 ownership 合同不变；fraud handoff 精确句合同仅在信息齐全并发送内部邮件后适用。
+- Verification:
+  - `backend/tests/test_automation_persona.py` 及目标套件 623 passed；详见任务 `p1-51`。

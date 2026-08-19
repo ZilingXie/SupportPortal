@@ -136,3 +136,23 @@ JSON body: ={{ $json }}
 ```
 
 SupportPortal stores Zendesk comments in an independent projection. Rerun removes Account AI reply state but does not remove this projection, so a later full snapshot remains the source of truth for displayed Zendesk public and internal comments.
+
+## Customer reply trigger
+
+The snapshot body accepts an optional `trigger_comment_id` (the webhook's current comment id):
+
+```json
+{
+  "source_updated_at": "...",
+  "snapshot_complete": true,
+  "trigger_comment_id": "5266...",
+  "comments": []
+}
+```
+
+- `trigger_comment_id` must be present in the snapshot, otherwise the endpoint returns 422 `trigger_comment_missing`.
+- Without `trigger_comment_id` the request is projection-only (display sync).
+- A trigger runs the automation state machine (same path as the workspace reply endpoint) only when the comment is public, authored by the customer (not an agent), non-initial, non-empty, and newer than the Account Case creation, and the case is a production registered automation in an active state.
+- Processing is idempotent per `account_case_id + trigger_comment_id`: replaying the same webhook returns the first run's recorded outcome and never duplicates the customer message, internal email, reply job, or Zendesk comment.
+- Agent-authored public comments (including SupportPortal's own AI public replies) return `ignored_agent_comment` and never trigger a second AI reply.
+- The response exposes `trigger_status` (`processed` / `ignored_*` / `failed` / `already_processing`) plus `internal_email_status` and `ai_reply_status` for execution readback.

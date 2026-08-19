@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T10:57:41Z",
-  "source_base_commit": "a6ba941619d46f31e0c792feebff7bff71977a1c",
-  "registry_digest": "b0333c50e4833a3c269c956a4bc47c4d294730d6b13449fed6296c9056261a44",
+  "generated_at": "2026-08-19T11:50:19Z",
+  "source_base_commit": "8a746a70723f6d75c94b2430d7b3a390ba50a992",
+  "registry_digest": "8eebb70f730d895c1f1584dc9d26691da6d740f5ab3c678e0e07c4c6cafdc671",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -996,6 +996,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Feature list and Project Overview validation",
           "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --check"
+        },
+        {
+          "type": "test",
+          "label": "Task worktree preflight",
+          "command": "git status --short --branch; git worktree list",
+          "result": "Worktree production-automated-public-replies created from clean main 8a746a7 on branch codex/production-automated-public-replies."
+        },
+        {
+          "type": "test",
+          "label": "Targeted automation and Zendesk delivery suite",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_zendesk_assignment.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_account_zendesk_comment.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_automation_persona.py backend/tests/test_account_verification_automation.py backend/tests/test_enablement_automation.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_account_ui_contract.py backend/tests/test_production_ui_contract.py backend/tests/test_repository_configuration.py backend/tests/test_workspace_api.py backend/tests/test_account_reply_version_fence.py backend/tests/test_zendesk_comments.py backend/tests/test_zendesk_public_comment.py backend/tests/test_account_automation_ownership.py",
+          "result": "623 passed, 8 skipped (PostgreSQL opt-in), 56 subtests passed."
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration (isolated schema) including the confirmed_at timestamptz regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_reply_publication_postgres.py",
+          "result": "8 passed. The record_account_zendesk_internal_comment_result test fails on main with psycopg DatatypeMismatch and passes in this worktree, confirming the confirmed_at::timestamptz fix against real PostgreSQL."
+        },
+        {
+          "type": "test",
+          "label": "Static and registry checks",
+          "command": ".venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/account_automation_ownership.py backend/services/account_zendesk_internal_comment.py backend/services/zendesk_comments.py backend/services/zendesk_ticket_assignment.py backend/services/automation_persona.py; node --check ui/account-ui/app.js; node --check ui/production-ui/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "All checks passed."
         }
       ],
       "source_refs": [
@@ -1007,7 +1031,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 6,
+      "task_count": 7,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -4374,6 +4398,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "persona_v11_repair_started",
           "summary": "Rerun 在 AC-12715 因 Fraud handoff 自然改写未通过确定性合同而停止；将 exact sentence 校验纳入现有四次 Account AI 调用预算，并保留具体失败码与真实尝试次数。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "followup_intent_repair",
+          "summary": "修复 fraud follow-up intent 冲突：_reply_to_billing_ticket_impl 的 top-level reply_intent 与 close_after_publish 仅在字段收齐且内部邮件成功（reply_ready）时传入，追问场景沿用 nested request_missing_information；同批新增 missing-information 禁止 24h/SLA 承诺句的确定性校验 fence。"
         }
       ],
       "legacy_refs": [],
@@ -4381,6 +4410,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-51",
+      "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
+      "status": "active",
+      "owner": "zac",
+      "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
+      "next_action": "Finalize 合入 main 后执行 DB 迁移、EC2 部署与四个测试 ticket 的 live 验收矩阵。",
+      "acceptance_criteria": [
+        "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
+        "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
+        "suspension closing 与 enablement completion 使用同一 PUT 附带 status=solved，Zendesk 确认 solved 后本地才在一个事务内关闭；其他 intent 不关单。",
+        "n8n 评论同步快照带 trigger_comment_id 时，新的客户公开评论触发与 admin reply 相同的状态机；agent/private/unknown/初始描述/重放不触发、不产生重复副作用。",
+        "fraud follow-up 缺信息时正常追问且不含 24h 承诺句；信息齐全后 handoff 回复保留精确独立句；enablement completion 走标准 reply job 与公开投递。",
+        "全部 AI 回复无签名；confirmed_at timestamptz 修复后 postgres 真库能把 delivery 确认为 delivered。",
+        "四个测试 ticket（12864/12865/12839/12838）live 验收矩阵通过并记录 public comment ID。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Task worktree preflight",
+          "command": "git status --short --branch; git worktree list",
+          "result": "Worktree production-automated-public-replies created from clean main 8a746a7 on branch codex/production-automated-public-replies."
+        },
+        {
+          "type": "test",
+          "label": "Targeted automation and Zendesk delivery suite",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_zendesk_assignment.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_account_zendesk_comment.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_automation_persona.py backend/tests/test_account_verification_automation.py backend/tests/test_enablement_automation.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_account_ui_contract.py backend/tests/test_production_ui_contract.py backend/tests/test_repository_configuration.py backend/tests/test_workspace_api.py backend/tests/test_account_reply_version_fence.py backend/tests/test_zendesk_comments.py backend/tests/test_zendesk_public_comment.py backend/tests/test_account_automation_ownership.py",
+          "result": "623 passed, 8 skipped (PostgreSQL opt-in), 56 subtests passed."
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration (isolated schema) including the confirmed_at timestamptz regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_reply_publication_postgres.py",
+          "result": "8 passed. The record_account_zendesk_internal_comment_result test fails on main with psycopg DatatypeMismatch and passes in this worktree, confirming the confirmed_at::timestamptz fix against real PostgreSQL."
+        },
+        {
+          "type": "test",
+          "label": "Static and registry checks",
+          "command": ".venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/account_automation_ownership.py backend/services/account_zendesk_internal_comment.py backend/services/zendesk_comments.py backend/services/zendesk_ticket_assignment.py backend/services/automation_persona.py; node --check ui/account-ui/app.js; node --check ui/production-ui/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
+          "result": "All checks passed."
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_routing.py",
+        "backend/services/zendesk_comments.py",
+        "backend/services/account_zendesk_internal_comment.py",
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/worker.py",
+        "docs/integrations/n8n/zendesk_account_comment_sync.md"
+      ],
+      "created_at": "2026-08-19",
+      "updated_at": "2026-08-19",
+      "history": [
+        {
+          "at": "2026-08-19",
+          "event": "started",
+          "summary": "诊断确认：production 投递契约为 private comment、无自动 Take Ownership、n8n 同步仅投影不触发自动化；ledger confirmed_at 存在 timestamptz 类型 bug 导致对账死循环；fraud follow-up 存在 intent 冲突导致追问无法排队。计划经用户批准后开工。"
+        },
+        {
+          "at": "2026-08-19",
+          "event": "implementation_complete",
+          "summary": "完成代码与测试：自动 Ownership gate（intake/回复核心/投递前三点接入、fail-closed、人工改派停止）、公开评论投递与 target_status=solved 同 PUT、本地关闭延后到 solved 确认的原子事务、Enablement completion 改标准 reply job、fraud follow-up intent 修复、missing-info 24h fence、confirmed_at timestamptz 修复、n8n trigger_comment_id 触发器与幂等、UI 按钮移除。"
+        }
+      ],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
     },
     {
       "schema_version": 2,
@@ -7765,15 +7865,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口可查看 Account Case 历史和详情。",
-        "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
-        "Account Admin 可让关联 Zendesk ticket 由配置的 AI Agent 接手，并展示 Zendesk 返回的最终 ownership 和 group。",
+        "staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。",
+        "production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",
         "Account 入口支持按 ticket # 精准打开 Case，并可对单 Case 执行仅保留客户消息、保留独立审计的完整 Rerun。",
-        "Account Case 读取受 Workspace Admin 保护；n8n 可通过独立 Zendesk comment snapshot integration 将 Account Case 的 public/internal comments 幂等同步到独立 projection，详情按不同标签和气泡展示，Rerun 不删除这些 Zendesk comments。",
+        "Account Case 读取受 Workspace Admin 保护；n8n 可通过独立 Zendesk comment snapshot integration 将 Account Case 的 public/internal comments 幂等同步到独立 projection，并可用 trigger_comment_id 将新的客户公开评论触发进自动化处理（agent 评论与重放不触发），详情按不同标签和气泡展示，Rerun 不删除这些 Zendesk comments。",
         "Account Rerun 先冻结目标 Case，再以无网络副作用的 Account-only preflight 校验数据库、Prompt runtime 和 Luna profile；首个 Case 的只读 Prepare 执行首次模型请求，任何错误立即停止并展示准确的失败阶段与未处理数量，支持从冻结 checkpoint Resume。",
         "Account 入口强制使用当前 layered route 并记录 pipeline 版本；Agora Router 将安全、隐私、信任、审计和合规请求归入 Security & Compliance classification-only 路由，Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。每次新建异步全量 Rerun 都会重新执行路由、字段提取和 handler reconciliation，并允许 Automation 重新发送内部邮件，同时保留单个 job 内的幂等和审计历史。",
         "Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。",
@@ -7781,8 +7881,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 自动化遇到 AI/API、结构化输出、字段处理、Persona 或内部处理链路故障时最多重试 3 次且不使用 fallback；失败会停止客户回复、取消待处理 reply job、转为 human review，并向指定负责人发送脱敏的幂等故障告警。",
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
-        "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动写入真实 Zendesk internal comment。",
-        "/account 的 Run in Production 按钮改为将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk internal comment 投递；staging 库内晋级（PRD Case）逻辑已移除。",
+        "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
+        "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [
@@ -7841,8 +7941,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "`/workspace/admin` 将 Route Strategy 统一纳入 Agent Config，以 Agent-only 层级导航 Route Agent、Agora Router、Security & Compliance、Account & Billing Router、Backend Operation Router 与 Automation Router；Account Suspension、Fraud Account 和 Detailed Invoice 位于 Account & Billing Router 下，Security & Compliance 作为 classification-only outcome 展示，Automation Workflow catalog 统一展示五类执行/兜底流程。Account Prompt 支持 managed 版本管理，正式 skill 与 MCP 状态继续支持 Draft、Scheduled、Active、Diff、Restore 和历史版本管理，Scheduled Prompt 仅在下一次成功的每日部署后统一生效。",
         "对话支持上传 txt/log/err 日志附件。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
-        "Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；external/customer reply 写回仍未完成。",
-        "Account Admin 可让关联 Zendesk ticket 由配置的 AI Agent 接手，并展示 Zendesk 返回的最终 ownership 和 group。",
+        "staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。",
+        "production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",

@@ -31,7 +31,7 @@ class ProductionUiContractTests(unittest.TestCase):
         self.assertIn("/shared-ui/composer.js", html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260819-production-env-1", html)
+        self.assertIn("20260819-automated-public-1", html)
 
     def test_production_app_prefixes_api_calls_with_production_base(self) -> None:
         app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")

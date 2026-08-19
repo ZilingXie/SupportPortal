@@ -29,7 +29,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260818-account-take-ownership-1", html)
+        self.assertIn("20260819-automated-public-1", html)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -58,7 +58,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("const PRODUCTION_FORWARD_TIMEOUT_MS = 300_000;", app_source)
         self.assertIn("const DEFAULT_FETCH_TIMEOUT_MS = 25_000;", app_source)
         forward_start = app_source.index("async function forwardAccountCaseToProduction")
-        forward_end = app_source.index("\nfunction renderZendeskOwnershipConfirmation", forward_start)
+        forward_end = app_source.index("\nfunction ", forward_start + 10)
         forward_source = app_source[forward_start:forward_end]
         self.assertIn('accountFetch(', forward_source)
         self.assertIn('"/production/account"', forward_source)
@@ -102,7 +102,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("detail-rerun-button", styles)
         self.assertIn("danger-button", styles)
         self.assertNotIn("standard 6-10 minute delay", app_source)
-        self.assertIn("20260819-account-immediate-reply-1", Path("ui/account-ui/index.html").read_text(encoding="utf-8"))
+        self.assertIn("20260819-automated-public-1", Path("ui/account-ui/index.html").read_text(encoding="utf-8"))
 
         helper_start = app_source.index("function normalizeCaseNumberQuery")
         helper_end = app_source.index("\nfunction", helper_start + 1)
@@ -467,41 +467,30 @@ class AccountUiContractTests(unittest.TestCase):
             "Retry internal comment",
             "Result unknown. Verify Zendesk before retrying.",
             "zendesk-internal-comment",
-            '"public": False',
+            "public: bool = False",
         ):
-            self.assertIn(marker, app_source if marker not in {'"public": False'} else zendesk_source)
+            self.assertIn(marker, app_source if marker not in {"public: bool = False"} else zendesk_source)
         self.assertIn("require_workspace_admin", main_source)
         self.assertIn("account_case_id", main_source)
         self.assertIn("message_id", main_source)
         self.assertNotIn('localStorage.setItem("supportportal_workspace_access_token"', app_source)
         self.assertNotIn('localStorage.setItem("supportportal_workspace_account"', app_source)
 
-    def test_account_app_contains_zendesk_ai_assignment_action(self) -> None:
+    def test_account_app_removed_manual_zendesk_ai_assignment_action(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
         styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
         for marker in (
             "Take ownership as AI",
-            "Taking ownership...",
-            "AI owns this ticket",
             "assignAccountCaseToAi",
             "zendeskAssignmentPendingCaseId",
-            "zendeskAssignmentErrorCaseId",
-            "zendeskOwnershipConfirmationOpen",
             "zendeskAssignmentTargetSnapshot",
             "zendesk-ai-assignment",
             "open-zendesk-ownership-confirmation",
             "confirm-zendesk-ownership",
-            "Zendesk may move this ticket to the AI Agent's default group",
-            "group_changed",
-            "No Zendesk ticket linked",
-            "finally",
         ):
-            self.assertIn(marker, app_source)
-        self.assertNotIn("Assign to AI", app_source)
-        self.assertNotIn("Assigning...", app_source)
-        self.assertNotIn("Assigned to AI", app_source)
-        self.assertIn("zendesk-assignment-action", styles)
-        self.assertIn("zendesk-assignment-button", styles)
+            self.assertNotIn(marker, app_source)
+        self.assertNotIn("zendesk-assignment-action", styles)
+        self.assertNotIn("zendesk-assignment-button", styles)
 
     def test_account_fetch_aborts_stalled_request_and_surfaces_timeout(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")

@@ -395,6 +395,22 @@ def _assert_fraud_handoff_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
 
 
+def _assert_missing_information_contract(reply: str) -> None:
+    """A missing-information ask must not promise any handoff/SLA follow-up."""
+    sentences = _standalone_sentences(reply)
+    if _HANDOFF_COMMITMENT_SENTENCE in sentences:
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_contract_failed"
+        )
+    if _has_positive_clause(
+        reply,
+        r"(?:\b\d+\s*[- ]?\s*hours?\b|\b\d+\s*[- ]?\s*(?:business\s+)?days?\b)",
+    ):
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_contract_failed"
+        )
+
+
 def _assert_suspension_contact_contract(reply: str) -> None:
     lowered = str(reply or "").casefold()
     if "email" not in lowered and "e-mail" not in lowered:
@@ -462,6 +478,8 @@ def validate_account_reply_contract(
         _assert_suspension_closing_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         _assert_enablement_completion_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION:
+        _assert_missing_information_contract(normalized_reply)
     if intent in {
         ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
         ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
