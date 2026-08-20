@@ -76,13 +76,22 @@
       "number": 731,
       "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
       "label": "PR #731"
+    },
+    {
+      "type": "test",
+      "label": "Registered Enablement deterministic routing regression",
+      "command": ".venv/bin/pytest -q backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py",
+      "result": "Included in the focused Account routing and ownership suite: 340 passed with 51 subtests passed. A separate 20-run direct check classified the case #12875 message shape as media_relay 20/20 times without calling the Agora Router model."
     }
   ],
   "source_refs": [
-    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+    "backend/services/account_route_pipeline.py",
+    "backend/services/enablement_automation.py",
+    "backend/services/prompts/account_routing.py"
   ],
   "created_at": "2026-08-10",
-  "updated_at": "2026-08-17",
+  "updated_at": "2026-08-20",
   "history": [
     {
       "at": "2026-08-16",
@@ -103,6 +112,16 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "reopened",
+      "summary": "Production case #12875 与 #12874 客户正文相同，但 Agora Router 在 backend_operation 与 uncategorized 之间漂移；重新打开任务以增加已注册 Enablement 请求的确定性边界和回归覆盖。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "completed",
+      "summary": "将明确的已注册 Media Relay 激活请求在 Agora Router 边界确定性归类为 backend_operation，同时保留技术咨询、故障诊断、价格问题、模糊请求和未注册功能的原有 LLM/人工边界。"
     }
   ],
   "legacy_refs": [

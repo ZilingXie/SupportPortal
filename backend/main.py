@@ -880,6 +880,9 @@ def _apply_production_ownership_gate(
             "assignee_id": result.assignee_id,
             "group_id": result.group_id,
             "failure_code": result.failure_code,
+            "failure_category": result.failure_category,
+            "zendesk_status_code": result.zendesk_status_code,
+            "blocking_comment_id": result.blocking_comment_id,
             "created_at": timestamp,
         },
     )

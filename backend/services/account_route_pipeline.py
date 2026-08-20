@@ -26,6 +26,7 @@ from backend.services.billing_automation import BILLING_TOOLING_PROFILE
 from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
     ENABLEMENT_TOOLING_PROFILE,
+    detect_registered_enablement_route,
 )
 from backend.services.quota_automation import QUOTA_SEMANTIC_INTENT, QUOTA_TOOLING_PROFILE
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
@@ -73,7 +74,7 @@ profile_has_invocation_credentials = account_profile_has_primary_credentials
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v9"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v10"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
@@ -1458,14 +1459,34 @@ def decide_account_route(
             attempts,
         ))
 
-    agora_attempt = _invoke_stage(
-        stage_name="agora_router",
-        prompt_key=ACCOUNT_AGORA_PROMPT_KEY,
-        fallback_system_prompt=build_account_agora_system_prompt(),
-        payload={**base_payload, "parent_classification": classification},
-        validate_payload=_validate_agora_payload,
-        model_scenario=ACCOUNT_ROUTE_SCENARIO,
-    )
+    deterministic_enablement = detect_registered_enablement_route(normalized_message)
+    if deterministic_enablement is not None:
+        agora_attempt = AccountRouteStageAttempt(
+            payload={
+                "agora_route": "backend_operation",
+                "confidence": 1.0,
+                "reason_code": "explicit_backend_operation",
+                "additional_intents": [],
+                "selection_reason": "A registered backend feature activation was explicitly requested",
+                "backend_operation": {
+                    "action": "enable",
+                    "target": deterministic_enablement.requested_feature,
+                    "evidence": deterministic_enablement.requested_feature_label,
+                },
+                "evidence_spans": [deterministic_enablement.requested_feature_label],
+            },
+            attempted=True,
+            provider_name="deterministic",
+        )
+    else:
+        agora_attempt = _invoke_stage(
+            stage_name="agora_router",
+            prompt_key=ACCOUNT_AGORA_PROMPT_KEY,
+            fallback_system_prompt=build_account_agora_system_prompt(),
+            payload={**base_payload, "parent_classification": classification},
+            validate_payload=_validate_agora_payload,
+            model_scenario=ACCOUNT_ROUTE_SCENARIO,
+        )
     attempts["agora_router"] = agora_attempt
     agora_payload = agora_attempt.payload or {}
     agora_route = str(agora_payload.get("agora_route") or "").strip().lower()
@@ -1692,6 +1713,11 @@ def decide_account_route(
         ))
 
     if agora_route == "backend_operation":
+        backend_operation_router_source = (
+            "account_layered_hybrid"
+            if deterministic_enablement is not None
+            else "account_layered_llm"
+        )
         backend_operation_attempt = _invoke_stage(
             stage_name="backend_operation_router",
             prompt_key=ACCOUNT_BACKEND_OPERATION_PROMPT_KEY,
@@ -1766,6 +1792,7 @@ def decide_account_route(
                     route_family="human_review",
                     not_automated_reason=backend_operation_reason,
                     evidence_spans=classification["evidence_spans"],
+                    router_source=backend_operation_router_source,
                 ),
                 attempts,
             ))
@@ -1783,6 +1810,7 @@ def decide_account_route(
                     semantic_intent="backend_operation.quota",
                     not_automated_reason=backend_operation_reason,
                     evidence_spans=classification["evidence_spans"],
+                    router_source=backend_operation_router_source,
                 ),
                 attempts,
             ))
@@ -1806,6 +1834,7 @@ def decide_account_route(
                 semantic_intent=semantic_intent,
                 automation_eligibility="eligible",
                 evidence_spans=classification["evidence_spans"],
+                router_source=backend_operation_router_source,
             ),
             attempts,
         ))

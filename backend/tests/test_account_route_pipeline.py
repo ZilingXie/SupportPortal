@@ -125,7 +125,10 @@ class AccountRoutePipelineTests(unittest.TestCase):
         with patch(
             "backend.services.account_route_pipeline._invoke_stage",
             side_effect=attempts,
-        ) as invoke_stage:
+        ) as invoke_stage, patch(
+            "backend.services.account_route_pipeline.detect_registered_enablement_route",
+            return_value=None,
+        ):
             result = decide_account_route("Please enable Media Relay from your end.")
 
         self.assertEqual(result.secondary_label, "Backend Operation / Enablement")
@@ -136,6 +139,55 @@ class AccountRoutePipelineTests(unittest.TestCase):
             [call.kwargs["stage_name"] for call in invoke_stage.call_args_list],
             ["intent_classifier", "agora_router", "backend_operation_router"],
         )
+
+    def test_registered_enablement_request_uses_deterministic_agora_boundary(self) -> None:
+        attempts = [
+            _attempt({"intent_class": "agora", "intent_confidence": 0.98, "reason_code": "agora_case"}),
+            _attempt({
+                "backend_operation_subcategory": "enablement",
+                "confidence": 0.99,
+                "reason_code": "registered_enablement",
+            }),
+        ]
+
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ) as invoke_stage:
+            result = decide_account_route(
+                "I want to enable media relay.",
+                ticket_subject="Zac Enablement Test",
+            )
+
+        self.assertEqual(result.secondary_label, "Backend Operation / Enablement")
+        self.assertEqual(result.decision.execution_action, "enablement")
+        self.assertEqual(result.decision.router_source, "account_layered_hybrid")
+        self.assertEqual(result.classification["backend_operation"]["target"], "media_relay")
+        self.assertEqual(result.stage_attempts["agora_router"].provider_name, "deterministic")
+        self.assertEqual(
+            [call.kwargs["stage_name"] for call in invoke_stage.call_args_list],
+            ["intent_classifier", "backend_operation_router"],
+        )
+
+    def test_registered_enablement_determinism_does_not_use_subject(self) -> None:
+        attempts = [
+            _attempt({"intent_class": "agora", "intent_confidence": 0.98, "reason_code": "agora_case"}),
+            _attempt({
+                "backend_operation_subcategory": "enablement",
+                "confidence": 0.99,
+                "reason_code": "registered_enablement",
+            }),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ):
+            result = decide_account_route(
+                "How do I enable Media Relay in the SDK?",
+                ticket_subject="Enable Media Relay",
+            )
+
+        self.assertNotEqual(result.decision.router_source, "account_layered_hybrid")
 
     def test_unregistered_backend_operation_stops_without_automation(self) -> None:
         attempts = [
@@ -783,7 +835,10 @@ class AccountRoutePipelineTests(unittest.TestCase):
         with patch(
             "backend.services.account_route_pipeline._invoke_stage",
             side_effect=attempts,
-        ) as invoke_stage:
+        ) as invoke_stage, patch(
+            "backend.services.account_route_pipeline.detect_registered_enablement_route",
+            return_value=None,
+        ):
             result = decide_account_route(
                 "Please enable Media Relay from your end for App ID 7da36383d624411698e5c0bc1fda6324."
             )

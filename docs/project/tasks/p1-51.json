@@ -58,6 +58,12 @@
       "label": "Live-discovered repair loop (post-deploy fixes)",
       "command": "pytest targeted suites per fix PR",
       "result": "Six follow-up defects found live and fixed with regression tests: solve required checkbox must use custom_fields array (flat field_<id> silently ignored), support_tickets lacked closed_at, audit readback must tolerate platform-appended signatures (prefix match), jsonb path braces must be escaped in close SQL, enablement completion trigger must equal the latest customer message timestamp, fraud attempt merge dropped ownership context. All suites green after each fix."
+    },
+    {
+      "type": "test",
+      "label": "Default-assignment and public-human-reply ownership regression",
+      "command": ".venv/bin/pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_worker.py backend/tests/test_account_intake.py",
+      "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
     }
   ],
   "source_refs": [
@@ -86,6 +92,16 @@
       "at": "2026-08-20",
       "event": "completed",
       "summary": "四个测试 ticket 的 live 矩阵全部闭环（12838/12864 公开回复且按规则不关单，12839/12865 公开回复 + Zendesk solved + 本地 resolved）。部署期共发现并修复六个缺陷（#804/#805/#808/#809/#811/#812），全部带回归测试。任务完成。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "reopened",
+      "summary": "Production #12874/#12875 调查确认 Zendesk 默认真人 assignee 和自动 group/status 变化不代表真人已回复；重新打开任务以用完整公开评论历史判定人工接管，并让 AI assignment 同时写入目标 group 与 assignee。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "completed",
+      "summary": "Production ownership 改为基于完整 Zendesk 公开评论历史：默认真人 assignee 在尚未公开回复时允许 AI 接管；真人公开回复、未知公开作者或 AI 接管后的真人改派均 fail closed。AI 接管使用 safe_update 原子写入 assignee 与目标 group，并记录失败类别、Zendesk 状态码和阻塞评论 ID。"
     }
   ],
   "phase_id": "phase-1",

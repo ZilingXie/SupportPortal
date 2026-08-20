@@ -3824,3 +3824,22 @@ For each new entry, record:
   - 追问类回复保持 ownership 合同不变；fraud handoff 精确句合同仅在信息齐全并发送内部邮件后适用。
 - Verification:
   - `backend/tests/test_automation_persona.py` 及目标套件 623 passed；详见任务 `p1-51`。
+
+## 2026-08-20 - Registered Enablement routing boundary v10
+
+- Area or subsystem: Account layered Agora Router and registered Enablement routing
+- Prompt or model version: `account-agora-v10`, `account-layered-router-v10`; model configuration unchanged
+- Summary: Clarified that an explicit desired outcome to enable a named feature is a backend operation even without the phrase "from your end". Added an inspectable deterministic boundary for unambiguous Media Relay activation requests before the Agora Router model, while retaining the downstream Backend Operations Router.
+- Reason: Production cases `12874` and `12875` had the same customer body but drifted between `backend_operation` and `uncategorized` because the first routing boundary was model-only.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_route_pipeline.py`
+  - `backend/services/enablement_automation.py`
+  - Account route and Enablement tests
+- Expected behavior change:
+  - Explicit Media Relay activation requests consistently enter `backend_operation` and continue through the registered Enablement router.
+  - How-to, SDK/API configuration, troubleshooting, failure, and pricing requests continue through the model router and do not use the deterministic activation boundary.
+  - Vague requests and unregistered feature names remain outside the deterministic boundary and keep their existing fail-closed behavior.
+- Verification:
+  - Focused Account routing and ownership suite: 340 passed with 51 subtests passed.
+  - Direct deterministic repetition check: 20 of 20 identical Media Relay activation requests resolved to `media_relay` without an Agora Router model call.

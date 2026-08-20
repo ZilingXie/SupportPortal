@@ -16,8 +16,7 @@ from backend.services.automation_routing import is_registered_automation
 from backend.services.zendesk_comments import ZendeskCommentError
 from backend.services.zendesk_ticket_assignment import (
     assign_ticket_to_configured_ai,
-    configured_ai_assignee_id,
-    read_ticket_assignment,
+    read_ticket_ownership_snapshot,
 )
 
 
@@ -28,6 +27,7 @@ OWNERSHIP_STATE_ASSIGNED = "assigned"
 OWNERSHIP_STATE_FAILED = "failed"
 OWNERSHIP_STATE_OUTCOME_UNKNOWN = "outcome_unknown"
 OWNERSHIP_STATE_HUMAN_REASSIGNED = "human_reassigned"
+OWNERSHIP_STATE_HUMAN_REPLIED = "human_replied"
 OWNERSHIP_EVENT_TYPE = "zendesk_ai_ownership"
 
 
@@ -38,6 +38,9 @@ class OwnershipGateResult:
     assignee_id: str | None = None
     group_id: str | None = None
     failure_code: str | None = None
+    failure_category: str | None = None
+    zendesk_status_code: int | None = None
+    blocking_comment_id: str | None = None
     updated_at: str | None = None
 
     @property
@@ -46,7 +49,12 @@ class OwnershipGateResult:
 
     @property
     def fail_closed(self) -> bool:
-        return self.state in {OWNERSHIP_STATE_FAILED, OWNERSHIP_STATE_OUTCOME_UNKNOWN}
+        return self.state in {
+            OWNERSHIP_STATE_FAILED,
+            OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            OWNERSHIP_STATE_HUMAN_REASSIGNED,
+            OWNERSHIP_STATE_HUMAN_REPLIED,
+        }
 
 
 def _ownership_context(account_case: dict[str, Any]) -> dict[str, Any]:
@@ -61,6 +69,9 @@ def _persist_ownership_state(
     assignee_id: str | None,
     group_id: str | None,
     failure_code: str | None,
+    failure_category: str | None,
+    zendesk_status_code: int | None,
+    blocking_comment_id: str | None,
     updated_at: str,
 ) -> dict[str, Any]:
     context = _ownership_context(account_case)
@@ -69,11 +80,81 @@ def _persist_ownership_state(
         "assignee_id": assignee_id,
         "group_id": group_id,
         "failure_code": failure_code,
+        "failure_category": failure_category,
+        "zendesk_status_code": zendesk_status_code,
+        "blocking_comment_id": blocking_comment_id,
         "confirmed_at": updated_at if state == OWNERSHIP_STATE_ASSIGNED else None,
         "updated_at": updated_at,
     }
     account_case["automation_context"] = context
     return context[OWNERSHIP_CONTEXT_KEY]
+
+
+def _ownership_result(
+    account_case: dict[str, Any],
+    *,
+    state: str,
+    updated_at: str,
+    assignee_id: str | None = None,
+    group_id: str | None = None,
+    failure_code: str | None = None,
+    failure_category: str | None = None,
+    zendesk_status_code: int | None = None,
+    blocking_comment_id: str | None = None,
+) -> OwnershipGateResult:
+    _persist_ownership_state(
+        account_case,
+        state=state,
+        assignee_id=assignee_id,
+        group_id=group_id,
+        failure_code=failure_code,
+        failure_category=failure_category,
+        zendesk_status_code=zendesk_status_code,
+        blocking_comment_id=blocking_comment_id,
+        updated_at=updated_at,
+    )
+    return OwnershipGateResult(
+        eligible=True,
+        state=state,
+        assignee_id=assignee_id,
+        group_id=group_id,
+        failure_code=failure_code,
+        failure_category=failure_category,
+        zendesk_status_code=zendesk_status_code,
+        blocking_comment_id=blocking_comment_id,
+        updated_at=updated_at,
+    )
+
+
+def _snapshot_policy_blocker(
+    account_case: dict[str, Any],
+    *,
+    snapshot: Any,
+    updated_at: str,
+) -> OwnershipGateResult | None:
+    if snapshot.human_replied:
+        return _ownership_result(
+            account_case,
+            state=OWNERSHIP_STATE_HUMAN_REPLIED,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            failure_code="zendesk_human_reply_blocks_automation",
+            failure_category="policy",
+            blocking_comment_id=snapshot.blocking_comment_id,
+            updated_at=updated_at,
+        )
+    if snapshot.unresolved_public_comment_id:
+        return _ownership_result(
+            account_case,
+            state=OWNERSHIP_STATE_FAILED,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            failure_code="zendesk_comment_author_unresolved",
+            failure_category="policy",
+            blocking_comment_id=snapshot.unresolved_public_comment_id,
+            updated_at=updated_at,
+        )
+    return None
 
 
 def ownership_gate_eligible(account_case: dict[str, Any]) -> bool:
@@ -115,132 +196,141 @@ def ensure_production_automation_ownership(
     previous = previous if isinstance(previous, dict) else {}
     previous_state = str(previous.get("state") or "").strip().lower()
 
-    if mode == "verify":
-        try:
-            expected_assignee_id = configured_ai_assignee_id()
-            assignee_id, group_id = read_ticket_assignment(ticket_id=zendesk_ticket_id)
-        except ZendeskCommentError as exc:
-            return OwnershipGateResult(
-                eligible=True,
-                state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
-                failure_code=exc.error_code,
-                updated_at=updated_at,
-            )
-        if assignee_id is not None and assignee_id != expected_assignee_id:
-            return OwnershipGateResult(
-                eligible=True,
-                state=OWNERSHIP_STATE_HUMAN_REASSIGNED,
-                assignee_id=assignee_id,
-                group_id=group_id,
-                updated_at=updated_at,
-            )
-        if assignee_id is None and previous_state != OWNERSHIP_STATE_ASSIGNED:
-            return OwnershipGateResult(
-                eligible=True,
-                state=OWNERSHIP_STATE_FAILED,
-                failure_code="zendesk_ownership_missing",
-                updated_at=updated_at,
-            )
-        return OwnershipGateResult(
-            eligible=True,
-            state=OWNERSHIP_STATE_ASSIGNED,
-            assignee_id=assignee_id or str(previous.get("assignee_id") or "").strip() or None,
-            group_id=group_id,
+    try:
+        snapshot = read_ticket_ownership_snapshot(ticket_id=zendesk_ticket_id)
+    except ZendeskCommentError as exc:
+        return _ownership_result(
+            account_case,
+            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            assignee_id=str(previous.get("assignee_id") or "").strip() or None,
+            group_id=str(previous.get("group_id") or "").strip() or None,
+            failure_code=exc.error_code,
+            failure_category=exc.category,
+            zendesk_status_code=exc.status_code,
             updated_at=updated_at,
         )
 
-    if previous_state == OWNERSHIP_STATE_ASSIGNED:
-        return OwnershipGateResult(
-            eligible=True,
-            state=OWNERSHIP_STATE_ASSIGNED,
-            assignee_id=str(previous.get("assignee_id") or "").strip() or None,
-            group_id=str(previous.get("group_id") or "").strip() or None,
-            failure_code=None,
-            updated_at=str(previous.get("confirmed_at") or "").strip() or None,
-        )
-    if previous_state == OWNERSHIP_STATE_OUTCOME_UNKNOWN:
-        # A previous PUT may have reached Zendesk; only read back, never PUT again.
-        try:
-            expected_assignee_id = configured_ai_assignee_id()
-            assignee_id, group_id = read_ticket_assignment(ticket_id=zendesk_ticket_id)
-        except ZendeskCommentError as exc:
-            _persist_ownership_state(
-                account_case,
-                state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
-                assignee_id=str(previous.get("assignee_id") or "").strip() or None,
-                group_id=str(previous.get("group_id") or "").strip() or None,
-                failure_code=exc.error_code,
-                updated_at=updated_at,
-            )
-            return OwnershipGateResult(
-                eligible=True,
-                state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
-                failure_code=exc.error_code,
-                updated_at=updated_at,
-            )
-        if assignee_id == expected_assignee_id:
-            _persist_ownership_state(
-                account_case,
-                state=OWNERSHIP_STATE_ASSIGNED,
-                assignee_id=assignee_id,
-                group_id=group_id,
-                failure_code=None,
-                updated_at=updated_at,
-            )
-            return OwnershipGateResult(
-                eligible=True,
-                state=OWNERSHIP_STATE_ASSIGNED,
-                assignee_id=assignee_id,
-                group_id=group_id,
-                updated_at=updated_at,
-            )
-        _persist_ownership_state(
+    blocker = _snapshot_policy_blocker(
+        account_case,
+        snapshot=snapshot,
+        updated_at=updated_at,
+    )
+    if blocker is not None:
+        return blocker
+
+    assignment_matches = (
+        snapshot.assignee_id == snapshot.ai_assignee_id
+        and snapshot.group_id == snapshot.ai_group_id
+    )
+    if assignment_matches:
+        return _ownership_result(
             account_case,
-            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
-            assignee_id=assignee_id,
-            group_id=group_id,
-            failure_code="zendesk_assignment_unverified",
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
             updated_at=updated_at,
         )
-        return OwnershipGateResult(
-            eligible=True,
-            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+
+    if previous_state == OWNERSHIP_STATE_ASSIGNED or mode == "verify":
+        if snapshot.assignee_id and snapshot.assignee_id != snapshot.ai_assignee_id:
+            return _ownership_result(
+                account_case,
+                state=OWNERSHIP_STATE_HUMAN_REASSIGNED,
+                assignee_id=snapshot.assignee_id,
+                group_id=snapshot.group_id,
+                failure_code="zendesk_ownership_human_reassigned",
+                failure_category="policy",
+                updated_at=updated_at,
+            )
+        return _ownership_result(
+            account_case,
+            state=OWNERSHIP_STATE_FAILED,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
             failure_code="zendesk_assignment_unverified",
+            failure_category="policy",
+            updated_at=updated_at,
+        )
+
+    if previous_state == OWNERSHIP_STATE_OUTCOME_UNKNOWN:
+        return _ownership_result(
+            account_case,
+            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            failure_code="zendesk_assignment_unverified",
+            failure_category="outcome_unknown",
             updated_at=updated_at,
         )
 
     try:
-        result = assign_ticket_to_configured_ai(ticket_id=zendesk_ticket_id)
+        result = assign_ticket_to_configured_ai(
+            ticket_id=zendesk_ticket_id,
+            ownership_snapshot=snapshot,
+        )
     except ZendeskCommentError as exc:
+        if exc.status_code == 409:
+            try:
+                snapshot = read_ticket_ownership_snapshot(ticket_id=zendesk_ticket_id)
+            except ZendeskCommentError as read_exc:
+                return _ownership_result(
+                    account_case,
+                    state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+                    failure_code=read_exc.error_code,
+                    failure_category=read_exc.category,
+                    zendesk_status_code=read_exc.status_code,
+                    updated_at=updated_at,
+                )
+            blocker = _snapshot_policy_blocker(
+                account_case,
+                snapshot=snapshot,
+                updated_at=updated_at,
+            )
+            if blocker is not None:
+                return blocker
+            if (
+                snapshot.assignee_id == snapshot.ai_assignee_id
+                and snapshot.group_id == snapshot.ai_group_id
+            ):
+                return _ownership_result(
+                    account_case,
+                    state=OWNERSHIP_STATE_ASSIGNED,
+                    assignee_id=snapshot.assignee_id,
+                    group_id=snapshot.group_id,
+                    updated_at=updated_at,
+                )
+            try:
+                result = assign_ticket_to_configured_ai(
+                    ticket_id=zendesk_ticket_id,
+                    ownership_snapshot=snapshot,
+                )
+            except ZendeskCommentError as retry_exc:
+                exc = retry_exc
+            else:
+                return _ownership_result(
+                    account_case,
+                    state=OWNERSHIP_STATE_ASSIGNED,
+                    assignee_id=result.assignee_id,
+                    group_id=result.group_id,
+                    updated_at=updated_at,
+                )
         state = (
             OWNERSHIP_STATE_OUTCOME_UNKNOWN
             if exc.category == "outcome_unknown"
             else OWNERSHIP_STATE_FAILED
         )
-        _persist_ownership_state(
+        return _ownership_result(
             account_case,
             state=state,
             assignee_id=None,
             group_id=None,
             failure_code=exc.error_code,
+            failure_category=exc.category,
+            zendesk_status_code=exc.status_code,
             updated_at=updated_at,
         )
-        return OwnershipGateResult(
-            eligible=True,
-            state=state,
-            failure_code=exc.error_code,
-            updated_at=updated_at,
-        )
-    _persist_ownership_state(
+    return _ownership_result(
         account_case,
-        state=OWNERSHIP_STATE_ASSIGNED,
-        assignee_id=result.assignee_id,
-        group_id=result.group_id,
-        failure_code=None,
-        updated_at=updated_at,
-    )
-    return OwnershipGateResult(
-        eligible=True,
         state=OWNERSHIP_STATE_ASSIGNED,
         assignee_id=result.assignee_id,
         group_id=result.group_id,
