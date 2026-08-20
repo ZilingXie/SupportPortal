@@ -2269,6 +2269,32 @@ def _queue_enablement_completion_reply_job(
         or account_case.get("billing_ticket_id")
         or ""
     )
+    # The publication gate requires the trigger to equal the latest customer
+    # message timestamp; the email-processing moment would always look stale.
+    canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
+    customer_timestamps = _account_customer_message_timestamps(canonical_ticket or {})
+    if not customer_timestamps:
+        _mark_account_case_for_human_review(
+            account_case,
+            reason="enablement_completion_trigger_missing",
+            timestamp=timestamp,
+            policy_decision="automation_persona_human_review",
+        )
+        manual_event = {
+            "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+            "account_case_id": case_id, "automation_reply_message_id": message_id,
+            "reason": "enablement_completion_trigger_missing",
+            "created_at": timestamp, "source": source,
+        }
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=None, account_case_updates=account_case,
+            events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+            completed_at=timestamp,
+        )
+        ticket_repository.save_account_case(account_case)
+        return "completed" if committed else "in_progress"
+    trigger_message_created_at = max(customer_timestamps)
     try:
         persona_assignment = ticket_repository.resolve_account_persona(client_ticket_id)
     except AccountPersonaUnavailableError as exc:
@@ -2312,7 +2338,7 @@ def _queue_enablement_completion_reply_job(
     job = create_account_reply_job(
         ticket_repository,
         ticket_id=client_ticket_id,
-        trigger_message_created_at=timestamp,
+        trigger_message_created_at=trigger_message_created_at,
         created_at=timestamp,
         delay_seconds=delay_seconds,
         reply_facts=reply_facts,
