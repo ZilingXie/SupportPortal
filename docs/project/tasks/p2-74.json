@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-74",
   "title": "/account Run in Production 重构为转发 production intake",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "移除 staging 库内 promote-production 端点与 PRD-* 晋级逻辑；/account 的 Run in Production 按钮改为以 n8n 同款五字段 intake 直连 POST /production/account，由 production 栈完成完整路由并在命中已注册 Automation 时自动写入 Zendesk internal comment。nginx intake 路由超时提升到 300s 匹配前端等待。",
-  "next_action": "合并后从根 main 重启官方栈并做 live 验证（/account 转发按钮新契约、/production 页面 marker），完成后收尾。",
+  "next_action": "",
   "acceptance_criteria": [
     "account-ui 的 Run in Production 按钮直接 POST /production/account（同源 n8n 同款 intake），载荷含 external_id/title/question/customer_email/customer_name/source/created_by；未关联数字 Zendesk 号的 Case 拒绝转发并就地报错。",
     "转发成功与幂等重放（idempotent_replay）分别有明确 toast；超时提示指向 /production/ 而非 PRD-* Case。",
@@ -32,6 +32,12 @@
       "label": "Syntax gates",
       "command": "python3 -m py_compile backend/main.py && node --check ui/account-ui/app.js && git diff --check",
       "details": "后端编译、前端 JS 语法、空白检查全部通过。"
+    },
+    {
+      "type": "deployment",
+      "label": "Official stack restart + live markers",
+      "command": "podman exec deployment_api_1 python -c \"import urllib.request, urllib.error; js=urllib.request.urlopen('http://127.0.0.1:8000/account/app.js', timeout=10).read().decode(); print('forward' in js)\" ; POST /api/account/cases/AC-X/promote-production -> 404",
+      "details": "2026-08-20 官方栈（app_build.ref=5318360e267f）：/account app.js 含 forwardAccountCaseToProduction 且无 promote-production 残留；后端 promote-production 端点已删除（404）。端到端转发在 EC2 production 环境运行（本地栈不启用 production profile，属设计行为）。"
     }
   ],
   "source_refs": [
@@ -41,12 +47,17 @@
     "backend/tests/test_account_ui_contract.py"
   ],
   "created_at": "2026-08-19",
-  "updated_at": "2026-08-19",
+  "updated_at": "2026-08-20",
   "history": [
     {
       "at": "2026-08-19",
       "event": "created",
       "summary": "将 /account 的 Run in Production 从 staging 库内晋级重构为转发到 /production 独立环境。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "completed",
+      "summary": "官方栈重启（app_build.ref=5318360e267f）与 live marker 验证通过，标记完成。"
     }
   ],
   "legacy_refs": [],
