@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "Production Fraud Account 和 Account Suspension 的最终 handoff 客户回复经 Zendesk public delivery 确认后，通过持久化 outbox 和 n8n 幂等投递到 Slack；Slack 失败与客户回复、Zendesk solved 和本地 Case close 独立。",
-  "next_action": "完成 finalize、官方栈重启；确认 Production API/auxiliary worker 使用 n8n_request_token，并在 n8n status workflow 发布后完成 synthetic 外部读回。",
+  "next_action": "激活 n8n 的 SupportPortal Account Handoff Status GET workflow；随后用 Prod worker 做 status readback，并确认 delivered/failed/outcome_unknown/missing 对账路径。",
   "acceptance_criteria": [
     "Fraud 仅 fraud_handoff_confirmation、Suspension 仅 account_suspension_handoff_and_close 在 public Zendesk delivered 后创建一次 Slack 投递；contact confirmation 和其他 Automation 不触发。",
     "Slack 消息包含 Case 类型和标题、Zendesk ticket link、持久化 question summary，不包含客户身份、collected fields、AI reply 或凭据。",
@@ -13,13 +13,27 @@
     "n8n 或 Slack 失败不回滚客户回复、Zendesk solved、本地 Case close，也不转 Human Review。",
     "配置只注入 Production API 和 auxiliary worker；缺失配置由 Production health warning 和结构化日志暴露。"
   ],
-  "blockers": [],
+  "blockers": [
+    "n8n production GET status webhook /webhook/supportportal/account-handoff/slack/status is not registered; activate the status workflow before final reconciliation acceptance."
+  ],
   "evidence": [
     {
       "type": "test",
       "label": "Account handoff Slack outbox, n8n and Zendesk independence suite",
       "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m pytest -q backend/tests/test_account_slack_n8n.py backend/tests/test_runtime_bootstrap.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py",
       "details": "239 tests passed with 22 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, Slack failure independence, and X-N8n-Request-Token header propagation from n8n_request_token."
+    },
+    {
+      "type": "deployment",
+      "label": "Production EC2 deployment and runtime configuration",
+      "command": "ssh zacbot 'cd /home/ubuntu/SupportPortal && ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space'",
+      "details": "Deployment completed successfully. Public /health returned HTTP 200 with app_build.ref=2166840d5e90 and runtime_profile=full. api_production and worker_aux_production run localhost/supportportal-app:2166840d5e90; both have n8n_request_token, ACCOUNT_SLACK_N8N_WEBHOOK_URL, and ACCOUNT_SLACK_N8N_STATUS_URL set without exposing values."
+    },
+    {
+      "type": "test",
+      "label": "Production n8n client synthetic delivery and replay",
+      "command": "docker exec deployment-worker_aux_production-1 python - (synthetic event; executed on zacbot)",
+      "details": "The formal Production worker client sent a synthetic fraud_handoff_confirmation event and received delivered; replaying the identical event_id also returned delivered, confirming the authenticated POST path and n8n event-idempotent replay response. GET status remains unavailable because the production status webhook is not registered."
     }
   ],
   "source_refs": [
@@ -47,6 +61,11 @@
       "at": "2026-08-20",
       "event": "progress",
       "summary": "Production Slack client 与 API/auxiliary worker 已统一使用 n8n_request_token 和 X-N8n-Request-Token；POST webhook synthetic delivery 已读回 delivered，status workflow 仍需发布后完成未知结果对账验收。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "progress",
+      "summary": "EC2 已部署 main 2166840d5e90，Production API/auxiliary worker 的 n8n URL 与 token 已注入；Prod worker synthetic POST 首次与相同 event_id 重放均 delivered。n8n GET status workflow 仍未激活，保留 active 等待 status readback。"
     }
   ],
   "legacy_refs": [],
