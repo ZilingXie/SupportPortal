@@ -9,6 +9,8 @@ continuing automation.
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -22,6 +24,13 @@ from backend.services.zendesk_ticket_assignment import (
 
 OWNERSHIP_CONTEXT_KEY = "zendesk_ownership"
 OwnershipGateMode = Literal["gate", "verify"]
+
+# Zendesk omnichannel routing briefly owns ticket assignment right after a
+# ticket is created and routed; an immediate assignment PUT gets rejected with
+# 422. Retry the assignment a bounded number of times with fresh snapshots
+# before classifying the failure as permanent.
+OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_ENV = "ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS"
+DEFAULT_ASSIGNMENT_RETRY_DELAYS: tuple[float, ...] = (20.0, 40.0)
 
 OWNERSHIP_STATE_ASSIGNED = "assigned"
 OWNERSHIP_STATE_FAILED = "failed"
@@ -40,6 +49,7 @@ class OwnershipGateResult:
     failure_code: str | None = None
     failure_category: str | None = None
     zendesk_status_code: int | None = None
+    failure_detail: str | None = None
     blocking_comment_id: str | None = None
     updated_at: str | None = None
 
@@ -57,6 +67,22 @@ class OwnershipGateResult:
         }
 
 
+def _assignment_retry_delays() -> tuple[float, ...]:
+    raw = str(os.getenv(OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_ENV, "20,40")).strip()
+    if not raw:
+        return ()
+    delays: list[float] = []
+    for part in raw.split(","):
+        try:
+            value = float(part.strip())
+        except ValueError:
+            return DEFAULT_ASSIGNMENT_RETRY_DELAYS
+        if value < 0:
+            return DEFAULT_ASSIGNMENT_RETRY_DELAYS
+        delays.append(value)
+    return tuple(delays)
+
+
 def _ownership_context(account_case: dict[str, Any]) -> dict[str, Any]:
     context = account_case.get("automation_context")
     return dict(context) if isinstance(context, dict) else {}
@@ -72,6 +98,7 @@ def _persist_ownership_state(
     failure_category: str | None,
     zendesk_status_code: int | None,
     blocking_comment_id: str | None,
+    failure_detail: str | None = None,
     updated_at: str,
 ) -> dict[str, Any]:
     context = _ownership_context(account_case)
@@ -82,6 +109,7 @@ def _persist_ownership_state(
         "failure_code": failure_code,
         "failure_category": failure_category,
         "zendesk_status_code": zendesk_status_code,
+        "failure_detail": failure_detail,
         "blocking_comment_id": blocking_comment_id,
         "confirmed_at": updated_at if state == OWNERSHIP_STATE_ASSIGNED else None,
         "updated_at": updated_at,
@@ -101,6 +129,7 @@ def _ownership_result(
     failure_category: str | None = None,
     zendesk_status_code: int | None = None,
     blocking_comment_id: str | None = None,
+    failure_detail: str | None = None,
 ) -> OwnershipGateResult:
     _persist_ownership_state(
         account_case,
@@ -111,6 +140,7 @@ def _ownership_result(
         failure_category=failure_category,
         zendesk_status_code=zendesk_status_code,
         blocking_comment_id=blocking_comment_id,
+        failure_detail=failure_detail,
         updated_at=updated_at,
     )
     return OwnershipGateResult(
@@ -121,6 +151,7 @@ def _ownership_result(
         failure_code=failure_code,
         failure_category=failure_category,
         zendesk_status_code=zendesk_status_code,
+        failure_detail=failure_detail,
         blocking_comment_id=blocking_comment_id,
         updated_at=updated_at,
     )
@@ -182,10 +213,12 @@ def ensure_production_automation_ownership(
     """Ensure the production automated case is owned by the configured AI agent.
 
     ``mode="gate"`` is the authoritative path used before external side effects:
-    it may issue one assignment PUT, verifies the result, and never puts twice
-    when a previous attempt's outcome is unknown. ``mode="verify"`` is read-only
-    and used right before each Zendesk comment write: if a human took the ticket
-    over, automation stops instead of stealing the ticket back.
+    it issues an assignment PUT (with a bounded backoff retry for 422, because
+    Zendesk omnichannel routing briefly rejects assignment writes right after a
+    ticket is routed), verifies the result, and never puts twice when a previous
+    attempt's outcome is unknown. ``mode="verify"`` is read-only and used right
+    before each Zendesk comment write: if a human took the ticket over,
+    automation stops instead of stealing the ticket back.
     """
     if not ownership_gate_eligible(account_case):
         return OwnershipGateResult(eligible=False, state=OWNERSHIP_STATE_ASSIGNED)
@@ -207,6 +240,7 @@ def ensure_production_automation_ownership(
             failure_code=exc.error_code,
             failure_category=exc.category,
             zendesk_status_code=exc.status_code,
+            failure_detail=getattr(exc, "detail", None),
             updated_at=updated_at,
         )
 
@@ -263,22 +297,22 @@ def ensure_production_automation_ownership(
             updated_at=updated_at,
         )
 
-    try:
-        result = assign_ticket_to_configured_ai(
-            ticket_id=zendesk_ticket_id,
-            ownership_snapshot=snapshot,
-        )
-    except ZendeskCommentError as exc:
-        if exc.status_code == 409:
+    attempt_delays: tuple[float, ...] = (0.0,) + _assignment_retry_delays()
+    last_exc: ZendeskCommentError | None = None
+    for attempt_index, delay_before_attempt in enumerate(attempt_delays):
+        if attempt_index > 0:
+            if delay_before_attempt > 0:
+                time.sleep(delay_before_attempt)
             try:
                 snapshot = read_ticket_ownership_snapshot(ticket_id=zendesk_ticket_id)
-            except ZendeskCommentError as read_exc:
+            except ZendeskCommentError as exc:
                 return _ownership_result(
                     account_case,
                     state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
-                    failure_code=read_exc.error_code,
-                    failure_category=read_exc.category,
-                    zendesk_status_code=read_exc.status_code,
+                    failure_code=exc.error_code,
+                    failure_category=exc.category,
+                    zendesk_status_code=exc.status_code,
+                    failure_detail=getattr(exc, "detail", None),
                     updated_at=updated_at,
                 )
             blocker = _snapshot_policy_blocker(
@@ -299,40 +333,92 @@ def ensure_production_automation_ownership(
                     group_id=snapshot.group_id,
                     updated_at=updated_at,
                 )
-            try:
-                result = assign_ticket_to_configured_ai(
-                    ticket_id=zendesk_ticket_id,
-                    ownership_snapshot=snapshot,
-                )
-            except ZendeskCommentError as retry_exc:
-                exc = retry_exc
-            else:
-                return _ownership_result(
+
+        try:
+            result = assign_ticket_to_configured_ai(
+                ticket_id=zendesk_ticket_id,
+                ownership_snapshot=snapshot,
+            )
+        except ZendeskCommentError as exc:
+            attempt_exc: ZendeskCommentError | None = exc
+            if exc.status_code == 409:
+                try:
+                    snapshot = read_ticket_ownership_snapshot(ticket_id=zendesk_ticket_id)
+                except ZendeskCommentError as read_exc:
+                    return _ownership_result(
+                        account_case,
+                        state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+                        failure_code=read_exc.error_code,
+                        failure_category=read_exc.category,
+                        zendesk_status_code=read_exc.status_code,
+                        failure_detail=getattr(read_exc, "detail", None),
+                        updated_at=updated_at,
+                    )
+                blocker = _snapshot_policy_blocker(
                     account_case,
-                    state=OWNERSHIP_STATE_ASSIGNED,
-                    assignee_id=result.assignee_id,
-                    group_id=result.group_id,
+                    snapshot=snapshot,
                     updated_at=updated_at,
                 )
-        state = (
-            OWNERSHIP_STATE_OUTCOME_UNKNOWN
-            if exc.category == "outcome_unknown"
-            else OWNERSHIP_STATE_FAILED
-        )
-        return _ownership_result(
-            account_case,
-            state=state,
-            assignee_id=None,
-            group_id=None,
-            failure_code=exc.error_code,
-            failure_category=exc.category,
-            zendesk_status_code=exc.status_code,
-            updated_at=updated_at,
-        )
+                if blocker is not None:
+                    return blocker
+                if (
+                    snapshot.assignee_id == snapshot.ai_assignee_id
+                    and snapshot.group_id == snapshot.ai_group_id
+                ):
+                    return _ownership_result(
+                        account_case,
+                        state=OWNERSHIP_STATE_ASSIGNED,
+                        assignee_id=snapshot.assignee_id,
+                        group_id=snapshot.group_id,
+                        updated_at=updated_at,
+                    )
+                try:
+                    result = assign_ticket_to_configured_ai(
+                        ticket_id=zendesk_ticket_id,
+                        ownership_snapshot=snapshot,
+                    )
+                except ZendeskCommentError as retry_exc:
+                    attempt_exc = retry_exc
+                else:
+                    return _ownership_result(
+                        account_case,
+                        state=OWNERSHIP_STATE_ASSIGNED,
+                        assignee_id=result.assignee_id,
+                        group_id=result.group_id,
+                        updated_at=updated_at,
+                    )
+            if attempt_exc is None:
+                break
+            last_exc = attempt_exc
+            if (
+                attempt_exc.status_code == 422
+                and attempt_index < len(attempt_delays) - 1
+            ):
+                continue
+            break
+        else:
+            return _ownership_result(
+                account_case,
+                state=OWNERSHIP_STATE_ASSIGNED,
+                assignee_id=result.assignee_id,
+                group_id=result.group_id,
+                updated_at=updated_at,
+            )
+
+    failure_exc = last_exc
+    state = (
+        OWNERSHIP_STATE_OUTCOME_UNKNOWN
+        if failure_exc is not None and failure_exc.category == "outcome_unknown"
+        else OWNERSHIP_STATE_FAILED
+    )
     return _ownership_result(
         account_case,
-        state=OWNERSHIP_STATE_ASSIGNED,
-        assignee_id=result.assignee_id,
-        group_id=result.group_id,
+        state=state,
+        assignee_id=None,
+        group_id=None,
+        failure_code=failure_exc.error_code if failure_exc is not None else "zendesk_assignment_failed",
+        failure_category=failure_exc.category if failure_exc is not None else "permanent",
+        zendesk_status_code=failure_exc.status_code if failure_exc is not None else None,
+        failure_detail=getattr(failure_exc, "detail", None) if failure_exc is not None else None,
         updated_at=updated_at,
     )

@@ -882,6 +882,7 @@ def _apply_production_ownership_gate(
             "failure_code": result.failure_code,
             "failure_category": result.failure_category,
             "zendesk_status_code": result.zendesk_status_code,
+            "failure_detail": result.failure_detail,
             "blocking_comment_id": result.blocking_comment_id,
             "created_at": timestamp,
         },
@@ -4855,11 +4856,14 @@ def _account_zendesk_assignment_http_error(exc: ZendeskCommentError) -> HTTPExce
             detail="Zendesk integration lacks permission to verify or update the ticket",
         )
     if exc.status_code == 422:
-        return HTTPException(
-            status_code=502,
-            detail="Zendesk rejected the ownership transfer; verify the ticket workflow and AI Agent permissions",
-        )
-    return HTTPException(status_code=502, detail="Zendesk rejected the AI assignment; check the integration configuration")
+        detail = "Zendesk rejected the ownership transfer; verify the ticket workflow and AI Agent permissions"
+        if exc.detail:
+            detail = f"{detail}: {exc.detail}"
+        return HTTPException(status_code=502, detail=detail)
+    detail = "Zendesk rejected the AI assignment; check the integration configuration"
+    if exc.detail:
+        detail = f"{detail}: {exc.detail}"
+    return HTTPException(status_code=502, detail=detail)
 
 
 def _account_zendesk_assignment_payload(

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T09:33:35Z",
-  "source_base_commit": "2166840d5e90be894484993d7cb771be35e85c2a",
-  "registry_digest": "bb6841de9f050ba192a747aa3f440f25d20d935fcff0764fde40a0ba38cc85f2",
+  "generated_at": "2026-08-20T10:21:20Z",
+  "source_base_commit": "04532f0416f83c9fd0cdfe58feca85ae1847c87c",
+  "registry_digest": "415fc1301b17ed940766456f54925e61abc0c594a9daaaa725708ec1b763d9b9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1050,6 +1050,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Default-assignment and public-human-reply ownership regression",
           "command": ".venv/bin/pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_worker.py backend/tests/test_account_intake.py",
           "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
+        },
+        {
+          "type": "test",
+          "label": "Ownership retry + detail persistence",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment",
+          "details": "27 全绿：422 重试成功（重取快照+复PUT 后 assigned）；持续 422 三次尝试后 failed 且 automation_context 持久化 failure_detail；重试窗口出现人工回复按 policy 停机且不再 PUT；HTTPError 错误体解析为 detail；原有 409 冲突恢复与禁用重试（env 置空）语义保持。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_reply_publication_postgres backend.tests.test_zendesk_comments",
+          "details": "290 通过、8 跳过（无活库 Postgres 集成用例，与改动前一致）：delivery/verify 流、intake gate 包装、手动 assignment 端点、评论服务全部不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "python3 -m py_compile backend/services/account_automation_ownership.py backend/services/zendesk_ticket_assignment.py backend/services/zendesk_comments.py backend/main.py && git diff --check",
+          "details": "四个改动文件编译与空白检查通过。"
         }
       ],
       "source_refs": [
@@ -1061,7 +1079,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 7,
+      "task_count": 8,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -7051,6 +7069,65 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-case-delivery"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-80",
+      "title": "修复 Zendesk AI 接管撞上 omnichannel 路由窗口时被固化成永久失败",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Production 自动接管 gate 在工单创建后数秒内执行时，可能撞上 Zendesk omnichannel 路由引擎的分配占有窗口而被 422 拒绝；现行代码把一切 422 归为 permanent 且丢弃 Zendesk 错误体，导致瞬时冲突被固化为 human_review 永久失败（AC-12878 实例）。修复：捕获并持久化 Zendesk 错误体（failure_detail），gate 对 422 做有界退避重试（默认 20s/40s，env 可调），每次重试重新快照、复查 human_replied 等策略阻断。",
+      "next_action": "合并后从根 main 重启官方栈并做 live 验证，完成后收尾。",
+      "acceptance_criteria": [
+        "zendesk_ticket_assignment 的 HTTPError 处理捕获 Zendesk 错误体（best-effort），以 detail 附加在 ZendeskCommentError 上并不再丢弃。",
+        "ownership gate 对 422 按默认 20s/40s（ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS 可调）退避重试；每次重试前重新读取快照（盖新 updated_stamp）、复查策略阻断与已分配状态；重试期间人工回复则按 policy 阻断停机。",
+        "ownership 结果/事件（zendesk_ai_ownership event 与 automation_context.zendesk_ownership）持久化 failure_detail；手动 Take Ownership 端点的错误响应透出该详情。",
+        "重试成功路径返回 assigned；持续 422 最终落 failed 并带 failure_detail；非 422 错误行为不变。",
+        "现有 ownership/assignment/worker/intake 测试全部保持通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Ownership retry + detail persistence",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment",
+          "details": "27 全绿：422 重试成功（重取快照+复PUT 后 assigned）；持续 422 三次尝试后 failed 且 automation_context 持久化 failure_detail；重试窗口出现人工回复按 policy 停机且不再 PUT；HTTPError 错误体解析为 detail；原有 409 冲突恢复与禁用重试（env 置空）语义保持。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_reply_publication_postgres backend.tests.test_zendesk_comments",
+          "details": "290 通过、8 跳过（无活库 Postgres 集成用例，与改动前一致）：delivery/verify 流、intake gate 包装、手动 assignment 端点、评论服务全部不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "python3 -m py_compile backend/services/account_automation_ownership.py backend/services/zendesk_ticket_assignment.py backend/services/zendesk_comments.py backend/main.py && git diff --check",
+          "details": "四个改动文件编译与空白检查通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/services/account_automation_ownership.py",
+        "backend/services/zendesk_comments.py",
+        "backend/main.py",
+        "backend/tests/test_account_automation_ownership.py",
+        "backend/tests/test_zendesk_ticket_assignment.py"
+      ],
+      "created_at": "2026-08-20",
+      "updated_at": "2026-08-20",
+      "history": [
+        {
+          "at": "2026-08-20",
+          "event": "created",
+          "summary": "基于 AC-12878 实测调查（接管发生在建单后 15 秒内撞上路由窗口 422；同载荷稍后成功；AI agent 组成员关系与写权限均正常）立项修复。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
     }
   ],
   "meetings": [

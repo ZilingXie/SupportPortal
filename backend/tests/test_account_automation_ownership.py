@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import patch
 
@@ -239,7 +240,9 @@ class OwnershipGateModeTests(unittest.TestCase):
 
     def test_assignment_error_preserves_sanitized_category_and_status(self):
         case = _production_case()
-        with patch(
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": ""}
+        ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             return_value=_snapshot(),
         ), patch(
@@ -258,6 +261,91 @@ class OwnershipGateModeTests(unittest.TestCase):
         ownership = case["automation_context"][OWNERSHIP_CONTEXT_KEY]
         self.assertEqual(ownership["failure_category"], "permanent")
         self.assertEqual(ownership["zendesk_status_code"], 422)
+
+    def test_assignment_422_is_retried_with_fresh_snapshot_until_success(self):
+        case = _production_case()
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0"}
+        ), patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            side_effect=[_snapshot(), _snapshot()],
+        ) as read_snapshot, patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+            side_effect=[
+                ZendeskCommentError(
+                    "permanent",
+                    status_code=422,
+                    error_code="zendesk_http_error",
+                    detail="Assignee cannot be set while the ticket is being routed",
+                ),
+                _assignment_result(),
+            ],
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertEqual(result.state, "assigned")
+        self.assertTrue(result.confirmed)
+        self.assertEqual(assign.call_count, 2)
+        self.assertEqual(read_snapshot.call_count, 2)
+        ownership = case["automation_context"][OWNERSHIP_CONTEXT_KEY]
+        self.assertEqual(ownership["state"], "assigned")
+        self.assertIsNone(ownership["failure_detail"])
+
+    def test_persistent_assignment_422_fails_with_detail_after_retries(self):
+        case = _production_case()
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0"}
+        ), patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            return_value=_snapshot(),
+        ), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+            side_effect=ZendeskCommentError(
+                "permanent",
+                status_code=422,
+                error_code="zendesk_http_error",
+                detail="Assignee cannot be set while the ticket is being routed",
+            ),
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.failure_category, "permanent")
+        self.assertEqual(result.zendesk_status_code, 422)
+        self.assertIn("Assignee cannot be set", result.failure_detail)
+        self.assertEqual(assign.call_count, 3)
+        ownership = case["automation_context"][OWNERSHIP_CONTEXT_KEY]
+        self.assertEqual(ownership["zendesk_status_code"], 422)
+        self.assertIn("Assignee cannot be set", ownership["failure_detail"])
+
+    def test_assignment_422_retry_stops_when_human_reply_appears(self):
+        case = _production_case()
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0"}
+        ), patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            side_effect=[
+                _snapshot(),
+                _snapshot(human_replied=True, blocking_comment_id="99001"),
+            ],
+        ), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+            side_effect=ZendeskCommentError(
+                "permanent", status_code=422, error_code="zendesk_http_error"
+            ),
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertEqual(result.state, "human_replied")
+        self.assertEqual(result.failure_category, "policy")
+        self.assertEqual(result.blocking_comment_id, "99001")
+        self.assertEqual(assign.call_count, 1)
 
 
 class OwnershipVerifyModeTests(unittest.TestCase):
