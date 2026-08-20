@@ -25,6 +25,15 @@ from backend.repositories.ticket_repository import (
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_zendesk_internal_comment import AccountZendeskCommentResult
+from backend.services.enablement_completion_classifier import (
+    EnablementCompletionClassification,
+)
+
+
+def _classifier_regex_fallback():
+    return EnablementCompletionClassification(
+        completed=False, source="regex_fallback", failure_reason="disabled"
+    )
 
 if importlib.util.find_spec("redis") is None:
     redis_module = types.ModuleType("redis")
@@ -2452,7 +2461,11 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "_render_case_persona_reply",
             return_value="Hi Customer,\n\nThe request is complete.",
-        ) as render:
+        ) as render, patch.object(
+            worker,
+            "classify_enablement_completion",
+            return_value=_classifier_regex_fallback(),
+        ):
             self.assertTrue(worker.handle_enablement_request_reply(reply))
 
         self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature"], "media_relay")
@@ -2490,6 +2503,10 @@ class WorkerResilienceTests(unittest.TestCase):
         generated_reply = "Hi there,\n\nPlease add a payment method before activation.\n\nBest Regards,\nSid"
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "_render_case_persona_reply", return_value=generated_reply,
+        ), patch.object(
+            worker,
+            "classify_enablement_completion",
+            return_value=_classifier_regex_fallback(),
         ):
             handled = worker.handle_automation_request_reply(reply)
 
@@ -2572,9 +2589,13 @@ class WorkerResilienceTests(unittest.TestCase):
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-DONE",
             body_text="Media Relay has been enabled successfully.",
         )
-        with patch.object(worker, "ticket_repository", repository):
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "classify_enablement_completion",
+        ) as classifier:
             handled = worker.handle_enablement_request_reply(reply)
 
+        classifier.assert_not_called()
         self.assertEqual(handled, "completed")
         repository.cancel_pending_account_reply_jobs.assert_called_once_with(
             "TK-ENABLEMENT-DONE", updated_at=unittest.mock.ANY
@@ -2620,6 +2641,12 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "_render_case_persona_reply",
             return_value="Hi Customer,\n\nWe are still investigating this request.",
+        ), patch.object(
+            worker,
+            "classify_enablement_completion",
+            return_value=EnablementCompletionClassification(
+                completed=False, source="regex_fallback", failure_reason="invocation_failed"
+            ),
         ):
             handled = worker.handle_enablement_request_reply(reply)
 
@@ -2627,6 +2654,61 @@ class WorkerResilienceTests(unittest.TestCase):
         commit = repository.commit_automation_reply_result.call_args.kwargs
         self.assertNotIn("close_after_publish", commit)
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
+
+    def test_enablement_completion_llm_classifier_upgrades_non_english_reply(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
+        repository.save_account_reply_job.side_effect = lambda job: job
+        repository.resolve_account_persona.return_value = {
+            "persona_key": "sid_precise",
+            "version": "test",
+            "content": {},
+        }
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ENABLEMENT-CN",
+            "billing_ticket_id": "AC-TK-ENABLEMENT-CN",
+            "client_ticket_id": "TK-ENABLEMENT-CN",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+            "processing_profile": "production",
+            "collected_fields": {"requested_feature": "media_relay", "requested_feature_label": "Media Relay"},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ENABLEMENT-CN",
+            "messages": [{"role": "customer", "content": "Please enable Media Relay."}],
+        }
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-cn",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-CN",
+            body_text="已开通",
+        )
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "classify_enablement_completion",
+            return_value=EnablementCompletionClassification(
+                completed=True, source="llm", failure_reason=None
+            ),
+        ) as classifier:
+            handled = worker.handle_enablement_request_reply(reply)
+
+        classifier.assert_called_once()
+        self.assertEqual(classifier.call_args.args[0], "已开通")
+        self.assertEqual(classifier.call_args.kwargs["feature_label"], "Media Relay")
+        self.assertEqual(handled, "completed")
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "TK-ENABLEMENT-CN", updated_at=unittest.mock.ANY
+        )
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        payload = saved_job["payload"]
+        self.assertEqual(payload["reply_intent"], "enablement_completed_and_close")
+        self.assertTrue(payload["close_after_publish"])
+        resolution_event = next(
+            event["payload"]
+            for event in repository.commit_automation_reply_result.call_args.kwargs["events"]
+            if event["event_type"] == "enablement_internal_resolution_received"
+        )
+        self.assertEqual(resolution_event["completion_source"], "llm")
 
     def test_enablement_completion_detection_requires_current_positive_state(self) -> None:
         invalid_notes = (
@@ -3697,7 +3779,11 @@ class WorkerResilienceTests(unittest.TestCase):
 
                 with patch.object(worker, "ticket_repository", repository), patch.object(
                     worker, "record_billing_request_reply"
-                ), patch.object(worker, "render_automation_reply") as render:
+                ), patch.object(worker, "render_automation_reply") as render, patch.object(
+                    worker,
+                    "classify_enablement_completion",
+                    return_value=_classifier_regex_fallback(),
+                ):
                     handled = handle_reply(reply)
 
                 self.assertEqual(handled, "completed")
@@ -3809,6 +3895,10 @@ class WorkerResilienceTests(unittest.TestCase):
 
                 with patch.object(worker, "ticket_repository", repository), patch.object(
                     worker, "record_billing_request_reply"
+                ), patch.object(
+                    worker,
+                    "classify_enablement_completion",
+                    return_value=_classifier_regex_fallback(),
                 ), patch.object(
                     worker,
                     "extract_automation_resolution_facts",
@@ -4352,6 +4442,10 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "_render_case_persona_reply",
             side_effect=reset_after_render,
+        ), patch.object(
+            worker,
+            "classify_enablement_completion",
+            return_value=_classifier_regex_fallback(),
         ):
             outcome = worker.handle_enablement_request_reply(reply)
 

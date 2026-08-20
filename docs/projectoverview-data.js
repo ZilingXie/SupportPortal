@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T10:33:24Z",
-  "source_base_commit": "5318360e267fd9eecae67f7e511d6eb6a87d9a43",
-  "registry_digest": "efccb7071b2fb05938eaff33fcf95edfa3424f83b36509902bc71274d8af220b",
+  "generated_at": "2026-08-20T11:00:15Z",
+  "source_base_commit": "bc6e96a612e79b7af1c1e0799c497a3975fd3322",
+  "registry_digest": "ef228780317963342218798083417e3a0efaac1da366d10512e3467c62eb7215",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -550,6 +550,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona v11 integrated Account Automation verification",
           "command": "python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_account_admin_features.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_workspace_api.py backend/tests/test_account_persona_postgres.py backend/tests/test_agent_config.py backend/tests/test_automation_routing.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_verification_automation.py backend/tests/test_enablement_automation.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_account_ui_contract.py",
           "result": "519 tests passed with 19 environment-dependent PostgreSQL tests skipped and 67 subtests passed; greeting-prefixed publication validation, Intake, full rerun, reply-only recovery, Persona assignment, and publication fences are green."
+        },
+        {
+          "type": "test",
+          "label": "Classifier unit + worker integration + contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
+          "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_intake backend.tests.test_repository_configuration",
+          "details": "连同前组合计 462 通过：persona、enablement 自动化、intake、repo 配置不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "python3 -m py_compile backend/worker.py backend/services/enablement_completion_classifier.py backend/services/llm_profiles.py && git diff --check",
+          "details": "编译与空白检查通过。"
         }
       ],
       "source_refs": [
@@ -562,7 +580,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 9,
+      "task_count": 10,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -7179,6 +7197,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-81",
+      "title": "Enablement 内部回复完成识别增加 LLM 分类器（正则保底）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "内部邮件回复是否确认开通的判定目前是纯英文正则，中文/typo/自由表达会漏判为完成，导致客户收到倒序的重复回复且工单不自动关闭。新增两级判定：正则命中即完成（零变化快路径）；正则判否时由小模型单次分类仲裁（强制 JSON、温度 0），LLM 确认才走完成+关单路径；任何 LLM 失败/开关关闭一律回退正则结果，永不 fail-open。新增 ENABLEMENT_COMPLETION_CLASSIFIER_* scenario 与总开关，判定来源写入审计事件。",
+      "next_action": "合并后从根 main 重启官方栈并做 live 验证，完成后收尾。",
+      "acceptance_criteria": [
+        "正则命中的英文完成回复不调用 LLM 直接走完成路径（快路径零变化）。",
+        "正则判否时调用 LLM 分类（ENABLEMENT_COMPLETION_CLASSIFIER_* scenario，gpt-5.4-mini/low/温度0/8s/重试1，JSON 强制模式）；LLM confirmed=true 才走 enablement_completed_and_close。",
+        "凭证缺失、调用失败、JSON 无效、开关 disabled 均回退 regex_fallback（=现行为 resolution_update），classify 永不抛异常；disabled 时不发起任何 LLM 调用。",
+        "判定来源（regex/llm/regex_fallback+原因）记录日志并写入完成路径的 resolution 审计事件。",
+        "worker_aux 与 worker_aux_production 的 compose env、.env.example、compose 契约测试同步；存量 regex-negative enablement 测试补 classifier mock，全部回归通过。",
+        "docs/prompt_change_log.md 记录 enablement-completion-classifier-v1。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Classifier unit + worker integration + contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
+          "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_automation_persona backend.tests.test_enablement_automation backend.tests.test_account_intake backend.tests.test_repository_configuration",
+          "details": "连同前组合计 462 通过：persona、enablement 自动化、intake、repo 配置不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Syntax gates",
+          "command": "python3 -m py_compile backend/worker.py backend/services/enablement_completion_classifier.py backend/services/llm_profiles.py && git diff --check",
+          "details": "编译与空白检查通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/enablement_completion_classifier.py",
+        "backend/services/llm_profiles.py",
+        "backend/worker.py",
+        "deployment/docker-compose.single-host.yml",
+        "backend/tests/test_enablement_completion_classifier.py",
+        "backend/tests/test_worker.py"
+      ],
+      "created_at": "2026-08-20",
+      "updated_at": "2026-08-20",
+      "history": [
+        {
+          "at": "2026-08-20",
+          "event": "created",
+          "summary": "用户确认采用 LLM 分类方案（选项3）：正则保底、LLM 仅升级否→是、失败回退现行为、带免部署开关。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "progress",
+          "summary": "完成实现与目标测试（462 全绿），prompt_change_log 已记录 enablement-completion-classifier-v1。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     }
   ],
   "meetings": [
@@ -8339,6 +8422,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。",
+        "Enablement 内部回复的完成识别支持任意语言与拼写容错：英文关键词正则保底，正则未命中时由 LLM 单次仲裁（失败或关闭时回退正则结果），命中即取消待发提交确认并走完成关单链路，判定来源写入审计事件。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口可查看 Account Case 历史和详情。",
         "staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。",

@@ -28,6 +28,25 @@ For each new entry, record:
 - Verification:
   - Text-level rule checks and `git diff --check`; no container restart.
 
+## 2026-08-20 - Enablement internal-reply completion LLM adjudicator
+
+- Area or subsystem: Account Automation internal email reply loop (worker reply poller)
+- Prompt or model version: `enablement-completion-classifier-v1`; new scenario `enablement_completion_classifier` (default gpt-5.4-mini, reasoning effort low, temperature 0.0, timeout 8s, max retries 1, forced JSON output)
+- Summary: Enablement internal replies that the English completion regex rejects are now re-adjudicated by a single LLM classification call ("does this reply explicitly confirm the feature is NOW enabled") before falling to the resolution-update path. The regex verdict stays authoritative: regex hits skip the LLM entirely, and any classifier failure (disabled, missing credentials, invocation error, invalid JSON) falls back to the regex verdict. `ENABLEMENT_COMPLETION_CLASSIFIER_ENABLED=false` restores regex-only behavior without a deploy.
+- Reason: Internal replies in Chinese or with typos (e.g. "已开通", "enbaled") were missed by the English-only regex, so customers received a reversed duplicate reply (resolution update followed by the 24-hour submission promise) and the ticket never auto-closed.
+- Affected files or config:
+  - `backend/services/enablement_completion_classifier.py` (new)
+  - `backend/services/llm_profiles.py`
+  - `backend/worker.py`
+  - `deployment/docker-compose.single-host.yml` (worker_aux, worker_aux_production)
+  - `.env.example`
+  - `backend/tests/test_enablement_completion_classifier.py` (new), `backend/tests/test_worker.py`, `backend/tests/test_single_host_compose.py`
+- Expected behavior change:
+  - Non-English/typo completion replies are upgraded to the completion path (cancel pending submission reply, queue the completed-and-close reply) when the LLM confirms; the decision source (regex/llm/regex_fallback with reason) is logged and recorded on the `enablement_internal_resolution_received` event.
+  - Fail-closed: LLM unavailability degrades to exactly the previous regex-only behavior; the classifier never raises and never downgrades a regex completion.
+- Verification:
+  - `TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose` (8 + 93 + compose contract, all green; empty API key proves no live LLM dependency in tests) and `python3 -m py_compile backend/worker.py backend/services/enablement_completion_classifier.py backend/services/llm_profiles.py`.
+
 ## 2026-08-17 - Fraud Account field grounding verification
 
 - Area or subsystem: `/account` Fraud Account field extractor and managed Account routing prompts

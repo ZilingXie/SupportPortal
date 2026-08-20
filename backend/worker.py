@@ -66,6 +66,9 @@ from backend.services.automation_persona import (
     render_automation_reply,
     validate_account_reply_contract,
 )
+from backend.services.enablement_completion_classifier import (
+    classify_enablement_completion,
+)
 from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
     reconciliation_reason_code,
@@ -2400,6 +2403,7 @@ def _queue_enablement_completion_reply_job(
     known_information: dict[str, Any],
     message_id: str,
     handler: str,
+    completion_source: str = "regex",
 ) -> str:
     """Queue the enablement completion as a standard Account reply job.
 
@@ -2533,6 +2537,7 @@ def _queue_enablement_completion_reply_job(
         "event": f"{handler}_internal_resolution_received", "account_case_id": case_id,
         "ticket_id": client_ticket_id, "note": note, "created_at": timestamp,
         "source": source, "automation_reply_message_id": message_id,
+        "completion_source": completion_source,
     }
     queued_event = {
         "event": f"{handler}_completion_reply_job_queued", "account_case_id": case_id,
@@ -2584,11 +2589,32 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             dict(collected_fields)
             if handler == "enablement" else {"products": collected_fields.get("products") or []}
         )
-        enablement_completed = (
-            _enablement_reply_explicitly_confirms_completion(note)
-            if handler == "enablement"
-            else False
-        )
+        completion_source: str | None = None
+        enablement_completed = False
+        if handler == "enablement":
+            if _enablement_reply_explicitly_confirms_completion(note):
+                enablement_completed = True
+                completion_source = "regex"
+            else:
+                classification = classify_enablement_completion(
+                    note,
+                    feature_label=str(collected_fields.get("requested_feature_label") or "").strip() or None,
+                )
+                enablement_completed = classification.completed
+                completion_source = classification.source
+                if classification.failure_reason:
+                    LOGGER.info(
+                        "enablement_completion_classification completed=%s source=%s failure_reason=%s",
+                        classification.completed,
+                        classification.source,
+                        classification.failure_reason,
+                    )
+                else:
+                    LOGGER.info(
+                        "enablement_completion_classification completed=%s source=%s",
+                        classification.completed,
+                        classification.source,
+                    )
         if enablement_completed:
             return _queue_enablement_completion_reply_job(
                 reply_key=reply_key,
@@ -2599,6 +2625,7 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                 known_information=known_information,
                 message_id=message_id,
                 handler=handler,
+                completion_source=completion_source or "regex",
             )
         reply_intent = "resolution_update"
         customer_reply = _render_case_persona_reply(
