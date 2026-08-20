@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T07:21:49Z",
-  "source_base_commit": "8b02e109db812df6b43fad05cab604a64453806c",
-  "registry_digest": "bcb418da18639b5a2a4d7d7f548da932dddfa62ccde1b6648c46e6d7ccc0d88c",
+  "generated_at": "2026-08-20T07:58:55Z",
+  "source_base_commit": "b82102e34bc49bb1c028de42145ba181ce104812",
+  "registry_digest": "9c1220fad79750c95235c14b1a60f4dca3781e09723e26a806b62d369d4c14eb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -672,6 +672,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PR #719"
         },
         {
+          "type": "test",
+          "label": "Registered Enablement deterministic routing regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py",
+          "result": "Included in the focused Account routing and ownership suite: 340 passed with 51 subtests passed. A separate 20-run direct check classified the case #12875 message shape as media_relay 20/20 times without calling the Agora Router model."
+        },
+        {
           "type": "pr",
           "number": 729,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/729",
@@ -1038,6 +1044,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live-discovered repair loop (post-deploy fixes)",
           "command": "pytest targeted suites per fix PR",
           "result": "Six follow-up defects found live and fixed with regression tests: solve required checkbox must use custom_fields array (flat field_\u003cid> silently ignored), support_tickets lacked closed_at, audit readback must tolerate platform-appended signatures (prefix match), jsonb path braces must be escaped in close SQL, enablement completion trigger must equal the latest customer message timestamp, fraud attempt merge dropped ownership context. All suites green after each fix."
+        },
+        {
+          "type": "test",
+          "label": "Default-assignment and public-human-reply ownership regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_worker.py backend/tests/test_account_intake.py",
+          "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
         }
       ],
       "source_refs": [
@@ -1723,13 +1735,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 731,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/731",
           "label": "PR #731"
+        },
+        {
+          "type": "test",
+          "label": "Registered Enablement deterministic routing regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_intake.py",
+          "result": "Included in the focused Account routing and ownership suite: 340 passed with 51 subtests passed. A separate 20-run direct check classified the case #12875 message shape as media_relay 20/20 times without calling the Agora Router model."
         }
       ],
       "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "backend/services/account_route_pipeline.py",
+        "backend/services/enablement_automation.py",
+        "backend/services/prompts/account_routing.py"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-17",
+      "updated_at": "2026-08-20",
       "history": [
         {
           "at": "2026-08-16",
@@ -1750,6 +1771,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Function 从 routing-taxonomy 重新归类到 case-route。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "reopened",
+          "summary": "Production case #12875 与 #12874 客户正文相同，但 Agora Router 在 backend_operation 与 uncategorized 之间漂移；重新打开任务以增加已注册 Enablement 请求的确定性边界和回归覆盖。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "将明确的已注册 Media Relay 激活请求在 Agora Router 边界确定性归类为 backend_operation，同时保留技术咨询、故障诊断、价格问题、模糊请求和未注册功能的原有 LLM/人工边界。"
         }
       ],
       "legacy_refs": [
@@ -4534,6 +4565,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live-discovered repair loop (post-deploy fixes)",
           "command": "pytest targeted suites per fix PR",
           "result": "Six follow-up defects found live and fixed with regression tests: solve required checkbox must use custom_fields array (flat field_\u003cid> silently ignored), support_tickets lacked closed_at, audit readback must tolerate platform-appended signatures (prefix match), jsonb path braces must be escaped in close SQL, enablement completion trigger must equal the latest customer message timestamp, fraud attempt merge dropped ownership context. All suites green after each fix."
+        },
+        {
+          "type": "test",
+          "label": "Default-assignment and public-human-reply ownership regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_worker.py backend/tests/test_account_intake.py",
+          "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
         }
       ],
       "source_refs": [
@@ -4562,6 +4599,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-20",
           "event": "completed",
           "summary": "四个测试 ticket 的 live 矩阵全部闭环（12838/12864 公开回复且按规则不关单，12839/12865 公开回复 + Zendesk solved + 本地 resolved）。部署期共发现并修复六个缺陷（#804/#805/#808/#809/#811/#812），全部带回归测试。任务完成。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "reopened",
+          "summary": "Production #12874/#12875 调查确认 Zendesk 默认真人 assignee 和自动 group/status 变化不代表真人已回复；重新打开任务以用完整公开评论历史判定人工接管，并让 AI assignment 同时写入目标 group 与 assignee。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "Production ownership 改为基于完整 Zendesk 公开评论历史：默认真人 assignee 在尚未公开回复时允许 AI 接管；真人公开回复、未知公开作者或 AI 接管后的真人改派均 fail closed。AI 接管使用 safe_update 原子写入 assignee 与目标 group，并记录失败类别、Zendesk 状态码和阻塞评论 ID。"
         }
       ],
       "phase_id": "phase-1",

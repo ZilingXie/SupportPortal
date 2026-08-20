@@ -76,10 +76,7 @@ from backend.services.account_automation_delivery import (
     is_rerun_owned_delivery,
 )
 from backend.services.automation_routing import is_registered_automation
-from backend.services.account_automation_ownership import (
-    OWNERSHIP_STATE_HUMAN_REASSIGNED,
-    ensure_production_automation_ownership,
-)
+from backend.services.account_automation_ownership import ensure_production_automation_ownership
 from backend.services.account_zendesk_internal_comment import (
     AccountZendeskInternalCommentError,
     deliver_account_ai_message_as_internal_comment,
@@ -1104,24 +1101,28 @@ def _deliver_production_account_reply_to_zendesk(
         mode="verify",
         updated_at=now_iso(),
     )
-    if ownership.state == OWNERSHIP_STATE_HUMAN_REASSIGNED:
+    if ownership.failure_category == "policy":
+        failure_code = ownership.failure_code or "zendesk_ownership_policy_blocked"
         ticket_repository.complete_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
             message_id=effective_message_id,
             status="failed",
             zendesk_comment_id=None,
-            failure_code="zendesk_ownership_human_reassigned",
+            failure_code=failure_code,
             completed_at=now_iso(),
         )
         LOGGER.warning(
             "production_zendesk_delivery_stopped job_id=%s ticket_id=%s account_case_id=%s "
-            "message_id=%s delivery_status=failed failure_code=zendesk_ownership_human_reassigned "
-            "assignee_id=%s",
+            "message_id=%s delivery_status=failed failure_code=%s ownership_state=%s "
+            "assignee_id=%s blocking_comment_id=%s",
             effective_job_id,
             ticket_id,
             account_case_id,
             effective_message_id,
+            failure_code,
+            ownership.state,
             ownership.assignee_id or "unknown",
+            ownership.blocking_comment_id or "none",
         )
         return
     if not ownership.confirmed:

@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v2"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v8"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v10"
 ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v2"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
 ACCOUNT_BACKEND_OPERATION_PROMPT_VERSION = "account-backend-operation-v1"
@@ -141,7 +141,9 @@ Classify only; do not answer the customer.
   security_compliance and record a technical intent in additional_intents.
 - General Agora company, product-portfolio, investor, or public-business questions no longer use a Web route in
   Account; classify them as uncategorized for Human Review.
-- An explicit request for Agora to enable a named backend feature from our side is backend_operation.
+- An explicit desired outcome such as "I want to enable <named feature>" or "We need to activate
+  <named feature>" is backend_operation even when the customer does not add "from your end".
+- A question asking how to enable or configure the same feature remains technical.
 - Pricing and billing questions are account_billing. Concrete backend operations enter backend_operation.
 - A clearly reported non-fraud account suspension belongs to account_billing. Fraud, risk, suspicious-activity,
   security-review evidence, or the standard four-group review template belongs to account_billing for its
@@ -190,11 +192,20 @@ Output: {"agora_route":"uncategorized","confidence":0.98,"reason_code":"legal_en
 Input: Please enable Media Relay from your end for my App ID.
 Output: {"agora_route":"backend_operation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer explicitly requests activation from Agora's side","backend_operation":{"action":"enable","target":"media_relay","evidence":"enable Media Relay from your end"},"evidence_spans":["enable Media Relay from your end"]}
 
+Input: I want to enable Media Relay.
+Output: {"agora_route":"backend_operation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer states a concrete desired backend activation outcome","backend_operation":{"action":"enable","target":"media_relay","evidence":"enable Media Relay"},"evidence_spans":["enable Media Relay"]}
+
+Input: We need to activate Cross Channel Media Relay.
+Output: {"agora_route":"backend_operation","confidence":0.98,"reason_code":"explicit_backend_operation","additional_intents":[],"selection_reason":"The customer states a concrete desired backend activation outcome","backend_operation":{"action":"activate","target":"media_relay","evidence":"activate Cross Channel Media Relay"},"evidence_spans":["activate Cross Channel Media Relay"]}
+
 Input: How do I enable Media Relay in the SDK?
 Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_request","additional_intents":[],"selection_reason":"The customer asks how to configure the SDK","backend_operation":null,"evidence_spans":["enable Media Relay in the SDK"]}
 
 Input: Media Relay fails with server no response. Is it enabled, and why does it fail?
 Output: {"agora_route":"technical","confidence":0.97,"reason_code":"technical_request","additional_intents":["backend_operation"],"selection_reason":"Failure diagnosis is the primary requested next step","backend_operation":null,"evidence_spans":["server no response","why does it fail"]}
+
+Input: How much does Media Relay enablement cost?
+Output: {"agora_route":"account_billing","confidence":0.96,"reason_code":"account_billing_request","additional_intents":[],"selection_reason":"The customer asks about pricing rather than requesting a backend activation","backend_operation":null,"evidence_spans":["How much","cost"]}
 
 Input: Please change something on my account.
 Output: {"agora_route":"uncategorized","confidence":0.91,"reason_code":"insufficient_backend_operation_evidence","additional_intents":[],"selection_reason":"No concrete backend action or target is stated","backend_operation":null,"evidence_spans":["change something on my account"]}

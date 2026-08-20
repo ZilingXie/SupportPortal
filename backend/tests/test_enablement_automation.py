@@ -9,6 +9,7 @@ from backend.services.enablement_automation import (
     build_enablement_customer_followup,
     customer_visible_enablement_information,
     detect_enablement_route,
+    detect_registered_enablement_route,
     send_enablement_internal_email,
 )
 from backend.services.llm_factory import LlmInvocationError
@@ -101,6 +102,29 @@ class EnablementAutomationTests(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 self.assertIsNone(detect_enablement_route(message))
+
+    def test_registered_enablement_route_is_narrow_and_deterministic(self) -> None:
+        for message in (
+            "I want to enable media relay.",
+            "We need to activate Cross Channel Media Relay.",
+            "Please provision Media Relay for our account.",
+        ):
+            with self.subTest(message=message):
+                match = detect_registered_enablement_route(message)
+                self.assertIsNotNone(match)
+                assert match is not None
+                self.assertEqual(match.requested_feature, "media_relay")
+
+        for message in (
+            "How do I enable Media Relay in the SDK?",
+            "Please help configure the Media Relay API.",
+            "Media Relay fails with server no response. Why?",
+            "How much does Media Relay enablement cost?",
+            "I want to enable Cloud Recording.",
+            "Please enable a feature for us.",
+        ):
+            with self.subTest(message=message):
+                self.assertIsNone(detect_registered_enablement_route(message))
 
     def test_missing_or_invalid_app_id_only_requests_app_id(self) -> None:
         for message in (
