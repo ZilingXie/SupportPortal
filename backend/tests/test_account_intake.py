@@ -7,7 +7,7 @@ import unittest
 from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import psycopg
 
@@ -26,6 +26,7 @@ from backend.repositories.ticket_repository import (
     InMemoryTicketRepository,
 )
 from backend.services.account_admin import AccountPersonaUnavailableError
+from backend.services.account_automation_ownership import OwnershipGateResult
 from backend.services.billing_response_flow import hash_billing_response_token
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction
@@ -553,6 +554,44 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._main_persona_patcher.start()
         self._resolution_extractor_patcher.start()
         self._rerun_preflight_patcher.start()
+
+    def test_ownership_gate_event_preserves_policy_diagnostics(self) -> None:
+        repository = Mock()
+        account_case = {
+            "account_case_id": "AC-12875",
+            "client_ticket_id": "PRD-12875",
+        }
+        result = OwnershipGateResult(
+            eligible=True,
+            state="human_replied",
+            assignee_id="31116634341396",
+            group_id="27216254064148",
+            failure_code="zendesk_human_reply_blocks_automation",
+            failure_category="policy",
+            zendesk_status_code=200,
+            blocking_comment_id="52708200000000",
+            updated_at="2026-08-20T07:04:00Z",
+        )
+
+        with patch.object(main, "ticket_repository", repository), patch.object(
+            main, "ownership_gate_eligible", return_value=True
+        ), patch.object(
+            main, "ensure_production_automation_ownership", return_value=result
+        ):
+            allowed = main._apply_production_ownership_gate(
+                account_case,
+                "2026-08-20T07:04:00Z",
+            )
+
+        self.assertFalse(allowed)
+        event = repository.record_event.call_args.args[2]
+        self.assertEqual(event["failure_category"], "policy")
+        self.assertEqual(event["zendesk_status_code"], 200)
+        self.assertEqual(event["blocking_comment_id"], "52708200000000")
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "PRD-12875",
+            updated_at="2026-08-20T07:04:00Z",
+        )
 
     def test_account_case_view_exposes_route_failure_diagnostics(self) -> None:
         view = main._build_account_ticket_view_model(
@@ -2434,7 +2473,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["final_route"], "human_review_required")
-        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v9")
+        self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v10")
         self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
         self.assertIn(

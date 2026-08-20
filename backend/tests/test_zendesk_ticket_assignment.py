@@ -7,7 +7,10 @@ import unittest
 from unittest.mock import patch
 
 from backend.services.zendesk_comments import ZendeskCommentError
-from backend.services.zendesk_ticket_assignment import assign_ticket_to_configured_ai
+from backend.services.zendesk_ticket_assignment import (
+    assign_ticket_to_configured_ai,
+    read_ticket_ownership_snapshot,
+)
 
 
 class _FakeResponse:
@@ -35,8 +38,8 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
 
     def test_updates_only_assignee_and_preserves_ticket_group(self) -> None:
         responses = [
-            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "name": "AI Support", "role": "agent", "active": True, "suspended": False}}),
-            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148, "status": "pending"}}),
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "name": "AI Support", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148, "status": "pending", "updated_at": "2026-08-20T07:03:44Z"}}),
             _FakeResponse({"ticket": {"id": 12807, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending"}}),
         ]
         with patch.dict(os.environ, self.config, clear=False), patch(
@@ -57,13 +60,20 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(update_request.method, "PUT")
         self.assertEqual(
             json.loads(update_request.data.decode("utf-8")),
-            {"ticket": {"assignee_id": 48557297720084}},
+            {
+                "ticket": {
+                    "assignee_id": 48557297720084,
+                    "group_id": 29388501432596,
+                    "safe_update": True,
+                    "updated_stamp": "2026-08-20T07:03:44Z",
+                }
+            },
         )
 
     def test_already_assigned_does_not_put(self) -> None:
         responses = [
-            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False}}),
-            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 48557297720084, "group_id": 27216254064148}}),
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 48557297720084, "group_id": 29388501432596}}),
         ]
         with patch.dict(os.environ, self.config, clear=False), patch(
             "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
@@ -77,8 +87,8 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
 
     def test_put_response_with_wrong_assignee_fails_closed(self) -> None:
         responses = [
-            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False}}),
-            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148}}),
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-20T07:03:44Z"}}),
             _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 29388501432596}}),
         ]
         with patch.dict(os.environ, self.config, clear=False), patch(
@@ -91,7 +101,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(raised.exception.error_code, "zendesk_assignment_unverified")
 
     def test_invalid_configured_user_fails_closed(self) -> None:
-        response = _FakeResponse({"user": {"id": 48557297720084, "email": "other@example.com", "role": "agent", "active": True, "suspended": False}})
+        response = _FakeResponse({"user": {"id": 48557297720084, "email": "other@example.com", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}})
         with patch.dict(os.environ, self.config, clear=False), patch(
             "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
             return_value=response,
@@ -102,7 +112,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertEqual(raised.exception.error_code, "zendesk_assignee_invalid")
 
     def test_inactive_or_non_agent_user_fails_closed(self) -> None:
-        response = _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "end-user", "active": True, "suspended": False}})
+        response = _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "end-user", "active": True, "suspended": False, "default_group_id": 29388501432596}})
         with patch.dict(os.environ, self.config, clear=False), patch(
             "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
             return_value=response,
@@ -118,6 +128,87 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
                 assign_ticket_to_configured_ai(ticket_id="12807")
 
         self.assertEqual(raised.exception.error_code, "zendesk_assignee_config_missing")
+
+    def test_ownership_snapshot_reads_all_comment_pages_and_finds_human_reply(self) -> None:
+        second_page = "https://agoraio.zendesk.com/api/v2/tickets/12875/comments.json?page=2"
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "name": "AI Support", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12875, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-20T07:05:37Z"}}),
+            _FakeResponse({
+                "comments": [
+                    {"id": 1, "public": True, "author_id": 100, "body": "Initial", "created_at": "2026-08-20T07:03:44Z"},
+                    {"id": 2, "public": False, "author_id": 200, "body": "Internal", "created_at": "2026-08-20T07:04:00Z"},
+                ],
+                "users": [
+                    {"id": 100, "name": "Customer", "role": "end-user"},
+                    {"id": 200, "name": "Engineer", "role": "agent"},
+                ],
+                "next_page": second_page,
+            }),
+            _FakeResponse({
+                "comments": [
+                    {"id": 3, "public": True, "author_id": 300, "body": "Public reply", "created_at": "2026-08-20T07:06:00Z"},
+                ],
+                "users": [{"id": 300, "name": "Admin", "role": "admin"}],
+                "next_page": None,
+            }),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            snapshot = read_ticket_ownership_snapshot(ticket_id="12875")
+
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertTrue(snapshot.human_replied)
+        self.assertEqual(snapshot.blocking_comment_id, "3")
+        self.assertIsNone(snapshot.unresolved_public_comment_id)
+
+    def test_ownership_snapshot_marks_unknown_public_author_unresolved(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12875, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-20T07:05:37Z"}}),
+            _FakeResponse({
+                "comments": [
+                    {"id": 1, "public": True, "author_id": 100, "body": "Initial", "created_at": "2026-08-20T07:03:44Z"},
+                    {"id": 2, "public": True, "author_id": 999, "body": "Unknown", "created_at": "2026-08-20T07:06:00Z"},
+                ],
+                "users": [{"id": 100, "name": "Customer", "role": "end-user"}],
+                "next_page": None,
+            }),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            snapshot = read_ticket_ownership_snapshot(ticket_id="12875")
+
+        self.assertFalse(snapshot.human_replied)
+        self.assertEqual(snapshot.unresolved_public_comment_id, "2")
+
+    def test_customer_follow_up_and_ai_reply_do_not_count_as_human_takeover(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "name": "AI Support", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12875, "assignee_id": 48557297720084, "group_id": 29388501432596, "updated_at": "2026-08-20T07:05:37Z"}}),
+            _FakeResponse({
+                "comments": [
+                    {"id": 1, "public": True, "author_id": 100, "body": "Initial", "created_at": "2026-08-20T07:03:44Z"},
+                    {"id": 2, "public": True, "author_id": 100, "body": "Customer follow-up", "created_at": "2026-08-20T07:04:00Z"},
+                    {"id": 3, "public": True, "author_id": 48557297720084, "body": "AI reply", "created_at": "2026-08-20T07:05:00Z"},
+                ],
+                "users": [{"id": 100, "name": "Customer", "role": "end-user"}],
+                "next_page": None,
+            }),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            snapshot = read_ticket_ownership_snapshot(ticket_id="12875")
+
+        self.assertFalse(snapshot.human_replied)
+        self.assertIsNone(snapshot.blocking_comment_id)
+        self.assertIsNone(snapshot.unresolved_public_comment_id)
 
 
 if __name__ == "__main__":

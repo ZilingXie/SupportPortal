@@ -162,6 +162,21 @@ def _ownership_assigned():
     )
 
 
+def _ownership_policy_blocked(*, state: str, failure_code: str, blocking_comment_id: str | None = None):
+    from backend.services.account_automation_ownership import OwnershipGateResult
+
+    return OwnershipGateResult(
+        eligible=True,
+        state=state,
+        assignee_id="31116634341396",
+        group_id="27216254064148",
+        failure_code=failure_code,
+        failure_category="policy",
+        blocking_comment_id=blocking_comment_id,
+        updated_at="2026-08-20T07:04:00Z",
+    )
+
+
 def _zendesk_result(
     *,
     status: str = "added",
@@ -321,6 +336,63 @@ class WorkerResilienceTests(unittest.TestCase):
             public_comment=True,
             solve_ticket=False,
         )
+
+    def test_policy_blocker_terminates_delivery_without_public_write(self) -> None:
+        for ownership in (
+            _ownership_policy_blocked(
+                state="human_reassigned",
+                failure_code="zendesk_ownership_human_reassigned",
+            ),
+            _ownership_policy_blocked(
+                state="human_replied",
+                failure_code="zendesk_human_reply_blocks_automation",
+                blocking_comment_id="52708200000000",
+            ),
+            _ownership_policy_blocked(
+                state="failed",
+                failure_code="zendesk_comment_author_unresolved",
+                blocking_comment_id="52708200000001",
+            ),
+        ):
+            with self.subTest(state=ownership.state):
+                repository = Mock()
+                repository.get_account_case_by_ticket_id.return_value = {
+                    "account_case_id": "AC-POLICY",
+                    "processing_profile": "production",
+                    "zendesk_ticket_id": "12875",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                }
+                repository.claim_account_zendesk_comment_delivery.return_value = {
+                    "claimed": True,
+                    "status": "pending",
+                    "is_public": True,
+                    "target_status": None,
+                }
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker,
+                    "ensure_production_automation_ownership",
+                    return_value=ownership,
+                ), patch.object(
+                    worker,
+                    "deliver_account_ai_message_as_internal_comment",
+                ) as deliver:
+                    worker._deliver_production_account_reply_to_zendesk(
+                        ticket_id="PRD-12875",
+                        message_id="1375",
+                        job_id="reply-policy",
+                    )
+
+                repository.complete_account_zendesk_comment_delivery.assert_called_once_with(
+                    account_case_id="AC-POLICY",
+                    message_id="1375",
+                    status="failed",
+                    zendesk_comment_id=None,
+                    failure_code=ownership.failure_code,
+                    completed_at=unittest.mock.ANY,
+                )
+                repository.requeue_account_zendesk_comment_delivery.assert_not_called()
+                deliver.assert_not_called()
 
     def test_pending_delivery_uses_audit_readback_without_put(self) -> None:
         repository = Mock()

@@ -58,7 +58,8 @@ _FROM_YOUR_END_RE = re.compile(
 )
 _REQUEST_PREFIX = (
     r"(?:please|kindly|can\s+you|could\s+you|would\s+you|we\s+(?:need|want)\s+you\s+to|"
-    r"i\s+(?:need|want)\s+you\s+to|request(?:ing)?(?:\s+you)?\s+to)"
+    r"i\s+(?:need|want)\s+you\s+to|we\s+(?:need|want)\s+to|i\s+(?:need|want)\s+to|"
+    r"request(?:ing)?(?:\s+you)?\s+to)"
 )
 _VERB = r"(?:enable|activate|provision|turn\s+on)"
 _FEATURE_CAPTURE = r"(?P<feature>[a-z0-9][a-z0-9+&./ _-]{1,100}?)"
@@ -82,6 +83,12 @@ _MEDIA_RELAY_RE = re.compile(
     r"\b(?:(?:cross|channel|cross[- ]channel)\s+)?(?:media|medial)\s+relay\b",
     re.IGNORECASE,
 )
+_DETERMINISTIC_ENABLEMENT_BLOCKER_RE = re.compile(
+    r"\b(?:how|sdk|api|configure|configuration|integrate|integration|troubleshoot|"
+    r"error|fails?|failed|failure|not\s+working|no\s+response|why|cost|price|pricing)\b",
+    re.IGNORECASE,
+)
+_REGISTERED_DETERMINISTIC_ENABLEMENT_FEATURES = frozenset({"media_relay"})
 _GENERIC_FEATURE_VALUES = {"feature", "service", "a feature", "the feature", "a service", "the service"}
 _EMAIL_ADDRESS_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _INTERNAL_REPLY_MARKERS = (
@@ -163,6 +170,17 @@ def detect_enablement_route(message: str) -> EnablementRouteMatch | None:
         reason="explicit_feature_enablement_request",
         matched_signals=signals,
     )
+
+
+def detect_registered_enablement_route(message: str) -> EnablementRouteMatch | None:
+    """Return only unambiguous activation requests for registered backend features."""
+    text = _clean_multiline(message)
+    if not text or _DETERMINISTIC_ENABLEMENT_BLOCKER_RE.search(text):
+        return None
+    match = detect_enablement_route(text)
+    if match is None or match.requested_feature not in _REGISTERED_DETERMINISTIC_ENABLEMENT_FEATURES:
+        return None
+    return match
 
 
 def build_enablement_automation_result(
