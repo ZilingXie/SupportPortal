@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T07:58:55Z",
-  "source_base_commit": "b82102e34bc49bb1c028de42145ba181ce104812",
-  "registry_digest": "9c1220fad79750c95235c14b1a60f4dca3781e09723e26a806b62d369d4c14eb",
+  "generated_at": "2026-08-20T09:08:41Z",
+  "source_base_commit": "f7fdba6e9481d7fd73ac189d22194b453bc2dc02",
+  "registry_digest": "2f1c6dcc272166127362a6eac389798eef906f0ddc32efe62af98a3b7e12537b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1569,7 +1569,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account handoff Slack outbox, n8n and Zendesk independence suite",
           "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m pytest -q backend/tests/test_account_slack_n8n.py backend/tests/test_runtime_bootstrap.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py",
-          "details": "238 tests passed with 19 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, and Slack failure independence."
+          "details": "239 tests passed with 22 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, Slack failure independence, and X-N8n-Request-Token header propagation from n8n_request_token."
         }
       ],
       "source_refs": [
@@ -6971,7 +6971,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "Production Fraud Account 和 Account Suspension 的最终 handoff 客户回复经 Zendesk public delivery 确认后，通过持久化 outbox 和 n8n 幂等投递到 Slack；Slack 失败与客户回复、Zendesk solved 和本地 Case close 独立。",
-      "next_action": "完成 finalize、官方栈重启和授权 synthetic Production Case 的 Zendesk/n8n/Slack 外部读回后补齐 deployment evidence。",
+      "next_action": "完成 finalize、官方栈重启；确认 Production API/auxiliary worker 使用 n8n_request_token，并在 n8n status workflow 发布后完成 synthetic 外部读回。",
       "acceptance_criteria": [
         "Fraud 仅 fraud_handoff_confirmation、Suspension 仅 account_suspension_handoff_and_close 在 public Zendesk delivered 后创建一次 Slack 投递；contact confirmation 和其他 Automation 不触发。",
         "Slack 消息包含 Case 类型和标题、Zendesk ticket link、持久化 question summary，不包含客户身份、collected fields、AI reply 或凭据。",
@@ -6985,7 +6985,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account handoff Slack outbox, n8n and Zendesk independence suite",
           "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m pytest -q backend/tests/test_account_slack_n8n.py backend/tests/test_runtime_bootstrap.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py",
-          "details": "238 tests passed with 19 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, and Slack failure independence."
+          "details": "239 tests passed with 22 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, Slack failure independence, and X-N8n-Request-Token header propagation from n8n_request_token."
         }
       ],
       "source_refs": [
@@ -7008,6 +7008,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-20",
           "event": "progress",
           "summary": "SupportPortal outbox、n8n client、Production 配置、集成文档和目标测试完成；等待 finalize、部署与外部读回。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "progress",
+          "summary": "Production Slack client 与 API/auxiliary worker 已统一使用 n8n_request_token 和 X-N8n-Request-Token；POST webhook synthetic delivery 已读回 delivered，status workflow 仍需发布后完成未知结果对账验收。"
         }
       ],
       "legacy_refs": [],

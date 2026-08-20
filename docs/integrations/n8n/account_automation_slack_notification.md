@@ -10,14 +10,16 @@ delivered. Slack delivery does not change Zendesk, Case, or Human Review state.
 The Production API and auxiliary worker receive these variables:
 
 ```dotenv
-PRODUCTION_ACCOUNT_SLACK_N8N_WEBHOOK_URL=
-PRODUCTION_ACCOUNT_SLACK_N8N_STATUS_URL=
-PRODUCTION_ACCOUNT_SLACK_N8N_TOKEN=
+PRODUCTION_ACCOUNT_SLACK_N8N_WEBHOOK_URL=https://n8n.stellarix.space/webhook/4cada732-33cc-4648-808a-bb72a3d9f93a
+PRODUCTION_ACCOUNT_SLACK_N8N_STATUS_URL=https://n8n.stellarix.space/webhook/supportportal/account-handoff/slack/status
+n8n_request_token=
 PRODUCTION_ACCOUNT_SLACK_N8N_TIMEOUT_SECONDS=15
 ```
 
-Both n8n webhooks use Header Auth with `X-SupportPortal-Token`. Keep the token in
-n8n credentials and the deployment environment; never put it in a workflow export.
+Both n8n webhooks use Header Auth with `X-N8n-Request-Token`. The value must be
+the same as `n8n_request_token` in the Production API/worker environment. Keep
+the token in n8n credentials and the deployment environment; never put it in a
+workflow export.
 
 ## Delivery workflow
 
@@ -28,7 +30,7 @@ allowlist before using any value. Create this separate PostgreSQL table in a
 database available to n8n:
 
 ```sql
-CREATE TABLE n8n_supportportal_slack_events (
+CREATE TABLE public.n8n_supportportal_slack_events (
     event_id TEXT PRIMARY KEY,
     status TEXT NOT NULL CHECK (
         status IN ('pending', 'delivered', 'failed', 'outcome_unknown')
@@ -45,7 +47,7 @@ CREATE TABLE n8n_supportportal_slack_events (
 Use a parameterized PostgreSQL node to claim the event atomically:
 
 ```sql
-INSERT INTO n8n_supportportal_slack_events (event_id, status, payload)
+INSERT INTO public.n8n_supportportal_slack_events (event_id, status, payload)
 VALUES ($1, 'pending', $2::jsonb)
 ON CONFLICT (event_id) DO NOTHING
 RETURNING event_id;

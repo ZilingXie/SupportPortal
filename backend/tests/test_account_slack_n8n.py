@@ -38,7 +38,7 @@ class AccountSlackN8nContractTests(unittest.TestCase):
             {
                 "ACCOUNT_SLACK_N8N_WEBHOOK_URL": "not-a-url",
                 "ACCOUNT_SLACK_N8N_STATUS_URL": "https://n8n.invalid/status",
-                "ACCOUNT_SLACK_N8N_TOKEN": "token",
+                "n8n_request_token": "token",
             },
             clear=False,
         ):
@@ -131,7 +131,7 @@ class AccountSlackN8nContractTests(unittest.TestCase):
         assert event is not None
         env = {
             "ACCOUNT_SLACK_N8N_WEBHOOK_URL": "https://n8n.example.invalid/delivery",
-            "ACCOUNT_SLACK_N8N_TOKEN": "secret-token",
+            "n8n_request_token": "secret-token",
         }
         with patch.dict(os.environ, env, clear=False), patch(
             "backend.services.account_slack_n8n.urllib.request.urlopen",
@@ -141,7 +141,9 @@ class AccountSlackN8nContractTests(unittest.TestCase):
                 post_account_slack_event(event)
         self.assertTrue(raised.exception.outcome_unknown)
         self.assertEqual(urlopen.call_count, 1)
-        self.assertEqual(urlopen.call_args.args[0].get_header("X-supportportal-token"), "secret-token")
+        self.assertEqual(
+            urlopen.call_args.args[0].get_header("X-n8n-request-token"), "secret-token"
+        )
 
     def test_post_rejects_mismatched_event_id_as_outcome_unknown(self) -> None:
         event = build_account_slack_event(
@@ -158,7 +160,7 @@ class AccountSlackN8nContractTests(unittest.TestCase):
         assert event is not None
         with patch.dict(
             os.environ,
-            {"ACCOUNT_SLACK_N8N_WEBHOOK_URL": "https://n8n.invalid", "ACCOUNT_SLACK_N8N_TOKEN": "x"},
+            {"ACCOUNT_SLACK_N8N_WEBHOOK_URL": "https://n8n.invalid", "n8n_request_token": "x"},
             clear=False,
         ), patch(
             "backend.services.account_slack_n8n.urllib.request.urlopen",
@@ -173,7 +175,7 @@ class AccountSlackN8nContractTests(unittest.TestCase):
             os.environ,
             {
                 "ACCOUNT_SLACK_N8N_STATUS_URL": "https://n8n.invalid/status",
-                "ACCOUNT_SLACK_N8N_TOKEN": "status-token",
+                "n8n_request_token": "status-token",
             },
             clear=False,
         ), patch(
@@ -193,7 +195,7 @@ class AccountSlackN8nContractTests(unittest.TestCase):
                 "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production",
                 "ACCOUNT_SLACK_N8N_WEBHOOK_URL": "",
                 "ACCOUNT_SLACK_N8N_STATUS_URL": "",
-                "ACCOUNT_SLACK_N8N_TOKEN": "",
+                "n8n_request_token": "",
             },
             clear=False,
         ):
@@ -204,7 +206,7 @@ class AccountSlackN8nContractTests(unittest.TestCase):
                 "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging",
                 "ACCOUNT_SLACK_N8N_WEBHOOK_URL": "",
                 "ACCOUNT_SLACK_N8N_STATUS_URL": "",
-                "ACCOUNT_SLACK_N8N_TOKEN": "",
+                "n8n_request_token": "",
             },
             clear=False,
         ):
