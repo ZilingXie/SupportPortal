@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T11:04:38Z",
-  "source_base_commit": "ebba123280b595c5ca6b7eec9becd45e5e33efec",
-  "registry_digest": "7b06a81c778087fb51235c6e63391f95fb48265a30b552833bf0e34ccb50d4db",
+  "generated_at": "2026-08-20T11:14:07Z",
+  "source_base_commit": "e77c69e91ddae2836985846ad24884ba43f7e961",
+  "registry_digest": "2bbc57ac7b867219a63034f5a46f8944292022b6e1bfbea34a341c95dde48efb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1109,7 +1109,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 7,
       "blocked_count": 0
     },
@@ -7279,6 +7279,45 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-82",
+      "title": "AI 接管等待 Zendesk 路由窗口 90 秒后再首试，并保留 422 字段级拒绝原因",
+      "status": "active",
+      "owner": "zac",
+      "summary": "AC-12879/AC-12880 实测：建单后 1 秒内 omnichannel 把工单分给真人 agent，其持有期间（超过 1 分钟）所有 assignment PUT 一律 422 RecordInvalid；PR#825 的 0s/20s/40s 重试全部落在窗口内，fail-closed 转 human_review，人工 8 分钟后同载荷 Take Ownership 成功。修复：gate 在首次 assignment PUT 前先等待路由窗口（默认 90s，ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS 可调，0=立即），等待后重取快照（新 updated_stamp）并复查策略阻断；同时 _http_error_detail 把 Zendesk 422 响应体的 details 字段级原因拼进 failure_detail（此前只留 top-level error，需翻 ticket audits 才能定位）。",
+      "next_action": "finalize 合并后在 EC2 生产栈部署重启，等待下一个真实 production 自动化工单验证 90s 等待路径。",
+      "acceptance_criteria": [
+        "gate 模式首次 assignment PUT 前等待 ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS（默认 90，0=禁用）；等待后重新读取快照并用新 updated_stamp 发 PUT。",
+        "等待期间出现人工回复/策略阻断则停机且不发 PUT；已分配匹配（verify/复访）路径不受等待影响。",
+        "重试语义保持：422 仍按 20s/40s 退避重试至多 3 次尝试；非 422 行为不变。",
+        "_http_error_detail 将 422 响应体 details（dict/list 紧凑 JSON 或字符串）追加进 detail（上限 1000 字符），无 details 时行为不变。",
+        "现有 ownership/assignment/intake/worker/comment 回归套件全部保持通过。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/account_automation_ownership.py",
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/tests/test_account_automation_ownership.py",
+        "backend/tests/test_zendesk_ticket_assignment.py",
+        ".env.example"
+      ],
+      "created_at": "2026-08-20",
+      "updated_at": "2026-08-20",
+      "history": [
+        {
+          "at": "2026-08-20",
+          "event": "created",
+          "summary": "基于 AC-12879/AC-12880 生产调查（omnichannel 路由窗口实测超过 60s，3 次重试全部 422；人工 8 分钟后成功）立项。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
     }
   ],
   "meetings": [
