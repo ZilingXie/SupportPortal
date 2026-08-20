@@ -85,6 +85,12 @@ from backend.services.account_zendesk_internal_comment import (
     deliver_account_ai_message_as_internal_comment,
     reconcile_account_ai_message_internal_comment,
 )
+from backend.services.account_slack_n8n import (
+    AccountSlackN8nError,
+    account_slack_n8n_configured,
+    get_account_slack_event_status,
+    post_account_slack_event,
+)
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -1311,6 +1317,82 @@ def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
         )
 
 
+def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
+    if str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower() != "production":
+        return
+    if not account_slack_n8n_configured():
+        LOGGER.warning("account_slack_delivery_paused failure_code=account_slack_n8n_config_incomplete")
+        return
+    deliveries = ticket_repository.list_account_slack_deliveries(
+        statuses=("queued", "pending", "outcome_unknown"),
+        limit=limit,
+    )
+    for delivery in deliveries:
+        event_id = str(delivery.get("event_id") or "").strip()
+        status = str(delivery.get("status") or "").strip().lower()
+        if not event_id:
+            continue
+        if status == "queued":
+            claimed = ticket_repository.claim_account_slack_delivery(
+                event_id=event_id,
+                claimed_at=now_iso(),
+            )
+            if not isinstance(claimed, dict) or not claimed.get("claimed"):
+                continue
+            event = claimed.get("payload") if isinstance(claimed.get("payload"), dict) else {}
+            try:
+                result = post_account_slack_event(event)
+            except AccountSlackN8nError as exc:
+                ticket_repository.complete_account_slack_delivery(
+                    event_id=event_id,
+                    status="outcome_unknown" if exc.outcome_unknown else "failed",
+                    failure_code=exc.code,
+                    completed_at=now_iso(),
+                )
+                LOGGER.warning(
+                    "account_slack_delivery_failed event_id=%s status=%s failure_code=%s",
+                    event_id,
+                    "outcome_unknown" if exc.outcome_unknown else "failed",
+                    exc.code,
+                )
+                continue
+        else:
+            try:
+                result = get_account_slack_event_status(event_id)
+            except AccountSlackN8nError as exc:
+                LOGGER.warning(
+                    "account_slack_reconciliation_failed event_id=%s status=%s failure_code=%s",
+                    event_id,
+                    status,
+                    exc.code,
+                )
+                continue
+
+        remote_status = str(result.get("status") or "").strip().lower()
+        if remote_status == "missing":
+            ticket_repository.requeue_account_slack_delivery(
+                event_id=event_id,
+                requeued_at=now_iso(),
+            )
+            LOGGER.warning(
+                "account_slack_delivery_requeued event_id=%s failure_code=remote_event_missing",
+                event_id,
+            )
+            continue
+        ticket_repository.complete_account_slack_delivery(
+            event_id=event_id,
+            status=remote_status,
+            failure_code=result.get("failure_code"),
+            completed_at=now_iso(),
+        )
+        LOGGER.info(
+            "account_slack_delivery_recorded event_id=%s status=%s failure_code=%s",
+            event_id,
+            remote_status,
+            result.get("failure_code") or "none",
+        )
+
+
 def _reconcile_production_zendesk_delivery(
     *,
     account_case_id: str,
@@ -1672,6 +1754,7 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                     limit=10,
                 )
             _drain_production_zendesk_comment_deliveries(limit=20)
+            _drain_account_slack_deliveries(limit=20)
         except Exception:
             LOGGER.exception("Account reply poller failed")
         sleep_until = time.time() + max(interval_seconds, 1.0)

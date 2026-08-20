@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T06:44:12Z",
-  "source_base_commit": "6a30eb11d5b9ae8ae0269fb9f7ca9362bae3e70f",
-  "registry_digest": "2c18fd5d2991d7a1f418d2652473ed18fab48bb139febc9da79ff525fe945d8b",
+  "generated_at": "2026-08-20T07:21:49Z",
+  "source_base_commit": "8b02e109db812df6b43fad05cab604a64453806c",
+  "registry_digest": "bcb418da18639b5a2a4d7d7f548da932dddfa62ccde1b6648c46e6d7ccc0d88c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1552,13 +1552,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Engineer Case 派单交付",
       "goal": "完成认证、数据库、排班、指标、Slack 和逐步派单。",
       "acceptance_criteria": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Account handoff Slack outbox, n8n and Zendesk independence suite",
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m pytest -q backend/tests/test_account_slack_n8n.py backend/tests/test_runtime_bootstrap.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py",
+          "details": "238 tests passed with 19 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, and Slack failure independence."
+        }
+      ],
       "source_refs": [
-        "docs/roadmap.html#lanes"
+        "docs/roadmap.html#lanes",
+        "backend/services/account_slack_n8n.py",
+        "docs/integrations/n8n/account_automation_slack_notification.md"
       ],
       "legacy_ids": [],
-      "status": "planned",
-      "task_count": 7,
+      "status": "active",
+      "task_count": 8,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -6907,6 +6916,58 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-79",
+      "title": "Production Fraud 与 Account Suspension handoff Slack 通知",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Production Fraud Account 和 Account Suspension 的最终 handoff 客户回复经 Zendesk public delivery 确认后，通过持久化 outbox 和 n8n 幂等投递到 Slack；Slack 失败与客户回复、Zendesk solved 和本地 Case close 独立。",
+      "next_action": "完成 finalize、官方栈重启和授权 synthetic Production Case 的 Zendesk/n8n/Slack 外部读回后补齐 deployment evidence。",
+      "acceptance_criteria": [
+        "Fraud 仅 fraud_handoff_confirmation、Suspension 仅 account_suspension_handoff_and_close 在 public Zendesk delivered 后创建一次 Slack 投递；contact confirmation 和其他 Automation 不触发。",
+        "Slack 消息包含 Case 类型和标题、Zendesk ticket link、持久化 question summary，不包含客户身份、collected fields、AI reply 或凭据。",
+        "SupportPortal 以 event_id 持久化 outbox；n8n 以 PostgreSQL primary key 原子去重，POST 超时后只查 status，只有 missing 才重新入队。",
+        "n8n 或 Slack 失败不回滚客户回复、Zendesk solved、本地 Case close，也不转 Human Review。",
+        "配置只注入 Production API 和 auxiliary worker；缺失配置由 Production health warning 和结构化日志暴露。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Account handoff Slack outbox, n8n and Zendesk independence suite",
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m pytest -q backend/tests/test_account_slack_n8n.py backend/tests/test_runtime_bootstrap.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py",
+          "details": "238 tests passed with 19 subtests after owner review; verified exact message and POST/GET contracts, case-action plus reply-intent trigger matrix, public-delivered release gate, private/failed/unknown non-release, concurrent claim deduplication, unknown-outcome status-only reconciliation, missing-only requeue, and Slack failure independence."
+        }
+      ],
+      "source_refs": [
+        "backend/services/account_slack_n8n.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/worker.py",
+        "backend/sql/migrations/2026_08_20_account_handoff_slack_delivery.sql",
+        "deployment/docker-compose.single-host.yml",
+        "docs/integrations/n8n/account_automation_slack_notification.md"
+      ],
+      "created_at": "2026-08-20",
+      "updated_at": "2026-08-20",
+      "history": [
+        {
+          "at": "2026-08-20",
+          "event": "created",
+          "summary": "建立 Production Account handoff Slack 独立投递链路，采用 SupportPortal outbox 与 n8n PostgreSQL 幂等状态查询。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "progress",
+          "summary": "SupportPortal outbox、n8n client、Production 配置、集成文档和目标测试完成；等待 finalize、部署与外部读回。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-case-delivery"
     }
   ],
   "meetings": [
@@ -8124,7 +8185,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer multi-agent 默认关闭并与 9/1 Controlled Launch 主链路隔离。",
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
-        "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。"
+        "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
+        "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。"
       ],
       "planned": [
         "对话支持上传图片和 txt/log/md 文件。",
