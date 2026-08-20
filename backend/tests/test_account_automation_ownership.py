@@ -79,7 +79,9 @@ class OwnershipGateModeTests(unittest.TestCase):
     def test_default_human_assignment_without_public_reply_is_taken_over(self):
         case = _production_case()
         snapshot = _snapshot()
-        with patch(
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0"}
+        ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             return_value=snapshot,
         ), patch(
@@ -190,7 +192,9 @@ class OwnershipGateModeTests(unittest.TestCase):
         case = _production_case()
         first_snapshot = _snapshot()
         second_snapshot = _snapshot(assignee_id="40430228336660")
-        with patch(
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0"}
+        ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             side_effect=[first_snapshot, second_snapshot],
         ) as read_snapshot, patch(
@@ -218,7 +222,9 @@ class OwnershipGateModeTests(unittest.TestCase):
             human_replied=True,
             blocking_comment_id="52708200000000",
         )
-        with patch(
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0"}
+        ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             side_effect=[first_snapshot, second_snapshot],
         ), patch(
@@ -241,7 +247,11 @@ class OwnershipGateModeTests(unittest.TestCase):
     def test_assignment_error_preserves_sanitized_category_and_status(self):
         case = _production_case()
         with patch.dict(
-            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": ""}
+            os.environ,
+            {
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "",
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0",
+            },
         ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             return_value=_snapshot(),
@@ -265,7 +275,11 @@ class OwnershipGateModeTests(unittest.TestCase):
     def test_assignment_422_is_retried_with_fresh_snapshot_until_success(self):
         case = _production_case()
         with patch.dict(
-            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0"}
+            os.environ,
+            {
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0",
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0",
+            },
         ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             side_effect=[_snapshot(), _snapshot()],
@@ -296,7 +310,11 @@ class OwnershipGateModeTests(unittest.TestCase):
     def test_persistent_assignment_422_fails_with_detail_after_retries(self):
         case = _production_case()
         with patch.dict(
-            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0"}
+            os.environ,
+            {
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0",
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0",
+            },
         ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             return_value=_snapshot(),
@@ -325,7 +343,11 @@ class OwnershipGateModeTests(unittest.TestCase):
     def test_assignment_422_retry_stops_when_human_reply_appears(self):
         case = _production_case()
         with patch.dict(
-            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0"}
+            os.environ,
+            {
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS": "0,0",
+                "ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0",
+            },
         ), patch(
             "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
             side_effect=[
@@ -346,6 +368,97 @@ class OwnershipGateModeTests(unittest.TestCase):
         self.assertEqual(result.failure_category, "policy")
         self.assertEqual(result.blocking_comment_id, "99001")
         self.assertEqual(assign.call_count, 1)
+
+    def test_initial_delay_waits_before_first_attempt_and_uses_fresh_snapshot(self):
+        case = _production_case()
+        stale_snapshot = _snapshot()
+        fresh_snapshot = _snapshot(assignee_id="40430228336660")
+        with patch(
+            "backend.services.account_automation_ownership.time.sleep"
+        ) as sleep, patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            side_effect=[stale_snapshot, fresh_snapshot],
+        ) as read_snapshot, patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+            return_value=_assignment_result(),
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertTrue(result.confirmed)
+        sleep.assert_called_once_with(90.0)
+        self.assertEqual(read_snapshot.call_count, 2)
+        assign.assert_called_once_with(
+            ticket_id="12838",
+            ownership_snapshot=fresh_snapshot,
+        )
+
+    def test_initial_delay_is_skipped_when_assignment_already_matches(self):
+        case = _production_case()
+        with patch(
+            "backend.services.account_automation_ownership.time.sleep"
+        ) as sleep, patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            return_value=_snapshot(
+                assignee_id="48557297720084",
+                group_id="29388501432596",
+            ),
+        ), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertTrue(result.confirmed)
+        sleep.assert_not_called()
+        assign.assert_not_called()
+
+    def test_initial_delay_env_zero_assigns_without_waiting(self):
+        case = _production_case()
+        with patch.dict(
+            os.environ, {"ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS": "0"}
+        ), patch(
+            "backend.services.account_automation_ownership.time.sleep"
+        ) as sleep, patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            return_value=_snapshot(),
+        ) as read_snapshot, patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+            return_value=_assignment_result(),
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertTrue(result.confirmed)
+        sleep.assert_not_called()
+        self.assertEqual(read_snapshot.call_count, 1)
+        assign.assert_called_once()
+
+    def test_human_reply_during_initial_delay_stops_before_any_assignment(self):
+        case = _production_case()
+        with patch(
+            "backend.services.account_automation_ownership.time.sleep"
+        ), patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            side_effect=[
+                _snapshot(),
+                _snapshot(human_replied=True, blocking_comment_id="99002"),
+            ],
+        ) as read_snapshot, patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-20T07:04:00Z"
+            )
+
+        self.assertEqual(result.state, "human_replied")
+        self.assertEqual(result.failure_category, "policy")
+        self.assertEqual(result.blocking_comment_id, "99002")
+        self.assertEqual(read_snapshot.call_count, 2)
+        assign.assert_not_called()
 
 
 class OwnershipVerifyModeTests(unittest.TestCase):

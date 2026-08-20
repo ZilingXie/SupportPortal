@@ -25,10 +25,14 @@ from backend.services.zendesk_ticket_assignment import (
 OWNERSHIP_CONTEXT_KEY = "zendesk_ownership"
 OwnershipGateMode = Literal["gate", "verify"]
 
-# Zendesk omnichannel routing briefly owns ticket assignment right after a
-# ticket is created and routed; an immediate assignment PUT gets rejected with
-# 422. Retry the assignment a bounded number of times with fresh snapshots
-# before classifying the failure as permanent.
+# Zendesk omnichannel routing owns a freshly created ticket while it routes the
+# assignment to a human agent, and keeps rejecting assignment PUTs with 422 for
+# as long as that agent holds the ticket (observed to outlast a full minute on
+# AC-12879/AC-12880). Wait out that window before the first assignment attempt,
+# then retry a bounded number of times with fresh snapshots before classifying
+# the failure as permanent.
+OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_ENV = "ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS"
+DEFAULT_ASSIGNMENT_INITIAL_DELAY = 90.0
 OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_ENV = "ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS"
 DEFAULT_ASSIGNMENT_RETRY_DELAYS: tuple[float, ...] = (20.0, 40.0)
 
@@ -65,6 +69,17 @@ class OwnershipGateResult:
             OWNERSHIP_STATE_HUMAN_REASSIGNED,
             OWNERSHIP_STATE_HUMAN_REPLIED,
         }
+
+
+def _assignment_initial_delay() -> float:
+    raw = str(os.getenv(OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_ENV, "")).strip()
+    if not raw:
+        return DEFAULT_ASSIGNMENT_INITIAL_DELAY
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_ASSIGNMENT_INITIAL_DELAY
+    return value if value >= 0 else DEFAULT_ASSIGNMENT_INITIAL_DELAY
 
 
 def _assignment_retry_delays() -> tuple[float, ...]:
@@ -213,12 +228,14 @@ def ensure_production_automation_ownership(
     """Ensure the production automated case is owned by the configured AI agent.
 
     ``mode="gate"`` is the authoritative path used before external side effects:
-    it issues an assignment PUT (with a bounded backoff retry for 422, because
-    Zendesk omnichannel routing briefly rejects assignment writes right after a
-    ticket is routed), verifies the result, and never puts twice when a previous
-    attempt's outcome is unknown. ``mode="verify"`` is read-only and used right
-    before each Zendesk comment write: if a human took the ticket over,
-    automation stops instead of stealing the ticket back.
+    it waits out the Zendesk omnichannel routing window (default 90s before the
+    first attempt, because routed assignments keep rejecting assignment writes
+    with 422 for as long as the routed agent holds the ticket), then issues an
+    assignment PUT with a bounded backoff retry for 422, verifies the result,
+    and never puts twice when a previous attempt's outcome is unknown.
+    ``mode="verify"`` is read-only and used right before each Zendesk comment
+    write: if a human took the ticket over, automation stops instead of
+    stealing the ticket back.
     """
     if not ownership_gate_eligible(account_case):
         return OwnershipGateResult(eligible=False, state=OWNERSHIP_STATE_ASSIGNED)
@@ -297,10 +314,12 @@ def ensure_production_automation_ownership(
             updated_at=updated_at,
         )
 
-    attempt_delays: tuple[float, ...] = (0.0,) + _assignment_retry_delays()
+    attempt_delays: tuple[float, ...] = (
+        _assignment_initial_delay(),
+    ) + _assignment_retry_delays()
     last_exc: ZendeskCommentError | None = None
     for attempt_index, delay_before_attempt in enumerate(attempt_delays):
-        if attempt_index > 0:
+        if delay_before_attempt > 0 or attempt_index > 0:
             if delay_before_attempt > 0:
                 time.sleep(delay_before_attempt)
             try:

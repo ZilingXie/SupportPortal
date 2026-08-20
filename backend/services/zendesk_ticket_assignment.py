@@ -57,7 +57,13 @@ def _assignment_error(
 
 
 def _http_error_detail(exc: urllib.error.HTTPError) -> str | None:
-    """Best-effort Zendesk error message from a failed response body."""
+    """Best-effort Zendesk error message from a failed response body.
+
+    Zendesk 422 rejections carry the field-level rejection reason only in the
+    ``details`` member (for example which assignment field the omnichannel
+    routing window refused), so it is appended verbatim to distinguish routing
+    collisions from other validation failures without reading ticket audits.
+    """
     try:
         raw = exc.read()
         text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
@@ -73,8 +79,17 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str | None:
         message = str(error.get("message") or error.get("title") or "").strip()
     else:
         message = str(payload.get("message") or payload.get("description") or "").strip()
-    message = message.strip()
-    return message[:300] if message else None
+    parts = [message] if message.strip() else []
+    details = payload.get("details")
+    if isinstance(details, (dict, list)):
+        try:
+            parts.append(json.dumps(details, ensure_ascii=False, separators=(",", ":")))
+        except (TypeError, ValueError):
+            pass
+    elif isinstance(details, str) and details.strip():
+        parts.append(details.strip())
+    combined = " | ".join(part.strip() for part in parts if part and part.strip())
+    return combined[:1000] if combined else None
 
 
 def _configured_assignee_email() -> str:
