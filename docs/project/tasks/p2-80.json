@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-80",
   "title": "修复 Zendesk AI 接管撞上 omnichannel 路由窗口时被固化成永久失败",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "Production 自动接管 gate 在工单创建后数秒内执行时，可能撞上 Zendesk omnichannel 路由引擎的分配占有窗口而被 422 拒绝；现行代码把一切 422 归为 permanent 且丢弃 Zendesk 错误体，导致瞬时冲突被固化为 human_review 永久失败（AC-12878 实例）。修复：捕获并持久化 Zendesk 错误体（failure_detail），gate 对 422 做有界退避重试（默认 20s/40s，env 可调），每次重试重新快照、复查 human_replied 等策略阻断。",
-  "next_action": "合并后从根 main 重启官方栈并做 live 验证，完成后收尾。",
+  "next_action": "",
   "acceptance_criteria": [
     "zendesk_ticket_assignment 的 HTTPError 处理捕获 Zendesk 错误体（best-effort），以 detail 附加在 ZendeskCommentError 上并不再丢弃。",
     "ownership gate 对 422 按默认 20s/40s（ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS 可调）退避重试；每次重试前重新读取快照（盖新 updated_stamp）、复查策略阻断与已分配状态；重试期间人工回复则按 policy 阻断停机。",
@@ -32,6 +32,12 @@
       "label": "Syntax gates",
       "command": "python3 -m py_compile backend/services/account_automation_ownership.py backend/services/zendesk_ticket_assignment.py backend/services/zendesk_comments.py backend/main.py && git diff --check",
       "details": "四个改动文件编译与空白检查通过。"
+    },
+    {
+      "type": "deployment",
+      "label": "Official stack restart + live markers",
+      "command": "podman exec deployment_api_1 python -c \"from backend.services.account_automation_ownership import DEFAULT_ASSIGNMENT_RETRY_DELAYS, _assignment_retry_delays; from backend.services.zendesk_ticket_assignment import _http_error_detail; print(DEFAULT_ASSIGNMENT_RETRY_DELAYS, callable(_http_error_detail))\"",
+      "details": "2026-08-20 官方栈（app_build.ref=5318360e267f）：运行镜像内默认退避 (20.0, 40.0)、env 解析与错误体捕获函数均在。真实 422 路由窗口重试事件待 EC2 下一次部署后的新工单自然验证（本地栈为 staging，不触发 production gate）。"
     }
   ],
   "source_refs": [
@@ -49,6 +55,11 @@
       "at": "2026-08-20",
       "event": "created",
       "summary": "基于 AC-12878 实测调查（接管发生在建单后 15 秒内撞上路由窗口 422；同载荷稍后成功；AI agent 组成员关系与写权限均正常）立项修复。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "completed",
+      "summary": "官方栈重启（app_build.ref=5318360e267f）与 live marker 验证通过，标记完成。"
     }
   ],
   "legacy_refs": [],

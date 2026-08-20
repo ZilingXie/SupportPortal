@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-73",
   "title": "新增 /production 独立环境（独立数据库 + 路径路由 + 无 Run in Production）",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "在同一 single-host 部署内新增第二组 api/worker 容器（compose profile production 门控），指向独立数据库 supportportal_production；新增 /production UI（功能与 /account 相同、移除 Run in Production）；nginx 以路径路由 /production、/production/api 与 intake POST /production/account；production 栈 intake 直接以 processing_profile=production 创建工单并沿用现有 delivery 台账自动投递 Zendesk internal comment；/account staging 行为零改动。",
-  "next_action": "合并后从根 main 重启官方栈并做 live 验证（/production 页面 marker、production 容器与队列隔离、n8n 新 URL）；完成后补充 live 证据并收尾任务。",
+  "next_action": "",
   "acceptance_criteria": [
     "/account（staging）现有功能与 API 行为零改动：未设置 ACCOUNT_DEFAULT_PROCESSING_PROFILE 时所有默认值仍为 staging。",
     "新增 /production 页面由 api StaticFiles 挂载，功能与 /account 相同，源码中不含 Run in Production（promote-production）相关代码。",
@@ -33,6 +33,12 @@
       "label": "Regression suites around changed paths",
       "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_zendesk_comment backend.tests.test_workspace_api backend.tests.test_bootstrap_auto_deploy_ec2",
       "details": "全绿（86+142+部署契约），证明 Zendesk 投递、publication 事务台账、workspace admin 与部署脚本回归安全。test_workflow_scripts 存在 5 个与本次无关的环境性失败（干净 main 上同样失败，已对照验证）。"
+    },
+    {
+      "type": "deployment",
+      "label": "Official stack restart + live markers",
+      "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_api_1 python -c \"import urllib.request; html=urllib.request.urlopen('http://127.0.0.1:8000/production/', timeout=10).read().decode(); print('<title>Account Production</title>' in html)\"",
+      "details": "2026-08-20 官方栈重启成功，/health app_build.ref=5318360e267f 与合并后 main HEAD 一致；/production 页面由 api 挂载返回且标题为 Account Production（资源版本串已被后续 automated-public 工作更新为 20260819-automated-public-1，与当前 main 一致）。EC2 侧已部署并可访问 /production/（用户确认），production 库/容器组随 profile 生效。"
     }
   ],
   "source_refs": [
@@ -43,7 +49,7 @@
     "docs/integrations/n8n/zendesk_account_comment_sync.md"
   ],
   "created_at": "2026-08-19",
-  "updated_at": "2026-08-19",
+  "updated_at": "2026-08-20",
   "history": [
     {
       "at": "2026-08-19",
@@ -54,6 +60,11 @@
       "at": "2026-08-19",
       "event": "progress",
       "summary": "完成实现与目标测试：/production UI、ACCOUNT_DEFAULT_PROCESSING_PROFILE 默认值（含失败持久化路径）、InMemory production 列表过滤修复、compose/nginx/deploy/.env.example 变更与契约/行为测试。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "completed",
+      "summary": "官方栈重启（app_build.ref=5318360e267f）与 live marker 验证通过，标记完成。"
     }
   ],
   "legacy_refs": [],

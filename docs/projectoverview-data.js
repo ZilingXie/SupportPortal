@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T10:21:20Z",
-  "source_base_commit": "04532f0416f83c9fd0cdfe58feca85ae1847c87c",
-  "registry_digest": "415fc1301b17ed940766456f54925e61abc0c594a9daaaa725708ec1b763d9b9",
+  "generated_at": "2026-08-20T10:33:24Z",
+  "source_base_commit": "5318360e267fd9eecae67f7e511d6eb6a87d9a43",
+  "registry_digest": "efccb7071b2fb05938eaff33fcf95edfa3424f83b36509902bc71274d8af220b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1068,6 +1068,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/services/account_automation_ownership.py backend/services/zendesk_ticket_assignment.py backend/services/zendesk_comments.py backend/main.py && git diff --check",
           "details": "四个改动文件编译与空白检查通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "podman exec deployment_api_1 python -c \"from backend.services.account_automation_ownership import DEFAULT_ASSIGNMENT_RETRY_DELAYS, _assignment_retry_delays; from backend.services.zendesk_ticket_assignment import _http_error_detail; print(DEFAULT_ASSIGNMENT_RETRY_DELAYS, callable(_http_error_detail))\"",
+          "details": "2026-08-20 官方栈（app_build.ref=5318360e267f）：运行镜像内默认退避 (20.0, 40.0)、env 解析与错误体捕获函数均在。真实 422 路由窗口重试事件待 EC2 下一次部署后的新工单自然验证（本地栈为 staging，不触发 production gate）。"
         }
       ],
       "source_refs": [
@@ -1080,7 +1086,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 8,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -1329,6 +1335,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "全绿（86+142+部署契约），证明 Zendesk 投递、publication 事务台账、workspace admin 与部署脚本回归安全。test_workflow_scripts 存在 5 个与本次无关的环境性失败（干净 main 上同样失败，已对照验证）。"
         },
         {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_api_1 python -c \"import urllib.request; html=urllib.request.urlopen('http://127.0.0.1:8000/production/', timeout=10).read().decode(); print('\u003ctitle>Account Production\u003c/title>' in html)\"",
+          "details": "2026-08-20 官方栈重启成功，/health app_build.ref=5318360e267f 与合并后 main HEAD 一致；/production 页面由 api 挂载返回且标题为 Account Production（资源版本串已被后续 automated-public 工作更新为 20260819-automated-public-1，与当前 main 一致）。EC2 侧已部署并可访问 /production/（用户确认），production 库/容器组随 profile 生效。"
+        },
+        {
           "type": "test",
           "label": "Forward contract (UI + backend removal + nginx)",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_ui_contract backend.tests.test_production_ui_contract",
@@ -1345,6 +1357,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/main.py && node --check ui/account-ui/app.js && git diff --check",
           "details": "后端编译、前端 JS 语法、空白检查全部通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "podman exec deployment_api_1 python -c \"import urllib.request, urllib.error; js=urllib.request.urlopen('http://127.0.0.1:8000/account/app.js', timeout=10).read().decode(); print('forward' in js)\" ; POST /api/account/cases/AC-X/promote-production -> 404",
+          "details": "2026-08-20 官方栈（app_build.ref=5318360e267f）：/account app.js 含 forwardAccountCaseToProduction 且无 promote-production 残留；后端 promote-production 端点已删除（404）。端到端转发在 EC2 production 环境运行（本地栈不启用 production profile，属设计行为）。"
         },
         {
           "type": "test",
@@ -1439,7 +1457,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 6,
-      "done_count": 3,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -6606,10 +6624,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-73",
       "title": "新增 /production 独立环境（独立数据库 + 路径路由 + 无 Run in Production）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "在同一 single-host 部署内新增第二组 api/worker 容器（compose profile production 门控），指向独立数据库 supportportal_production；新增 /production UI（功能与 /account 相同、移除 Run in Production）；nginx 以路径路由 /production、/production/api 与 intake POST /production/account；production 栈 intake 直接以 processing_profile=production 创建工单并沿用现有 delivery 台账自动投递 Zendesk internal comment；/account staging 行为零改动。",
-      "next_action": "合并后从根 main 重启官方栈并做 live 验证（/production 页面 marker、production 容器与队列隔离、n8n 新 URL）；完成后补充 live 证据并收尾任务。",
+      "next_action": "",
       "acceptance_criteria": [
         "/account（staging）现有功能与 API 行为零改动：未设置 ACCOUNT_DEFAULT_PROCESSING_PROFILE 时所有默认值仍为 staging。",
         "新增 /production 页面由 api StaticFiles 挂载，功能与 /account 相同，源码中不含 Run in Production（promote-production）相关代码。",
@@ -6637,6 +6655,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Regression suites around changed paths",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_zendesk_comment backend.tests.test_workspace_api backend.tests.test_bootstrap_auto_deploy_ec2",
           "details": "全绿（86+142+部署契约），证明 Zendesk 投递、publication 事务台账、workspace admin 与部署脚本回归安全。test_workflow_scripts 存在 5 个与本次无关的环境性失败（干净 main 上同样失败，已对照验证）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_api_1 python -c \"import urllib.request; html=urllib.request.urlopen('http://127.0.0.1:8000/production/', timeout=10).read().decode(); print('\u003ctitle>Account Production\u003c/title>' in html)\"",
+          "details": "2026-08-20 官方栈重启成功，/health app_build.ref=5318360e267f 与合并后 main HEAD 一致；/production 页面由 api 挂载返回且标题为 Account Production（资源版本串已被后续 automated-public 工作更新为 20260819-automated-public-1，与当前 main 一致）。EC2 侧已部署并可访问 /production/（用户确认），production 库/容器组随 profile 生效。"
         }
       ],
       "source_refs": [
@@ -6647,7 +6671,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/zendesk_account_comment_sync.md"
       ],
       "created_at": "2026-08-19",
-      "updated_at": "2026-08-19",
+      "updated_at": "2026-08-20",
       "history": [
         {
           "at": "2026-08-19",
@@ -6658,6 +6682,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "progress",
           "summary": "完成实现与目标测试：/production UI、ACCOUNT_DEFAULT_PROCESSING_PROFILE 默认值（含失败持久化路径）、InMemory production 列表过滤修复、compose/nginx/deploy/.env.example 变更与契约/行为测试。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "官方栈重启（app_build.ref=5318360e267f）与 live marker 验证通过，标记完成。"
         }
       ],
       "legacy_refs": [],
@@ -6670,10 +6699,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-74",
       "title": "/account Run in Production 重构为转发 production intake",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "移除 staging 库内 promote-production 端点与 PRD-* 晋级逻辑；/account 的 Run in Production 按钮改为以 n8n 同款五字段 intake 直连 POST /production/account，由 production 栈完成完整路由并在命中已注册 Automation 时自动写入 Zendesk internal comment。nginx intake 路由超时提升到 300s 匹配前端等待。",
-      "next_action": "合并后从根 main 重启官方栈并做 live 验证（/account 转发按钮新契约、/production 页面 marker），完成后收尾。",
+      "next_action": "",
       "acceptance_criteria": [
         "account-ui 的 Run in Production 按钮直接 POST /production/account（同源 n8n 同款 intake），载荷含 external_id/title/question/customer_email/customer_name/source/created_by；未关联数字 Zendesk 号的 Case 拒绝转发并就地报错。",
         "转发成功与幂等重放（idempotent_replay）分别有明确 toast；超时提示指向 /production/ 而非 PRD-* Case。",
@@ -6700,6 +6729,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/main.py && node --check ui/account-ui/app.js && git diff --check",
           "details": "后端编译、前端 JS 语法、空白检查全部通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "podman exec deployment_api_1 python -c \"import urllib.request, urllib.error; js=urllib.request.urlopen('http://127.0.0.1:8000/account/app.js', timeout=10).read().decode(); print('forward' in js)\" ; POST /api/account/cases/AC-X/promote-production -> 404",
+          "details": "2026-08-20 官方栈（app_build.ref=5318360e267f）：/account app.js 含 forwardAccountCaseToProduction 且无 promote-production 残留；后端 promote-production 端点已删除（404）。端到端转发在 EC2 production 环境运行（本地栈不启用 production profile，属设计行为）。"
         }
       ],
       "source_refs": [
@@ -6709,12 +6744,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/tests/test_account_ui_contract.py"
       ],
       "created_at": "2026-08-19",
-      "updated_at": "2026-08-19",
+      "updated_at": "2026-08-20",
       "history": [
         {
           "at": "2026-08-19",
           "event": "created",
           "summary": "将 /account 的 Run in Production 从 staging 库内晋级重构为转发到 /production 独立环境。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "官方栈重启（app_build.ref=5318360e267f）与 live marker 验证通过，标记完成。"
         }
       ],
       "legacy_refs": [],
@@ -7074,10 +7114,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-80",
       "title": "修复 Zendesk AI 接管撞上 omnichannel 路由窗口时被固化成永久失败",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "Production 自动接管 gate 在工单创建后数秒内执行时，可能撞上 Zendesk omnichannel 路由引擎的分配占有窗口而被 422 拒绝；现行代码把一切 422 归为 permanent 且丢弃 Zendesk 错误体，导致瞬时冲突被固化为 human_review 永久失败（AC-12878 实例）。修复：捕获并持久化 Zendesk 错误体（failure_detail），gate 对 422 做有界退避重试（默认 20s/40s，env 可调），每次重试重新快照、复查 human_replied 等策略阻断。",
-      "next_action": "合并后从根 main 重启官方栈并做 live 验证，完成后收尾。",
+      "next_action": "",
       "acceptance_criteria": [
         "zendesk_ticket_assignment 的 HTTPError 处理捕获 Zendesk 错误体（best-effort），以 detail 附加在 ZendeskCommentError 上并不再丢弃。",
         "ownership gate 对 422 按默认 20s/40s（ZENDESK_OWNERSHIP_ASSIGNMENT_RETRY_DELAYS_SECONDS 可调）退避重试；每次重试前重新读取快照（盖新 updated_stamp）、复查策略阻断与已分配状态；重试期间人工回复则按 policy 阻断停机。",
@@ -7104,6 +7144,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/services/account_automation_ownership.py backend/services/zendesk_ticket_assignment.py backend/services/zendesk_comments.py backend/main.py && git diff --check",
           "details": "四个改动文件编译与空白检查通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "podman exec deployment_api_1 python -c \"from backend.services.account_automation_ownership import DEFAULT_ASSIGNMENT_RETRY_DELAYS, _assignment_retry_delays; from backend.services.zendesk_ticket_assignment import _http_error_detail; print(DEFAULT_ASSIGNMENT_RETRY_DELAYS, callable(_http_error_detail))\"",
+          "details": "2026-08-20 官方栈（app_build.ref=5318360e267f）：运行镜像内默认退避 (20.0, 40.0)、env 解析与错误体捕获函数均在。真实 422 路由窗口重试事件待 EC2 下一次部署后的新工单自然验证（本地栈为 staging，不触发 production gate）。"
         }
       ],
       "source_refs": [
@@ -7121,6 +7167,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-20",
           "event": "created",
           "summary": "基于 AC-12878 实测调查（接管发生在建单后 15 秒内撞上路由窗口 422；同载荷稍后成功；AI agent 组成员关系与写权限均正常）立项修复。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "官方栈重启（app_build.ref=5318360e267f）与 live marker 验证通过，标记完成。"
         }
       ],
       "legacy_refs": [],
