@@ -326,6 +326,18 @@ def _is_automated(ticket: dict[str, Any]) -> bool:
     )
 
 
+ADMIN_AUTOMATION_SUBCATEGORY_ORDER = ("fraud_account", "enablement", "account_suspension")
+
+
+def _admin_case_subcategory(record: dict[str, Any], secondary_label: str = "") -> str:
+    raw_subcategory = str(record.get("subcategory") or "").strip().lower()
+    if not raw_subcategory:
+        label = secondary_label or account_case_labels(record)[1]
+        if " / " in label:
+            raw_subcategory = label.rsplit(" / ", 1)[-1].strip().lower().replace(" ", "_")
+    return raw_subcategory
+
+
 def account_automation_payload(
     repository: Any,
     *,
@@ -346,6 +358,30 @@ def account_automation_payload(
     )
     automated = sum(1 for item in all_cases if _is_automated(item))
     total = len(all_cases)
+    subcategory_buckets = {
+        key: {"total": 0, "automated": 0} for key in ADMIN_AUTOMATION_SUBCATEGORY_ORDER
+    }
+    for item in all_cases:
+        bucket = subcategory_buckets.get(_admin_case_subcategory(item))
+        if bucket is None:
+            continue
+        bucket["total"] += 1
+        if _is_automated(item):
+            bucket["automated"] += 1
+    automation_subcategories = []
+    for key in ADMIN_AUTOMATION_SUBCATEGORY_ORDER:
+        bucket_total = subcategory_buckets[key]["total"]
+        bucket_automated = subcategory_buckets[key]["automated"]
+        automation_subcategories.append(
+            {
+                "subcategory": key,
+                "label": key.replace("_", " ").title(),
+                "total": bucket_total,
+                "automated": bucket_automated,
+                "not_automated": bucket_total - bucket_automated,
+                "automation_rate": bucket_automated / bucket_total if bucket_total else 0,
+            }
+        )
     filtered = list(all_cases)
     normalized_status = str(route_status or "").strip().lower()
     if normalized_status in {"automation", "automated"}:
@@ -400,9 +436,7 @@ def account_automation_payload(
             "human_review",
         }:
             raw_category = "human_review"
-        raw_subcategory = str(record.get("subcategory") or "").strip().lower()
-        if not raw_subcategory and " / " in secondary_label:
-            raw_subcategory = secondary_label.rsplit(" / ", 1)[-1].strip().lower().replace(" ", "_")
+        raw_subcategory = _admin_case_subcategory(record, secondary_label)
         classification = record.get("route_classification")
         route_reason_code = (
             classification.get("route_reason_code")
@@ -434,6 +468,7 @@ def account_automation_payload(
             "not_automated_cases": total - automated,
             "automation_rate": automated / total if total else 0,
         },
+        "automation_subcategories": automation_subcategories,
         "cases": [admin_case_view(item) for item in filtered[start : start + safe_size]],
         "page": safe_page,
         "page_size": safe_size,

@@ -803,6 +803,23 @@ function renderAdminSourceValue(item) {
   return `<div class="admin-source-cell">${primary}</div>`;
 }
 
+const AUTOMATION_SUBCATEGORY_ICONS = { fraud_account: "gpp_maybe", enablement: "rocket_launch", account_suspension: "block" };
+
+function renderAutomationSubcategoryCards() {
+  const groups = Array.isArray(automationData.automation_subcategories) ? automationData.automation_subcategories : [];
+  if (!groups.length) return "";
+  return `
+    <section class="admin-metric-grid" aria-label="Automation category metrics">
+      ${groups.map((group) => renderMetricCard(
+        group.label,
+        Number(group.total || 0),
+        `Automated ${Number(group.automated || 0)} · ${(Number(group.automation_rate || 0) * 100).toFixed(1)}%`,
+        AUTOMATION_SUBCATEGORY_ICONS[group.subcategory] || "smart_toy"
+      )).join("")}
+    </section>
+  `;
+}
+
 function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
@@ -815,6 +832,7 @@ function renderAutomatedCases() {
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
     </section>
+    ${renderAutomationSubcategoryCards()}
     <form class="admin-filter-bar" data-automation-filter-form>
       <select name="route_status" aria-label="Automation route status">
         <option value="" ${automationRouteStatus ? "" : "selected"}>All routes</option>
