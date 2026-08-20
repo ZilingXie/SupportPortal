@@ -34,10 +34,12 @@ class ZendeskCommentError(RuntimeError):
         *,
         status_code: int | None = None,
         error_code: str = "zendesk_comment_failed",
+        detail: str | None = None,
     ) -> None:
         self.category = str(category or "permanent").strip().lower() or "permanent"
         self.status_code = status_code
         self.error_code = str(error_code or "zendesk_comment_failed").strip() or "zendesk_comment_failed"
+        self.detail = (str(detail).strip() or None) if detail is not None else None
         super().__init__(self.error_code)
 
 

@@ -51,8 +51,30 @@ def _assignment_error(
     *,
     status_code: int | None = None,
     error_code: str = "zendesk_assignment_failed",
+    detail: str | None = None,
 ) -> ZendeskCommentError:
-    return ZendeskCommentError(category, status_code=status_code, error_code=error_code)
+    return ZendeskCommentError(category, status_code=status_code, error_code=error_code, detail=detail)
+
+
+def _http_error_detail(exc: urllib.error.HTTPError) -> str | None:
+    """Best-effort Zendesk error message from a failed response body."""
+    try:
+        raw = exc.read()
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        payload = json.loads(text)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if isinstance(error, str):
+        message = str(payload.get("message") or "").strip() or error
+    elif isinstance(error, dict):
+        message = str(error.get("message") or error.get("title") or "").strip()
+    else:
+        message = str(payload.get("message") or payload.get("description") or "").strip()
+    message = message.strip()
+    return message[:300] if message else None
 
 
 def _configured_assignee_email() -> str:
@@ -132,7 +154,12 @@ def _request(
         status_code = int(exc.code or 0) or None
         category = "retryable" if status_code in {408, 425, 429} or (status_code is not None and status_code >= 500) else "permanent"
         error_code = "zendesk_update_conflict" if status_code == 409 else "zendesk_http_error"
-        raise _assignment_error(category, status_code=status_code, error_code=error_code) from exc
+        raise _assignment_error(
+            category,
+            status_code=status_code,
+            error_code=error_code,
+            detail=_http_error_detail(exc),
+        ) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise _assignment_error("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
 

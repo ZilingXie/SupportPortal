@@ -100,6 +100,46 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.error_code, "zendesk_assignment_unverified")
 
+    def test_http_error_body_is_captured_as_detail(self) -> None:
+        import io
+        import urllib.error
+
+        routing_rejection = urllib.error.HTTPError(
+            "https://agoraio.zendesk.com/api/v2/tickets/12807.json",
+            422,
+            "Unprocessable Entity",
+            None,
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "title": "RecordInvalid",
+                            "message": "Assignee cannot be set while the ticket is being routed",
+                        },
+                        "description": "RecordInvalid",
+                    }
+                ).encode("utf-8")
+            ),
+        )
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-20T07:03:44Z"}}),
+            routing_rejection,
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            with self.assertRaises(ZendeskCommentError) as raised:
+                assign_ticket_to_configured_ai(ticket_id="12807")
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.error_code, "zendesk_http_error")
+        self.assertEqual(
+            raised.exception.detail,
+            "Assignee cannot be set while the ticket is being routed",
+        )
+
     def test_invalid_configured_user_fails_closed(self) -> None:
         response = _FakeResponse({"user": {"id": 48557297720084, "email": "other@example.com", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}})
         with patch.dict(os.environ, self.config, clear=False), patch(
