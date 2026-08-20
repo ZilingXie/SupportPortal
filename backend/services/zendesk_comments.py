@@ -160,6 +160,18 @@ def _audit_contains_solved_change(audits: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _audit_body_matches(actual: Any, expected: str) -> bool:
+    """Exact match, or the platform appended a signature/footer after our body.
+
+    Zendesk appends the agent's signature and marketing footer to public
+    comments; the stored audit body then equals our content plus that suffix.
+    """
+    normalized_actual = str(actual or "").strip()
+    if not normalized_actual:
+        return False
+    return normalized_actual == expected or normalized_actual.startswith(expected)
+
+
 def read_ticket_comment_audit(
     *,
     ticket_id: str,
@@ -190,7 +202,7 @@ def read_ticket_comment_audit(
             if (
                 str(event.get("type") or "").strip().lower() == "comment"
                 and event.get("public") is expected_public
-                and str(event.get("body") or "").strip() == normalized_body
+                and _audit_body_matches(event.get("body"), normalized_body)
             ):
                 comment_id = str(event.get("id") or "").strip() or None
                 return (

@@ -199,6 +199,43 @@ class ZendeskPublicCommentServiceTests(unittest.TestCase):
         self.assertEqual(comment.comment_id, "52660005")
         self.assertTrue(solved_seen)
 
+    def test_audit_readback_accepts_platform_appended_signature(self) -> None:
+        clean_body = "Hi Customer,\n\nThe feature is enabled, and this ticket is closing."
+        appended_body = clean_body + "\n\nBest regards,\nMay Collins\nAgora Support Engineer\nJoin our Discord..."
+        audits_payload = {
+            "audits": [
+                {
+                    "id": 3,
+                    "events": [
+                        {
+                            "body": appended_body,
+                            "id": 52660007,
+                            "public": True,
+                            "type": "Comment",
+                        },
+                        {
+                            "type": "Change",
+                            "field_name": "status",
+                            "value": "solved",
+                        },
+                    ],
+                }
+            ]
+        }
+        with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen",
+            return_value=_FakeResponse(audits_payload),
+        ):
+            comment, solved_seen = read_ticket_comment_audit(
+                ticket_id="12839",
+                body=clean_body,
+                public=True,
+            )
+
+        self.assertIsNotNone(comment)
+        self.assertEqual(comment.comment_id, "52660007")
+        self.assertTrue(solved_seen)
+
     def test_audit_readback_without_solved_change(self) -> None:
         audits_payload = {
             "audits": [
