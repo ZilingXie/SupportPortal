@@ -8376,9 +8376,15 @@ class PostgresTicketRepository:
                             client_intake_state JSONB,
                             client_agent_runtime_state JSONB,
                             created_at TIMESTAMPTZ NOT NULL,
-                            updated_at TIMESTAMPTZ NOT NULL
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            closed_at TIMESTAMPTZ
                         )
                         """
+                    ).format(self._table("support_tickets"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ"
                     ).format(self._table("support_tickets"))
                 )
                 cur.execute(
