@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-82",
   "title": "AI 接管等待 Zendesk 路由窗口 90 秒后再首试，并保留 422 字段级拒绝原因",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "AC-12879/AC-12880 实测：建单后 1 秒内 omnichannel 把工单分给真人 agent，其持有期间（超过 1 分钟）所有 assignment PUT 一律 422 RecordInvalid；PR#825 的 0s/20s/40s 重试全部落在窗口内，fail-closed 转 human_review，人工 8 分钟后同载荷 Take Ownership 成功。修复：gate 在首次 assignment PUT 前先等待路由窗口（默认 90s，ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS 可调，0=立即），等待后重取快照（新 updated_stamp）并复查策略阻断；同时 _http_error_detail 把 Zendesk 422 响应体的 details 字段级原因拼进 failure_detail（此前只留 top-level error，需翻 ticket audits 才能定位）。",
-  "next_action": "finalize 合并后在 EC2 生产栈部署重启，等待下一个真实 production 自动化工单验证 90s 等待路径。",
+  "next_action": "",
   "acceptance_criteria": [
     "gate 模式首次 assignment PUT 前等待 ZENDESK_OWNERSHIP_ASSIGNMENT_INITIAL_DELAY_SECONDS（默认 90，0=禁用）；等待后重新读取快照并用新 updated_stamp 发 PUT。",
     "等待期间出现人工回复/策略阻断则停机且不发 PUT；已分配匹配（verify/复访）路径不受等待影响。",
@@ -14,7 +14,32 @@
     "现有 ownership/assignment/intake/worker/comment 回归套件全部保持通过。"
   ],
   "blockers": [],
-  "evidence": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Initial delay + detail capture",
+      "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment",
+      "details": "32 全绿：默认 90s 等待后重取快照再用新 updated_stamp 发 PUT；等待期间人工回复停机且不发 PUT；已分配匹配路径零等待；env=0 立即分配；422 响应体 details 以紧凑 JSON 追加进 detail（RecordInvalid | {\"assignee_id\":[...]}）。"
+    },
+    {
+      "type": "test",
+      "label": "Regression suites",
+      "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_comment_sync backend.tests.test_zendesk_comments",
+      "details": "301 通过（worktree 需先 link_worktree_env.sh，否则 intake 分类缺凭证误报）。intake gate 包装、verify 流、手动 assignment、评论服务全部不受影响。"
+    },
+    {
+      "type": "deployment",
+      "label": "Local official stack restart + live markers",
+      "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_api_1 python -c \"from backend.services.account_automation_ownership import DEFAULT_ASSIGNMENT_INITIAL_DELAY, _assignment_initial_delay; from backend.services.zendesk_ticket_assignment import _http_error_detail; print(DEFAULT_ASSIGNMENT_INITIAL_DELAY, _assignment_initial_delay(), callable(_http_error_detail))\"",
+      "details": "2026-08-20 官方栈重启（app_build.ref=1020e2e26c9b，/health status=ok）：运行镜像内默认初始延迟 90.0、env 解析 90.0、错误体捕获函数均在。"
+    },
+    {
+      "type": "deployment",
+      "label": "EC2 production stack deploy + live markers",
+      "command": "ssh zacbot ./deployment/deploy_ec2.sh --branch main（auto-deploy 自动执行）+ docker exec deployment-api_production-1 python -c \"...import DEFAULT_ASSIGNMENT_INITIAL_DELAY, _assignment_initial_delay...\" + curl https://support.stellarix.space/health",
+      "details": "2026-08-20 EC2 生产栈（main=1020e2e）：api/worker_query/worker_aux production 容器全部运行 supportportal-app:1020e2e26c9b；域名 /health status=ok build=1020e2e26c9b；生产容器内 DEFAULT_ASSIGNMENT_INITIAL_DELAY=90.0、_assignment_initial_delay()=90.0。真实 90s 等待路径待下一个 production 自动化工单自然验证。"
+    }
+  ],
   "source_refs": [
     "backend/services/account_automation_ownership.py",
     "backend/services/zendesk_ticket_assignment.py",
@@ -29,6 +54,11 @@
       "at": "2026-08-20",
       "event": "created",
       "summary": "基于 AC-12879/AC-12880 生产调查（omnichannel 路由窗口实测超过 60s，3 次重试全部 422；人工 8 分钟后成功）立项。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "completed",
+      "summary": "PR#829 合并（main=1020e2e）；本地官方栈与 EC2 生产栈均部署重启，/health 与 build ref 匹配，镜像内初始延迟 90s marker 验证通过，标记完成。"
     }
   ],
   "legacy_refs": [],
