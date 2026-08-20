@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T11:00:15Z",
-  "source_base_commit": "bc6e96a612e79b7af1c1e0799c497a3975fd3322",
-  "registry_digest": "ef228780317963342218798083417e3a0efaac1da366d10512e3467c62eb7215",
+  "generated_at": "2026-08-20T11:04:38Z",
+  "source_base_commit": "ebba123280b595c5ca6b7eec9becd45e5e33efec",
+  "registry_digest": "7b06a81c778087fb51235c6e63391f95fb48265a30b552833bf0e34ccb50d4db",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -568,6 +568,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/worker.py backend/services/enablement_completion_classifier.py backend/services/llm_profiles.py && git diff --check",
           "details": "编译与空白检查通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_worker_aux_1 python -c \"from backend.services.enablement_completion_classifier import classify_enablement_completion; print(classify_enablement_completion('已开通', feature_label='Media Relay'))\"",
+          "details": "2026-08-20 官方栈重启，/health app_build.ref=ebba123280b5 与合并后 main HEAD 一致；worker_aux 运行镜像内 prompt 版本 enablement-completion-classifier-v1、scenario profile（gpt-5.4-mini/low/温度0）解析正确；用真实凭据对中文 note '已开通' 实测分类返回 completed=True source=llm（真实 LLM 端到端判定成功）。"
         }
       ],
       "source_refs": [
@@ -581,7 +587,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 10,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -7202,10 +7208,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-81",
       "title": "Enablement 内部回复完成识别增加 LLM 分类器（正则保底）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "内部邮件回复是否确认开通的判定目前是纯英文正则，中文/typo/自由表达会漏判为完成，导致客户收到倒序的重复回复且工单不自动关闭。新增两级判定：正则命中即完成（零变化快路径）；正则判否时由小模型单次分类仲裁（强制 JSON、温度 0），LLM 确认才走完成+关单路径；任何 LLM 失败/开关关闭一律回退正则结果，永不 fail-open。新增 ENABLEMENT_COMPLETION_CLASSIFIER_* scenario 与总开关，判定来源写入审计事件。",
-      "next_action": "合并后从根 main 重启官方栈并做 live 验证，完成后收尾。",
+      "next_action": "",
       "acceptance_criteria": [
         "正则命中的英文完成回复不调用 LLM 直接走完成路径（快路径零变化）。",
         "正则判否时调用 LLM 分类（ENABLEMENT_COMPLETION_CLASSIFIER_* scenario，gpt-5.4-mini/low/温度0/8s/重试1，JSON 强制模式）；LLM confirmed=true 才走 enablement_completed_and_close。",
@@ -7233,6 +7239,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Syntax gates",
           "command": "python3 -m py_compile backend/worker.py backend/services/enablement_completion_classifier.py backend/services/llm_profiles.py && git diff --check",
           "details": "编译与空白检查通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official stack restart + live markers",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_worker_aux_1 python -c \"from backend.services.enablement_completion_classifier import classify_enablement_completion; print(classify_enablement_completion('已开通', feature_label='Media Relay'))\"",
+          "details": "2026-08-20 官方栈重启，/health app_build.ref=ebba123280b5 与合并后 main HEAD 一致；worker_aux 运行镜像内 prompt 版本 enablement-completion-classifier-v1、scenario profile（gpt-5.4-mini/low/温度0）解析正确；用真实凭据对中文 note '已开通' 实测分类返回 completed=True source=llm（真实 LLM 端到端判定成功）。"
         }
       ],
       "source_refs": [
@@ -7255,6 +7267,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-20",
           "event": "progress",
           "summary": "完成实现与目标测试（462 全绿），prompt_change_log 已记录 enablement-completion-classifier-v1。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "PR #827 合并后官方栈重启（build ref ebba123280b5）与 live marker（含真实 LLM 中文判定）验证通过，标记完成。"
         }
       ],
       "legacy_refs": [],
