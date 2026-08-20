@@ -12125,8 +12125,8 @@ class PostgresTicketRepository:
                     cur.execute(
                         sql.SQL(
                             "UPDATE {} SET automation_context=jsonb_set("
-                            "COALESCE(automation_context,'{}'::jsonb), "
-                            "'{account_suspension_contact_workflow,state}', '\"closed\"'::jsonb, true), "
+                            "COALESCE(automation_context,'{{}}'::jsonb), "
+                            "'{{account_suspension_contact_workflow,state}}', '\"closed\"'::jsonb, true), "
                             "updated_at=%s WHERE client_ticket_id=%s AND automation_handler='account_suspension'"
                         ).format(self._table("support_account_cases")),
                         (recorded_at, normalized_ticket_id),
@@ -15631,8 +15631,8 @@ class PostgresTicketRepository:
                     cur.execute(
                         sql.SQL(
                             "UPDATE {} SET automation_context=jsonb_set("
-                            "COALESCE(automation_context,'{}'::jsonb), "
-                            "'{account_suspension_contact_workflow,state}', '""closed""'::jsonb, true), "
+                            "COALESCE(automation_context,'{{}}'::jsonb), "
+                            "'{{account_suspension_contact_workflow,state}}', '\"closed\"'::jsonb, true), "
                             "updated_at=%s WHERE client_ticket_id=%s AND automation_handler='account_suspension'"
                         ).format(self._table("support_account_cases")),
                         (published_at, ticket_id),
