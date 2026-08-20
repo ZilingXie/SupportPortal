@@ -122,6 +122,14 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
+            "ENABLEMENT_COMPLETION_CLASSIFIER_ENABLED: ${ENABLEMENT_COMPLETION_CLASSIFIER_ENABLED:-true}",
+            worker_block,
+        )
+        self.assertIn(
+            "ENABLEMENT_COMPLETION_CLASSIFIER_MODEL: ${ENABLEMENT_COMPLETION_CLASSIFIER_MODEL:-gpt-5.4-mini}",
+            worker_block,
+        )
+        self.assertIn(
             "SENTIMENT_PROVIDER: ${WORKER_SENTIMENT_PROVIDER:-legacy}",
             worker_block,
         )
