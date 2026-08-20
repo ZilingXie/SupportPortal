@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p1-52",
   "title": "Admin Automated Cases 页新增 Automation 子类指标卡",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "在 workspace admin 的 Automated Cases 页指标条下方，为 automation 的三个活跃子类（fraud_account、enablement、account_suspension）各显示一组指标卡（Total、Automated 数、自动化率）。后端 account_automation_payload 在全量 all_cases 上新增 automation_subcategories 数组（与现有 metrics 同口径、不受筛选影响，子类归一化与表格 Subcategory 列共用同一助手）；前端复用 renderMetricCard/admin-metric-grid 卡片样式渲染三张卡，数据缺失时整段不渲染。纯展示，不改筛选器与表格。",
-  "next_action": "实现后端 payload 字段与前端卡片渲染，补 endpoint 断言与 UI 契约 markers/runtime 用例，回归全绿后 finalize 合入 main，再重启官方栈做 live 验证。",
+  "next_action": "",
   "acceptance_criteria": [
     "GET /api/workspace/admin/account-automation 返回 automation_subcategories：三个子类固定顺序且零填充，每行含 subcategory/label/total/automated/not_automated/automation_rate。",
     "子类计数基于全量数据（忽略 route_status/category/date 筛选），与表格 Subcategory 列同一套归一化口径；非 automation 子类（如 human_review）不进任何桶。",
@@ -25,6 +25,18 @@
       "label": "Contract regression",
       "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_account_admin_features && node --check ui/workspace-ui/admin/app.js",
       "details": "79 全绿 + app.js 语法检查通过：production/account UI 契约与 account admin 行为回归不受影响。"
+    },
+    {
+      "type": "deployment",
+      "label": "Post-merge official-stack restart & build provenance",
+      "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl /health",
+      "details": "PR #806 合并后从根 main（6c7902fb7f41）重启官方栈：deployment 模式、无辅助栈；镜像 tag 与 /health app_build.ref 均为 6c7902fb7f41，status ok、runtime_profile local_lightweight。"
+    },
+    {
+      "type": "deployment",
+      "label": "Live automation_subcategories matches production database",
+      "command": "psql 等价直查 PRODUCTION_TICKET_DB_DSN + bootstrap admin 登录调用 GET /api/workspace/admin/account-automation",
+      "details": "production 库直查与 admin API 返回逐条一致：fraud_account total=1/automated=1（AC-12864）、enablement total=2/automated=2（AC-12839/12838）、account_suspension total=1/automated=1（AC-12865），三行 rate 均 1.0；子类 rag 的 AC-12807 正确不进任何桶。页面卡片渲染由 UI 契约 runtime 用例直接验证（IAB 内嵌浏览器无法提交登录表单，属工具限制）。"
     }
   ],
   "source_refs": [
@@ -45,6 +57,11 @@
       "at": "2026-08-20",
       "event": "progress",
       "summary": "完成实现与目标测试：后端 payload 新增 automation_subcategories（全量口径、固定顺序零填充、子类归一化提取为 _admin_case_subcategory 与表格列共用），前端复用 renderMetricCard/admin-metric-grid 渲染三张卡；workspace API 26+契约与回归 79 全绿。"
+    },
+    {
+      "at": "2026-08-20",
+      "event": "done",
+      "summary": "PR #806 合并入 main（6c7902fb7f41）；根 main 官方栈重启后 live 验证通过：/health 与镜像 build ref 均为 6c7902fb7f41，automation_subcategories 与 production 独立库逐条一致（fraud 1/1、enablement 2/2、suspension 1/1，均 automated）。"
     }
   ],
   "legacy_refs": [],
