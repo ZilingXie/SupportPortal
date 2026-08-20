@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     client_intake_state JSONB,
     client_agent_runtime_state JSONB,
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    closed_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS support_ticket_messages (

@@ -100,7 +100,7 @@ class ZendeskPublicCommentServiceTests(unittest.TestCase):
                 "ticket": {
                     "comment": {"body": "closing reply", "public": True},
                     "status": "solved",
-                    "field_36379228408724": True,
+                    "custom_fields": [{"id": 36379228408724, "value": True}],
                 }
             },
         )

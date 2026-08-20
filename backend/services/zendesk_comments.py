@@ -280,8 +280,13 @@ def add_ticket_comment(
     if solve:
         # solved (not closed) keeps the requester able to reopen by replying.
         ticket_payload["status"] = "solved"
-        for field_id in ZENDESK_SOLVE_REQUIRED_CHECKBOX_FIELDS:
-            ticket_payload[f"field_{field_id}"] = True
+        # Zendesk silently ignores flat field_<id> keys for these required
+        # checkbox validations; only the custom_fields array form satisfies
+        # the required-on-solve check.
+        ticket_payload["custom_fields"] = [
+            {"id": int(field_id), "value": True}
+            for field_id in ZENDESK_SOLVE_REQUIRED_CHECKBOX_FIELDS
+        ]
     request = urllib.request.Request(
         url,
         data=json.dumps({"ticket": ticket_payload}, ensure_ascii=False).encode("utf-8"),
