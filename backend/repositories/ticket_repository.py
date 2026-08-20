@@ -2096,6 +2096,16 @@ class TicketRepository(Protocol):
         dismissed_at: str,
     ) -> bool: ...
 
+    def record_dismissed_automation_reply(
+        self,
+        automation_reply_key: str,
+        *,
+        client_ticket_id: str,
+        handler: str,
+        reason: str,
+        dismissed_at: str,
+    ) -> bool: ...
+
     def commit_automation_reply_result(
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
         assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
@@ -5867,6 +5877,32 @@ class InMemoryTicketRepository:
             claim.update({"state": "completed", "owner_token": None, "lease_expires_at": None,
                           "error_code": str(reason or "automation_reply_dismissed")[:120],
                           "updated_at": dismissed_at, "completed_at": dismissed_at})
+            return True
+
+    def record_dismissed_automation_reply(
+        self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
+        reason: str, dismissed_at: str,
+    ) -> bool:
+        key = str(automation_reply_key or "").strip()
+        if not key or not str(client_ticket_id or "").strip():
+            return False
+        with self._assignment_lock:
+            existing = self._automation_reply_claims.get(key)
+            if existing and existing.get("state") == "completed":
+                return False
+            self._automation_reply_claims[key] = {
+                "automation_reply_key": key,
+                "client_ticket_id": str(client_ticket_id).strip(),
+                "handler": handler,
+                "state": "completed",
+                "owner_token": None,
+                "lease_expires_at": None,
+                "attempt_count": int((existing or {}).get("attempt_count") or 0) + 1,
+                "error_code": str(reason or "automation_reply_dismissed")[:120],
+                "created_at": (existing or {}).get("created_at") or dismissed_at,
+                "updated_at": dismissed_at,
+                "completed_at": dismissed_at,
+            }
             return True
 
     def commit_automation_reply_result(
@@ -12836,6 +12872,47 @@ class PostgresTicketRepository:
                     )
                     return cur.rowcount == 1
         return self._run_with_connection_retry("dismiss_automation_reply_claim", _operation)
+
+    def record_dismissed_automation_reply(
+        self, automation_reply_key: str, *, client_ticket_id: str, handler: str,
+        reason: str, dismissed_at: str,
+    ) -> bool:
+        key = str(automation_reply_key or "").strip()
+        normalized_ticket_id = str(client_ticket_id or "").strip()
+        if not key or not normalized_ticket_id:
+            return False
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    # A reply whose ticket does not exist in this stack cannot
+                    # even be claimed; persist a terminal completed claim so
+                    # the poller never retries it.
+                    cur.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (automation_reply_key, client_ticket_id, handler, state, "
+                            "owner_token, lease_expires_at, attempt_count, error_code, "
+                            "created_at, updated_at, completed_at) "
+                            "VALUES (%s, %s, %s, 'completed', NULL, NULL, 1, %s, %s, %s, %s) "
+                            "ON CONFLICT (automation_reply_key) DO UPDATE SET "
+                            "state = 'completed', owner_token = NULL, lease_expires_at = NULL, "
+                            "error_code = EXCLUDED.error_code, updated_at = EXCLUDED.updated_at, "
+                            "completed_at = EXCLUDED.completed_at "
+                            "WHERE {}.state <> 'completed' "
+                            "RETURNING true"
+                        ).format(self._table("support_automation_reply_claims")),
+                        (
+                            key,
+                            normalized_ticket_id,
+                            handler,
+                            str(reason or "automation_reply_dismissed")[:120],
+                            dismissed_at,
+                            dismissed_at,
+                            dismissed_at,
+                        ),
+                    )
+                    return cur.fetchone() is not None
+        return self._run_with_connection_retry("record_dismissed_automation_reply", _operation)
 
     def commit_automation_reply_result(
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,

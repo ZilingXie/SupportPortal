@@ -2043,14 +2043,33 @@ def _claim_automation_reply(*, client_ticket_id: str, message_id: str, handler: 
     claimed_at = datetime.now(timezone.utc)
     owner_token = uuid4().hex
     key = _automation_reply_key(message_id)
-    claim = ticket_repository.claim_automation_reply(
-        key,
-        client_ticket_id=client_ticket_id,
-        handler=handler,
-        owner_token=owner_token,
-        claimed_at=claimed_at.isoformat(),
-        lease_expires_at=(claimed_at + timedelta(seconds=AUTOMATION_REPLY_CLAIM_LEASE_SECONDS)).isoformat(),
-    )
+    try:
+        claim = ticket_repository.claim_automation_reply(
+            key,
+            client_ticket_id=client_ticket_id,
+            handler=handler,
+            owner_token=owner_token,
+            claimed_at=claimed_at.isoformat(),
+            lease_expires_at=(claimed_at + timedelta(seconds=AUTOMATION_REPLY_CLAIM_LEASE_SECONDS)).isoformat(),
+        )
+    except ValueError as exc:
+        if "linked support ticket not found" not in str(exc):
+            raise
+        # The claim itself cannot start without the ticket; persist a terminal
+        # dismissal so this cross-environment message never retries.
+        ticket_repository.record_dismissed_automation_reply(
+            key,
+            client_ticket_id=client_ticket_id,
+            handler=handler,
+            reason="linked_ticket_not_found_at_claim",
+            dismissed_at=claimed_at.isoformat(),
+        )
+        LOGGER.warning(
+            "Automation reply dismissed cross-environment ticket_id=%s reason=linked_ticket_not_found_at_claim reply_key=%s",
+            client_ticket_id,
+            key,
+        )
+        return "already_completed", key, owner_token
     return str(claim.get("status") or "in_progress"), key, owner_token
 
 

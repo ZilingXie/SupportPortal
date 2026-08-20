@@ -2430,6 +2430,26 @@ class WorkerResilienceTests(unittest.TestCase):
         event_payload = commit["events"][0]["payload"]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
 
+    def test_reply_with_missing_ticket_is_dismissed_at_claim(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.side_effect = ValueError(
+            "linked support ticket not found for 12998"
+        )
+        repository.record_dismissed_automation_reply.return_value = True
+        reply = types.SimpleNamespace(
+            message_id="cross-env-msg-2",
+            subject="Re: [Enablement Request] Media Relay - Ticket 12998",
+            body_text="It's enabled.",
+        )
+        with patch.object(worker, "ticket_repository", repository):
+            handled = worker.handle_automation_request_reply(reply)
+
+        self.assertEqual(handled, "already_completed")
+        repository.record_dismissed_automation_reply.assert_called_once()
+        kwargs = repository.record_dismissed_automation_reply.call_args.kwargs
+        self.assertEqual(kwargs["reason"], "linked_ticket_not_found_at_claim")
+        self.assertEqual(kwargs["client_ticket_id"], "12998")
+
     def test_billing_reply_without_case_is_dismissed_terminally(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
