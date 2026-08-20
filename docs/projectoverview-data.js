@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T03:03:31Z",
-  "source_base_commit": "6c7902fb7f41f9edf48e8aab7326e94bb803469a",
-  "registry_digest": "2e50151adc3ecb8534817927551bf8ef6e3cfb5ed7108763656811a0d220de58",
+  "generated_at": "2026-08-20T04:06:31Z",
+  "source_base_commit": "d58b79f6e8536368f31d138e0c39ca62bc8e5945",
+  "registry_digest": "6b8d1e3636c1932432825b2ffe9517d1344f3d970537f68f57a77103b638862a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1020,6 +1020,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Static and registry checks",
           "command": ".venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/account_automation_ownership.py backend/services/account_zendesk_internal_comment.py backend/services/zendesk_comments.py backend/services/zendesk_ticket_assignment.py backend/services/automation_persona.py; node --check ui/account-ui/app.js; node --check ui/production-ui/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "All checks passed."
+        },
+        {
+          "type": "deployment",
+          "label": "Merged PRs and deployed builds",
+          "command": "gh pr view 803/804/805/808/809/811/812",
+          "result": "PR #803 (core), #804 (solve checkbox + ownership context carry), #805 (completion trigger currency), #808 (custom_fields solve + closed_at column), #809/#811 (audit readback signature tolerance), #812 (jsonb brace escape in close SQL) all merged; EC2 running cc36eb5 (build ref cc36eb552055) with local stack restarted to the same main; migrations 2026_08_19_production_public_zendesk_delivery.sql and 2026_08_20_support_tickets_closed_at.sql applied to both databases."
+        },
+        {
+          "type": "deployment",
+          "label": "Live acceptance matrix on tickets 12838/12839/12864/12865",
+          "command": "psql production ledger + tickets; Zendesk API readback",
+          "result": "12838 enablement: public submission comment 52671546896660 with 24h + Mon-Fri, ticket intentionally open; 12864 fraud: public handoff comment 52671576049812 with exact 'The relevant team will contact you within 24 hours.', no email resend, ticket open; 12839 enablement completion: internal reply consumed end-to-end, public completion comment 52704906920980, Zendesk solved, local resolved with closed_at 2026-08-20T04:00:20Z; 12865 suspension: confirmation -> single internal email -> public closing comment 52705195825556, Zendesk solved, local resolved with closed_at 2026-08-20T04:00:19Z. All four tickets owned by AI agent 48557297720084. Legacy stuck AC-12839 private delivery reconciled to delivered without resend; historical private rows stayed private."
+        },
+        {
+          "type": "test",
+          "label": "Live-discovered repair loop (post-deploy fixes)",
+          "command": "pytest targeted suites per fix PR",
+          "result": "Six follow-up defects found live and fixed with regression tests: solve required checkbox must use custom_fields array (flat field_\u003cid> silently ignored), support_tickets lacked closed_at, audit readback must tolerate platform-appended signatures (prefix match), jsonb path braces must be escaped in close SQL, enablement completion trigger must equal the latest customer message timestamp, fraud attempt merge dropped ownership context. All suites green after each fix."
         }
       ],
       "source_refs": [
@@ -1032,7 +1050,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 7,
-      "done_count": 5,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -4439,10 +4457,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-51",
       "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
-      "next_action": "Finalize 合入 main 后执行 DB 迁移、EC2 部署与四个测试 ticket 的 live 验收矩阵。",
+      "next_action": "",
       "acceptance_criteria": [
         "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
         "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
@@ -4477,6 +4495,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Static and registry checks",
           "command": ".venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/account_automation_ownership.py backend/services/account_zendesk_internal_comment.py backend/services/zendesk_comments.py backend/services/zendesk_ticket_assignment.py backend/services/automation_persona.py; node --check ui/account-ui/app.js; node --check ui/production-ui/app.js; python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check",
           "result": "All checks passed."
+        },
+        {
+          "type": "deployment",
+          "label": "Merged PRs and deployed builds",
+          "command": "gh pr view 803/804/805/808/809/811/812",
+          "result": "PR #803 (core), #804 (solve checkbox + ownership context carry), #805 (completion trigger currency), #808 (custom_fields solve + closed_at column), #809/#811 (audit readback signature tolerance), #812 (jsonb brace escape in close SQL) all merged; EC2 running cc36eb5 (build ref cc36eb552055) with local stack restarted to the same main; migrations 2026_08_19_production_public_zendesk_delivery.sql and 2026_08_20_support_tickets_closed_at.sql applied to both databases."
+        },
+        {
+          "type": "deployment",
+          "label": "Live acceptance matrix on tickets 12838/12839/12864/12865",
+          "command": "psql production ledger + tickets; Zendesk API readback",
+          "result": "12838 enablement: public submission comment 52671546896660 with 24h + Mon-Fri, ticket intentionally open; 12864 fraud: public handoff comment 52671576049812 with exact 'The relevant team will contact you within 24 hours.', no email resend, ticket open; 12839 enablement completion: internal reply consumed end-to-end, public completion comment 52704906920980, Zendesk solved, local resolved with closed_at 2026-08-20T04:00:20Z; 12865 suspension: confirmation -> single internal email -> public closing comment 52705195825556, Zendesk solved, local resolved with closed_at 2026-08-20T04:00:19Z. All four tickets owned by AI agent 48557297720084. Legacy stuck AC-12839 private delivery reconciled to delivered without resend; historical private rows stayed private."
+        },
+        {
+          "type": "test",
+          "label": "Live-discovered repair loop (post-deploy fixes)",
+          "command": "pytest targeted suites per fix PR",
+          "result": "Six follow-up defects found live and fixed with regression tests: solve required checkbox must use custom_fields array (flat field_\u003cid> silently ignored), support_tickets lacked closed_at, audit readback must tolerate platform-appended signatures (prefix match), jsonb path braces must be escaped in close SQL, enablement completion trigger must equal the latest customer message timestamp, fraud attempt merge dropped ownership context. All suites green after each fix."
         }
       ],
       "source_refs": [
@@ -4489,7 +4525,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/zendesk_account_comment_sync.md"
       ],
       "created_at": "2026-08-19",
-      "updated_at": "2026-08-19",
+      "updated_at": "2026-08-20",
       "history": [
         {
           "at": "2026-08-19",
@@ -4500,6 +4536,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-19",
           "event": "implementation_complete",
           "summary": "完成代码与测试：自动 Ownership gate（intake/回复核心/投递前三点接入、fail-closed、人工改派停止）、公开评论投递与 target_status=solved 同 PUT、本地关闭延后到 solved 确认的原子事务、Enablement completion 改标准 reply job、fraud follow-up intent 修复、missing-info 24h fence、confirmed_at timestamptz 修复、n8n trigger_comment_id 触发器与幂等、UI 按钮移除。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "completed",
+          "summary": "四个测试 ticket 的 live 矩阵全部闭环（12838/12864 公开回复且按规则不关单，12839/12865 公开回复 + Zendesk solved + 本地 resolved）。部署期共发现并修复六个缺陷（#804/#805/#808/#809/#811/#812），全部带回归测试。任务完成。"
         }
       ],
       "phase_id": "phase-1",
