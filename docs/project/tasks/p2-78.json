@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-78",
+  "title": "内部邮件按环境命名空间隔离与跨环境回复终态忽略",
+  "status": "active",
+  "owner": "zac",
+  "summary": "staging 与 production 共用同一 Graph 内部邮箱导致双栈消费同一封回复（曾引发跨环境误完成与每分钟重试噪音）。为内部邮件主题增加环境命名空间标签（production 为空、staging 为 [staging]，形如 [staging][Enablement Request]），轮询匹配改为剥离 Re:/FW: 后的锚定前缀匹配；跨环境 not-found 回复改为终态 dismiss，单条坏消息不再中断整个收件箱轮询周期。",
+  "next_action": "实现完成，待 PR 合入后部署 EC2 与本地栈并做容器内环境标签验证。",
+  "acceptance_criteria": [
+    "production 内部邮件主题保持不变；staging 主题携带 [staging] 前缀标签。",
+    "staging worker 只消费 [staging] 前缀回复，production worker 只消费无标签前缀回复；锚定匹配使子串误匹配不可能发生。",
+    "跨环境回复（对端 case 不存在/ handler 不匹配/缺 ticket）被终态 dismiss，不再每分钟重试。",
+    "单条 handler 异常不中断当轮收件箱处理，失败消息保持未读。",
+    "compose 层 staging 服务默认 [staging]、production 服务强制为空，单一 .env 可同时驱动两套环境。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Namespaced internal email suite",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_internal_email_namespace.py backend/tests/test_worker.py backend/tests/test_billing_automation_email.py backend/tests/test_enablement_automation.py backend/tests/test_account_verification_automation.py backend/tests/test_account_intake.py backend/tests/test_repository_configuration.py",
+      "result": "425 passed with 39 subtests."
+    }
+  ],
+  "source_refs": [
+    "backend/services/internal_email_template.py",
+    "backend/services/billing_automation.py",
+    "backend/services/enablement_automation.py",
+    "backend/worker.py",
+    "deployment/docker-compose.single-host.yml"
+  ],
+  "created_at": "2026-08-20",
+  "updated_at": "2026-08-20",
+  "history": [
+    {
+      "at": "2026-08-20",
+      "event": "started",
+      "summary": "用户确认单邮箱方案：主题命名空间 [staging][xxx]；n8n 侧已由用户另行修复。"
+    }
+  ],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment"
+}

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T04:06:31Z",
-  "source_base_commit": "d58b79f6e8536368f31d138e0c39ca62bc8e5945",
-  "registry_digest": "6b8d1e3636c1932432825b2ffe9517d1344f3d970537f68f57a77103b638862a",
+  "generated_at": "2026-08-20T06:26:51Z",
+  "source_base_commit": "3d6a6eff2965296c40301d1f2a7873cbf0c2efeb",
+  "registry_digest": "bf7f18762b1e2fe3986b88dbea7b51834e345953a5db52290d13261e2cef741e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1387,6 +1387,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Changed Python and JavaScript syntax",
           "command": "python -m py_compile backend/main.py backend/worker.py backend/services/account_reply_jobs.py backend/scripts/repair_account_customer_name.py && node --check ui/account-ui/app.js && node --check ui/production-ui/app.js",
           "details": "四个 Python 文件编译通过，两套 Account UI JavaScript 语法检查通过。"
+        },
+        {
+          "type": "test",
+          "label": "Namespaced internal email suite",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_internal_email_namespace.py backend/tests/test_worker.py backend/tests/test_billing_automation_email.py backend/tests/test_enablement_automation.py backend/tests/test_account_verification_automation.py backend/tests/test_account_intake.py backend/tests/test_repository_configuration.py",
+          "result": "425 passed with 39 subtests."
         }
       ],
       "source_refs": [
@@ -1396,7 +1402,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 5,
+      "task_count": 6,
       "done_count": 2,
       "blocked_count": 0
     },
@@ -6837,6 +6843,50 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_refs": [],
       "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-78",
+      "title": "内部邮件按环境命名空间隔离与跨环境回复终态忽略",
+      "status": "active",
+      "owner": "zac",
+      "summary": "staging 与 production 共用同一 Graph 内部邮箱导致双栈消费同一封回复（曾引发跨环境误完成与每分钟重试噪音）。为内部邮件主题增加环境命名空间标签（production 为空、staging 为 [staging]，形如 [staging][Enablement Request]），轮询匹配改为剥离 Re:/FW: 后的锚定前缀匹配；跨环境 not-found 回复改为终态 dismiss，单条坏消息不再中断整个收件箱轮询周期。",
+      "next_action": "实现完成，待 PR 合入后部署 EC2 与本地栈并做容器内环境标签验证。",
+      "acceptance_criteria": [
+        "production 内部邮件主题保持不变；staging 主题携带 [staging] 前缀标签。",
+        "staging worker 只消费 [staging] 前缀回复，production worker 只消费无标签前缀回复；锚定匹配使子串误匹配不可能发生。",
+        "跨环境回复（对端 case 不存在/ handler 不匹配/缺 ticket）被终态 dismiss，不再每分钟重试。",
+        "单条 handler 异常不中断当轮收件箱处理，失败消息保持未读。",
+        "compose 层 staging 服务默认 [staging]、production 服务强制为空，单一 .env 可同时驱动两套环境。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Namespaced internal email suite",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_internal_email_namespace.py backend/tests/test_worker.py backend/tests/test_billing_automation_email.py backend/tests/test_enablement_automation.py backend/tests/test_account_verification_automation.py backend/tests/test_account_intake.py backend/tests/test_repository_configuration.py",
+          "result": "425 passed with 39 subtests."
+        }
+      ],
+      "source_refs": [
+        "backend/services/internal_email_template.py",
+        "backend/services/billing_automation.py",
+        "backend/services/enablement_automation.py",
+        "backend/worker.py",
+        "deployment/docker-compose.single-host.yml"
+      ],
+      "created_at": "2026-08-20",
+      "updated_at": "2026-08-20",
+      "history": [
+        {
+          "at": "2026-08-20",
+          "event": "started",
+          "summary": "用户确认单邮箱方案：主题命名空间 [staging][xxx]；n8n 侧已由用户另行修复。"
+        }
+      ],
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"

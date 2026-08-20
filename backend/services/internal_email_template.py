@@ -10,6 +10,39 @@ from urllib.parse import urlparse
 INTERNAL_EMAIL_TEMPLATE_VERSION = "internal-handoff-v4"
 INTERNAL_EMAIL_HTML_CONTENT_TYPE = "HTML"
 
+# Staging and production share one Graph mailbox; every internal email subject
+# carries this namespace tag so each stack's reply poller only consumes its own
+# environment's threads ("" on production, e.g. "[staging]" on staging).
+import os as _os
+
+INTERNAL_EMAIL_SUBJECT_NAMESPACE_ENV = "INTERNAL_EMAIL_SUBJECT_NAMESPACE"
+_REPLY_SUBJECT_PREFIX_RE = re.compile(
+    r"^\s*((?:re|fw|fwd|aw|automatic reply)\s*:\s*)+", re.IGNORECASE
+)
+
+
+def internal_email_subject_namespace() -> str:
+    return " ".join(
+        str(_os.getenv(INTERNAL_EMAIL_SUBJECT_NAMESPACE_ENV) or "").split()
+    ).strip()
+
+
+def namespaced_internal_email_subject(prefix: str) -> str:
+    namespace = internal_email_subject_namespace()
+    normalized_prefix = str(prefix or "").strip()
+    return f"{namespace}{normalized_prefix}" if namespace else normalized_prefix
+
+
+def internal_email_subject_matches(subject: str, prefix: str) -> bool:
+    """Anchored prefix match that tolerates reply/forward decorations.
+
+    Substring matching would let an un-namespaced prefix consume a namespaced
+    subject (e.g. "[enablement request]" inside "[staging][enablement
+    request]"), so the namespace stays authoritative.
+    """
+    cleaned = _REPLY_SUBJECT_PREFIX_RE.sub("", str(subject or "").strip())
+    return cleaned.lower().startswith(str(prefix or "").strip().lower())
+
 _LIGHT_THEME = {
     "shell": "#FFFFFF",
     "panel": "#FFFFFF",

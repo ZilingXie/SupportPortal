@@ -5,6 +5,7 @@ services:
         INSTALL_ML_DEPS: "0"
     environment:
       RUNTIME_PROFILE: local_lightweight
+      INTERNAL_EMAIL_SUBJECT_NAMESPACE: ${INTERNAL_EMAIL_SUBJECT_NAMESPACE:-[staging]}
       ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-5.6-luna}
       ACCOUNT_ROUTE_BASE_URL: ${ACCOUNT_ROUTE_BASE_URL:-}
       ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-xhigh}
@@ -63,6 +64,7 @@ services:
   worker_aux:
     environment:
       RUNTIME_PROFILE: local_lightweight
+      INTERNAL_EMAIL_SUBJECT_NAMESPACE: ${INTERNAL_EMAIL_SUBJECT_NAMESPACE:-[staging]}
       # Reply job statuses are version-fenced, so this worker may poll a shared
       # PostgreSQL database without an older worker claiming new v8 jobs.
       ACCOUNT_REPLY_POLLER_ENABLED: "true"

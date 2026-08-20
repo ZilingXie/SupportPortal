@@ -8,7 +8,7 @@ from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
-from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
+from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email, namespaced_internal_email_subject
 from backend.services.account_ai_execution import (
     AccountProcessingFailure,
     account_profile_has_primary_credentials,
@@ -226,7 +226,7 @@ def _build_internal_email(
         "recipient_config_key": QUOTA_INTERNAL_EMAIL_ENV,
         "delivery_key": f"quota:{_clean_text(account_case_id)}:v1",
         "from": _clean_text(os.getenv("MSGRAPH_USERNAME")) or DEFAULT_USERNAME,
-        "subject": f"{QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX} {product_label} - Ticket {_clean_text(ticket_id)}",
+        "subject": f"{namespaced_internal_email_subject(QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX)} {product_label} - Ticket {_clean_text(ticket_id)}",
         **rendered,
     }
 

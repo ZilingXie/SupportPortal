@@ -2430,6 +2430,25 @@ class WorkerResilienceTests(unittest.TestCase):
         event_payload = commit["events"][0]["payload"]
         self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
 
+    def test_billing_reply_without_case_is_dismissed_terminally(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.dismiss_automation_reply_claim.return_value = True
+        repository.get_billing_ticket_by_client_ticket_id.return_value = None
+        reply = types.SimpleNamespace(
+            message_id="cross-env-msg-1",
+            subject="Re: [Enablement Request] Media Relay - Ticket 12999",
+            body_text="It's enabled.",
+        )
+        with patch.object(worker, "ticket_repository", repository):
+            handled = worker.handle_automation_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        repository.dismiss_automation_reply_claim.assert_called_once()
+        kwargs = repository.dismiss_automation_reply_claim.call_args.kwargs
+        self.assertEqual(kwargs["reason"], "account_case_not_found")
+        repository.commit_automation_reply_result.assert_not_called()
+
     def test_enablement_explicit_completion_queues_closing_reply_job(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}

@@ -2091,6 +2091,11 @@ class TicketRepository(Protocol):
         failed_at: str,
     ) -> bool: ...
 
+    def dismiss_automation_reply_claim(
+        self, automation_reply_key: str, *, owner_token: str, reason: str,
+        dismissed_at: str,
+    ) -> bool: ...
+
     def commit_automation_reply_result(
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
         assistant_message: dict[str, Any] | None, account_case_updates: dict[str, Any],
@@ -5847,6 +5852,21 @@ class InMemoryTicketRepository:
                 return False
             claim.update({"state": "failed", "owner_token": None, "lease_expires_at": None,
                           "error_code": str(error_code or "automation_reply_failed")[:120], "updated_at": failed_at})
+            return True
+
+    def dismiss_automation_reply_claim(
+        self, automation_reply_key: str, *, owner_token: str, reason: str, dismissed_at: str,
+    ) -> bool:
+        with self._assignment_lock:
+            claim = self._automation_reply_claims.get(str(automation_reply_key))
+            if not claim or claim.get("state") != "processing" or claim.get("owner_token") != owner_token:
+                return False
+            # Cross-environment noise (a reply whose case lives in the other
+            # stack) is terminal: completed without side effects so the poller
+            # never retries it.
+            claim.update({"state": "completed", "owner_token": None, "lease_expires_at": None,
+                          "error_code": str(reason or "automation_reply_dismissed")[:120],
+                          "updated_at": dismissed_at, "completed_at": dismissed_at})
             return True
 
     def commit_automation_reply_result(
@@ -12792,6 +12812,30 @@ class PostgresTicketRepository:
                     )
                     return cur.rowcount == 1
         return self._run_with_connection_retry("fail_automation_reply_claim", _operation)
+
+    def dismiss_automation_reply_claim(
+        self, automation_reply_key: str, *, owner_token: str, reason: str,
+        dismissed_at: str,
+    ) -> bool:
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET state='completed', owner_token=NULL, lease_expires_at=NULL, "
+                            "error_code=%s, updated_at=%s, completed_at=%s "
+                            "WHERE automation_reply_key=%s AND state='processing' AND owner_token=%s"
+                        ).format(self._table("support_automation_reply_claims")),
+                        (
+                            str(reason or "automation_reply_dismissed")[:120],
+                            dismissed_at,
+                            dismissed_at,
+                            automation_reply_key,
+                            owner_token,
+                        ),
+                    )
+                    return cur.rowcount == 1
+        return self._run_with_connection_retry("dismiss_automation_reply_claim", _operation)
 
     def commit_automation_reply_result(
         self, automation_reply_key: str, *, owner_token: str, ticket_id: str,
