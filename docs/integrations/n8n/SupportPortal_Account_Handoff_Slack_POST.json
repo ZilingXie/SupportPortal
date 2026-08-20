@@ -6,6 +6,7 @@
         "httpMethod": "POST",
         "path": "supportportal/account-handoff/slack",
         "responseMode": "lastNode",
+        "authentication": "headerAuth",
         "options": {}
       },
       "id": "f5b2a6d0-8f05-4bc7-9b66-8e3b7af4c001",
@@ -13,11 +14,17 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [ -920, 0 ],
-      "webhookId": "f5b2a6d0-8f05-4bc7-9b66-8e3b7af4c001"
+      "webhookId": "f5b2a6d0-8f05-4bc7-9b66-8e3b7af4c001",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID",
+          "name": "SupportPortal n8n Header Auth"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\nconst headers = $json.headers && typeof $json.headers === 'object' ? $json.headers : {};\nconst suppliedToken = String(headers['x-supportportal-token'] || headers['X-SupportPortal-Token'] || '').trim();\nconst expectedToken = String($env.SUPPORTPORTAL_N8N_TOKEN || '').trim();\nif (!expectedToken || suppliedToken !== expectedToken) throw new Error('invalid_supportportal_token');\nconst allowed = new Set(['schema_version','event_id','event_type','account_case_id','message_id','reply_intent','case_type','case_title','zendesk_ticket_id','zendesk_url','ticket_summary','message_text']);\nconst keys = Object.keys(body);\nif (keys.some(key => !allowed.has(key))) throw new Error('unsupported_event_field');\nif (Number(body.schema_version) !== 1 || String(body.event_type || '') !== 'account_automation_handoff_confirmed') throw new Error('invalid_event_contract');\nconst event = {};\nfor (const key of allowed) event[key] = body[key];\nfor (const key of ['event_id','account_case_id','message_id','reply_intent','case_type','case_title','zendesk_ticket_id','zendesk_url','ticket_summary','message_text']) {\n  if (!String(event[key] ?? '').trim()) throw new Error(`missing_event_field:${key}`);\n}\nif (!/^account-automation-slack:[^:]+:[^:]+$/.test(String(event.event_id))) throw new Error('invalid_event_id');\nreturn [{ json: { event, event_id: String(event.event_id) } }];"
+        "jsCode": "const body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\nconst allowed = new Set(['schema_version','event_id','event_type','account_case_id','message_id','reply_intent','case_type','case_title','zendesk_ticket_id','zendesk_url','ticket_summary','message_text']);\nconst keys = Object.keys(body);\nif (keys.some(key => !allowed.has(key))) throw new Error('unsupported_event_field');\nif (Number(body.schema_version) !== 1 || String(body.event_type || '') !== 'account_automation_handoff_confirmed') throw new Error('invalid_event_contract');\nconst event = {};\nfor (const key of allowed) event[key] = body[key];\nfor (const key of ['event_id','account_case_id','message_id','reply_intent','case_type','case_title','zendesk_ticket_id','zendesk_url','ticket_summary','message_text']) {\n  if (!String(event[key] ?? '').trim()) throw new Error(`missing_event_field:${key}`);\n}\nif (!/^account-automation-slack:[^:]+:[^:]+$/.test(String(event.event_id))) throw new Error('invalid_event_id');\nreturn [{ json: { event, event_id: String(event.event_id) } }];"
       },
       "id": "f5b2a6d0-8f05-4bc7-9b66-8e3b7af4c002",
       "name": "Validate Event",
@@ -28,7 +35,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH inserted AS (\n  INSERT INTO n8n_supportportal_slack_events (event_id, status, payload)\n  VALUES ($1, 'pending', $2::jsonb)\n  ON CONFLICT (event_id) DO NOTHING\n  RETURNING event_id, status, payload, slack_channel_id, slack_message_ts, failure_code\n)\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, TRUE AS claimed\nFROM inserted\nUNION ALL\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, FALSE AS claimed\nFROM n8n_supportportal_slack_events\nWHERE event_id = $1 AND NOT EXISTS (SELECT 1 FROM inserted);",
+        "query": "WITH inserted AS (\n  INSERT INTO public.n8n_supportportal_slack_events (event_id, status, payload)\n  VALUES ($1, 'pending', $2::jsonb)\n  ON CONFLICT (event_id) DO NOTHING\n  RETURNING event_id, status, payload, slack_channel_id, slack_message_ts, failure_code\n)\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, TRUE AS claimed\nFROM inserted\nUNION ALL\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, FALSE AS claimed\nFROM public.n8n_supportportal_slack_events\nWHERE event_id = $1 AND NOT EXISTS (SELECT 1 FROM inserted);",
         "options": {
           "queryReplacement": "={{ [$('Validate Event').first().json.event_id, JSON.stringify($('Validate Event').first().json.event)] }}"
         }
@@ -64,7 +71,7 @@
       "parameters": {
         "resource": "message",
         "operation": "post",
-        "channel": "={{ $env.SUPPORTPORTAL_SLACK_CHANNEL_ID }}",
+        "channel": "REPLACE_WITH_SLACK_CHANNEL_ID",
         "text": "={{ $json.payload.message_text }}",
         "otherOptions": {}
       },
@@ -83,9 +90,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE n8n_supportportal_slack_events\nSET status = 'delivered', slack_channel_id = $2, slack_message_ts = $3, failure_code = NULL, updated_at = NOW()\nWHERE event_id = $1 AND status = 'pending'\nRETURNING event_id, status, failure_code;",
+        "query": "UPDATE public.n8n_supportportal_slack_events\nSET status = 'delivered', slack_channel_id = $2, slack_message_ts = $3, failure_code = NULL, updated_at = NOW()\nWHERE event_id = $1 AND status = 'pending'\nRETURNING event_id, status, failure_code;",
         "options": {
-          "queryReplacement": "={{ [$('Claim Event').first().json.event_id, $('Send Slack Message').first().json.channel || $env.SUPPORTPORTAL_SLACK_CHANNEL_ID, $('Send Slack Message').first().json.ts] }}"
+          "queryReplacement": "={{ [$('Claim Event').first().json.event_id, $('Send Slack Message').first().json.channel, $('Send Slack Message').first().json.ts] }}"
         }
       },
       "id": "f5b2a6d0-8f05-4bc7-9b66-8e3b7af4c006",

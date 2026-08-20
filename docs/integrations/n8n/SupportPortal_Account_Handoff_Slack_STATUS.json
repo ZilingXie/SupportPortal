@@ -6,6 +6,7 @@
         "httpMethod": "GET",
         "path": "supportportal/account-handoff/slack/status",
         "responseMode": "lastNode",
+        "authentication": "headerAuth",
         "options": {}
       },
       "id": "a4c8e5e1-7d1d-47c7-a46d-9b70c5ec1001",
@@ -13,11 +14,17 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [ -700, 0 ],
-      "webhookId": "a4c8e5e1-7d1d-47c7-a46d-9b70c5ec1001"
+      "webhookId": "a4c8e5e1-7d1d-47c7-a46d-9b70c5ec1001",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID",
+          "name": "SupportPortal n8n Header Auth"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const headers = $json.headers && typeof $json.headers === 'object' ? $json.headers : {};\nconst suppliedToken = String(headers['x-supportportal-token'] || headers['X-SupportPortal-Token'] || '').trim();\nconst expectedToken = String($env.SUPPORTPORTAL_N8N_TOKEN || '').trim();\nif (!expectedToken || suppliedToken !== expectedToken) throw new Error('invalid_supportportal_token');\nconst eventId = String(($json.query || {}).event_id || '').trim();\nif (!/^account-automation-slack:[^:]+:[^:]+$/.test(eventId)) throw new Error('invalid_event_id');\nreturn [{ json: { event_id: eventId } }];"
+        "jsCode": "const eventId = String(($json.query || {}).event_id || '').trim();\nif (!/^account-automation-slack:[^:]+:[^:]+$/.test(eventId)) throw new Error('invalid_event_id');\nreturn [{ json: { event_id: eventId } }];"
       },
       "id": "a4c8e5e1-7d1d-47c7-a46d-9b70c5ec1002",
       "name": "Validate Status Request",
@@ -28,7 +35,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT event_id, status, failure_code\nFROM n8n_supportportal_slack_events\nWHERE event_id = $1\nUNION ALL\nSELECT $1, 'missing', NULL\nWHERE NOT EXISTS (SELECT 1 FROM n8n_supportportal_slack_events WHERE event_id = $1);",
+        "query": "SELECT event_id, status, failure_code\nFROM public.n8n_supportportal_slack_events\nWHERE event_id = $1\nUNION ALL\nSELECT $1, 'missing', NULL\nWHERE NOT EXISTS (SELECT 1 FROM public.n8n_supportportal_slack_events WHERE event_id = $1);",
         "options": {
           "queryReplacement": "={{ [$('Validate Status Request').first().json.event_id] }}"
         }

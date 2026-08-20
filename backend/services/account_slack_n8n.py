@@ -40,7 +40,7 @@ def account_slack_n8n_configured() -> bool:
         str(os.getenv("ACCOUNT_SLACK_N8N_WEBHOOK_URL") or "").strip(),
         str(os.getenv("ACCOUNT_SLACK_N8N_STATUS_URL") or "").strip(),
     )
-    token = str(os.getenv("ACCOUNT_SLACK_N8N_TOKEN") or "").strip()
+    token = str(os.getenv("n8n_request_token") or "").strip()
     return bool(token) and all(
         (parsed := urllib.parse.urlparse(value)).scheme in {"http", "https"}
         and bool(parsed.netloc)
@@ -138,7 +138,7 @@ def post_account_slack_event(event: dict[str, Any]) -> dict[str, Any]:
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-SupportPortal-Token": str(os.getenv("ACCOUNT_SLACK_N8N_TOKEN") or "").strip(),
+            "X-N8n-Request-Token": str(os.getenv("n8n_request_token") or "").strip(),
         },
     )
     try:
@@ -160,7 +160,7 @@ def get_account_slack_event_status(event_id: str) -> dict[str, Any]:
         method="GET",
         headers={
             "Accept": "application/json",
-            "X-SupportPortal-Token": str(os.getenv("ACCOUNT_SLACK_N8N_TOKEN") or "").strip(),
+            "X-N8n-Request-Token": str(os.getenv("n8n_request_token") or "").strip(),
         },
     )
     return _validate_response(

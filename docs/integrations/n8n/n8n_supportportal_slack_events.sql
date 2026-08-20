@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS n8n_supportportal_slack_events (
+CREATE TABLE IF NOT EXISTS public.n8n_supportportal_slack_events (
     event_id TEXT PRIMARY KEY,
     status TEXT NOT NULL CHECK (
         status IN ('pending', 'delivered', 'failed', 'outcome_unknown')

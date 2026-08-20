@@ -35,7 +35,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH inserted AS (\n  INSERT INTO n8n_supportportal_slack_events (event_id, status, payload)\n  VALUES ($1, 'pending', $2::jsonb)\n  ON CONFLICT (event_id) DO NOTHING\n  RETURNING event_id, status, payload, slack_channel_id, slack_message_ts, failure_code\n)\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, TRUE AS claimed\nFROM inserted\nUNION ALL\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, FALSE AS claimed\nFROM n8n_supportportal_slack_events\nWHERE event_id = $1 AND NOT EXISTS (SELECT 1 FROM inserted);",
+        "query": "WITH inserted AS (\n  INSERT INTO public.n8n_supportportal_slack_events (event_id, status, payload)\n  VALUES ($1, 'pending', $2::jsonb)\n  ON CONFLICT (event_id) DO NOTHING\n  RETURNING event_id, status, payload, slack_channel_id, slack_message_ts, failure_code\n)\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, TRUE AS claimed\nFROM inserted\nUNION ALL\nSELECT event_id, status, payload, slack_channel_id, slack_message_ts, failure_code, FALSE AS claimed\nFROM public.n8n_supportportal_slack_events\nWHERE event_id = $1 AND NOT EXISTS (SELECT 1 FROM inserted);",
         "options": {
           "queryReplacement": "={{ [$('Validate Event').first().json.event_id, JSON.stringify($('Validate Event').first().json.event)] }}"
         }
@@ -90,7 +90,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE n8n_supportportal_slack_events\nSET status = 'delivered', slack_channel_id = $2, slack_message_ts = $3, failure_code = NULL, updated_at = NOW()\nWHERE event_id = $1 AND status = 'pending'\nRETURNING event_id, status, failure_code;",
+        "query": "UPDATE public.n8n_supportportal_slack_events\nSET status = 'delivered', slack_channel_id = $2, slack_message_ts = $3, failure_code = NULL, updated_at = NOW()\nWHERE event_id = $1 AND status = 'pending'\nRETURNING event_id, status, failure_code;",
         "options": {
           "queryReplacement": "={{ [$('Claim Event').first().json.event_id, $('Send Slack Message').first().json.channel, $('Send Slack Message').first().json.ts] }}"
         }
