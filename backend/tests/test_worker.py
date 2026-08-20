@@ -2447,7 +2447,13 @@ class WorkerResilienceTests(unittest.TestCase):
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ENABLEMENT-DONE",
-            "messages": [{"role": "customer", "content": "Please enable Media Relay."}],
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable Media Relay.",
+                    "created_at": "2026-08-19T08:00:00+00:00",
+                }
+            ],
         }
         reply = types.SimpleNamespace(
             message_id="enablement-msg-done",
@@ -2468,11 +2474,51 @@ class WorkerResilienceTests(unittest.TestCase):
             job_kwargs["reply_intent"], "enablement_completed_and_close"
         )
         self.assertTrue(job_kwargs["close_after_publish"])
+        # The publication currency gate requires the trigger to be the latest
+        # customer message timestamp, not the email-processing moment.
+        self.assertEqual(
+            job_kwargs["trigger_message_created_at"],
+            "2026-08-19T08:00:00+00:00",
+        )
         self.assertEqual(job_kwargs["automation_delivery_key"], "enablement-delivery-1")
         commit = repository.commit_automation_reply_result.call_args.kwargs
         self.assertIsNone(commit["assistant_message"])
         self.assertNotIn("close_after_publish", commit)
         self.assertEqual(commit["account_case_updates"]["automation_status"], "automation")
+
+    def test_enablement_completion_without_customer_messages_fails_closed(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ENABLEMENT-NO-MSGS",
+            "billing_ticket_id": "AC-TK-ENABLEMENT-NO-MSGS",
+            "client_ticket_id": "TK-ENABLEMENT-NO-MSGS",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+            "processing_profile": "production",
+            "collected_fields": {"requested_feature": "media_relay", "app_id": "a" * 32},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ENABLEMENT-NO-MSGS",
+            "messages": [],
+        }
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-no-msgs",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-NO-MSGS",
+            body_text="Media Relay has been enabled successfully.",
+        )
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "create_account_reply_job",
+        ) as create_job:
+            handled = worker.handle_enablement_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        create_job.assert_not_called()
+        case = repository.get_billing_ticket_by_client_ticket_id.return_value
+        self.assertEqual(case["automation_status"], "human_review_required")
 
     def test_enablement_non_completion_reply_does_not_close(self) -> None:
         repository = Mock()
