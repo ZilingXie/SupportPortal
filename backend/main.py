@@ -77,6 +77,7 @@ from backend.services.billing_automation import (
 from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_automation_handlers import account_automation_handler
+from backend.services.account_slack_n8n import account_slack_n8n_configured
 from backend.services.account_billing_handlers import (
     account_billing_handler,
     account_billing_metadata,
@@ -4117,6 +4118,12 @@ def _health_config_warnings() -> list[str]:
     rag_signature = _dsn_host_database_signature(os.getenv("PGVECTOR_DSN") or "")
     if ticket_signature is not None and ticket_signature == rag_signature:
         warnings.add("shared_ticket_and_rag_database")
+    if (
+        str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower()
+        == "production"
+        and not account_slack_n8n_configured()
+    ):
+        warnings.add("account_slack_n8n_config_incomplete")
     return sorted(warnings)
 
 

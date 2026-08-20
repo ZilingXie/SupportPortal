@@ -41,6 +41,7 @@ from backend.services.account_zendesk_comments import (
     author_is_agent,
     build_conversation_revision,
 )
+from backend.services.account_slack_n8n import build_account_slack_event
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -75,6 +76,28 @@ def _account_zendesk_comment_delivery_from_row(
     if row is None:
         return None
     return dict(zip(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS, row))
+
+
+_ACCOUNT_SLACK_DELIVERY_FIELDS = (
+    "event_id",
+    "account_case_id",
+    "message_id",
+    "reply_intent",
+    "payload",
+    "status",
+    "failure_code",
+    "confirmed_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _account_slack_delivery_from_row(
+    row: tuple[Any, ...] | None,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_ACCOUNT_SLACK_DELIVERY_FIELDS, row))
 
 
 _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS = frozenset(
@@ -2324,6 +2347,31 @@ class TicketRepository(Protocol):
     ) -> dict[str, Any] | None:
         ...
 
+    def list_account_slack_deliveries(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def claim_account_slack_delivery(
+        self, *, event_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def complete_account_slack_delivery(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def requeue_account_slack_delivery(
+        self, *, event_id: str, requeued_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
     def get_account_case_details(
         self, identifiers: list[str]
     ) -> dict[str, dict[str, Any]]:
@@ -2725,6 +2773,70 @@ class InMemoryTicketRepository:
                 delivery["updated_at"] = requeued_at
             return copy.deepcopy(delivery)
 
+    def list_account_slack_deliveries(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        allowed = {str(status).strip().lower() for status in statuses if str(status).strip()}
+        with self._assignment_lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._account_slack_deliveries.values()
+                if str(row.get("status") or "").strip().lower() in allowed
+            ]
+        rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("event_id") or "")))
+        return rows[: max(1, min(int(limit), 500))]
+
+    def claim_account_slack_delivery(
+        self, *, event_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            delivery = self._account_slack_deliveries.get(str(event_id).strip())
+            if delivery is None:
+                return None
+            claimed = str(delivery.get("status") or "").strip().lower() == "queued"
+            if claimed:
+                delivery.update(status="pending", updated_at=claimed_at)
+            return {**copy.deepcopy(delivery), "claimed": claimed}
+
+    def complete_account_slack_delivery(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"pending", "delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Account Slack delivery status")
+        with self._assignment_lock:
+            delivery = self._account_slack_deliveries.get(str(event_id).strip())
+            if delivery is None:
+                return None
+            if str(delivery.get("status") or "").strip().lower() == "delivered":
+                return copy.deepcopy(delivery)
+            delivery.update(
+                status=normalized_status,
+                failure_code=str(failure_code or "").strip() or None,
+                confirmed_at=completed_at if normalized_status == "delivered" else None,
+                updated_at=completed_at,
+            )
+            return copy.deepcopy(delivery)
+
+    def requeue_account_slack_delivery(
+        self, *, event_id: str, requeued_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            delivery = self._account_slack_deliveries.get(str(event_id).strip())
+            if delivery is None:
+                return None
+            if str(delivery.get("status") or "").strip().lower() in {
+                "pending",
+                "outcome_unknown",
+            }:
+                delivery.update(status="queued", failure_code=None, updated_at=requeued_at)
+            return copy.deepcopy(delivery)
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -3109,6 +3221,7 @@ class InMemoryTicketRepository:
         self._account_reply_executions: dict[str, list[dict[str, Any]]] = {}
         self._account_reply_jobs: dict[str, dict[str, Any]] = {}
         self._account_zendesk_comment_deliveries: dict[tuple[str, str], dict[str, Any]] = {}
+        self._account_slack_deliveries: dict[str, dict[str, Any]] = {}
         self._account_case_comments: dict[str, dict[str, dict[str, Any]]] = {}
         self._account_case_comment_sync: dict[str, dict[str, Any]] = {}
         self._account_personas: dict[str, dict[str, Any]] = {}
@@ -3744,6 +3857,7 @@ class InMemoryTicketRepository:
                         "persona_version": payload.get("persona_version"),
                         "persona_render_status": payload.get("persona_render_status"),
                         "rerun_job_id": payload.get("rerun_job_id"),
+                        "reply_intent": payload.get("reply_intent"),
                         "source": "account_ai",
                     },
                 }
@@ -3825,6 +3939,24 @@ class InMemoryTicketRepository:
                     is_public=True,
                     target_status="solved" if payload.get("close_after_publish") else None,
                 )
+                slack_event = build_account_slack_event(
+                    account_case=billing_ticket or {},
+                    message_id=message_id,
+                    reply_intent=str(payload.get("reply_intent") or ""),
+                )
+                if slack_event is not None and slack_event["event_id"] not in self._account_slack_deliveries:
+                    self._account_slack_deliveries[slack_event["event_id"]] = {
+                        "event_id": slack_event["event_id"],
+                        "account_case_id": account_case_id,
+                        "message_id": message_id,
+                        "reply_intent": slack_event["reply_intent"],
+                        "payload": copy.deepcopy(slack_event),
+                        "status": "waiting_zendesk",
+                        "failure_code": None,
+                        "confirmed_at": None,
+                        "created_at": published_at,
+                        "updated_at": published_at,
+                    }
             self.save_account_reply_execution(reply_execution)
             saved_job = copy.deepcopy(job)
             saved_job["payload"] = copy.deepcopy(payload)
@@ -5410,6 +5542,14 @@ class InMemoryTicketRepository:
                             "updated_at": recorded_at,
                         }
                     )
+                if normalized_status == "added" and bool(delivery.get("is_public")):
+                    for slack_delivery in self._account_slack_deliveries.values():
+                        if (
+                            str(slack_delivery.get("account_case_id") or "") == normalized_case_id
+                            and str(slack_delivery.get("message_id") or "") == normalized_message_id
+                            and str(slack_delivery.get("status") or "") == "waiting_zendesk"
+                        ):
+                            slack_delivery.update(status="queued", updated_at=recorded_at)
             if (
                 close_local_ticket
                 and normalized_status == "added"
@@ -7065,6 +7205,140 @@ class PostgresTicketRepository:
         return self._run_with_connection_retry(
             "requeue_account_zendesk_comment_delivery", _operation
         )
+
+    def list_account_slack_deliveries(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        normalized_statuses = tuple(
+            dict.fromkeys(
+                str(status or "").strip().lower()
+                for status in statuses
+                if str(status or "").strip()
+            )
+        )
+        if not normalized_statuses:
+            return []
+        columns = ", ".join(_ACCOUNT_SLACK_DELIVERY_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + columns + " FROM {} WHERE status = ANY(%s::TEXT[]) "
+                        "ORDER BY created_at, event_id LIMIT %s"
+                    ).format(self._table("support_account_slack_deliveries")),
+                    (list(normalized_statuses), max(1, min(int(limit), 500))),
+                )
+                return [
+                    record
+                    for row in cur.fetchall()
+                    for record in [_account_slack_delivery_from_row(row)]
+                    if record is not None
+                ]
+
+        return self._run_with_connection_retry("list_account_slack_deliveries", _operation)
+
+    def claim_account_slack_delivery(
+        self, *, event_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        normalized_event_id = str(event_id or "").strip()
+        columns = ", ".join(_ACCOUNT_SLACK_DELIVERY_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='pending', updated_at=%s "
+                        "WHERE event_id=%s AND status='queued' RETURNING " + columns
+                    ).format(self._table("support_account_slack_deliveries")),
+                    (claimed_at, normalized_event_id),
+                )
+                row = cur.fetchone()
+                claimed = row is not None
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
+                            self._table("support_account_slack_deliveries")
+                        ),
+                        (normalized_event_id,),
+                    )
+                    row = cur.fetchone()
+                record = _account_slack_delivery_from_row(row)
+                if record is not None:
+                    record["claimed"] = claimed
+                return record
+
+        return self._run_with_connection_retry("claim_account_slack_delivery", _operation)
+
+    def complete_account_slack_delivery(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"pending", "delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Account Slack delivery status")
+        columns = ", ".join(_ACCOUNT_SLACK_DELIVERY_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s, failure_code=%s, "
+                        "confirmed_at=CASE WHEN %s='delivered' THEN %s::timestamptz ELSE NULL END, "
+                        "updated_at=%s WHERE event_id=%s AND status<>'delivered' RETURNING " + columns
+                    ).format(self._table("support_account_slack_deliveries")),
+                    (
+                        normalized_status,
+                        str(failure_code or "").strip() or None,
+                        normalized_status,
+                        completed_at,
+                        completed_at,
+                        str(event_id or "").strip(),
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
+                            self._table("support_account_slack_deliveries")
+                        ),
+                        (str(event_id or "").strip(),),
+                    )
+                    row = cur.fetchone()
+                return _account_slack_delivery_from_row(row)
+
+        return self._run_with_connection_retry("complete_account_slack_delivery", _operation)
+
+    def requeue_account_slack_delivery(
+        self, *, event_id: str, requeued_at: str
+    ) -> dict[str, Any] | None:
+        columns = ", ".join(_ACCOUNT_SLACK_DELIVERY_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='queued', failure_code=NULL, updated_at=%s "
+                        "WHERE event_id=%s AND status IN ('pending','outcome_unknown') RETURNING " + columns
+                    ).format(self._table("support_account_slack_deliveries")),
+                    (requeued_at, str(event_id or "").strip()),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
+                            self._table("support_account_slack_deliveries")
+                        ),
+                        (str(event_id or "").strip(),),
+                    )
+                    row = cur.fetchone()
+                return _account_slack_delivery_from_row(row)
+
+        return self._run_with_connection_retry("requeue_account_slack_delivery", _operation)
 
     def get_account_case_details(
         self, identifiers: list[str]
@@ -9717,6 +9991,23 @@ class PostgresTicketRepository:
                     )
                 cur.execute(
                     sql.SQL(
+                        "CREATE TABLE IF NOT EXISTS {} ("
+                        "event_id TEXT PRIMARY KEY, "
+                        "account_case_id TEXT NOT NULL, message_id TEXT NOT NULL, "
+                        "reply_intent TEXT NOT NULL, payload JSONB NOT NULL, "
+                        "status TEXT NOT NULL CHECK (status IN ('waiting_zendesk','queued','pending','delivered','outcome_unknown','failed')), "
+                        "failure_code TEXT, confirmed_at TIMESTAMPTZ, "
+                        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+                        "UNIQUE (account_case_id, message_id), "
+                        "FOREIGN KEY (account_case_id, message_id) REFERENCES {}(account_case_id, message_id) ON DELETE CASCADE"
+                        ")"
+                    ).format(
+                        self._table("support_account_slack_deliveries"),
+                        self._table("support_account_zendesk_comment_deliveries"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
                             account_case_id TEXT NOT NULL REFERENCES {}(account_case_id) ON DELETE CASCADE,
@@ -12162,6 +12453,18 @@ class PostgresTicketRepository:
                             "confirmed_at": recorded_at if target_status == "delivered" else None,
                             "updated_at": recorded_at,
                         }
+                    )
+                if (
+                    normalized_status == "added"
+                    and delivery is not None
+                    and bool(delivery.get("is_public"))
+                ):
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='queued', updated_at=%s "
+                            "WHERE account_case_id=%s AND message_id=%s AND status='waiting_zendesk'"
+                        ).format(self._table("support_account_slack_deliveries")),
+                        (recorded_at, normalized_case_id, normalized_message_id),
                     )
                 if (
                     close_local_ticket
@@ -15528,6 +15831,7 @@ class PostgresTicketRepository:
                 "persona_version": payload.get("persona_version"),
                 "persona_render_status": payload.get("persona_render_status"),
                 "rerun_job_id": payload.get("rerun_job_id"),
+                "reply_intent": payload.get("reply_intent"),
                 "source": "account_ai",
             }
         )
@@ -15645,7 +15949,7 @@ class PostgresTicketRepository:
                 delivery = None
                 cur.execute(
                     sql.SQL(
-                        "SELECT account_case_id, processing_profile, zendesk_ticket_id "
+                        "SELECT account_case_id, processing_profile, zendesk_ticket_id, title, question "
                         "FROM {} WHERE client_ticket_id=%s"
                     ).format(self._table("support_account_cases")),
                     (ticket_id,),
@@ -15703,6 +16007,42 @@ class PostgresTicketRepository:
                     delivery = _account_zendesk_comment_delivery_from_row(delivery_row)
                     assert delivery is not None
                     delivery["created"] = delivery_created
+
+                    reply_intent = str(payload.get("reply_intent") or "").strip().lower()
+                    slack_event = None
+                    if reply_intent in {
+                        "fraud_handoff_confirmation",
+                        "account_suspension_handoff_and_close",
+                    }:
+                        slack_event = build_account_slack_event(
+                            account_case={
+                                "account_case_id": delivery_case_id,
+                                "zendesk_ticket_id": delivery_ticket_id,
+                                "title": delivery_case_row[3],
+                                "question": delivery_case_row[4],
+                                "execution_action": account_case.get("execution_action")
+                                or account_case.get("route"),
+                            },
+                            message_id=str(message_id),
+                            reply_intent=reply_intent,
+                        )
+                    if slack_event is not None:
+                        cur.execute(
+                            sql.SQL(
+                                "INSERT INTO {} (event_id,account_case_id,message_id,reply_intent,payload,status,created_at,updated_at) "
+                                "VALUES (%s,%s,%s,%s,%s::jsonb,'waiting_zendesk',%s,%s) "
+                                "ON CONFLICT (event_id) DO NOTHING"
+                            ).format(self._table("support_account_slack_deliveries")),
+                            (
+                                slack_event["event_id"],
+                                delivery_case_id,
+                                str(message_id),
+                                slack_event["reply_intent"],
+                                Json(slack_event),
+                                published_at,
+                                published_at,
+                            ),
+                        )
 
                 if payload.get("replace_existing_reply"):
                     cur.execute(

@@ -8,7 +8,9 @@
   "acceptance_criteria": [],
   "evidence": [],
   "source_refs": [
-    "docs/roadmap.html#lanes"
+    "docs/roadmap.html#lanes",
+    "backend/services/account_slack_n8n.py",
+    "docs/integrations/n8n/account_automation_slack_notification.md"
   ],
   "legacy_ids": []
 }
