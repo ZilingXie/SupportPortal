@@ -86,6 +86,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "/api/workspace/admin/account-personas",
             "/api/workspace/admin/environment-config",
             "Automation share", "Current route", "Agent Config", "No MCP configured", "Configuration names",
+            "automation_subcategories", "Automation category metrics",
             "data-action=\"toggle-agent-tree\"", "data-env-search", "data-action=\"select-agent-prompt\"",
             "environmentLoadError", "loadEnvironmentConfig",
             "agentConfigLoadError", "loadAgentConfig", "data-action=\"retry-agent-config\"",
@@ -103,7 +104,11 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
 
         self.run_admin_app_script(
             """
-            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, cases: [{ account_case_id: 'AC-12715', source: 'https://agoraio.zendesk.com/agent/tickets/12666', title: 'Invoice', category: 'account_billing', subcategory: 'detailed_invoice', category_label: 'Account & Billing', subcategory_label: 'Detailed Invoice', automation_handler: 'billing', route_status: 'automated', automation_status: 'internal_pending' }] };
+            automationData = { metrics: { total_account_cases: 4, automated_cases: 1, not_automated_cases: 3, automation_rate: .25 }, automation_subcategories: [
+              { subcategory: 'fraud_account', label: 'Fraud Account', total: 2, automated: 1, not_automated: 1, automation_rate: .5 },
+              { subcategory: 'enablement', label: 'Enablement', total: 1, automated: 1, not_automated: 0, automation_rate: 1 },
+              { subcategory: 'account_suspension', label: 'Account Suspension', total: 0, automated: 0, not_automated: 0, automation_rate: 0 }
+            ], cases: [{ account_case_id: 'AC-12715', source: 'https://agoraio.zendesk.com/agent/tickets/12666', title: 'Invoice', category: 'account_billing', subcategory: 'detailed_invoice', category_label: 'Account & Billing', subcategory_label: 'Detailed Invoice', automation_handler: 'billing', route_status: 'automated', automation_status: 'internal_pending' }] };
             auditEvents = [{ created_at: '2026-08-11T00:00:00Z', event_type: 'account_route', actor_id: 'system', target_id: 'AC-1', payload: { classification_reason_code: 'detailed_invoice_requested', execution_reason_code: 'internal_email_sent' } }];
             agentConfigData = {
               agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes requests.', status: 'active', components: [], prompts: [{ key: 'automation-system', name: 'Automation Router', version: 'v1', component_key: 'automation-router', content: 'actual prompt', metadata: {} }], skills: [], mcp_servers: [] }],
@@ -136,6 +141,11 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             const nonZendeskMarkup = renderAutomatedCases();
             if (nonZendeskMarkup.includes('admin-source-link') || !nonZendeskMarkup.includes('manual') || nonZendeskMarkup.includes('AC-12715')) throw new Error('Non-Zendesk Source should remain static without an internal Case ID');
             if (!casesMarkup.includes('All categories')) throw new Error('Automated Cases category filter missing');
+            if (!casesMarkup.includes('Automation category metrics') || !casesMarkup.includes('Fraud Account') || !casesMarkup.includes('Enablement') || !casesMarkup.includes('Account Suspension')) throw new Error('automation subcategory metric cards missing');
+            if (!casesMarkup.includes('Automated 1 · 50.0%')) throw new Error('automation subcategory card metrics missing');
+            automationData.automation_subcategories = undefined;
+            const noCardsMarkup = renderAutomatedCases();
+            if (noCardsMarkup.includes('Automation category metrics')) throw new Error('automation subcategory cards should not render without data');
             const auditMarkup = renderAudit();
             if (!auditMarkup.includes('Classification reason code') || !auditMarkup.includes('Execution reason code') || !auditMarkup.includes('detailed_invoice_requested') || !auditMarkup.includes('internal_email_sent')) throw new Error('audit reason code columns missing');
             selectedAgentPath = [];

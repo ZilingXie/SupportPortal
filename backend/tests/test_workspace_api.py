@@ -334,11 +334,88 @@ class WorkspaceApiTests(unittest.TestCase):
             "processing_profile": "production",
             "created_at": "2026-07-21T00:00:00+00:00",
         })
+        self.repository.save_billing_ticket({
+            "billing_ticket_id": "BT-TK-ENAB",
+            "client_ticket_id": "TK-ENAB",
+            "title": "Enablement request",
+            "question": "Please enable the project.",
+            "scope_label": "billing",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "category": "backend_operation",
+            "subcategory": "enablement",
+            "route_status": "automated",
+            "automation_handler": "enablement",
+            "processing_profile": "production",
+            "created_at": "2026-07-21T01:00:00+00:00",
+        })
+        self.repository.save_billing_ticket({
+            "billing_ticket_id": "BT-TK-SUSP",
+            "client_ticket_id": "TK-SUSP",
+            "title": "Suspend the account",
+            "question": "Please suspend this account.",
+            "scope_label": "billing",
+            "route_family": "billing_automation",
+            "execution_action": "account_suspension",
+            "category": "account_billing",
+            "subcategory": "account_suspension",
+            "route_status": "not_automated",
+            "processing_profile": "production",
+            "created_at": "2026-07-21T02:00:00+00:00",
+        })
+        self.repository.save_billing_ticket({
+            "billing_ticket_id": "BT-TK-HUMAN",
+            "client_ticket_id": "TK-HUMAN",
+            "title": "Unclear request",
+            "question": "Not sure what this is about.",
+            "scope_label": "billing",
+            "category": "human_review",
+            "subcategory": "uncategorized",
+            "route_status": "not_automated",
+            "processing_profile": "production",
+            "created_at": "2026-07-21T03:00:00+00:00",
+        })
         self.assertEqual(self.client.get("/api/workspace/admin/account-automation").status_code, 401)
 
         response = self.client.get("/api/workspace/admin/account-automation", headers=self._admin_headers())
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["metrics"]["automation_rate"], 1)
+        self.assertEqual(response.json()["metrics"]["total_account_cases"], 4)
+        self.assertEqual(response.json()["metrics"]["automated_cases"], 2)
+        self.assertEqual(response.json()["metrics"]["automation_rate"], 0.5)
+
+        subcategories = response.json()["automation_subcategories"]
+        self.assertEqual(
+            [row["subcategory"] for row in subcategories],
+            ["fraud_account", "enablement", "account_suspension"],
+        )
+        by_subcategory = {row["subcategory"]: row for row in subcategories}
+        self.assertEqual(
+            by_subcategory["fraud_account"],
+            {
+                "subcategory": "fraud_account",
+                "label": "Fraud Account",
+                "total": 1,
+                "automated": 1,
+                "not_automated": 0,
+                "automation_rate": 1,
+            },
+        )
+        self.assertEqual(by_subcategory["enablement"]["total"], 1)
+        self.assertEqual(by_subcategory["enablement"]["automated"], 1)
+        self.assertEqual(by_subcategory["enablement"]["automation_rate"], 1)
+        self.assertEqual(by_subcategory["account_suspension"]["total"], 1)
+        self.assertEqual(by_subcategory["account_suspension"]["automated"], 0)
+        self.assertEqual(by_subcategory["account_suspension"]["not_automated"], 1)
+        self.assertEqual(by_subcategory["account_suspension"]["automation_rate"], 0)
+
+        filtered_response = self.client.get(
+            "/api/workspace/admin/account-automation?route_status=automated",
+            headers=self._admin_headers(),
+        )
+        self.assertEqual(
+            [row["total"] for row in filtered_response.json()["automation_subcategories"]],
+            [1, 1, 1],
+        )
 
         routing = self.client.get("/api/workspace/admin/account-routing/config", headers=self._admin_headers())
         self.assertEqual(routing.status_code, 200, routing.text)

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-19T11:50:19Z",
-  "source_base_commit": "8a746a70723f6d75c94b2430d7b3a390ba50a992",
-  "registry_digest": "8eebb70f730d895c1f1584dc9d26691da6d740f5ab3c678e0e07c4c6cafdc671",
+  "generated_at": "2026-08-20T02:56:45Z",
+  "source_base_commit": "33ad3735663124cceafab4e02c050621d220c712",
+  "registry_digest": "e49942962513524b4d2151f31ee426eb602511dce23e90d47c9303e8f8b74ffd",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1097,6 +1097,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 690,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/690",
           "label": "PR #690"
+        },
+        {
+          "type": "test",
+          "label": "Endpoint payload + admin UI contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_workspace_api backend.tests.test_workspace_admin_ui_contract",
+          "details": "54 全绿。endpoint 测试扩展为 4 个 seed（fraud/enablement automated、account_suspension not_automated、human_review 不进桶），断言 automation_subcategories 固定顺序、零填充、每行 total/automated/not_automated/rate，且 route_status=automated 筛选下分类计数不变（全量口径）；UI 契约新增静态 markers（automation_subcategories、Automation category metrics）与 runtime 断言（三张卡文案、'Automated 1 · 50.0%'、数据缺失时区块不渲染）。"
+        },
+        {
+          "type": "test",
+          "label": "Contract regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_account_admin_features && node --check ui/workspace-ui/admin/app.js",
+          "details": "79 全绿 + app.js 语法检查通过：production/account UI 契约与 account admin 行为回归不受影响。"
         }
       ],
       "source_refs": [
@@ -1106,7 +1118,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 6,
+      "task_count": 7,
       "done_count": 2,
       "blocked_count": 0
     },
@@ -4481,6 +4493,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-52",
+      "title": "Admin Automated Cases 页新增 Automation 子类指标卡",
+      "status": "active",
+      "owner": "zac",
+      "summary": "在 workspace admin 的 Automated Cases 页指标条下方，为 automation 的三个活跃子类（fraud_account、enablement、account_suspension）各显示一组指标卡（Total、Automated 数、自动化率）。后端 account_automation_payload 在全量 all_cases 上新增 automation_subcategories 数组（与现有 metrics 同口径、不受筛选影响，子类归一化与表格 Subcategory 列共用同一助手）；前端复用 renderMetricCard/admin-metric-grid 卡片样式渲染三张卡，数据缺失时整段不渲染。纯展示，不改筛选器与表格。",
+      "next_action": "实现后端 payload 字段与前端卡片渲染，补 endpoint 断言与 UI 契约 markers/runtime 用例，回归全绿后 finalize 合入 main，再重启官方栈做 live 验证。",
+      "acceptance_criteria": [
+        "GET /api/workspace/admin/account-automation 返回 automation_subcategories：三个子类固定顺序且零填充，每行含 subcategory/label/total/automated/not_automated/automation_rate。",
+        "子类计数基于全量数据（忽略 route_status/category/date 筛选），与表格 Subcategory 列同一套归一化口径；非 automation 子类（如 human_review）不进任何桶。",
+        "admin 页 Automated Cases 段在指标条下方渲染三张指标卡（Fraud Account / Enablement / Account Suspension），展示 total 与 Automated 数/率；automation_subcategories 缺失时不渲染该区块。",
+        "筛选器、case 表格与既有 endpoint 契约零改动；workspace admin 相关测试回归通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Endpoint payload + admin UI contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_workspace_api backend.tests.test_workspace_admin_ui_contract",
+          "details": "54 全绿。endpoint 测试扩展为 4 个 seed（fraud/enablement automated、account_suspension not_automated、human_review 不进桶），断言 automation_subcategories 固定顺序、零填充、每行 total/automated/not_automated/rate，且 route_status=automated 筛选下分类计数不变（全量口径）；UI 契约新增静态 markers（automation_subcategories、Automation category metrics）与 runtime 断言（三张卡文案、'Automated 1 · 50.0%'、数据缺失时区块不渲染）。"
+        },
+        {
+          "type": "test",
+          "label": "Contract regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_account_admin_features && node --check ui/workspace-ui/admin/app.js",
+          "details": "79 全绿 + app.js 语法检查通过：production/account UI 契约与 account admin 行为回归不受影响。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/account_admin.py",
+        "ui/workspace-ui/admin/app.js",
+        "backend/tests/test_workspace_api.py",
+        "backend/tests/test_workspace_admin_ui_contract.py"
+      ],
+      "created_at": "2026-08-20",
+      "updated_at": "2026-08-20",
+      "history": [
+        {
+          "at": "2026-08-20",
+          "event": "created",
+          "summary": "为 admin Automated Cases 页 automation 子类指标卡功能创建任务（Function admin-case-operations）。"
+        },
+        {
+          "at": "2026-08-20",
+          "event": "progress",
+          "summary": "完成实现与目标测试：后端 payload 新增 automation_subcategories（全量口径、固定顺序零填充、子类归一化提取为 _admin_case_subcategory 与表格列共用），前端复用 renderMetricCard/admin-metric-grid 渲染三张卡；workspace API 26+契约与回归 79 全绿。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
