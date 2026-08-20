@@ -883,6 +883,73 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("DROP CONSTRAINT IF EXISTS", repo_source)
         self.assertIn("pg_get_constraintdef", repo_source)
 
+    def test_postgres_close_local_ticket_statement_builds(self) -> None:
+        # The atomic close SQL embeds jsonb path literals whose braces must be
+        # escaped for SQL.format(); unescaped braces raise IndexError at
+        # statement build time before any database is touched.
+        import contextlib
+
+        fetch_results: list[tuple | None] = [
+            ("processing",),                              # idempotency state
+            None,                                        # message meta row
+            (                                            # delivery row (12 cols)
+                "AC-CLOSE-SQL", "1", "TK-ZENDESK", "production-zendesk-comment:AC-CLOSE-SQL:1",
+                True, "pending", None, None, None, "solved",
+                "2026-08-20T03:00:00+00:00", "2026-08-20T03:00:00+00:00",
+            ),
+        ]
+
+        class _FakeCursor:
+            def execute(self, *_args, **_kwargs):
+                return None
+
+            def fetchone(self):
+                return fetch_results.pop(0) if fetch_results else None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        class _FakeConn:
+            def transaction(self):
+                return contextlib.nullcontext()
+
+            def cursor(self):
+                return _FakeCursor()
+
+        repository = PostgresTicketRepository(
+            dsn="postgresql://fake@example.invalid/db",
+            schema="supportportal_test",
+        )
+        captured = {}
+
+        def _capture(_name, operation):
+            captured["ran"] = True
+            return operation(_FakeConn())
+
+        repository._run_with_connection_retry = _capture
+        result = repository.record_account_zendesk_internal_comment_result(
+            account_case_id="AC-CLOSE-SQL",
+            ticket_id="TK-CLOSE-SQL",
+            message_id="1",
+            idempotency_key="AC-CLOSE-SQL:1",
+            result_payload={
+                "status": "added",
+                "account_case_id": "AC-CLOSE-SQL",
+                "message_id": "1",
+                "actor_id": "system:production-account-reply",
+                "trigger": "production_worker",
+                "comment_id": "comment-close-sql",
+            },
+            recorded_at="2026-08-20T04:00:00+00:00",
+            close_local_ticket=True,
+        )
+        self.assertTrue(captured.get("ran"))
+        self.assertEqual(result["audit_persisted"], False)
+        self.assertEqual(result["delivery"]["target_status"], "solved")
+
     def test_in_memory_production_publication_creates_one_queued_zendesk_intent(self) -> None:
         repository = InMemoryTicketRepository()
         ticket_id = "TK-ZENDESK-QUEUED"
