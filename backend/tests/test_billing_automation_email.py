@@ -499,9 +499,11 @@ class BillingAutomationEmailTests(unittest.TestCase):
             env = dict(GRAPH_ENV)
             env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
             with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
-                with self.assertRaisesRegex(RuntimeError, "handler failed"):
-                    poll_billing_request_replies(handler=lambda _reply: (_ for _ in ()).throw(RuntimeError("handler failed")))
+                # One broken message must not abort the inbox cycle and the
+                # unread message is left for the next attempt.
+                replies = poll_billing_request_replies(handler=lambda _reply: (_ for _ in ()).throw(RuntimeError("handler failed")))
 
+        self.assertEqual(replies, [])
         self.assertEqual([request.get_method() for request in requests], ["GET", "GET"])
 
     def test_poll_billing_request_replies_downloads_pdf_attachments_without_ocr_before_marking_read(self) -> None:
@@ -655,11 +657,13 @@ class BillingAutomationEmailTests(unittest.TestCase):
             env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
             env["PADDLEOCR_API_TOKEN"] = ""
             with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
-                with self.assertRaisesRegex(RuntimeError, "handler failed"):
-                    poll_billing_request_replies(
-                        handler=lambda _reply: (_ for _ in ()).throw(RuntimeError("handler failed"))
-                    )
+                # One broken message must not abort the inbox cycle and the
+                # unread PDF message is left for the next attempt.
+                replies = poll_billing_request_replies(
+                    handler=lambda _reply: (_ for _ in ()).throw(RuntimeError("handler failed"))
+                )
 
+        self.assertEqual(replies, [])
         self.assertFalse(any(request.get_method() == "PATCH" for request in requests))
 
     def test_record_billing_request_reply_appends_jsonl(self) -> None:

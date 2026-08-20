@@ -104,7 +104,12 @@ from backend.services.investigation_flow import (
     normalize_ticket_status,
     start_or_refresh_investigation,
 )
-from backend.services.billing_automation import poll_automation_request_replies, record_billing_request_reply
+from backend.services.billing_automation import (
+    BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,
+    poll_automation_request_replies,
+    record_billing_request_reply,
+)
+from backend.services.internal_email_template import namespaced_internal_email_subject
 from backend.services.account_suspension_automation import SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
@@ -492,9 +497,9 @@ def _run_billing_reply_poller(interval_seconds: float) -> None:
                 handler=handle_automation_request_reply,
                 max_messages=_billing_reply_poll_max_messages_from_env(),
                 subject_prefixes=(
-                    "[Billing Request]",
-                    ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
-                    QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
+                    namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
+                    namespaced_internal_email_subject(ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),
+                    namespaced_internal_email_subject(QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX),
                 ),
             )
             if replies:
@@ -2167,6 +2172,32 @@ def _store_billing_reply_pdf_attachments(
     return message_attachments, asset_ids
 
 
+def _dismiss_cross_environment_reply(
+    reply_key: str,
+    owner_token: str,
+    client_ticket_id: str,
+    reason: str,
+) -> str:
+    """Terminally ignore a reply whose case lives in the other environment.
+
+    Both stacks poll the same mailbox; a not-found case means this stack is
+    not the owner. Failing the claim would retry every poll cycle forever.
+    """
+    ticket_repository.dismiss_automation_reply_claim(
+        reply_key,
+        owner_token=owner_token,
+        reason=reason,
+        dismissed_at=now_iso(),
+    )
+    LOGGER.warning(
+        "Automation reply dismissed cross-environment ticket_id=%s reason=%s reply_key=%s",
+        client_ticket_id,
+        reason,
+        reply_key,
+    )
+    return "completed"
+
+
 def handle_billing_request_reply(reply: Any) -> str:
     client_ticket_id = _ticket_id_from_billing_reply_subject(getattr(reply, "subject", ""))
     if not client_ticket_id:
@@ -2182,10 +2213,14 @@ def handle_billing_request_reply(reply: Any) -> str:
         record_billing_request_reply(reply)
         billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
         if billing_ticket is None:
-            raise ValueError(f"billing ticket not found for {client_ticket_id}")
+            return _dismiss_cross_environment_reply(
+                reply_key, owner_token, client_ticket_id, "billing_ticket_not_found"
+            )
         canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
         if canonical_ticket is None:
-            raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+            return _dismiss_cross_environment_reply(
+                reply_key, owner_token, client_ticket_id, "linked_ticket_not_found"
+            )
         body_note = str(getattr(reply, "body_text", "") or "").strip()
         attachment_note = _billing_reply_attachment_note(reply)
         note = "\n\n".join(part for part in (body_note, attachment_note) if part)
@@ -2426,11 +2461,17 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
     try:
         account_case = ticket_repository.get_billing_ticket_by_client_ticket_id(client_ticket_id)
         if account_case is None:
-            raise ValueError(f"account case not found for {client_ticket_id}")
+            return _dismiss_cross_environment_reply(
+                reply_key, owner_token, client_ticket_id, "account_case_not_found"
+            )
         if str(account_case.get("automation_handler") or "").strip() != handler:
-            raise ValueError(f"account case {client_ticket_id} is not handled by {handler} automation")
+            return _dismiss_cross_environment_reply(
+                reply_key, owner_token, client_ticket_id, "automation_handler_mismatch"
+            )
         if ticket_repository.get_ticket(client_ticket_id) is None:
-            raise ValueError(f"linked support ticket not found for {client_ticket_id}")
+            return _dismiss_cross_environment_reply(
+                reply_key, owner_token, client_ticket_id, "linked_ticket_not_found"
+            )
         note = str(getattr(reply, "body_text", "") or "").strip()
         if not note:
             raise ValueError(f"{handler} reply body is empty")

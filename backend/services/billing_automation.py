@@ -34,7 +34,12 @@ from backend.services.detailed_invoice_field_extractor import (
     DetailedInvoiceFieldExtraction,
     extract_detailed_invoice_fields,
 )
-from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
+from backend.services.internal_email_template import (
+    InternalEmailSection,
+    internal_email_subject_matches,
+    namespaced_internal_email_subject,
+    render_internal_handoff_email,
+)
 
 invoke_responses_text = invoke_account_responses_text
 
@@ -382,8 +387,11 @@ def poll_automation_request_replies(
     handler: Any | None = None,
     max_messages: int = 25,
     lookback_days: int = 7,
-    subject_prefixes: tuple[str, ...] = (BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,),
+    subject_prefixes: tuple[str, ...] = (),
 ) -> list[BillingRequestReply]:
+    prefixes = subject_prefixes or (
+        namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
+    )
     graph_config = _load_graph_mail_config()
     missing_graph = [name for name, value in graph_config.items() if not value]
     if missing_graph:
@@ -391,7 +399,7 @@ def poll_automation_request_replies(
 
     access_token = _acquire_graph_access_token(graph_config)
     replies: list[BillingRequestReply] = []
-    normalized_prefixes = tuple(_clean_text(prefix).lower() for prefix in subject_prefixes if _clean_text(prefix))
+    normalized_prefixes = tuple(_clean_text(prefix).lower() for prefix in prefixes if _clean_text(prefix))
     for summary in _list_recent_inbox_messages(
         access_token=access_token,
         max_messages=max_messages,
@@ -399,7 +407,10 @@ def poll_automation_request_replies(
     ):
         subject = _clean_text(summary.get("subject"))
         message_id = _clean_text(summary.get("id"))
-        matched_prefix = next((prefix for prefix in normalized_prefixes if prefix in subject.lower()), "")
+        matched_prefix = next(
+            (prefix for prefix in normalized_prefixes if internal_email_subject_matches(subject, prefix)),
+            "",
+        )
         if not matched_prefix or not message_id:
             continue
 
@@ -408,7 +419,8 @@ def poll_automation_request_replies(
         if not reply.message_id:
             continue
         if (
-            matched_prefix == BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX.lower()
+            matched_prefix
+            == namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX).lower()
             and (bool(message.get("hasAttachments")) or bool(summary.get("hasAttachments")))
         ):
             attachments = _download_billing_reply_pdf_attachments(
@@ -423,7 +435,16 @@ def poll_automation_request_replies(
                 )
         outcome: Any = "completed"
         if handler is not None:
-            outcome = handler(reply)
+            try:
+                outcome = handler(reply)
+            except Exception as exc:
+                # One broken message must not abort the remaining inbox cycle.
+                LOGGER.warning(
+                    "Automation reply handler failed for message %s: %s",
+                    reply.message_id,
+                    exc,
+                )
+                continue
         if outcome in {"in_progress", "failed"}:
             continue
         if summary.get("isRead") is not True:
@@ -1154,9 +1175,9 @@ def _build_internal_email(
         "to": to_address,
         "from": from_address,
         "subject": (
-            f"[Account Suspension Review] - Ticket {normalized_ticket_id}"
+            f"{namespaced_internal_email_subject('[Account Suspension Review]')} - Ticket {normalized_ticket_id}"
             if action == BILLING_ACTION_ACCOUNT_SUSPENSION
-            else f"{BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX} {subject}"
+            else f"{namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX)} {subject}"
         ),
         **rendered,
     }

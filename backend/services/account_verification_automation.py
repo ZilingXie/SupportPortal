@@ -12,7 +12,7 @@ from backend.services.account_verification_field_extractor import (
 )
 from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO
 from backend.services.customer_reply_composer import compose_customer_reply_email
-from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email
+from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email, namespaced_internal_email_subject
 from backend.services.llm_factory import LlmInvocationError
 
 ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL"
@@ -79,7 +79,7 @@ def _internal_email(
     return {
         "to": os.getenv(ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV, "").strip()
         or DEFAULT_ACCOUNT_VERIFICATION_INTERNAL_EMAIL,
-        "subject": f"[Fraud Account Review] - Ticket {ticket_id}",
+        "subject": f"{namespaced_internal_email_subject('[Fraud Account Review]')} - Ticket {ticket_id}",
         "delivery_key": delivery_key,
         **rendered,
     }
