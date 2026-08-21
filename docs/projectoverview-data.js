@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T08:51:18Z",
-  "source_base_commit": "46fe2ec23f6bd26ff4501b9dfde2414670d6760f",
-  "registry_digest": "85645775e490b7311b8fa2ffcbc9b9940355b19c67ab98e30be1472b1d54f539",
+  "generated_at": "2026-08-21T09:26:09Z",
+  "source_base_commit": "eec5e20b8d01918a71be9c449a6b99aff1f3fa8c",
+  "registry_digest": "780404a1531eed110ba124416d46566dbc7af1e39824d4a93372373e4be8bb85",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1218,6 +1218,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production JavaScript and Project Overview contracts",
           "command": "node --check ui/production-ui/app.js && git diff --check && python3 scripts/generate_project_overview.py --check",
           "details": "JavaScript syntax、diff whitespace 与 Project Overview generated view 校验通过；Production asset marker 为 20260821-route-back-queue-1。"
+        },
+        {
+          "type": "test",
+          "label": "Route-back email, Zendesk fence, UI and Graph Mail regression",
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_assignment backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment backend.tests.test_production_ui_contract backend.tests.test_worker backend.tests.test_workspace_invitations backend.tests.test_account_failure_alerts",
+          "details": "177 tests pass：覆盖 queued/assigned/already_human_owned/failed/outcome_unknown 邮件、固定收件人和无客户正文、邮件失败不重放 Zendesk、非法请求零邮件、审计状态、UI notification toast 与 120 秒 timeout，以及既有 worker/ownership/Graph Mail 回归。"
+        },
+        {
+          "type": "test",
+          "label": "JavaScript and generated Project Overview contracts",
+          "command": "node --check ui/production-ui/app.js && git diff --check && python3 scripts/generate_project_overview.py --check",
+          "details": "JavaScript syntax、diff whitespace、Project Overview generated view 校验通过；Production asset marker 为 20260821-route-back-email-1。"
         }
       ],
       "source_refs": [
@@ -1229,8 +1241,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 13,
-      "done_count": 12,
+      "task_count": 14,
+      "done_count": 13,
       "blocked_count": 0
     },
     {
@@ -7757,6 +7769,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "completed",
           "summary": "完成 Production 手动回队列按钮、AI 停机与 reply-job 取消、原 group 恢复、Zendesk safe update/readback、outcome_unknown fence 和专用审计；自动 fallback 与 RAG fallback 保持后续任务。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-87",
+      "title": "Production route-back 操作邮件通知",
+      "status": "done",
+      "owner": "zac",
+      "summary": "Production 管理员执行 Route back to queue 后，通过现有 Microsoft Graph Mail 给 xieziling@agora.io 发送状态通知。通知覆盖 Zendesk queued、assigned、already_human_owned、failed 与 outcome_unknown 终态，不包含客户正文或凭据。邮件失败不得回滚或诱发重复 Zendesk 写入，结果必须进入 API 响应与审计。",
+      "next_action": "由用户使用新的 Production case 执行 Route back to queue，确认 Zendesk routing 与 xieziling@agora.io 收件同时成功。",
+      "acceptance_criteria": [
+        "通过 Production/admin/numeric-ticket 前置校验并开始 route-back 后，每个 Zendesk 终态都尝试向 xieziling@agora.io 发送一封 Graph Mail。",
+        "邮件包含 Account Case ID、Zendesk ticket 链接、route-back 状态、group/assignee、取消 reply-job 数和触发时间，不包含客户问题正文或 secret。",
+        "Zendesk 成功但邮件失败时保持 route-back 成功，不重试 Zendesk；API 与审计明确记录 notification_email_status=failed。",
+        "Zendesk route-back 失败或 outcome_unknown 时仍尝试发送失败状态邮件，并保留原有 HTTP/fail-closed 语义。",
+        "未通过前置校验的请求不发送邮件。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Route-back email, Zendesk fence, UI and Graph Mail regression",
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_assignment backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment backend.tests.test_production_ui_contract backend.tests.test_worker backend.tests.test_workspace_invitations backend.tests.test_account_failure_alerts",
+          "details": "177 tests pass：覆盖 queued/assigned/already_human_owned/failed/outcome_unknown 邮件、固定收件人和无客户正文、邮件失败不重放 Zendesk、非法请求零邮件、审计状态、UI notification toast 与 120 秒 timeout，以及既有 worker/ownership/Graph Mail 回归。"
+        },
+        {
+          "type": "test",
+          "label": "JavaScript and generated Project Overview contracts",
+          "command": "node --check ui/production-ui/app.js && git diff --check && python3 scripts/generate_project_overview.py --check",
+          "details": "JavaScript syntax、diff whitespace、Project Overview generated view 校验通过；Production asset marker 为 20260821-route-back-email-1。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/services/graph_mail.py",
+        "backend/tests/test_account_zendesk_assignment.py"
+      ],
+      "created_at": "2026-08-21",
+      "updated_at": "2026-08-21",
+      "history": [
+        {
+          "at": "2026-08-21",
+          "event": "created",
+          "summary": "用户要求执行 Production Route back to queue 时同时给 xieziling@agora.io 发送邮件。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "completed",
+          "summary": "Route-back 的所有执行终态都会尝试发送 Graph Mail；通知失败进入 API/UI/审计但不回滚或重放 Zendesk，扩展回归通过。"
         }
       ],
       "legacy_refs": [],

@@ -31,7 +31,7 @@ class ProductionUiContractTests(unittest.TestCase):
         self.assertIn("/shared-ui/composer.js", html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260821-route-back-queue-1", html)
+        self.assertIn("20260821-route-back-email-1", html)
 
     def test_production_app_renders_zendesk_ticket_status(self) -> None:
         app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")
@@ -105,6 +105,9 @@ class ProductionUiContractTests(unittest.TestCase):
         self.assertIn("released_to_queue", app_source)
         self.assertIn("Assigned by Zendesk", app_source)
         self.assertIn("Queued in group", app_source)
+        self.assertIn("Notification email sent.", app_source)
+        self.assertIn("Notification email failed.", app_source)
+        self.assertIn("timeoutMs: 120_000", app_source)
         self.assertIn("route-back-button", styles)
         self.assertIn("route-back-chip", styles)
 

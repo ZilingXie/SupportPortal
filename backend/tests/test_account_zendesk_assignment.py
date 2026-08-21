@@ -21,6 +21,8 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
         self.repository.initialize()
         self.original_repository = main.ticket_repository
         self.original_dependency_overrides = dict(main.app.dependency_overrides)
+        self.send_mail_patcher = patch("backend.main.send_graph_mail")
+        self.send_mail = self.send_mail_patcher.start()
         main.ticket_repository = self.repository
         main.app.dependency_overrides[main.require_workspace_admin] = lambda: WorkspacePrincipal(
             account_id="assignment-test-admin",
@@ -65,6 +67,7 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
+        self.send_mail_patcher.stop()
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(self.original_dependency_overrides)
         main.ticket_repository = self.original_repository
@@ -186,6 +189,10 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "queued")
+        self.assertEqual(response.json()["notification_email_status"], "sent")
+        self.assertEqual(
+            response.json()["notification_email_recipient"], "xieziling@agora.io"
+        )
         route_back.assert_called_once_with(
             ticket_id="12807", source_group_id="27216253642772"
         )
@@ -200,6 +207,15 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
         events = self.repository.list_workspace_audit_events()
         self.assertEqual(events[0]["event_type"], "account_zendesk_route_back_to_queue")
         self.assertEqual(events[0]["payload"]["status"], "queued")
+        self.assertEqual(events[0]["payload"]["notification_email_status"], "sent")
+        self.send_mail.assert_called_once()
+        mail = self.send_mail.call_args.kwargs
+        self.assertEqual(mail["to_address"], "xieziling@agora.io")
+        self.assertIn("ticket #12807 route-back: queued", mail["subject"])
+        self.assertIn("Account Case ID: AC-12807", mail["body"])
+        self.assertIn("Result: queued", mail["body"])
+        self.assertIn("https://agoraio.zendesk.com/agent/tickets/12807", mail["body"])
+        self.assertNotIn("Question", mail["body"])
 
     def test_route_back_failure_keeps_ai_stopped_and_audits_failure(self) -> None:
         with patch(
@@ -222,6 +238,30 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
             self.repository.list_workspace_audit_events()[0]["payload"]["failure_code"],
             "zendesk_source_group_unavailable",
         )
+        failure_mail = self.send_mail.call_args.kwargs
+        self.assertIn("route-back: failed", failure_mail["subject"])
+        self.assertIn("Failure code: zendesk_source_group_unavailable", failure_mail["body"])
+
+    def test_route_back_outcome_unknown_sends_notification_without_retry(self) -> None:
+        with patch(
+            "backend.main.route_ticket_back_to_queue",
+            side_effect=ZendeskCommentError(
+                "outcome_unknown", error_code="zendesk_network_outcome_unknown"
+            ),
+        ) as route_back:
+            response = self.client.post(
+                "/api/account/cases/AC-12807/zendesk-route-back-to-queue"
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        route_back.assert_called_once()
+        self.send_mail.assert_called_once()
+        mail = self.send_mail.call_args.kwargs
+        self.assertIn("route-back: outcome_unknown", mail["subject"])
+        self.assertIn("Failure code: zendesk_network_outcome_unknown", mail["body"])
+        audit = self.repository.list_workspace_audit_events()[0]
+        self.assertEqual(audit["payload"]["status"], "outcome_unknown")
+        self.assertEqual(audit["payload"]["notification_email_status"], "sent")
 
     def test_route_back_rejects_non_production_case_before_zendesk(self) -> None:
         case = self.repository.get_account_case("AC-12807")
@@ -234,6 +274,7 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409, response.text)
         route_back.assert_not_called()
+        self.send_mail.assert_not_called()
         saved = self.repository.get_account_case("AC-12807")
         self.assertEqual(saved["automation_status"], "automation")
 
@@ -255,6 +296,38 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "already_human_owned")
         self.assertFalse(response.json()["updated"])
+        self.send_mail.assert_called_once()
+
+    def test_route_back_email_failure_is_visible_without_replaying_zendesk(self) -> None:
+        result = ZendeskRouteBackResult(
+            ticket_id="12807",
+            status="queued",
+            assignee_id=None,
+            group_id="27216253642772",
+            source_group_id="27216253642772",
+            status_code=200,
+            updated=True,
+        )
+        self.send_mail.side_effect = RuntimeError("mail unavailable")
+        with patch(
+            "backend.main.route_ticket_back_to_queue", return_value=result
+        ) as route_back:
+            response = self.client.post(
+                "/api/account/cases/AC-12807/zendesk-route-back-to-queue"
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "queued")
+        self.assertEqual(response.json()["notification_email_status"], "failed")
+        route_back.assert_called_once()
+        audit = self.repository.list_workspace_audit_events()[0]
+        self.assertEqual(audit["payload"]["notification_email_status"], "failed")
+        self.assertEqual(audit["payload"]["notification_email_error"], "RuntimeError")
+        saved = self.repository.get_account_case("AC-12807")
+        self.assertEqual(
+            saved["automation_context"]["zendesk_ownership"]["handoff_status"],
+            "queued",
+        )
 
     def test_route_back_outcome_unknown_cannot_be_blindly_retried(self) -> None:
         case = self.repository.get_account_case("AC-12807")
@@ -271,6 +344,7 @@ class AccountZendeskAssignmentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409, response.text)
         self.assertIn("verify the ticket", response.json()["detail"])
         route_back.assert_not_called()
+        self.send_mail.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
