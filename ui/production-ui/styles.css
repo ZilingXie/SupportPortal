@@ -1445,7 +1445,7 @@ select.input,
 
 .detail-header__actions {
   display: flex;
-  flex: 0 1 360px;
+  flex: 0 1 560px;
   align-items: flex-end;
   justify-content: flex-end;
   gap: 10px;
@@ -1454,6 +1454,52 @@ select.input,
 
 .detail-rerun-button {
   flex: 0 0 auto;
+}
+
+.route-back-button,
+.route-back-confirm-button,
+.route-back-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+}
+
+.route-back-button {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.route-back-confirm-button {
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: white;
+  background: var(--warning);
+  font-weight: 800;
+}
+
+.route-back-button .material-symbols-outlined,
+.route-back-confirm-button .material-symbols-outlined,
+.route-back-chip .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.route-back-chip {
+  min-height: 32px;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--success);
+  background: #e0f2e9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.route-back-chip--failed,
+.route-back-chip--outcome_unknown {
+  color: var(--danger);
+  background: #ffdad6;
 }
 
 .detail-title {

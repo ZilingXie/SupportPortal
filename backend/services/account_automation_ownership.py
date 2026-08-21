@@ -41,6 +41,7 @@ OWNERSHIP_STATE_FAILED = "failed"
 OWNERSHIP_STATE_OUTCOME_UNKNOWN = "outcome_unknown"
 OWNERSHIP_STATE_HUMAN_REASSIGNED = "human_reassigned"
 OWNERSHIP_STATE_HUMAN_REPLIED = "human_replied"
+OWNERSHIP_STATE_RELEASED_TO_QUEUE = "released_to_queue"
 OWNERSHIP_EVENT_TYPE = "zendesk_ai_ownership"
 
 
@@ -68,6 +69,7 @@ class OwnershipGateResult:
             OWNERSHIP_STATE_OUTCOME_UNKNOWN,
             OWNERSHIP_STATE_HUMAN_REASSIGNED,
             OWNERSHIP_STATE_HUMAN_REPLIED,
+            OWNERSHIP_STATE_RELEASED_TO_QUEUE,
         }
 
 
@@ -114,9 +116,13 @@ def _persist_ownership_state(
     zendesk_status_code: int | None,
     blocking_comment_id: str | None,
     failure_detail: str | None = None,
+    source_assignee_id: str | None = None,
+    source_group_id: str | None = None,
     updated_at: str,
 ) -> dict[str, Any]:
     context = _ownership_context(account_case)
+    previous = context.get(OWNERSHIP_CONTEXT_KEY)
+    previous = previous if isinstance(previous, dict) else {}
     context[OWNERSHIP_CONTEXT_KEY] = {
         "state": state,
         "assignee_id": assignee_id,
@@ -126,6 +132,13 @@ def _persist_ownership_state(
         "zendesk_status_code": zendesk_status_code,
         "failure_detail": failure_detail,
         "blocking_comment_id": blocking_comment_id,
+        "source_assignee_id": source_assignee_id
+        if source_assignee_id is not None
+        else previous.get("source_assignee_id"),
+        "source_group_id": source_group_id
+        if source_group_id is not None
+        else previous.get("source_group_id"),
+        "handoff_status": previous.get("handoff_status"),
         "confirmed_at": updated_at if state == OWNERSHIP_STATE_ASSIGNED else None,
         "updated_at": updated_at,
     }
@@ -145,6 +158,8 @@ def _ownership_result(
     zendesk_status_code: int | None = None,
     blocking_comment_id: str | None = None,
     failure_detail: str | None = None,
+    source_assignee_id: str | None = None,
+    source_group_id: str | None = None,
 ) -> OwnershipGateResult:
     _persist_ownership_state(
         account_case,
@@ -156,6 +171,8 @@ def _ownership_result(
         zendesk_status_code=zendesk_status_code,
         blocking_comment_id=blocking_comment_id,
         failure_detail=failure_detail,
+        source_assignee_id=source_assignee_id,
+        source_group_id=source_group_id,
         updated_at=updated_at,
     )
     return OwnershipGateResult(
@@ -170,6 +187,35 @@ def _ownership_result(
         blocking_comment_id=blocking_comment_id,
         updated_at=updated_at,
     )
+
+
+def mark_production_ownership_released(
+    account_case: dict[str, Any],
+    *,
+    updated_at: str,
+    handoff_status: str,
+    assignee_id: str | None = None,
+    group_id: str | None = None,
+    failure_code: str | None = None,
+    failure_category: str | None = None,
+    zendesk_status_code: int | None = None,
+    failure_detail: str | None = None,
+) -> dict[str, Any]:
+    ownership = _persist_ownership_state(
+        account_case,
+        state=OWNERSHIP_STATE_RELEASED_TO_QUEUE,
+        assignee_id=assignee_id,
+        group_id=group_id,
+        failure_code=failure_code,
+        failure_category=failure_category,
+        zendesk_status_code=zendesk_status_code,
+        blocking_comment_id=None,
+        failure_detail=failure_detail,
+        updated_at=updated_at,
+    )
+    ownership["handoff_status"] = str(handoff_status or "pending").strip() or "pending"
+    account_case["automation_context"][OWNERSHIP_CONTEXT_KEY] = ownership
+    return ownership
 
 
 def _snapshot_policy_blocker(
@@ -208,13 +254,25 @@ def ownership_gate_eligible(account_case: dict[str, Any]) -> bool:
         return False
     processing_profile = str(account_case.get("processing_profile") or "staging").strip().lower()
     zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
+    context = _ownership_context(account_case)
+    ownership = context.get(OWNERSHIP_CONTEXT_KEY)
+    ownership = ownership if isinstance(ownership, dict) else {}
+    locally_stopped = (
+        str(ownership.get("state") or "").strip().lower()
+        == OWNERSHIP_STATE_RELEASED_TO_QUEUE
+        or str(account_case.get("automation_status") or "").strip().lower()
+        in {"human_review_required", "human_review"}
+    )
     return bool(
         processing_profile == "production"
         and zendesk_ticket_id
-        and is_registered_automation(
-            route_family=account_case.get("route_family"),
-            execution_action=account_case.get("execution_action")
-            or account_case.get("route"),
+        and (
+            locally_stopped
+            or is_registered_automation(
+                route_family=account_case.get("route_family"),
+                execution_action=account_case.get("execution_action")
+                or account_case.get("route"),
+            )
         )
     )
 
@@ -245,6 +303,21 @@ def ensure_production_automation_ownership(
     previous = context.get(OWNERSHIP_CONTEXT_KEY)
     previous = previous if isinstance(previous, dict) else {}
     previous_state = str(previous.get("state") or "").strip().lower()
+
+    if (
+        previous_state == OWNERSHIP_STATE_RELEASED_TO_QUEUE
+        or str(account_case.get("automation_status") or "").strip().lower()
+        in {"human_review_required", "human_review"}
+    ):
+        return _ownership_result(
+            account_case,
+            state=OWNERSHIP_STATE_RELEASED_TO_QUEUE,
+            assignee_id=str(previous.get("assignee_id") or "").strip() or None,
+            group_id=str(previous.get("group_id") or "").strip() or None,
+            failure_code="zendesk_ownership_released_to_queue",
+            failure_category="policy",
+            updated_at=updated_at,
+        )
 
     try:
         snapshot = read_ticket_ownership_snapshot(ticket_id=zendesk_ticket_id)
@@ -404,6 +477,8 @@ def ensure_production_automation_ownership(
                         state=OWNERSHIP_STATE_ASSIGNED,
                         assignee_id=result.assignee_id,
                         group_id=result.group_id,
+                        source_assignee_id=snapshot.assignee_id,
+                        source_group_id=snapshot.group_id,
                         updated_at=updated_at,
                     )
             if attempt_exc is None:
@@ -421,6 +496,8 @@ def ensure_production_automation_ownership(
                 state=OWNERSHIP_STATE_ASSIGNED,
                 assignee_id=result.assignee_id,
                 group_id=result.group_id,
+                source_assignee_id=snapshot.assignee_id,
+                source_group_id=snapshot.group_id,
                 updated_at=updated_at,
             )
 
