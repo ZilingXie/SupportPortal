@@ -18,6 +18,9 @@ from backend.services.zendesk_comments import (
 ZENDESK_TICKET_API_BASE = "https://agoraio.zendesk.com/api/v2/tickets"
 ZENDESK_USER_API_BASE = "https://agoraio.zendesk.com/api/v2/users"
 ZENDESK_AI_ASSIGNEE_EMAIL_ENV = "ZENDESK_AI_ASSIGNEE_EMAIL"
+# Fraud review handoff: the Zendesk agent that receives a fraud_account case
+# after the automated public reply has been published.
+ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL_ENV = "ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL"
 # Zendesk ticket fields with field-level `required` reject every API ticket
 # update with 422 RecordInvalid "... needed" while they are empty, which is
 # what blocked the AI ownership assignment PUT on AC-12878/12879/12880/12893.
@@ -415,6 +418,31 @@ def assign_ticket_to_configured_ai(
 
     if not updated_stamp:
         raise _assignment_error("outcome_unknown", error_code="zendesk_ticket_updated_at_missing")
+    return _put_ticket_assignment(
+        normalized_ticket_id=normalized_ticket_id,
+        assignee_id=assignee_id,
+        assignee_email=actual_email,
+        assignee_name=str(user.get("name") or expected_email).strip(),
+        target_group_id=target_group_id,
+        previous_group_id=group_id,
+        updated_stamp=updated_stamp,
+        required_field_missing=required_field_missing,
+        timeout_seconds=timeout,
+    )
+
+
+def _put_ticket_assignment(
+    *,
+    normalized_ticket_id: str,
+    assignee_id: str,
+    assignee_email: str,
+    assignee_name: str,
+    target_group_id: str,
+    previous_group_id: str | None,
+    updated_stamp: str,
+    required_field_missing: bool,
+    timeout_seconds: float,
+) -> ZendeskAssignmentResult:
     update_payload: dict[str, Any] = {
         "assignee_id": int(assignee_id),
         "group_id": int(target_group_id),
@@ -436,7 +464,7 @@ def assign_ticket_to_configured_ai(
         method="PUT",
         url=f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json",
         data={"ticket": update_payload},
-        timeout_seconds=timeout,
+        timeout_seconds=timeout_seconds,
     )
     updated_ticket = updated_payload.get("ticket") if isinstance(updated_payload.get("ticket"), dict) else {}
     if (
@@ -448,11 +476,98 @@ def assign_ticket_to_configured_ai(
     return ZendeskAssignmentResult(
         ticket_id=normalized_ticket_id,
         assignee_id=assignee_id,
-        assignee_email=actual_email,
-        assignee_name=str(user.get("name") or expected_email).strip(),
+        assignee_email=assignee_email,
+        assignee_name=assignee_name,
         group_id=final_group_id,
-        previous_group_id=group_id,
-        group_changed=bool(group_id and final_group_id and group_id != final_group_id),
+        previous_group_id=previous_group_id,
+        group_changed=bool(previous_group_id and final_group_id and previous_group_id != final_group_id),
         status_code=status_code,
         already_assigned=False,
+    )
+
+
+def _resolve_reviewer_assignee(*, email: str, timeout_seconds: float) -> dict[str, Any]:
+    search_payload, _ = _request(
+        method="GET",
+        url=f"{ZENDESK_USER_API_BASE}/search.json?query={urllib.parse.quote(email)}",
+        timeout_seconds=timeout_seconds,
+    )
+    candidates = search_payload.get("users") if isinstance(search_payload.get("users"), list) else []
+    user = next(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, dict)
+            and str(candidate.get("email") or "").strip().lower() == email
+        ),
+        None,
+    )
+    if not isinstance(user, dict):
+        raise _assignment_error("permanent", error_code="zendesk_reviewer_not_found")
+    role = str(user.get("role") or "").strip().lower()
+    if (
+        not str(user.get("id") or "").strip().isdigit()
+        or not bool(user.get("active", False))
+        or bool(user.get("suspended", False))
+        or role != "agent"
+    ):
+        raise _assignment_error("permanent", error_code="zendesk_reviewer_invalid")
+    return user
+
+
+def assign_ticket_to_reviewer(
+    *,
+    ticket_id: str,
+    reviewer_email: str,
+    timeout_seconds: float = 15.0,
+) -> ZendeskAssignmentResult:
+    """Hand a ticket to a human reviewer agent and their default group."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    normalized_email = str(reviewer_email or "").strip().lower()
+    if not normalized_ticket_id or not normalized_email:
+        raise _assignment_error("permanent", error_code="zendesk_assignment_input_invalid")
+    try:
+        timeout = float(timeout_seconds)
+    except (TypeError, ValueError):
+        timeout = 15.0
+    if timeout <= 0:
+        timeout = 15.0
+
+    user = _resolve_reviewer_assignee(email=normalized_email, timeout_seconds=timeout)
+    assignee_id = str(user.get("id") or "").strip()
+    target_group_id = _configured_assignee_group_id(user)
+
+    ticket_payload, _ = _request(
+        method="GET",
+        url=f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json",
+        timeout_seconds=timeout,
+    )
+    current_ticket = ticket_payload.get("ticket") if isinstance(ticket_payload.get("ticket"), dict) else {}
+    current_assignee_id = str(current_ticket.get("assignee_id") or "").strip()
+    group_id = str(current_ticket.get("group_id") or "").strip() or None
+    updated_stamp = str(current_ticket.get("updated_at") or "").strip()
+    if current_assignee_id == assignee_id and group_id == target_group_id:
+        return ZendeskAssignmentResult(
+            ticket_id=normalized_ticket_id,
+            assignee_id=assignee_id,
+            assignee_email=normalized_email,
+            assignee_name=str(user.get("name") or normalized_email).strip(),
+            group_id=group_id,
+            previous_group_id=group_id,
+            group_changed=False,
+            status_code=200,
+            already_assigned=True,
+        )
+    if not updated_stamp:
+        raise _assignment_error("outcome_unknown", error_code="zendesk_ticket_updated_at_missing")
+    return _put_ticket_assignment(
+        normalized_ticket_id=normalized_ticket_id,
+        assignee_id=assignee_id,
+        assignee_email=normalized_email,
+        assignee_name=str(user.get("name") or normalized_email).strip(),
+        target_group_id=target_group_id,
+        previous_group_id=group_id,
+        updated_stamp=updated_stamp,
+        required_field_missing=_assignment_required_field_missing(current_ticket),
+        timeout_seconds=timeout,
     )

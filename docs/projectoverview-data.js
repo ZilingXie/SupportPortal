@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T02:52:20Z",
-  "source_base_commit": "0cffc5950cc0025b867b2e3e5953daf88b6f7dd0",
-  "registry_digest": "12cbbf74a459527a1fe43af1500013e2cc139f040ebf8eff9cab57448972a9f1",
+  "generated_at": "2026-08-21T03:37:20Z",
+  "source_base_commit": "0f8283baeff9c6e61a518d583401dd698a502068",
+  "registry_digest": "15cd539643e3d2d0cec6c1533adeeaab9d7c3769c566ea037b3c4bbc34edd062",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1157,7 +1157,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 10,
+      "task_count": 11,
       "done_count": 9,
       "blocked_count": 0
     },
@@ -7459,6 +7459,44 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "completed",
           "summary": "PR#831（顶层键形式）+ PR#832（custom_fields 数组修正）合并；EC2 生产栈部署 0cffc5950cc0，12893 实测接管成功且字段写入 video_calling，标记完成。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-84",
+      "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
+      "status": "active",
+      "owner": "zac",
+      "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL（=xieziling@agora.io，已实测该凭证有权限 assign，PUT 200）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
+      "next_action": "finalize 后部署 EC2，等下一个真实 fraud_account 工单验证 handoff 链路。",
+      "acceptance_criteria": [
+        "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
+        "assign_ticket_to_reviewer：按 email 搜索解析 reviewer（必须 active agent），assign 到其 default group；已 assign 则 no-op；复用 safe_update 与 required-field autofill 语义。",
+        "handoff 结果记录 zendesk_fraud_review_handoff 事件与结构化日志；失败/缺配置为 owner 可见信号，不影响已发布回复。",
+        "现有 assignment/ownership/worker/intake/comment 回归套件全部保持通过。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/worker.py",
+        "backend/tests/test_zendesk_ticket_assignment.py",
+        "backend/tests/test_worker.py",
+        ".env.example"
+      ],
+      "created_at": "2026-08-21",
+      "updated_at": "2026-08-21",
+      "history": [
+        {
+          "at": "2026-08-21",
+          "event": "created",
+          "summary": "用户提出 fraud 回复后转人工复审；先用 12895 实测 AI agent 凭证可 assign 给 xieziling（PUT 200）后立项实现。"
         }
       ],
       "legacy_refs": [],

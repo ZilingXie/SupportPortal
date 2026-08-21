@@ -11,7 +11,7 @@ import threading
 import time
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 if importlib.util.find_spec("psycopg") is None:
     raise unittest.SkipTest("psycopg is not installed in the local test environment")
@@ -25,6 +25,8 @@ from backend.repositories.ticket_repository import (
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_zendesk_internal_comment import AccountZendeskCommentResult
+from backend.services.zendesk_comments import ZendeskCommentError
+from backend.services.zendesk_ticket_assignment import ZendeskAssignmentResult
 from backend.services.enablement_completion_classifier import (
     EnablementCompletionClassification,
 )
@@ -203,6 +205,182 @@ def _zendesk_result(
         retryable=retryable,
         error_code=error_code,
     )
+
+
+class FraudReviewHandoffTests(unittest.TestCase):
+    def _fraud_case(self) -> dict:
+        return {
+            "account_case_id": "AC-FRAUD",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12895",
+            "route_family": "automated",
+            "execution_action": "fraud_account",
+        }
+
+    def test_public_fraud_delivery_hands_off_to_reviewer(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._fraud_case()
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        result = _zendesk_result(comment_id="comment-fraud")
+        assignment = ZendeskAssignmentResult(
+            ticket_id="12895",
+            assignee_id="31116634341396",
+            assignee_email="xieziling@agora.io",
+            assignee_name="Xie Ziling",
+            group_id="27216254064148",
+            previous_group_id="29388501432596",
+            group_changed=True,
+            status_code=200,
+            already_assigned=False,
+        )
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=result
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer", return_value=assignment
+        ) as assign_reviewer:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+            )
+
+        assign_reviewer.assert_called_once_with(
+            ticket_id="12895",
+            reviewer_email="xieziling@agora.io",
+        )
+        event_calls = [
+            call for call in repository.record_event.call_args_list
+            if call.args[1] == "zendesk_fraud_review_handoff"
+        ]
+        self.assertEqual(len(event_calls), 1)
+        payload = event_calls[0].args[2]
+        self.assertEqual(payload["state"], "assigned")
+        self.assertEqual(payload["assignee_id"], "31116634341396")
+
+    def test_internal_fraud_delivery_does_not_hand_off(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._fraud_case()
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": False,
+            "target_status": None,
+        }
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer"
+        ) as assign_reviewer:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+            )
+
+        assign_reviewer.assert_not_called()
+
+    def test_public_non_fraud_delivery_does_not_hand_off(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-EN",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "12838",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer"
+        ) as assign_reviewer:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12838", message_id="m-en", job_id="reply-en"
+            )
+
+        assign_reviewer.assert_not_called()
+
+    def test_handoff_failure_records_failed_event_without_failing_delivery(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._fraud_case()
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker,
+            "assign_ticket_to_reviewer",
+            side_effect=ZendeskCommentError("permanent", status_code=422, error_code="zendesk_http_error", detail="RecordInvalid | {...}"),
+        ):
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+            )
+
+        repository.complete_account_zendesk_comment_delivery.assert_not_called()
+        event_calls = [
+            call for call in repository.record_event.call_args_list
+            if call.args[1] == "zendesk_fraud_review_handoff"
+        ]
+        self.assertEqual(len(event_calls), 1)
+        payload = event_calls[0].args[2]
+        self.assertEqual(payload["state"], "failed")
+        self.assertEqual(payload["failure_code"], "zendesk_http_error")
+
+    def test_missing_reviewer_config_records_skipped_event(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._fraud_case()
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": ""}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer"
+        ) as assign_reviewer:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+            )
+
+        assign_reviewer.assert_not_called()
+        event_calls = [
+            call for call in repository.record_event.call_args_list
+            if call.args[1] == "zendesk_fraud_review_handoff"
+        ]
+        self.assertEqual(len(event_calls), 1)
+        self.assertEqual(event_calls[0].args[2]["state"], "skipped")
 
 
 class WorkerResilienceTests(unittest.TestCase):

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from backend.services.zendesk_comments import ZendeskCommentError
 from backend.services.zendesk_ticket_assignment import (
     assign_ticket_to_configured_ai,
+    assign_ticket_to_reviewer,
     read_ticket_ownership_snapshot,
 )
 
@@ -335,6 +336,103 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertFalse(snapshot.human_replied)
         self.assertIsNone(snapshot.blocking_comment_id)
         self.assertIsNone(snapshot.unresolved_public_comment_id)
+
+
+class ZendeskReviewerAssignmentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.basic_auth = base64.b64encode(b"supportportal@example.com:zendesk-api-token").decode("ascii")
+        self.config = {
+            "zendesk_basic_auth": self.basic_auth,
+            "ZENDESK_AI_ASSIGNEE_EMAIL": "ai-support-agent@agora.io",
+        }
+        self.reviewer = {
+            "id": 31116634341396,
+            "email": "xieziling@agora.io",
+            "name": "Xie Ziling",
+            "role": "agent",
+            "active": True,
+            "suspended": False,
+            "default_group_id": 27216254064148,
+        }
+
+    def test_assigns_ticket_to_reviewer_and_default_group(self) -> None:
+        responses = [
+            _FakeResponse({"users": [self.reviewer]}),
+            _FakeResponse({"ticket": {"id": 12895, "assignee_id": 48557297720084, "group_id": 29388501432596, "updated_at": "2026-08-21T03:12:05Z", "custom_fields": [{"id": 31503099534100, "value": "video_calling"}]}}),
+            _FakeResponse({"ticket": {"id": 12895, "assignee_id": 31116634341396, "group_id": 27216254064148}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = assign_ticket_to_reviewer(
+                ticket_id="12895",
+                reviewer_email="xieziling@agora.io",
+            )
+
+        self.assertFalse(result.already_assigned)
+        self.assertEqual(result.assignee_id, "31116634341396")
+        self.assertEqual(result.group_id, "27216254064148")
+        self.assertTrue(result.group_changed)
+        update_request = urlopen.call_args_list[2].args[0]
+        self.assertEqual(update_request.method, "PUT")
+        self.assertEqual(
+            json.loads(update_request.data.decode("utf-8")),
+            {
+                "ticket": {
+                    "assignee_id": 31116634341396,
+                    "group_id": 27216254064148,
+                    "safe_update": True,
+                    "updated_stamp": "2026-08-21T03:12:05Z",
+                }
+            },
+        )
+
+    def test_reviewer_already_assigned_does_not_put(self) -> None:
+        responses = [
+            _FakeResponse({"users": [self.reviewer]}),
+            _FakeResponse({"ticket": {"id": 12895, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-21T03:20:00Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = assign_ticket_to_reviewer(
+                ticket_id="12895",
+                reviewer_email="xieziling@agora.io",
+            )
+
+        self.assertTrue(result.already_assigned)
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_unknown_reviewer_email_fails_closed(self) -> None:
+        responses = [_FakeResponse({"users": []})]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            with self.assertRaises(ZendeskCommentError) as raised:
+                assign_ticket_to_reviewer(
+                    ticket_id="12895",
+                    reviewer_email="nobody@agora.io",
+                )
+
+        self.assertEqual(raised.exception.error_code, "zendesk_reviewer_not_found")
+
+    def test_inactive_reviewer_fails_closed(self) -> None:
+        inactive = dict(self.reviewer, active=False)
+        responses = [_FakeResponse({"users": [inactive]})]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            with self.assertRaises(ZendeskCommentError) as raised:
+                assign_ticket_to_reviewer(
+                    ticket_id="12895",
+                    reviewer_email="xieziling@agora.io",
+                )
+
+        self.assertEqual(raised.exception.error_code, "zendesk_reviewer_invalid")
 
 
 if __name__ == "__main__":

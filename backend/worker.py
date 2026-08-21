@@ -80,6 +80,11 @@ from backend.services.account_automation_delivery import (
 )
 from backend.services.automation_routing import is_registered_automation
 from backend.services.account_automation_ownership import ensure_production_automation_ownership
+from backend.services.zendesk_comments import ZendeskCommentError
+from backend.services.zendesk_ticket_assignment import (
+    ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL_ENV,
+    assign_ticket_to_reviewer,
+)
 from backend.services.account_zendesk_internal_comment import (
     AccountZendeskInternalCommentError,
     deliver_account_ai_message_as_internal_comment,
@@ -1244,6 +1249,119 @@ def _deliver_production_account_reply_to_zendesk(
                 delivery_is_public,
                 claim.get("target_status") or "none",
             )
+            if delivery_is_public:
+                _hand_off_fraud_review_after_public_reply(
+                    account_case=account_case,
+                    ticket_id=ticket_id,
+                    job_id=effective_job_id,
+                    message_id=effective_message_id,
+                )
+
+
+FRAUD_REVIEW_HANDOFF_EVENT_TYPE = "zendesk_fraud_review_handoff"
+
+
+def _hand_off_fraud_review_after_public_reply(
+    *,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    job_id: str | None = None,
+    message_id: str | None = None,
+) -> None:
+    """After the fraud public reply lands, hand the Zendesk ticket to the reviewer.
+
+    The reply is already published at this point, so a handoff failure is an
+    owner-visible signal (event + log), never a delivery failure.
+    """
+    execution_action = str(
+        account_case.get("execution_action") or account_case.get("route") or ""
+    ).strip()
+    if execution_action != "fraud_account":
+        return
+    effective_job_id = str(job_id or "").strip() or "unknown"
+    effective_message_id = str(message_id or "").strip() or "unknown"
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
+    reviewer_email = str(os.getenv(ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL_ENV) or "").strip().lower()
+    timestamp = now_iso()
+
+    def _record_event(state: str, **fields: Any) -> None:
+        ticket_repository.record_event(
+            ticket_id or None,
+            FRAUD_REVIEW_HANDOFF_EVENT_TYPE,
+            {
+                "account_case_id": account_case_id,
+                "state": state,
+                "created_at": timestamp,
+                **fields,
+            },
+        )
+
+    if not reviewer_email or not zendesk_ticket_id:
+        _record_event(
+            "skipped",
+            failure_code=(
+                "fraud_review_assignee_config_missing"
+                if not reviewer_email
+                else "fraud_review_zendesk_ticket_missing"
+            ),
+        )
+        LOGGER.warning(
+            "fraud_review_handoff_skipped job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s failure_code=%s",
+            effective_job_id,
+            ticket_id,
+            account_case_id or "unknown",
+            effective_message_id,
+            "fraud_review_assignee_config_missing" if not reviewer_email else "fraud_review_zendesk_ticket_missing",
+        )
+        return
+    try:
+        result = assign_ticket_to_reviewer(
+            ticket_id=zendesk_ticket_id,
+            reviewer_email=reviewer_email,
+        )
+    except ZendeskCommentError as exc:
+        _record_event(
+            "failed",
+            failure_code=exc.error_code,
+            failure_category=exc.category,
+            zendesk_status_code=exc.status_code,
+            failure_detail=getattr(exc, "detail", None),
+        )
+        LOGGER.warning(
+            "fraud_review_handoff_failed job_id=%s ticket_id=%s account_case_id=%s "
+            "message_id=%s failure_code=%s category=%s zendesk_status_code=%s failure_detail=%s",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+            exc.error_code or "unknown",
+            exc.category,
+            exc.status_code or "none",
+            getattr(exc, "detail", None) or "none",
+        )
+        return
+    state = "already_assigned" if result.already_assigned else "assigned"
+    _record_event(
+        state,
+        assignee_id=result.assignee_id,
+        group_id=result.group_id,
+        reviewer_email=result.assignee_email,
+    )
+    LOGGER.info(
+        "fraud_review_handoff_%s job_id=%s ticket_id=%s account_case_id=%s "
+        "message_id=%s assignee_id=%s group_id=%s",
+        state,
+        effective_job_id,
+        ticket_id,
+        account_case_id,
+        effective_message_id,
+        result.assignee_id,
+        result.group_id,
+    )
 
 
 def _account_reply_message_for_delivery(
