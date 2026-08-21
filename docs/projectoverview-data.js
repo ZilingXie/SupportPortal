@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T02:26:48Z",
-  "source_base_commit": "d6e603ffc71d6a97267edc6f4062e6b41d7cdc99",
-  "registry_digest": "dc7a1e835cc905ede92d9c84127f99909ad10fa786bbc626111a8b69e2078233",
+  "generated_at": "2026-08-21T02:45:43Z",
+  "source_base_commit": "2879a7235073ed8a65ad553ae437f462892433da",
+  "registry_digest": "5874771f810e37075de04e4e2a248f8f9c966e82ba348022b8d8fcce9dde976c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7380,7 +7380,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "12893 实测（PR#829 的 details 捕获）定位 422 真因：Zendesk 字段级 required 字段 31503099534100 \"SDK Product (Selectable)\" 为空时拒绝一切 API 工单更新（RecordInvalid \"needed\"），与路由窗口/时机无关；此前 12878/12879/12880 的手动成功都是因为人工在 UI 接手时被表单强制填了该字段。Zendesk 侧无法修改（用户确认），改为代码侧：assignment PUT 在该字段为空时自动带上默认值 video_calling，已有值（人工已选）一律不覆盖；快照与手动 GET 路径同样判定。",
-      "next_action": "finalize 合并后部署 EC2，在 12893 上实测手动 Take Ownership（字段仍为空）验证自动填充生效。",
+      "next_action": "修正 custom_fields 数组形式后重新部署 EC2,在 12893 上验证接管成功并标记完成。",
       "acceptance_criteria": [
         "assign_ticket_to_configured_ai 的 PUT 在字段 31503099534100 为空/缺失时附带默认值 video_calling；字段已有任何值（如人工选的 voice_calling）时完全不附带，不覆盖人工选择。",
         "ownership_snapshot 路径与手动 GET 路径使用同一判定（custom_fields 中该字段非空才算已填）。",
@@ -7400,6 +7400,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "created",
           "summary": "12893 追踪中由 failure_detail 的 details 捕获定位真因（required 字段而非路由窗口），用户决策采用代码侧自动填 video_calling。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "updated",
+          "summary": "首版（PR#831）用顶层 \"\u003cfield_id>\": \"\u003cvalue>\" 形式被该 Zendesk 账户静默忽略（12893 实测 PUT 仍报 needed）；改为 custom_fields 数组形式（12893 实测 200 并成功写入 video_calling）。"
         }
       ],
       "legacy_refs": [],

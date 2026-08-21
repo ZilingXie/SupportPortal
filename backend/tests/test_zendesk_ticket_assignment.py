@@ -66,7 +66,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
                     "group_id": 29388501432596,
                     "safe_update": True,
                     "updated_stamp": "2026-08-20T07:03:44Z",
-                    "31503099534100": "video_calling",
+                    "custom_fields": [{"id": 31503099534100, "value": "video_calling"}],
                 }
             },
         )

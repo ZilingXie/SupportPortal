@@ -422,7 +422,16 @@ def assign_ticket_to_configured_ai(
         "updated_stamp": updated_stamp,
     }
     if required_field_missing:
-        update_payload[ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID] = ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE
+        # The top-level "<field_id>": "<value>" form is silently ignored by this
+        # Zendesk account (verified live on ticket 12893: the PUT still failed
+        # with "needed" and the custom_fields array form was accepted), so the
+        # required field must ride in custom_fields.
+        update_payload["custom_fields"] = [
+            {
+                "id": int(ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID),
+                "value": ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE,
+            }
+        ]
     updated_payload, status_code = _request(
         method="PUT",
         url=f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json",
