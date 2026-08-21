@@ -19,8 +19,9 @@ ZENDESK_TICKET_API_BASE = "https://agoraio.zendesk.com/api/v2/tickets"
 ZENDESK_USER_API_BASE = "https://agoraio.zendesk.com/api/v2/users"
 ZENDESK_AI_ASSIGNEE_EMAIL_ENV = "ZENDESK_AI_ASSIGNEE_EMAIL"
 # Fraud review handoff: the Zendesk agent that receives a fraud_account case
-# after the automated public reply has been published.
-ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL_ENV = "ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL"
+# after the automated public reply has been published. Configured by numeric
+# user id because the AI agent token cannot search users by email.
+ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV = "ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID"
 # Zendesk ticket fields with field-level `required` reject every API ticket
 # update with 422 RecordInvalid "... needed" while they are empty, which is
 # what blocked the AI ownership assignment PUT on AC-12878/12879/12880/12893.
@@ -486,27 +487,19 @@ def _put_ticket_assignment(
     )
 
 
-def _resolve_reviewer_assignee(*, email: str, timeout_seconds: float) -> dict[str, Any]:
-    search_payload, _ = _request(
+def _resolve_reviewer_assignee(*, user_id: str, timeout_seconds: float) -> dict[str, Any]:
+    # The AI agent token cannot search users by email (users/search.json and
+    # show_many.json?emails= are scoped away), but GET /users/{id}.json works,
+    # so the reviewer is configured by numeric Zendesk user id.
+    user_payload, _ = _request(
         method="GET",
-        url=f"{ZENDESK_USER_API_BASE}/search.json?query={urllib.parse.quote(email)}",
+        url=f"{ZENDESK_USER_API_BASE}/{urllib.parse.quote(user_id, safe='')}.json",
         timeout_seconds=timeout_seconds,
     )
-    candidates = search_payload.get("users") if isinstance(search_payload.get("users"), list) else []
-    user = next(
-        (
-            candidate
-            for candidate in candidates
-            if isinstance(candidate, dict)
-            and str(candidate.get("email") or "").strip().lower() == email
-        ),
-        None,
-    )
-    if not isinstance(user, dict):
-        raise _assignment_error("permanent", error_code="zendesk_reviewer_not_found")
+    user = user_payload.get("user") if isinstance(user_payload.get("user"), dict) else {}
     role = str(user.get("role") or "").strip().lower()
     if (
-        not str(user.get("id") or "").strip().isdigit()
+        str(user.get("id") or "").strip() != user_id
         or not bool(user.get("active", False))
         or bool(user.get("suspended", False))
         or role != "agent"
@@ -518,13 +511,13 @@ def _resolve_reviewer_assignee(*, email: str, timeout_seconds: float) -> dict[st
 def assign_ticket_to_reviewer(
     *,
     ticket_id: str,
-    reviewer_email: str,
+    reviewer_user_id: str,
     timeout_seconds: float = 15.0,
 ) -> ZendeskAssignmentResult:
     """Hand a ticket to a human reviewer agent and their default group."""
     normalized_ticket_id = str(ticket_id or "").strip()
-    normalized_email = str(reviewer_email or "").strip().lower()
-    if not normalized_ticket_id or not normalized_email:
+    normalized_user_id = str(reviewer_user_id or "").strip()
+    if not normalized_ticket_id or not normalized_user_id.isdigit():
         raise _assignment_error("permanent", error_code="zendesk_assignment_input_invalid")
     try:
         timeout = float(timeout_seconds)
@@ -533,7 +526,7 @@ def assign_ticket_to_reviewer(
     if timeout <= 0:
         timeout = 15.0
 
-    user = _resolve_reviewer_assignee(email=normalized_email, timeout_seconds=timeout)
+    user = _resolve_reviewer_assignee(user_id=normalized_user_id, timeout_seconds=timeout)
     assignee_id = str(user.get("id") or "").strip()
     target_group_id = _configured_assignee_group_id(user)
 
@@ -550,8 +543,8 @@ def assign_ticket_to_reviewer(
         return ZendeskAssignmentResult(
             ticket_id=normalized_ticket_id,
             assignee_id=assignee_id,
-            assignee_email=normalized_email,
-            assignee_name=str(user.get("name") or normalized_email).strip(),
+            assignee_email=str(user.get("email") or "").strip(),
+            assignee_name=str(user.get("name") or normalized_user_id).strip(),
             group_id=group_id,
             previous_group_id=group_id,
             group_changed=False,
@@ -563,8 +556,8 @@ def assign_ticket_to_reviewer(
     return _put_ticket_assignment(
         normalized_ticket_id=normalized_ticket_id,
         assignee_id=assignee_id,
-        assignee_email=normalized_email,
-        assignee_name=str(user.get("name") or normalized_email).strip(),
+        assignee_email=str(user.get("email") or "").strip(),
+        assignee_name=str(user.get("name") or normalized_user_id).strip(),
         target_group_id=target_group_id,
         previous_group_id=group_id,
         updated_stamp=updated_stamp,

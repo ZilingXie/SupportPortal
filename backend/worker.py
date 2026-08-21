@@ -82,7 +82,7 @@ from backend.services.automation_routing import is_registered_automation
 from backend.services.account_automation_ownership import ensure_production_automation_ownership
 from backend.services.zendesk_comments import ZendeskCommentError
 from backend.services.zendesk_ticket_assignment import (
-    ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL_ENV,
+    ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV,
     assign_ticket_to_reviewer,
 )
 from backend.services.account_zendesk_internal_comment import (
@@ -1284,7 +1284,7 @@ def _hand_off_fraud_review_after_public_reply(
         account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
     ).strip()
     zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
-    reviewer_email = str(os.getenv(ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL_ENV) or "").strip().lower()
+    reviewer_user_id = str(os.getenv(ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV) or "").strip()
     timestamp = now_iso()
 
     def _record_event(state: str, **fields: Any) -> None:
@@ -1299,12 +1299,12 @@ def _hand_off_fraud_review_after_public_reply(
             },
         )
 
-    if not reviewer_email or not zendesk_ticket_id:
+    if not reviewer_user_id.isdigit() or not zendesk_ticket_id:
         _record_event(
             "skipped",
             failure_code=(
                 "fraud_review_assignee_config_missing"
-                if not reviewer_email
+                if not reviewer_user_id.isdigit()
                 else "fraud_review_zendesk_ticket_missing"
             ),
         )
@@ -1315,13 +1315,13 @@ def _hand_off_fraud_review_after_public_reply(
             ticket_id,
             account_case_id or "unknown",
             effective_message_id,
-            "fraud_review_assignee_config_missing" if not reviewer_email else "fraud_review_zendesk_ticket_missing",
+            "fraud_review_assignee_config_missing" if not reviewer_user_id.isdigit() else "fraud_review_zendesk_ticket_missing",
         )
         return
     try:
         result = assign_ticket_to_reviewer(
             ticket_id=zendesk_ticket_id,
-            reviewer_email=reviewer_email,
+            reviewer_user_id=reviewer_user_id,
         )
     except ZendeskCommentError as exc:
         _record_event(
