@@ -74,6 +74,18 @@ class OwnershipGateEligibilityTests(unittest.TestCase):
     def test_production_automated_case_is_eligible(self):
         self.assertTrue(ownership_gate_eligible(_production_case()))
 
+    def test_released_case_remains_fenced_after_route_metadata_changes(self):
+        self.assertTrue(
+            ownership_gate_eligible(
+                _production_case(
+                    execution_action="rag",
+                    automation_context={
+                        OWNERSHIP_CONTEXT_KEY: {"state": "released_to_queue"}
+                    },
+                )
+            )
+        )
+
 
 class OwnershipGateModeTests(unittest.TestCase):
     def test_default_human_assignment_without_public_reply_is_taken_over(self):
@@ -98,6 +110,53 @@ class OwnershipGateModeTests(unittest.TestCase):
         self.assertEqual(ownership["state"], "assigned")
         self.assertEqual(ownership["assignee_id"], "48557297720084")
         self.assertEqual(ownership["group_id"], "29388501432596")
+        self.assertEqual(ownership["source_assignee_id"], "31116634341396")
+        self.assertEqual(ownership["source_group_id"], "27216254064148")
+
+    def test_released_to_queue_state_blocks_gate_before_zendesk_read(self):
+        case = _production_case(
+            automation_context={
+                OWNERSHIP_CONTEXT_KEY: {
+                    "state": "released_to_queue",
+                    "source_group_id": "27216254064148",
+                    "handoff_status": "queued",
+                }
+            }
+        )
+        with patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot"
+        ) as read_snapshot, patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
+        ) as assign:
+            result = ensure_production_automation_ownership(
+                case, mode="gate", updated_at="2026-08-21T07:04:00Z"
+            )
+
+        self.assertEqual(result.state, "released_to_queue")
+        self.assertTrue(result.fail_closed)
+        self.assertEqual(
+            case["automation_context"][OWNERSHIP_CONTEXT_KEY]["source_group_id"],
+            "27216254064148",
+        )
+        self.assertEqual(
+            case["automation_context"][OWNERSHIP_CONTEXT_KEY]["handoff_status"],
+            "queued",
+        )
+        read_snapshot.assert_not_called()
+        assign.assert_not_called()
+
+    def test_human_review_status_blocks_gate_before_zendesk_read(self):
+        case = _production_case(automation_status="human_review_required")
+        with patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot"
+        ) as read_snapshot:
+            result = ensure_production_automation_ownership(
+                case, mode="verify", updated_at="2026-08-21T07:04:00Z"
+            )
+
+        self.assertEqual(result.state, "released_to_queue")
+        self.assertTrue(result.fail_closed)
+        read_snapshot.assert_not_called()
 
     def test_public_human_reply_blocks_takeover(self):
         case = _production_case()

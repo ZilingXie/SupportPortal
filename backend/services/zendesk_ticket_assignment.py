@@ -29,6 +29,8 @@ ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV = "ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID"
 # overwrite a value a human already chose.
 ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID = "31503099534100"
 ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE = "video_calling"
+ZENDESK_WAITING_FOR_SUPPORT_CUSTOM_STATUS_ID = "26895324619412"
+ZENDESK_ROUTE_BACK_TAGS = ("auto_route", "supportportal_human_fallback")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,17 @@ class ZendeskAssignmentResult:
     group_changed: bool
     status_code: int
     already_assigned: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ZendeskRouteBackResult:
+    ticket_id: str
+    status: str
+    assignee_id: str | None
+    group_id: str | None
+    source_group_id: str | None
+    status_code: int
+    updated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +79,100 @@ def _assignment_required_field_missing(ticket: dict[str, Any]) -> bool:
         ):
             return not str(entry.get("value") or "").strip()
     return True
+
+
+def _ticket_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return payload.get("ticket") if isinstance(payload.get("ticket"), dict) else {}
+
+
+def _route_back_state(
+    *,
+    ticket_id: str,
+    ticket: dict[str, Any],
+    ai_assignee_id: str,
+    ai_group_id: str,
+    source_group_id: str | None,
+    status_code: int,
+    updated: bool,
+) -> ZendeskRouteBackResult | None:
+    assignee_id = str(ticket.get("assignee_id") or "").strip() or None
+    group_id = str(ticket.get("group_id") or "").strip() or None
+    if assignee_id and assignee_id != ai_assignee_id:
+        return ZendeskRouteBackResult(
+            ticket_id=ticket_id,
+            status="assigned" if updated else "already_human_owned",
+            assignee_id=assignee_id,
+            group_id=group_id,
+            source_group_id=source_group_id or group_id,
+            status_code=status_code,
+            updated=updated,
+        )
+    if not assignee_id and group_id and group_id != ai_group_id:
+        return ZendeskRouteBackResult(
+            ticket_id=ticket_id,
+            status="queued",
+            assignee_id=None,
+            group_id=group_id,
+            source_group_id=source_group_id or group_id,
+            status_code=status_code,
+            updated=updated,
+        )
+    return None
+
+
+def _source_group_from_audits(
+    *, ticket_id: str, ai_group_id: str, timeout_seconds: float
+) -> str | None:
+    quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
+    endpoint_path = f"/api/v2/tickets/{quoted_ticket_id}/audits.json"
+    next_url: str | None = f"{ZENDESK_TICKET_API_BASE}/{quoted_ticket_id}/audits.json?per_page=100"
+    seen_urls: set[str] = set()
+    candidates: list[tuple[str, str]] = []
+    while next_url is not None:
+        parsed = urllib.parse.urlparse(next_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "agoraio.zendesk.com"
+            or parsed.path != endpoint_path
+            or next_url in seen_urls
+        ):
+            raise _assignment_error(
+                "outcome_unknown", error_code="zendesk_audits_pagination_invalid"
+            )
+        seen_urls.add(next_url)
+        payload, _ = _request(method="GET", url=next_url, timeout_seconds=timeout_seconds)
+        audits = payload.get("audits")
+        if not isinstance(audits, list):
+            raise _assignment_error("outcome_unknown", error_code="zendesk_response_invalid")
+        for audit in audits:
+            if not isinstance(audit, dict):
+                raise _assignment_error("outcome_unknown", error_code="zendesk_response_invalid")
+            audit_id = str(audit.get("id") or "").strip()
+            for event in audit.get("events") or []:
+                if not isinstance(event, dict):
+                    continue
+                if str(event.get("field_name") or "") != "group_id":
+                    continue
+                new_group_id = str(event.get("value") or "").strip()
+                old_group_id = str(event.get("previous_value") or "").strip()
+                if (
+                    new_group_id == ai_group_id
+                    and old_group_id.isdigit()
+                    and old_group_id != ai_group_id
+                ):
+                    candidates.append((audit_id, old_group_id))
+        raw_next_page = payload.get("next_page")
+        if raw_next_page is None:
+            next_url = None
+        elif isinstance(raw_next_page, str) and raw_next_page.strip():
+            next_url = raw_next_page.strip()
+        else:
+            raise _assignment_error(
+                "outcome_unknown", error_code="zendesk_audits_pagination_invalid"
+            )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: int(item[0]) if item[0].isdigit() else -1)[1]
 
 
 def _assignment_error(
@@ -485,6 +592,141 @@ def _put_ticket_assignment(
         status_code=status_code,
         already_assigned=False,
     )
+
+
+def route_ticket_back_to_queue(
+    *,
+    ticket_id: str,
+    source_group_id: str | None = None,
+    timeout_seconds: float = 15.0,
+) -> ZendeskRouteBackResult:
+    """Release an AI-owned ticket into its proven prior Zendesk group."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_ticket_id.isdigit():
+        raise _assignment_error("permanent", error_code="zendesk_assignment_input_invalid")
+    try:
+        timeout = float(timeout_seconds)
+    except (TypeError, ValueError):
+        timeout = 15.0
+    if timeout <= 0:
+        timeout = 15.0
+
+    expected_email = _configured_assignee_email()
+    ai_assignee_id, ai_user = _resolve_configured_assignee(
+        expected_email=expected_email,
+        timeout_seconds=timeout,
+    )
+    ai_group_id = _configured_assignee_group_id(ai_user)
+    quoted_ticket_id = urllib.parse.quote(normalized_ticket_id, safe="")
+    ticket_url = f"{ZENDESK_TICKET_API_BASE}/{quoted_ticket_id}.json"
+    ticket_payload, read_status = _request(
+        method="GET", url=ticket_url, timeout_seconds=timeout
+    )
+    current_ticket = _ticket_from_payload(ticket_payload)
+    current_status = str(current_ticket.get("status") or "").strip().lower()
+    if current_status in {"solved", "closed"}:
+        raise _assignment_error("permanent", error_code="zendesk_ticket_closed")
+
+    stable = _route_back_state(
+        ticket_id=normalized_ticket_id,
+        ticket=current_ticket,
+        ai_assignee_id=ai_assignee_id,
+        ai_group_id=ai_group_id,
+        source_group_id=str(source_group_id or "").strip() or None,
+        status_code=read_status,
+        updated=False,
+    )
+    if stable is not None:
+        return stable
+
+    restored_group_id = str(source_group_id or "").strip()
+    if not restored_group_id.isdigit() or restored_group_id == ai_group_id:
+        restored_group_id = (
+            _source_group_from_audits(
+                ticket_id=normalized_ticket_id,
+                ai_group_id=ai_group_id,
+                timeout_seconds=timeout,
+            )
+            or ""
+        )
+    if not restored_group_id.isdigit() or restored_group_id == ai_group_id:
+        raise _assignment_error(
+            "permanent", error_code="zendesk_source_group_unavailable"
+        )
+    updated_stamp = str(current_ticket.get("updated_at") or "").strip()
+    if not updated_stamp:
+        raise _assignment_error(
+            "outcome_unknown", error_code="zendesk_ticket_updated_at_missing"
+        )
+    update_payload: dict[str, Any] = {
+        "assignee_id": None,
+        "group_id": int(restored_group_id),
+        "status": "open",
+        "custom_status_id": int(ZENDESK_WAITING_FOR_SUPPORT_CUSTOM_STATUS_ID),
+        "additional_tags": list(ZENDESK_ROUTE_BACK_TAGS),
+        "safe_update": True,
+        "updated_stamp": updated_stamp,
+    }
+    if _assignment_required_field_missing(current_ticket):
+        update_payload["custom_fields"] = [
+            {
+                "id": int(ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID),
+                "value": ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE,
+            }
+        ]
+    put_status = 200
+    try:
+        _updated_payload, put_status = _request(
+            method="PUT",
+            url=ticket_url,
+            data={"ticket": update_payload},
+            timeout_seconds=timeout,
+        )
+    except ZendeskCommentError as exc:
+        if exc.category != "outcome_unknown":
+            raise
+        try:
+            reconciled_payload, reconciled_status = _request(
+                method="GET", url=ticket_url, timeout_seconds=timeout
+            )
+        except ZendeskCommentError:
+            raise exc from None
+        reconciled = _route_back_state(
+            ticket_id=normalized_ticket_id,
+            ticket=_ticket_from_payload(reconciled_payload),
+            ai_assignee_id=ai_assignee_id,
+            ai_group_id=ai_group_id,
+            source_group_id=restored_group_id,
+            status_code=reconciled_status,
+            updated=True,
+        )
+        if reconciled is not None and (
+            reconciled.status == "assigned" or reconciled.group_id == restored_group_id
+        ):
+            return reconciled
+        raise exc from None
+
+    readback_payload, readback_status = _request(
+        method="GET", url=ticket_url, timeout_seconds=timeout
+    )
+    readback = _route_back_state(
+        ticket_id=normalized_ticket_id,
+        ticket=_ticket_from_payload(readback_payload),
+        ai_assignee_id=ai_assignee_id,
+        ai_group_id=ai_group_id,
+        source_group_id=restored_group_id,
+        status_code=put_status or readback_status,
+        updated=True,
+    )
+    if readback is None or (
+        readback.status != "assigned" and readback.group_id != restored_group_id
+    ):
+        raise _assignment_error(
+            "outcome_unknown",
+            status_code=readback_status,
+            error_code="zendesk_route_back_unverified",
+        )
+    return readback
 
 
 def _resolve_reviewer_assignee(*, user_id: str, timeout_seconds: float) -> dict[str, Any]:

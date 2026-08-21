@@ -31,7 +31,7 @@ class ProductionUiContractTests(unittest.TestCase):
         self.assertIn("/shared-ui/composer.js", html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260821-zendesk-status-1", html)
+        self.assertIn("20260821-route-back-queue-1", html)
 
     def test_production_app_renders_zendesk_ticket_status(self) -> None:
         app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")
@@ -93,6 +93,20 @@ class ProductionUiContractTests(unittest.TestCase):
 
         self.assertIn("AI reply scheduled", app_source)
         self.assertIn("standard 6-10 minute delay", app_source)
+
+    def test_production_app_exposes_manual_route_back_to_queue(self) -> None:
+        app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/production-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("Route back to queue", app_source)
+        self.assertIn("zendesk-route-back-to-queue", app_source)
+        self.assertIn("open-route-back-confirmation", app_source)
+        self.assertIn("confirm-route-back", app_source)
+        self.assertIn("released_to_queue", app_source)
+        self.assertIn("Assigned by Zendesk", app_source)
+        self.assertIn("Queued in group", app_source)
+        self.assertIn("route-back-button", styles)
+        self.assertIn("route-back-chip", styles)
 
     def test_production_app_javascript_syntax(self) -> None:
         result = subprocess.run(

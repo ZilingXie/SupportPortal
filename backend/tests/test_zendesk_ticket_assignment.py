@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from backend.services.zendesk_comments import ZendeskCommentError
@@ -11,6 +12,7 @@ from backend.services.zendesk_ticket_assignment import (
     assign_ticket_to_configured_ai,
     assign_ticket_to_reviewer,
     read_ticket_ownership_snapshot,
+    route_ticket_back_to_queue,
 )
 
 
@@ -432,6 +434,139 @@ class ZendeskReviewerAssignmentTests(unittest.TestCase):
                 )
 
         self.assertEqual(raised.exception.error_code, "zendesk_reviewer_invalid")
+
+    def test_route_back_releases_ai_to_saved_source_group_and_reads_back(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _FakeResponse({"ticket": {"id": 12899}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": None, "group_id": 27216253642772, "status": "open"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(
+                ticket_id="12899", source_group_id="27216253642772"
+            )
+
+        self.assertEqual(result.status, "queued")
+        self.assertTrue(result.updated)
+        update_request = urlopen.call_args_list[2].args[0]
+        self.assertEqual(update_request.method, "PUT")
+        self.assertEqual(
+            json.loads(update_request.data.decode("utf-8"))["ticket"],
+            {
+                "assignee_id": None,
+                "group_id": 27216253642772,
+                "status": "open",
+                "custom_status_id": 26895324619412,
+                "additional_tags": ["auto_route", "supportportal_human_fallback"],
+                "safe_update": True,
+                "updated_stamp": "2026-08-21T07:00:00Z",
+                "custom_fields": [{"id": 31503099534100, "value": "video_calling"}],
+            },
+        )
+
+    def test_route_back_never_clears_existing_human_assignment(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 31116634341396, "group_id": 27216253642772, "status": "open", "updated_at": "2026-08-21T07:00:00Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(ticket_id="12899")
+
+        self.assertEqual(result.status, "already_human_owned")
+        self.assertFalse(result.updated)
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_route_back_already_queued_does_not_put(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": None, "group_id": 27216253642772, "status": "open", "updated_at": "2026-08-21T07:00:00Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(ticket_id="12899")
+
+        self.assertEqual(result.status, "queued")
+        self.assertFalse(result.updated)
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_route_back_recovers_source_group_from_assignment_audit(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z", "custom_fields": [{"id": 31503099534100, "value": "voice_calling"}]}}),
+            _FakeResponse({"audits": [{"id": 700, "events": [{"field_name": "group_id", "previous_value": "27216254064148", "value": "29388501432596"}]}], "next_page": None}),
+            _FakeResponse({"ticket": {"id": 12899}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 40430228336660, "group_id": 27216254064148, "status": "open"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            result = route_ticket_back_to_queue(ticket_id="12899")
+
+        self.assertEqual(result.status, "assigned")
+        self.assertEqual(result.source_group_id, "27216254064148")
+
+    def test_route_back_outcome_unknown_reconciles_with_get_without_second_put(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            urllib.error.URLError("connection reset"),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": None, "group_id": 27216253642772, "status": "open"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(
+                ticket_id="12899", source_group_id="27216253642772"
+            )
+
+        self.assertEqual(result.status, "queued")
+        self.assertEqual(
+            sum(call.args[0].method == "PUT" for call in urlopen.call_args_list), 1
+        )
+
+    def test_route_back_rejects_closed_ticket(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "closed", "updated_at": "2026-08-21T07:00:00Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            with self.assertRaises(ZendeskCommentError) as raised:
+                route_ticket_back_to_queue(ticket_id="12899")
+
+        self.assertEqual(raised.exception.error_code, "zendesk_ticket_closed")
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_route_back_fails_closed_when_no_prior_human_group_is_proven(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _FakeResponse({"audits": [], "next_page": None}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            with self.assertRaises(ZendeskCommentError) as raised:
+                route_ticket_back_to_queue(ticket_id="12899")
+
+        self.assertEqual(raised.exception.error_code, "zendesk_source_group_unavailable")
+        self.assertEqual(
+            sum(call.args[0].method == "PUT" for call in urlopen.call_args_list), 0
+        )
 
 
 if __name__ == "__main__":

@@ -126,6 +126,7 @@ from backend.services.internal_email_payload import (
 from backend.services.account_automation_ownership import (
     OWNERSHIP_EVENT_TYPE,
     ensure_production_automation_ownership,
+    mark_production_ownership_released,
     ownership_gate_eligible,
 )
 from backend.services.automation_routing import (
@@ -239,7 +240,9 @@ from backend.services.zendesk_comments import (
 )
 from backend.services.zendesk_ticket_assignment import (
     ZendeskAssignmentResult,
+    ZendeskRouteBackResult,
     assign_ticket_to_configured_ai,
+    route_ticket_back_to_queue,
 )
 from backend.services.account_case_filters import (
     account_case_filter_definitions,
@@ -4853,6 +4856,18 @@ def _account_zendesk_assignment_http_error(exc: ZendeskCommentError) -> HTTPExce
         return HTTPException(status_code=409, detail="Zendesk assignment result could not be verified")
     if exc.error_code == "zendesk_assignment_input_invalid":
         return HTTPException(status_code=422, detail="Zendesk ticket id is required")
+    if exc.error_code == "zendesk_ticket_closed":
+        return HTTPException(status_code=409, detail="Solved or closed Zendesk tickets cannot be routed")
+    if exc.error_code == "zendesk_source_group_unavailable":
+        return HTTPException(
+            status_code=409,
+            detail="The ticket's prior human group could not be verified; route it manually in Zendesk",
+        )
+    if exc.error_code == "zendesk_route_back_unverified":
+        return HTTPException(
+            status_code=409,
+            detail="Zendesk route-back result could not be verified; check the ticket before retrying",
+        )
     if exc.category == "retryable":
         return HTTPException(status_code=503, detail="Zendesk is temporarily unavailable; retry the assignment")
     if exc.category == "outcome_unknown":
@@ -4931,6 +4946,174 @@ async def assign_account_case_to_zendesk_ai(
     except ZendeskCommentError as exc:
         raise _account_zendesk_assignment_http_error(exc) from None
     return _account_zendesk_assignment_payload(
+        account_case_id=normalized_case_id,
+        result=result,
+    )
+
+
+def _account_zendesk_route_back_payload(
+    *, account_case_id: str, result: ZendeskRouteBackResult
+) -> dict[str, Any]:
+    return {
+        "status": result.status,
+        "account_case_id": account_case_id,
+        "zendesk_ticket_id": result.ticket_id,
+        "assignee_id": result.assignee_id,
+        "group_id": result.group_id,
+        "source_group_id": result.source_group_id,
+        "updated": result.updated,
+    }
+
+
+@app.post("/api/account/cases/{account_case_id}/zendesk-route-back-to-queue")
+async def route_account_case_back_to_zendesk_queue(
+    account_case_id: str,
+    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    normalized_case_id = str(account_case_id or "").strip()
+    if not normalized_case_id:
+        raise HTTPException(status_code=422, detail="account case id is required")
+
+    bundles = await async_to_thread(
+        ticket_repository.get_account_case_details, [normalized_case_id]
+    )
+    bundle = bundles.get(normalized_case_id)
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("account_case"), dict):
+        raise HTTPException(status_code=404, detail="account case not found")
+    account_case = dict(bundle["account_case"])
+    if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
+        raise HTTPException(
+            status_code=409,
+            detail="Route back to queue is available only for Production cases",
+        )
+    canonical_ticket = bundle.get("ticket")
+    ticket_id = str(
+        (canonical_ticket or {}).get("ticket_id")
+        if isinstance(canonical_ticket, dict)
+        else ""
+    ).strip()
+    if not ticket_id:
+        ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
+    if not zendesk_ticket_id:
+        zendesk_ticket_id = _zendesk_ticket_id_from_source(account_case.get("source")) or ""
+    if not zendesk_ticket_id and ticket_id.isdigit():
+        zendesk_ticket_id = ticket_id
+    if not zendesk_ticket_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Account Case is not linked to a numeric Zendesk ticket",
+        )
+
+    timestamp = now_iso()
+    prior_context = account_case.get("automation_context")
+    prior_context = prior_context if isinstance(prior_context, dict) else {}
+    prior_ownership = prior_context.get("zendesk_ownership")
+    prior_ownership = prior_ownership if isinstance(prior_ownership, dict) else {}
+    if (
+        str(prior_ownership.get("state") or "").strip() == "released_to_queue"
+        and str(prior_ownership.get("handoff_status") or "").strip()
+        == "outcome_unknown"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="The previous route-back outcome is unknown; verify the ticket in Zendesk before any retry",
+        )
+    source_group_id = str(prior_ownership.get("source_group_id") or "").strip() or None
+    account_case.update(
+        {
+            "automation_status": "human_review_required",
+            "policy_decision": "manual_zendesk_route_back_to_queue",
+            "not_automated_reason": "manual_zendesk_route_back_to_queue",
+            "route_status": "not_automated",
+            "updated_at": timestamp,
+        }
+    )
+    mark_production_ownership_released(
+        account_case,
+        updated_at=timestamp,
+        handoff_status="pending",
+        assignee_id=str(prior_ownership.get("assignee_id") or "").strip() or None,
+        group_id=str(prior_ownership.get("group_id") or "").strip() or None,
+    )
+    await async_to_thread(ticket_repository.save_account_case, account_case)
+    cancelled_jobs = await async_to_thread(
+        ticket_repository.cancel_pending_account_reply_jobs,
+        ticket_id,
+        updated_at=timestamp,
+    )
+
+    try:
+        result = await async_to_thread(
+            route_ticket_back_to_queue,
+            ticket_id=zendesk_ticket_id,
+            source_group_id=source_group_id,
+        )
+    except ZendeskCommentError as exc:
+        handoff_status = "outcome_unknown" if exc.category == "outcome_unknown" else "failed"
+        failure_at = now_iso()
+        account_case["updated_at"] = failure_at
+        mark_production_ownership_released(
+            account_case,
+            updated_at=failure_at,
+            handoff_status=handoff_status,
+            assignee_id=str(prior_ownership.get("assignee_id") or "").strip() or None,
+            group_id=str(prior_ownership.get("group_id") or "").strip() or None,
+            failure_code=exc.error_code,
+            failure_category=exc.category,
+            zendesk_status_code=exc.status_code,
+            failure_detail=getattr(exc, "detail", None),
+        )
+        await async_to_thread(ticket_repository.save_account_case, account_case)
+        await async_to_thread(
+            ticket_repository.record_workspace_audit_event,
+            "account_zendesk_route_back_to_queue",
+            actor_id=principal.account_id,
+            target_id=normalized_case_id,
+            payload={
+                "status": handoff_status,
+                "zendesk_ticket_id": zendesk_ticket_id,
+                "failure_code": exc.error_code,
+                "failure_category": exc.category,
+                "zendesk_status_code": exc.status_code,
+                "reply_jobs_cancelled": cancelled_jobs,
+            },
+            created_at=timestamp,
+        )
+        if exc.category == "outcome_unknown":
+            raise HTTPException(
+                status_code=409,
+                detail="Zendesk route-back outcome is unknown; verify the ticket before any retry",
+            ) from None
+        raise _account_zendesk_assignment_http_error(exc) from None
+
+    completed_at = now_iso()
+    account_case["updated_at"] = completed_at
+    mark_production_ownership_released(
+        account_case,
+        updated_at=completed_at,
+        handoff_status=result.status,
+        assignee_id=result.assignee_id,
+        group_id=result.group_id,
+    )
+    await async_to_thread(ticket_repository.save_account_case, account_case)
+    await async_to_thread(
+        ticket_repository.record_workspace_audit_event,
+        "account_zendesk_route_back_to_queue",
+        actor_id=principal.account_id,
+        target_id=normalized_case_id,
+        payload={
+            "status": result.status,
+            "zendesk_ticket_id": result.ticket_id,
+            "assignee_id": result.assignee_id,
+            "group_id": result.group_id,
+            "source_group_id": result.source_group_id,
+            "zendesk_updated": result.updated,
+            "reply_jobs_cancelled": cancelled_jobs,
+        },
+        created_at=completed_at,
+    )
+    return _account_zendesk_route_back_payload(
         account_case_id=normalized_case_id,
         result=result,
     )

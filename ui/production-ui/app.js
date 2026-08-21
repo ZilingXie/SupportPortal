@@ -141,7 +141,8 @@ const state = {
   zendeskCommentPendingMessageId: "",
   zendeskCommentError: "",
   zendeskCommentErrorMessageId: "",
-  zendeskOwnershipConfirmationOpen: false,
+  routeBackConfirmationOpen: false,
+  isRoutingBackToQueue: false,
 };
 
 let accessToken = readStorage(ACCOUNT_ACCESS_TOKEN_KEY, "");
@@ -503,6 +504,43 @@ function zendeskTicketLabel(link) {
 function accountTicketNumber(item) {
   return zendeskTicketId(safeSourceLink(item?.source))
     || String(item?.ticket_id || item?.client_ticket_id || "").trim();
+}
+
+function routeBackOwnership(item) {
+  const context = item?.automation_context;
+  const ownership = context && typeof context === "object" ? context.zendesk_ownership : null;
+  return ownership && typeof ownership === "object" ? ownership : {};
+}
+
+function routeBackCompleted(item) {
+  return String(routeBackOwnership(item).state || "") === "released_to_queue";
+}
+
+function renderRouteBackAction(item) {
+  const ticketNumber = accountTicketNumber(item);
+  if (!/^\d+$/.test(ticketNumber)) return "";
+  const ownership = routeBackOwnership(item);
+  if (routeBackCompleted(item)) {
+    const handoffStatus = String(ownership.handoff_status || "pending").trim();
+    const label = handoffStatus === "assigned"
+      ? "Assigned by Zendesk"
+      : handoffStatus === "already_human_owned"
+        ? "Human owned"
+        : handoffStatus === "queued"
+          ? "Queued in Zendesk"
+          : handoffStatus === "failed"
+            ? "Route back failed"
+            : handoffStatus === "outcome_unknown"
+              ? "Route back unverified"
+              : "Route back pending";
+    return `<span class="route-back-chip route-back-chip--${escapeHtml(handoffStatus)}"><span class="material-symbols-outlined" aria-hidden="true">move_up</span>${escapeHtml(label)}</span>`;
+  }
+  return `
+    <button class="ghost-button route-back-button" type="button" data-action="open-route-back-confirmation" ${state.isRoutingBackToQueue ? "disabled" : ""}>
+      <span class="material-symbols-outlined" aria-hidden="true">move_up</span>
+      Route back to queue
+    </button>
+  `;
 }
 
 function normalizeCaseNumberQuery(value) {
@@ -1992,6 +2030,7 @@ function renderDetailView() {
         </div>
         <div class="detail-header__actions">
           ${renderClassificationBadges(item)}
+          ${renderRouteBackAction(item)}
           <button
             class="danger-button detail-rerun-button"
             type="button"
@@ -2424,6 +2463,72 @@ function renderRerouteConfirmation() {
   `;
 }
 
+function renderRouteBackConfirmation() {
+  if (!state.routeBackConfirmationOpen || !state.activeItem) return "";
+  const ticketNumber = accountTicketNumber(state.activeItem);
+  return `
+    <div class="reroute-modal-backdrop" data-action="close-route-back-confirmation">
+      <section class="reroute-modal" role="dialog" aria-modal="true" aria-labelledby="route-back-dialog-title" data-route-back-dialog>
+        <div class="reroute-modal__heading">
+          <span class="material-symbols-outlined" aria-hidden="true">move_up</span>
+          <div>
+            <h2 id="route-back-dialog-title">Route Ticket #${escapeHtml(ticketNumber)} back to queue?</h2>
+            <p>AI automation will stop immediately and any pending AI reply will be cancelled.</p>
+          </div>
+        </div>
+        <p>Zendesk will route the ticket from its previous human group. An existing human assignment will be preserved.</p>
+        <div class="reroute-modal__actions">
+          <button class="ghost-button" type="button" data-action="close-route-back-confirmation" ${state.isRoutingBackToQueue ? "disabled" : ""}>Cancel</button>
+          <button class="route-back-confirm-button" type="button" data-action="confirm-route-back" ${state.isRoutingBackToQueue ? "disabled" : ""}>
+            <span class="material-symbols-outlined" aria-hidden="true">move_up</span>
+            ${state.isRoutingBackToQueue ? "Routing..." : "Route back to queue"}
+          </button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+async function routeActiveCaseBackToQueue() {
+  if (state.isRoutingBackToQueue || !state.activeItem) return;
+  const caseId = accountCaseIdentifier(state.activeItem);
+  if (!caseId) return;
+  state.isRoutingBackToQueue = true;
+  render();
+  try {
+    const response = await accountFetch(
+      `/api/account/cases/${encodeURIComponent(caseId)}/zendesk-route-back-to-queue`,
+      { method: "POST", cache: "no-store" }
+    );
+    if (handleAccountAuthFailure(response)) return;
+    const payload = await readResponsePayload(response);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Could not route this ticket back to Zendesk."));
+    }
+    state.routeBackConfirmationOpen = false;
+    invalidateDetailCache(caseId);
+    invalidateSummaryCache();
+    await Promise.all([
+      openTicket(caseId),
+      fetchTickets({ force: true, renderOnUpdate: false }),
+    ]);
+    const status = String(payload.status || "");
+    if (status === "assigned" || status === "already_human_owned") {
+      showToast("Assigned by Zendesk");
+    } else {
+      showToast(`Queued in group ${String(payload.group_id || payload.source_group_id || "")}`.trim());
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not route this ticket back to Zendesk.";
+    invalidateDetailCache(caseId);
+    await openTicket(caseId);
+    showToast(message);
+  } finally {
+    state.isRoutingBackToQueue = false;
+    render();
+  }
+}
+
 function render() {
   if (!state.authenticated) {
     appRoot.innerHTML = renderLogin();
@@ -2485,7 +2590,7 @@ function render() {
       </section>
     </main>
     ${renderRerouteConfirmation()}
-    ${renderZendeskOwnershipConfirmation()}
+    ${renderRouteBackConfirmation()}
   `;
   bind();
   updateReplyPolling();
@@ -2541,9 +2646,9 @@ document.addEventListener("keydown", (event) => {
     state.rerouteTargetSnapshot = null;
     render();
   }
-  if (event.key === "Escape" && state.zendeskOwnershipConfirmationOpen) {
-    state.zendeskOwnershipConfirmationOpen = false;
-      render();
+  if (event.key === "Escape" && state.routeBackConfirmationOpen && !state.isRoutingBackToQueue) {
+    state.routeBackConfirmationOpen = false;
+    render();
   }
 });
 
@@ -2616,6 +2721,28 @@ function bind() {
   });
   document.querySelectorAll("[data-action='back-to-create']").forEach((el) => {
     el.addEventListener("click", openCreateView);
+  });
+  document.querySelectorAll("[data-action='open-route-back-confirmation']").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (state.isRoutingBackToQueue || !state.activeItem || routeBackCompleted(state.activeItem)) return;
+      state.routeBackConfirmationOpen = true;
+      render();
+      document.querySelector("[data-route-back-dialog] [data-action='confirm-route-back']")?.focus();
+    });
+  });
+  document.querySelectorAll("[data-action='close-route-back-confirmation']").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (state.isRoutingBackToQueue) return;
+      if (
+        event.currentTarget.classList.contains("reroute-modal-backdrop")
+        && event.target.closest("[data-route-back-dialog]")
+      ) return;
+      state.routeBackConfirmationOpen = false;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-action='confirm-route-back']").forEach((el) => {
+    el.addEventListener("click", () => void routeActiveCaseBackToQueue());
   });
   document.querySelectorAll("[data-action='open-reroute-confirmation']").forEach((el) => {
     el.addEventListener("click", () => {

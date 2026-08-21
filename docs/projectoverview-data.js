@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T07:19:44Z",
-  "source_base_commit": "2568819792cef37fce6fdede853da6d1ebbb423a",
-  "registry_digest": "bc3f110d37860fc7c40dde602568c9ba846b86b8d08578e605eb1d112bf46f29",
+  "generated_at": "2026-08-21T08:51:18Z",
+  "source_base_commit": "46fe2ec23f6bd26ff4501b9dfde2414670d6760f",
+  "registry_digest": "85645775e490b7311b8fa2ffcbc9b9940355b19c67ab98e30be1472b1d54f539",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1206,6 +1206,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live status sync on both origins",
           "command": "curl -X PUT -H 'X-Zendesk-Account-Sync-Token: …' -d '{\"zendesk_status\":…}' http://127.0.0.1:8080/api/integrations/zendesk/account-cases/12862/status 与 https://support.stellarix.space/production/api/integrations/zendesk/account-cases/12896/status",
           "details": "staging 源（12862）：target 返回 status_endpoint、push open→updated、重放→unchanged、审计事件落库。production 源（12896，Zendesk 实测 solved 而本地仍 open 的真实缺口）：push solved→updated+local_ticket_closed=true；DB 终态 support_tickets=resolved+closed_at、case zendesk=solved automation=closed prior=automation、审计 closed=true。n8n 工作流待用户按 docs/integrations/n8n/zendesk_account_status_sync.md 配置。"
+        },
+        {
+          "type": "test",
+          "label": "Route-back service, API, ownership fence, Production UI, and worker regression",
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_assignment backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment backend.tests.test_production_ui_contract backend.tests.test_worker",
+          "details": "171 tests pass：覆盖保存/审计原真人 group、真人 assignment 不清空、已 queued 零 PUT、audit fallback、无可靠 group fail closed、safe_update payload、outcome_unknown 只读对账且不可盲重试、human_review/released worker fence、Production admin API 与 UI contract。"
+        },
+        {
+          "type": "test",
+          "label": "Production JavaScript and Project Overview contracts",
+          "command": "node --check ui/production-ui/app.js && git diff --check && python3 scripts/generate_project_overview.py --check",
+          "details": "JavaScript syntax、diff whitespace 与 Project Overview generated view 校验通过；Production asset marker 为 20260821-route-back-queue-1。"
         }
       ],
       "source_refs": [
@@ -1217,8 +1229,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 12,
-      "done_count": 11,
+      "task_count": 13,
+      "done_count": 12,
       "blocked_count": 0
     },
     {
@@ -7687,6 +7699,64 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "completed",
           "summary": "共享 /account 与 /production status-sync API 接受 n8n 带时区 ISO-8601 updated_at，规范化为 UTC 并对非法日期返回 422；保留严格 zendesk_status 枚举，补齐错误字段映射回归。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-86",
+      "title": "Production 手动将 AI 工单退回 Zendesk routing queue",
+      "status": "done",
+      "owner": "zac",
+      "summary": "在 /production case 详情提供 Route back to queue 操作。操作先停止本地 AI 自动化并取消待发送回复，再将仍由配置 AI 持有的 Zendesk 工单恢复到可靠识别的原真人 group、清空 assignee、设置 Waiting for Support 并添加 routing tag；更新后 readback 验证，重复操作不得释放已经由真人接管的工单。",
+      "next_action": "由用户在部署后的 /production 使用新 case 点击 Route back to queue，确认 Zendesk 标准 routing 分配给当前在线工程师。",
+      "acceptance_criteria": [
+        "仅 Production workspace admin 可调用手动 route-back endpoint；非 production case、无数字 Zendesk ticket、solved/closed 工单均拒绝。",
+        "操作开始即将本地 automation_status 置为 human_review_required、取消 pending reply jobs，并在 automation_context 与审计事件中记录结果；失败时保持 AI 停机。",
+        "Zendesk 工单仍由配置 AI 持有时，恢复已保存或 audit 可证明的原真人 group，清空 assignee，设为 open/Waiting for Support，并添加 auto_route 与 supportportal_human_fallback tags。",
+        "无法可靠识别原 group 时 fail closed；已由真人持有时返回 already_human_owned，已在非 AI group 且未分配时返回 queued，不覆盖或清空真人 assignment。",
+        "PUT 使用 safe_update 与 updated_stamp；网络 outcome_unknown 仅做 GET 对账，不盲目重复 PUT；成功后 readback 返回 queued 或 assigned。",
+        "/production 详情页显示 Route back to queue 按钮与确认弹窗，pending 时防重复，成功后 toast 并刷新详情；已退回或真人接管状态不可再次释放。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Route-back service, API, ownership fence, Production UI, and worker regression",
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_assignment backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment backend.tests.test_production_ui_contract backend.tests.test_worker",
+          "details": "171 tests pass：覆盖保存/审计原真人 group、真人 assignment 不清空、已 queued 零 PUT、audit fallback、无可靠 group fail closed、safe_update payload、outcome_unknown 只读对账且不可盲重试、human_review/released worker fence、Production admin API 与 UI contract。"
+        },
+        {
+          "type": "test",
+          "label": "Production JavaScript and Project Overview contracts",
+          "command": "node --check ui/production-ui/app.js && git diff --check && python3 scripts/generate_project_overview.py --check",
+          "details": "JavaScript syntax、diff whitespace 与 Project Overview generated view 校验通过；Production asset marker 为 20260821-route-back-queue-1。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/services/account_automation_ownership.py",
+        "backend/main.py",
+        "ui/production-ui/app.js",
+        "ui/production-ui/styles.css"
+      ],
+      "created_at": "2026-08-21",
+      "updated_at": "2026-08-21",
+      "history": [
+        {
+          "at": "2026-08-21",
+          "event": "created",
+          "summary": "用户批准先实现 Production 手动 Route back to queue，用按钮验证 Zendesk 标准 routing；自动 human fallback 与 RAG fallback 不在本任务范围。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "completed",
+          "summary": "完成 Production 手动回队列按钮、AI 停机与 reply-job 取消、原 group 恢复、Zendesk safe update/readback、outcome_unknown fence 和专用审计；自动 fallback 与 RAG fallback 保持后续任务。"
         }
       ],
       "legacy_refs": [],
