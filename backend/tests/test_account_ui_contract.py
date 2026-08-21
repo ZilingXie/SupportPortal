@@ -29,7 +29,23 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn('/shared-ui/composer.js', html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260819-automated-public-1", html)
+        self.assertIn("20260821-zendesk-status-1", html)
+
+    def test_account_app_renders_zendesk_ticket_status(self) -> None:
+        app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/account-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("ZENDESK_STATUS_META", app_source)
+        self.assertIn('"On hold"', app_source)
+        self.assertIn("renderZendeskStatusBadge(item)", app_source)
+        self.assertIn("renderZendeskStatusMetaRow(item)", app_source)
+        self.assertIn("Zendesk status", app_source)
+        self.assertIn("Not synced", app_source)
+        self.assertIn("zendesk_ticket_status", app_source)
+        self.assertIn("zendesk_status_synced_at", app_source)
+        self.assertIn("zendesk-status--solved", styles)
+        self.assertIn("zendesk-status--closed", styles)
+        self.assertIn("zendesk-status-synced-at", styles)
 
     def test_account_app_contains_full_reroute_job_controls(self) -> None:
         app_source = Path("ui/account-ui/app.js").read_text(encoding="utf-8")
@@ -102,7 +118,7 @@ class AccountUiContractTests(unittest.TestCase):
         self.assertIn("detail-rerun-button", styles)
         self.assertIn("danger-button", styles)
         self.assertNotIn("standard 6-10 minute delay", app_source)
-        self.assertIn("20260819-automated-public-1", Path("ui/account-ui/index.html").read_text(encoding="utf-8"))
+        self.assertIn("20260821-zendesk-status-1", Path("ui/account-ui/index.html").read_text(encoding="utf-8"))
 
         helper_start = app_source.index("function normalizeCaseNumberQuery")
         helper_end = app_source.index("\nfunction", helper_start + 1)

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T03:53:31Z",
-  "source_base_commit": "ba2a44d3d67c08d19aff03f5143e65c7009c8d14",
-  "registry_digest": "d4db84dadb9c735c1ca9e1720f140f69c832e338546131eb2ec356a15d69d474",
+  "generated_at": "2026-08-21T05:30:43Z",
+  "source_base_commit": "c90513bba3d25ce2c98bf4cf8c1318a2dc546b64",
+  "registry_digest": "2eae1aba166b7e8aa7a03c74989f10be47c355506aa136ac05e25cc88632310d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1170,6 +1170,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live permission + function verification",
           "command": "docker exec deployment-api_production-1 python -c \"assign_ticket_to_reviewer(ticket_id='12895', reviewer_user_id='31116634341396')\"",
           "details": "前置权限试探（12895 手动 PUT assignee=xieziling+group=Tier 2 CSE → 200，AI agent token 有 assign 权限，无需 Admin）；部署后函数级验证：GET /users/{id}.json 解析 + ticket 比对 → already_assigned（200）。注：AI agent token 无 users/search（403）与 show_many?emails（空）权限，故按 id 配置。完整自动链路（fraud public 回复发布 → 自动 handoff 事件）待下一个真实 fraud_account 工单自然验证。已知边界：已 solved 工单的任何 API 更新被声明式 checkbox 36379228408724 拦截（12893 实测 422，detail 明确）；fraud 回复后工单为 pending，不受影响。"
+        },
+        {
+          "type": "test",
+          "label": "Status sync endpoint + repository transition tests",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync backend.tests.test_account_zendesk_status_sync_postgres",
+          "details": "9 全绿：token 401/422/404、solved 联动关闭（resolved+closed_at+automation_status=closed+prior 快照+审计事件）、unchanged/stale_ignored、重开恢复 automation、status_endpoint 字段、summary/detail payload 带出新字段；Postgres 契约（同事务 SQL 参数数、重开不写工单、unchanged/stale 零写入、缺案 KeyError）。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_intake backend.tests.test_account_reply_publication_postgres backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_automation_ownership backend.tests.test_workspace_api backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment backend.tests.test_zendesk_comments backend.tests.test_account_reply_version_fence backend.tests.test_account_slack_n8n",
+          "details": "572 通过（8 skip 为无 DSN 的 Postgres 用例）；UI 契约（account/production 含新徽章断言与版本串）另 55 通过。"
         }
       ],
       "source_refs": [
@@ -1181,7 +1193,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 11,
+      "task_count": 12,
       "done_count": 10,
       "blocked_count": 0
     },
@@ -7563,6 +7575,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-85",
+      "title": "n8n 同步 Zendesk 工单状态到 /account 与 /production 并联动关闭本地 case",
+      "status": "active",
+      "owner": "zac",
+      "summary": "n8n 监听 Zendesk 工单状态变更事件后，通过新的集成端点把状态推回 SupportPortal。新增 PUT /api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status（X-Zendesk-Account-Sync-Token 认证，与 comment sync 同模式）：n8n 对 staging 源与 production 源各调一次已有 comment-sync-target 归属检测，命中者接收推送；端点幂等可重放，带旧 updated_at 的事件 stale_ignored。solved/closed 在同一事务联动关闭：support_tickets.status=resolved + closed_at（与 p1-51 solved 读回同语义）+ automation_status=closed（AI 自动回复停机，UI 手动回复不受影响），prior automation_status 存 automation_context 快照；Zendesk 重开时恢复。support_account_cases 新增 zendesk_ticket_status / zendesk_status_updated_at / zendesk_status_synced_at 三列（迁移双库执行）。/account 与 /production UI 列表徽章 + 详情 meta 行显示 Zendesk 状态。",
+      "next_action": "合并后双栈部署与迁移，live 验证 staging/production 两源推送与 UI 展示。",
+      "acceptance_criteria": [
+        "PUT status 端点：token 认证（401/503 语义与 comment sync 一致）、404 非本栈工单、422 非法状态；重复同状态返回 unchanged，旧 updated_at 返回 stale_ignored，可安全重放。",
+        "solved/closed 联动：同事务置 support_tickets.status=resolved + closed_at + automation_status=closed，并记录 prior 快照；solved→非 solved 重开时恢复 prior automation_status。",
+        "审计事件 account_zendesk_status_synced（actor zendesk_n8n）仅在状态实际变化时记录。",
+        "comment-sync-target 响应新增 status_endpoint 字段。",
+        "account-ui 与 production-ui：列表项 Zendesk 状态徽章（空值不显示）+ 详情 meta-grid「Zendesk 状态」行（徽章+同步时间），文字始终存在。",
+        "迁移对 supportportal 与 supportportal_production 两库执行；相关回归套件保持通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Status sync endpoint + repository transition tests",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync backend.tests.test_account_zendesk_status_sync_postgres",
+          "details": "9 全绿：token 401/422/404、solved 联动关闭（resolved+closed_at+automation_status=closed+prior 快照+审计事件）、unchanged/stale_ignored、重开恢复 automation、status_endpoint 字段、summary/detail payload 带出新字段；Postgres 契约（同事务 SQL 参数数、重开不写工单、unchanged/stale 零写入、缺案 KeyError）。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_intake backend.tests.test_account_reply_publication_postgres backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_automation_ownership backend.tests.test_workspace_api backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment backend.tests.test_zendesk_comments backend.tests.test_account_reply_version_fence backend.tests.test_account_slack_n8n",
+          "details": "572 通过（8 skip 为无 DSN 的 Postgres 用例）；UI 契约（account/production 含新徽章断言与版本串）另 55 通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/sql/ticket_storage.sql",
+        "backend/sql/migrations/2026_08_21_account_zendesk_status_sync.sql",
+        "ui/account-ui/app.js",
+        "ui/production-ui/app.js",
+        "docs/integrations/n8n/zendesk_account_status_sync.md"
+      ],
+      "created_at": "2026-08-21",
+      "updated_at": "2026-08-21",
+      "history": [
+        {
+          "at": "2026-08-21",
+          "event": "created",
+          "summary": "用户提出 n8n 监听 Zendesk 状态变更并同步到 /account 与 /production；确认采用联动关闭（solved/closed 停 AI 自动回复）+ 列表与详情双展示。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
     }
   ],
   "meetings": [
@@ -8735,6 +8802,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",
         "Account 入口支持按 ticket # 精准打开 Case，并可对单 Case 执行仅保留客户消息、保留独立审计的完整 Rerun。",
         "Account Case 读取受 Workspace Admin 保护；n8n 可通过独立 Zendesk comment snapshot integration 将 Account Case 的 public/internal comments 幂等同步到独立 projection，并可用 trigger_comment_id 将新的客户公开评论触发进自动化处理（agent 评论与重放不触发），详情按不同标签和气泡展示，Rerun 不删除这些 Zendesk comments。",
+        "n8n 可将 Zendesk 工单状态幂等同步到 Account Case：/account 与 /production 的列表和详情显示 Zendesk 状态，solved/closed 联动关闭本地工单并停止 AI 自动回复，重开后自动恢复。",
         "Account Rerun 先冻结目标 Case，再以无网络副作用的 Account-only preflight 校验数据库、Prompt runtime 和 Luna profile；首个 Case 的只读 Prepare 执行首次模型请求，任何错误立即停止并展示准确的失败阶段与未处理数量，支持从冻结 checkpoint Resume。",
         "Account 入口强制使用当前 layered route 并记录 pipeline 版本；Agora Router 将安全、隐私、信任、审计和合规请求归入 Security & Compliance classification-only 路由，Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。每次新建异步全量 Rerun 都会重新执行路由、字段提取和 handler reconciliation，并允许 Automation 重新发送内部邮件，同时保留单个 job 内的幂等和审计历史。",
         "Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。",

@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import os
+import unittest
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
+os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
+
+import backend.main as main
+from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+
+class AccountZendeskStatusSyncTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repository = InMemoryTicketRepository()
+        self.repository.initialize()
+        self.ticket_id = "12896"
+        self.case_id = "AC-12896"
+        self.repository.save_ticket(
+            {
+                "ticket_id": self.ticket_id,
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable Media Relay.",
+                        "created_at": "2026-08-21T08:00:00Z",
+                    }
+                ],
+                "created_at": "2026-08-21T08:00:00Z",
+                "updated_at": "2026-08-21T08:00:00Z",
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": self.case_id,
+                "billing_ticket_id": self.case_id,
+                "client_ticket_id": self.ticket_id,
+                "processing_profile": "production",
+                "zendesk_ticket_id": self.ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable Media Relay.",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "route_status": "automated",
+                "automation_status": "automation",
+                "created_at": "2026-08-21T08:00:30Z",
+            }
+        )
+        self.admin_account = self.repository.save_workspace_account(
+            {
+                "account_id": "status-sync-admin",
+                "email": "status-sync-admin@example.com",
+                "display_name": "Status Sync Admin",
+                "role": "admin",
+                "password_hash": main.hash_workspace_password("status-sync-admin-password"),
+                "active": True,
+            }
+        )
+        self.admin_access_token = main.create_workspace_access_token(self.admin_account)
+        self.original_repository = main.ticket_repository
+        main.ticket_repository = self.repository
+        self.client = TestClient(main.app)
+        self.token_patcher = patch.dict(
+            os.environ,
+            {"ZENDESK_ACCOUNT_SYNC_TOKEN": "test-sync-token"},
+            clear=False,
+        )
+        self.token_patcher.start()
+        self.status_url = f"/api/integrations/zendesk/account-cases/{self.ticket_id}/status"
+        self.headers = {"X-Zendesk-Account-Sync-Token": "test-sync-token"}
+
+    def tearDown(self) -> None:
+        self.token_patcher.stop()
+        main.ticket_repository = self.original_repository
+        self.client.close()
+
+    def push_status(self, zendesk_status: str, updated_at: str | None = None):
+        return self.client.put(
+            self.status_url,
+            headers=self.headers,
+            json={"zendesk_status": zendesk_status, **({"updated_at": updated_at} if updated_at else {})},
+        )
+
+    def test_status_sync_requires_token_and_membership_and_valid_status(self) -> None:
+        self.assertEqual(self.client.put(self.status_url, json={"zendesk_status": "open"}).status_code, 401)
+        self.assertEqual(self.push_status("reopened").status_code, 422)
+        missing = self.client.put(
+            "/api/integrations/zendesk/account-cases/999999/status",
+            headers=self.headers,
+            json={"zendesk_status": "open"},
+        )
+        self.assertEqual(missing.status_code, 404)
+
+        target = self.client.get(
+            f"/api/integrations/zendesk/account-cases/{self.ticket_id}/comment-sync-target",
+            headers=self.headers,
+        )
+        self.assertEqual(target.status_code, 200, target.text)
+        self.assertEqual(
+            target.json()["status_endpoint"],
+            f"/api/integrations/zendesk/account-cases/{self.ticket_id}/status",
+        )
+
+    def test_solved_closes_local_case_and_stops_automation(self) -> None:
+        response = self.push_status("solved", updated_at="2026-08-21T09:00:00Z")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "updated")
+        self.assertEqual(body["zendesk_ticket_status"], "solved")
+        self.assertTrue(body["local_ticket_closed"])
+        self.assertEqual(body["automation_status"], "closed")
+
+        ticket = self.repository.get_ticket(self.ticket_id)
+        self.assertEqual(ticket["status"], "resolved")
+        self.assertIsNotNone(ticket.get("closed_at"))
+        account_case = self.repository.get_account_case(self.case_id)
+        self.assertEqual(account_case["automation_status"], "closed")
+        self.assertEqual(account_case["zendesk_ticket_status"], "solved")
+        snapshot = account_case["automation_context"]["zendesk_status_sync"]
+        self.assertEqual(snapshot["prior_automation_status"], "automation")
+
+        audits = self.repository.list_workspace_audit_events(limit=10)
+        self.assertTrue(
+            any(event.get("event_type") == "account_zendesk_status_synced" for event in audits)
+        )
+
+    def test_repeated_status_is_unchanged_and_stale_event_is_ignored(self) -> None:
+        first = self.push_status("open", updated_at="2026-08-21T09:00:00Z")
+        self.assertEqual(first.json()["status"], "updated")
+        second = self.push_status("open", updated_at="2026-08-21T09:05:00Z")
+        self.assertEqual(second.json()["status"], "unchanged")
+        stale = self.push_status("solved", updated_at="2026-08-21T08:30:00Z")
+        self.assertEqual(stale.json()["status"], "stale_ignored")
+        self.assertEqual(stale.json()["zendesk_ticket_status"], "open")
+        account_case = self.repository.get_account_case(self.case_id)
+        self.assertEqual(account_case["zendesk_ticket_status"], "open")
+        self.assertEqual(account_case["automation_status"], "automation")
+
+    def test_reopen_restores_prior_automation_status(self) -> None:
+        self.push_status("solved", updated_at="2026-08-21T09:00:00Z")
+        reopened = self.push_status("open", updated_at="2026-08-21T10:00:00Z")
+        self.assertEqual(reopened.status_code, 200, reopened.text)
+        body = reopened.json()
+        self.assertEqual(body["status"], "updated")
+        self.assertEqual(body["restored_automation_status"], "automation")
+        self.assertEqual(body["automation_status"], "automation")
+
+        account_case = self.repository.get_account_case(self.case_id)
+        self.assertEqual(account_case["zendesk_ticket_status"], "open")
+        self.assertEqual(account_case["automation_status"], "automation")
+
+    def test_status_flows_to_summary_and_detail_payloads(self) -> None:
+        self.push_status("pending", updated_at="2026-08-21T09:00:00Z")
+        list_response = self.client.get(
+            "/api/account/cases?processing_profile=production",
+            headers={"Authorization": f"Bearer {self.admin_access_token}"},
+        )
+        self.assertEqual(list_response.status_code, 200, list_response.text)
+        cases = list_response.json()["cases"]
+        self.assertEqual(cases[0]["zendesk_ticket_status"], "pending")
+        self.assertTrue(str(cases[0]["zendesk_status_synced_at"] or "").startswith("2026-08-21"))
+
+        detail_response = self.client.get(
+            f"/api/account/cases/{self.case_id}",
+            headers={"Authorization": f"Bearer {self.admin_access_token}"},
+        )
+        self.assertEqual(detail_response.status_code, 200, detail_response.text)
+        self.assertEqual(detail_response.json()["zendesk_ticket_status"], "pending")
+
+
+if __name__ == "__main__":
+    unittest.main()

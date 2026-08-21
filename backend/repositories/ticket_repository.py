@@ -705,6 +705,9 @@ _ACCOUNT_CASE_LIST_FIELDS = (
     "route_classification",
     "automation_context",
     "route_review_status",
+    "zendesk_ticket_status",
+    "zendesk_status_updated_at",
+    "zendesk_status_synced_at",
     "created_at",
     "updated_at",
 )
@@ -732,6 +735,75 @@ def _canonical_account_revision_timestamp(value: Any) -> str:
     if candidate.tzinfo is None:
         candidate = candidate.replace(tzinfo=timezone.utc)
     return candidate.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+_ZENDESK_SYNC_STATUSES = frozenset({"new", "open", "pending", "hold", "solved", "closed"})
+_ZENDESK_STATUS_SYNC_CLOSED_STATUSES = frozenset({"solved", "closed"})
+
+
+def _plan_account_zendesk_status_transition(
+    *,
+    current_zendesk_status: Any,
+    current_automation_status: Any,
+    automation_context: Any,
+    incoming_status: str,
+    source_updated_at: Any,
+    stored_status_updated_at: Any,
+    synced_at: str,
+) -> dict[str, Any]:
+    """Decide the Account Case transition for one inbound Zendesk status event.
+
+    Shared by the in-memory and Postgres repositories so the close/restore
+    coupling cannot drift between them.
+    """
+    normalized_current = str(current_zendesk_status or "").strip().lower() or None
+    if normalized_current == incoming_status:
+        return {"outcome": "unchanged"}
+    if (
+        str(source_updated_at or "").strip()
+        and stored_status_updated_at is not None
+        and _canonical_account_revision_timestamp(source_updated_at)
+        < _canonical_account_revision_timestamp(stored_status_updated_at)
+    ):
+        return {"outcome": "stale_ignored"}
+
+    current_automation = str(current_automation_status or "").strip()
+    context = dict(automation_context) if isinstance(automation_context, dict) else {}
+    snapshot = (
+        dict(context["zendesk_status_sync"])
+        if isinstance(context.get("zendesk_status_sync"), dict)
+        else {}
+    )
+    close_local_ticket = False
+    restored_automation_status: str | None = None
+    next_automation_status = current_automation
+    if incoming_status in _ZENDESK_STATUS_SYNC_CLOSED_STATUSES:
+        if normalized_current not in _ZENDESK_STATUS_SYNC_CLOSED_STATUSES:
+            close_local_ticket = True
+            prior = (
+                snapshot.get("prior_automation_status")
+                if current_automation == "closed"
+                else current_automation
+            )
+            context["zendesk_status_sync"] = {
+                **snapshot,
+                "prior_automation_status": str(prior or "").strip() or None,
+                "closed_at": synced_at,
+            }
+            next_automation_status = "closed"
+    elif normalized_current in _ZENDESK_STATUS_SYNC_CLOSED_STATUSES:
+        prior = str(snapshot.get("prior_automation_status") or "").strip()
+        if current_automation == "closed" and prior:
+            next_automation_status = prior
+            restored_automation_status = prior
+    return {
+        "outcome": "updated",
+        "prior_zendesk_status": normalized_current,
+        "automation_context": context,
+        "automation_status": next_automation_status,
+        "close_local_ticket": close_local_ticket,
+        "restored_automation_status": restored_automation_status,
+    }
 
 
 def _account_case_detail_revision(
@@ -838,6 +910,9 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
         raise ValueError("processing_profile must be staging or production")
     normalized["processing_profile"] = processing_profile
     normalized["zendesk_ticket_id"] = str(normalized.get("zendesk_ticket_id") or "").strip() or None
+    normalized["zendesk_ticket_status"] = (
+        str(normalized.get("zendesk_ticket_status") or "").strip().lower() or None
+    )
     normalized["origin_staging_case_id"] = str(normalized.get("origin_staging_case_id") or "").strip() or None
     normalized["rule_release"] = (
         copy.deepcopy(normalized.get("rule_release"))
@@ -2393,6 +2468,16 @@ class TicketRepository(Protocol):
     ) -> dict[str, Any]:
         ...
 
+    def update_account_case_zendesk_status(
+        self,
+        *,
+        account_case_id: str,
+        zendesk_status: str,
+        synced_at: str,
+        source_updated_at: str | None = None,
+    ) -> dict[str, Any]:
+        ...
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -3179,6 +3264,97 @@ class InMemoryTicketRepository:
                 created_at=synced_at,
             )
             return {"status": "synced", **copy.deepcopy(state)}
+
+    def update_account_case_zendesk_status(
+        self,
+        *,
+        account_case_id: str,
+        zendesk_status: str,
+        synced_at: str,
+        source_updated_at: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_status = str(zendesk_status or "").strip().lower()
+        if not normalized_case_id:
+            raise ValueError("account_case_id is required")
+        if normalized_status not in _ZENDESK_SYNC_STATUSES:
+            raise ValueError("invalid Zendesk ticket status")
+        with self._assignment_lock:
+            account_case = self.get_account_case(normalized_case_id)
+            if not isinstance(account_case, dict):
+                raise KeyError(normalized_case_id)
+            stored_key = str(
+                account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+            ).strip()
+            billing_ticket_id = str(account_case.get("billing_ticket_id") or "").strip()
+            plan = _plan_account_zendesk_status_transition(
+                current_zendesk_status=account_case.get("zendesk_ticket_status"),
+                current_automation_status=account_case.get("automation_status"),
+                automation_context=account_case.get("automation_context"),
+                incoming_status=normalized_status,
+                source_updated_at=source_updated_at,
+                stored_status_updated_at=account_case.get("zendesk_status_updated_at"),
+                synced_at=synced_at,
+            )
+            if plan["outcome"] != "updated":
+                return {
+                    "status": plan["outcome"],
+                    "account_case_id": stored_key,
+                    "client_ticket_id": account_case.get("client_ticket_id"),
+                    "zendesk_ticket_status": account_case.get("zendesk_ticket_status"),
+                    "zendesk_status_synced_at": account_case.get("zendesk_status_synced_at"),
+                    "automation_status": account_case.get("automation_status"),
+                    "local_ticket_closed": False,
+                    "restored_automation_status": None,
+                }
+
+            client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+            local_ticket_closed = False
+            ticket = self._tickets.get(client_ticket_id) if client_ticket_id else None
+            if plan["close_local_ticket"] and isinstance(ticket, dict):
+                if str(ticket.get("status") or "").strip().lower() != "resolved":
+                    ticket["status"] = "resolved"
+                    ticket["closed_at"] = synced_at
+                    ticket["updated_at"] = synced_at
+                    local_ticket_closed = True
+            updated = copy.deepcopy(account_case)
+            updated.update(
+                {
+                    "zendesk_ticket_status": normalized_status,
+                    "zendesk_status_updated_at": str(source_updated_at or "").strip() or synced_at,
+                    "zendesk_status_synced_at": synced_at,
+                    "automation_status": plan["automation_status"],
+                    "automation_context": plan["automation_context"],
+                    "updated_at": synced_at,
+                }
+            )
+            storage_key = billing_ticket_id or stored_key
+            self._billing_tickets[storage_key] = _normalize_account_case_record(updated)
+            self.record_workspace_audit_event(
+                "account_zendesk_status_synced",
+                actor_id="zendesk_n8n",
+                target_id=stored_key,
+                payload={
+                    "status": "updated",
+                    "zendesk_status": normalized_status,
+                    "prior_zendesk_status": plan["prior_zendesk_status"],
+                    "local_ticket_closed": local_ticket_closed,
+                    "restored_automation_status": plan["restored_automation_status"],
+                    "automation_status": plan["automation_status"],
+                    "source_updated_at": str(source_updated_at or "").strip() or None,
+                },
+                created_at=synced_at,
+            )
+            return {
+                "status": "updated",
+                "account_case_id": stored_key,
+                "client_ticket_id": client_ticket_id or None,
+                "zendesk_ticket_status": normalized_status,
+                "zendesk_status_synced_at": synced_at,
+                "automation_status": plan["automation_status"],
+                "local_ticket_closed": local_ticket_closed,
+                "restored_automation_status": plan["restored_automation_status"],
+            }
 
     def count_account_cases(
         self,
@@ -7742,6 +7918,132 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("sync_account_case_comments", _operation)
 
+    def update_account_case_zendesk_status(
+        self,
+        *,
+        account_case_id: str,
+        zendesk_status: str,
+        synced_at: str,
+        source_updated_at: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_case_id = str(account_case_id or "").strip()
+        normalized_status = str(zendesk_status or "").strip().lower()
+        normalized_source_updated_at = str(source_updated_at or "").strip() or None
+        if not normalized_case_id:
+            raise ValueError("account_case_id is required")
+        if normalized_status not in _ZENDESK_SYNC_STATUSES:
+            raise ValueError("invalid Zendesk ticket status")
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT account_case_id, billing_ticket_id, client_ticket_id, "
+                        "automation_status, automation_context, zendesk_ticket_status, "
+                        "zendesk_status_updated_at, zendesk_status_synced_at "
+                        "FROM {} WHERE account_case_id=%s OR billing_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_case_id, normalized_case_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise KeyError(normalized_case_id)
+                (
+                    stored_case_id,
+                    billing_ticket_id,
+                    client_ticket_id,
+                    automation_status,
+                    automation_context,
+                    stored_zendesk_status,
+                    stored_status_updated_at,
+                    stored_status_synced_at,
+                ) = row
+                stored_key = str(stored_case_id or billing_ticket_id or "").strip()
+                plan = _plan_account_zendesk_status_transition(
+                    current_zendesk_status=stored_zendesk_status,
+                    current_automation_status=automation_status,
+                    automation_context=automation_context,
+                    incoming_status=normalized_status,
+                    source_updated_at=normalized_source_updated_at,
+                    stored_status_updated_at=stored_status_updated_at,
+                    synced_at=synced_at,
+                )
+                if plan["outcome"] != "updated":
+                    return {
+                        "status": plan["outcome"],
+                        "account_case_id": stored_key,
+                        "client_ticket_id": client_ticket_id,
+                        "zendesk_ticket_status": stored_zendesk_status,
+                        "zendesk_status_synced_at": stored_status_synced_at,
+                        "automation_status": automation_status,
+                        "local_ticket_closed": False,
+                        "restored_automation_status": None,
+                    }
+
+                local_ticket_closed = False
+                if plan["close_local_ticket"]:
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='resolved',closed_at=%s,updated_at=%s "
+                            "WHERE ticket_id=%s AND status<>'resolved'"
+                        ).format(self._table("support_tickets")),
+                        (synced_at, synced_at, client_ticket_id),
+                    )
+                    local_ticket_closed = cur.rowcount == 1
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET zendesk_ticket_status=%s, zendesk_status_updated_at=%s, "
+                        "zendesk_status_synced_at=%s, automation_status=%s, automation_context=%s, "
+                        "updated_at=%s WHERE account_case_id=%s"
+                    ).format(self._table("support_account_cases")),
+                    (
+                        normalized_status,
+                        normalized_source_updated_at or synced_at,
+                        synced_at,
+                        plan["automation_status"],
+                        Json(plan["automation_context"]),
+                        synced_at,
+                        stored_key,
+                    ),
+                )
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (event_type, actor_id, target_id, payload, created_at) "
+                        "VALUES (%s,%s,%s,%s,%s)"
+                    ).format(self._table("support_workspace_audit_events")),
+                    (
+                        "account_zendesk_status_synced",
+                        "zendesk_n8n",
+                        stored_key,
+                        Json(
+                            {
+                                "status": "updated",
+                                "zendesk_status": normalized_status,
+                                "prior_zendesk_status": plan["prior_zendesk_status"],
+                                "local_ticket_closed": local_ticket_closed,
+                                "restored_automation_status": plan["restored_automation_status"],
+                                "automation_status": plan["automation_status"],
+                                "source_updated_at": normalized_source_updated_at,
+                            }
+                        ),
+                        synced_at,
+                    ),
+                )
+                return {
+                    "status": "updated",
+                    "account_case_id": stored_key,
+                    "client_ticket_id": client_ticket_id,
+                    "zendesk_ticket_status": normalized_status,
+                    "zendesk_status_synced_at": synced_at,
+                    "automation_status": plan["automation_status"],
+                    "local_ticket_closed": local_ticket_closed,
+                    "restored_automation_status": plan["restored_automation_status"],
+                }
+
+        return self._run_with_connection_retry(
+            "update_account_case_zendesk_status", _operation
+        )
+
     def list_account_cases(
         self,
         limit: int = 30,
@@ -9721,6 +10023,9 @@ class PostgresTicketRepository:
                             route_classification JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             automation_context JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             route_review_status TEXT NOT NULL DEFAULT 'pending',
+                            zendesk_ticket_status TEXT,
+                            zendesk_status_updated_at TIMESTAMPTZ,
+                            zendesk_status_synced_at TIMESTAMPTZ,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
@@ -9886,6 +10191,27 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_review_status TEXT NOT NULL DEFAULT 'pending'"
+                    ).format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS zendesk_ticket_status TEXT"
+                    ).format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS zendesk_status_updated_at TIMESTAMPTZ"
+                    ).format(
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS zendesk_status_synced_at TIMESTAMPTZ"
                     ).format(
                         self._table("support_account_cases"),
                     )

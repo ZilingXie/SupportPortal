@@ -354,6 +354,45 @@ function statusLabel(status) {
   return labels[status] || "Not automated";
 }
 
+const ZENDESK_STATUS_META = {
+  new: { label: "New", className: "zendesk-status--new" },
+  open: { label: "Open", className: "zendesk-status--open" },
+  pending: { label: "Pending", className: "zendesk-status--pending" },
+  hold: { label: "On hold", className: "zendesk-status--hold" },
+  solved: { label: "Solved", className: "zendesk-status--solved" },
+  closed: { label: "Closed", className: "zendesk-status--closed" },
+};
+
+function normalizedZendeskStatus(item) {
+  const raw = String(item?.zendesk_ticket_status || "").trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ZENDESK_STATUS_META, raw) ? raw : "";
+}
+
+function renderZendeskStatusBadge(item) {
+  const status = normalizedZendeskStatus(item);
+  if (!status) return "";
+  const meta = ZENDESK_STATUS_META[status];
+  return `<span class="status-badge zendesk-status-badge ${meta.className}" aria-label="Zendesk ticket status">${escapeHtml(meta.label)}</span>`;
+}
+
+function renderZendeskStatusMetaRow(item) {
+  const status = normalizedZendeskStatus(item);
+  if (!status) {
+    return `<div class="meta-row"><span class="meta-label">Zendesk status</span><span class="meta-value">Not synced</span></div>`;
+  }
+  const meta = ZENDESK_STATUS_META[status];
+  const syncedAt = String(item?.zendesk_status_synced_at || "").trim().slice(0, 16).replace("T", " ");
+  return `
+    <div class="meta-row">
+      <span class="meta-label">Zendesk status</span>
+      <span class="meta-value zendesk-status-value">
+        <span class="status-badge zendesk-status-badge ${meta.className}" aria-label="Zendesk ticket status">${escapeHtml(meta.label)}</span>
+        ${syncedAt ? `<span class="zendesk-status-synced-at">synced ${escapeHtml(syncedAt)}</span>` : ""}
+      </span>
+    </div>
+  `;
+}
+
 function routeClass(route) {
   if (route === "detailed_invoice") return "route-invoice";
   if (route === "account_suspension") return "route-suspension";
@@ -1607,6 +1646,7 @@ function renderHistorySidebar() {
       ${renderClassificationBadges(item)}
       <div class="history-item-meta">
         <span class="status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
+        ${renderZendeskStatusBadge(item)}
         <span class="history-time">${escapeHtml((item.updated_at || item.created_at || "").slice(0, 16).replace("T", " "))}</span>
       </div>
     </button>
@@ -1988,6 +2028,7 @@ function renderDetailView() {
           <span class="meta-label">Status</span>
           <span class="meta-value status-badge status-badge--${escapeHtml(itemStatus)}">${escapeHtml(statusLabel(itemStatus))}</span>
         </div>
+        ${renderZendeskStatusMetaRow(item)}
         ${renderPersonaAssignment(item)}
         ${
           routeClassification.automation_mode
