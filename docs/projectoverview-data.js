@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T03:46:23Z",
-  "source_base_commit": "2db27c217e2e463b2a9db069e3ba7f7f355a33be",
-  "registry_digest": "4315d04cfcbc12cbfaab950bb09a06424146e02f780469f156de143f4bd3af5c",
+  "generated_at": "2026-08-21T03:53:31Z",
+  "source_base_commit": "ba2a44d3d67c08d19aff03f5143e65c7009c8d14",
+  "registry_digest": "d4db84dadb9c735c1ca9e1720f140f69c832e338546131eb2ec356a15d69d474",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1146,6 +1146,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 production deploy + live takeover on 12893",
           "command": "ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space + docker exec deployment-api_production-1 python -c \"assign_ticket_to_configured_ai(ticket_id='12893')\"",
           "details": "2026-08-21 EC2 生产栈部署 0cffc5950cc0（域名 /health ok）。真实验证链：① 顶层键形式实测被忽略（12893 PUT 仍 422 needed，detail 完整捕获）；② custom_fields 数组形式对 12893 实测 200 并写入 video_calling；③ 部署修正版后经生产容器调用 assign_ticket_to_configured_ai 成功：assignee=48557297720084（AI agent）、group=29388501432596、sdk_product=video_calling。全新工单的 PUT 内自动填充路径待下一个真实 production 自动化工单自然验证。"
+        },
+        {
+          "type": "test",
+          "label": "Handoff service + worker hook tests",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_worker",
+          "details": "115 全绿：按 id 解析 reviewer（非数字 id、inactive agent 均 fail-closed）、assign 到 default group 的 PUT payload、already-assigned no-op；worker 侧 public+fraud 触发 / internal、非 fraud、缺配置不触发；handoff 失败记录 failed 事件且不影响已发布回复。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_automation_ownership backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_comment_sync backend.tests.test_zendesk_comments",
+          "details": "229 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local official stack + EC2 production deploy",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote；ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space",
+          "details": "2026-08-21 双栈部署 ba2a44d3d67c（PR#835），/health ok；本地与 EC2 生产容器内 assign_ticket_to_reviewer 可导入、ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID=31116634341396 已注入 worker。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live permission + function verification",
+          "command": "docker exec deployment-api_production-1 python -c \"assign_ticket_to_reviewer(ticket_id='12895', reviewer_user_id='31116634341396')\"",
+          "details": "前置权限试探（12895 手动 PUT assignee=xieziling+group=Tier 2 CSE → 200，AI agent token 有 assign 权限，无需 Admin）；部署后函数级验证：GET /users/{id}.json 解析 + ticket 比对 → already_assigned（200）。注：AI agent token 无 users/search（403）与 show_many?emails（空）权限，故按 id 配置。完整自动链路（fraud public 回复发布 → 自动 handoff 事件）待下一个真实 fraud_account 工单自然验证。已知边界：已 solved 工单的任何 API 更新被声明式 checkbox 36379228408724 拦截（12893 实测 422，detail 明确）；fraud 回复后工单为 pending，不受影响。"
         }
       ],
       "source_refs": [
@@ -1158,7 +1182,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 11,
-      "done_count": 9,
+      "done_count": 10,
       "blocked_count": 0
     },
     {
@@ -7471,10 +7495,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-84",
       "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 xieziling@agora.io；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
-      "next_action": "finalize 后部署 EC2，等下一个真实 fraud_account 工单验证 handoff 链路。",
+      "next_action": "",
       "acceptance_criteria": [
         "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
         "assign_ticket_to_reviewer：按数字 user id 解析 reviewer（GET /users/{id}.json，必须 active agent），assign 到其 default group；已 assign 则 no-op；复用 safe_update 与 required-field autofill 语义。",
@@ -7482,7 +7506,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有 assignment/ownership/worker/intake/comment 回归套件全部保持通过。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Handoff service + worker hook tests",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_worker",
+          "details": "115 全绿：按 id 解析 reviewer（非数字 id、inactive agent 均 fail-closed）、assign 到 default group 的 PUT payload、already-assigned no-op；worker 侧 public+fraud 触发 / internal、非 fraud、缺配置不触发；handoff 失败记录 failed 事件且不影响已发布回复。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_automation_ownership backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_comment_sync backend.tests.test_zendesk_comments",
+          "details": "229 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local official stack + EC2 production deploy",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote；ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space",
+          "details": "2026-08-21 双栈部署 ba2a44d3d67c（PR#835），/health ok；本地与 EC2 生产容器内 assign_ticket_to_reviewer 可导入、ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID=31116634341396 已注入 worker。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live permission + function verification",
+          "command": "docker exec deployment-api_production-1 python -c \"assign_ticket_to_reviewer(ticket_id='12895', reviewer_user_id='31116634341396')\"",
+          "details": "前置权限试探（12895 手动 PUT assignee=xieziling+group=Tier 2 CSE → 200，AI agent token 有 assign 权限，无需 Admin）；部署后函数级验证：GET /users/{id}.json 解析 + ticket 比对 → already_assigned（200）。注：AI agent token 无 users/search（403）与 show_many?emails（空）权限，故按 id 配置。完整自动链路（fraud public 回复发布 → 自动 handoff 事件）待下一个真实 fraud_account 工单自然验证。已知边界：已 solved 工单的任何 API 更新被声明式 checkbox 36379228408724 拦截（12893 实测 422，detail 明确）；fraud 回复后工单为 pending，不受影响。"
+        }
+      ],
       "source_refs": [
         "backend/services/zendesk_ticket_assignment.py",
         "backend/worker.py",
@@ -7502,6 +7551,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "updated",
           "summary": "PR#834 首版按 email 搜索解析 reviewer，实测该 token users/search 403/show_many 空；改为 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID 数字 id 解析（/users/{id}.json 实测 200 含完整记录）。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "completed",
+          "summary": "PR#834+PR#835 合并（main=ba2a44d），双栈部署，权限与函数级 live 验证通过，标记完成。"
         }
       ],
       "legacy_refs": [],
