@@ -101,6 +101,9 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     route_classification JSONB NOT NULL DEFAULT '{}'::jsonb,
     automation_context JSONB NOT NULL DEFAULT '{}'::jsonb,
     route_review_status TEXT NOT NULL DEFAULT 'pending',
+    zendesk_ticket_status TEXT,
+    zendesk_status_updated_at TIMESTAMPTZ,
+    zendesk_status_synced_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

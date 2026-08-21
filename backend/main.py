@@ -1555,6 +1555,11 @@ class ZendeskCommentSnapshotRequest(BaseModel):
     trigger_comment_id: str | None = Field(default=None, max_length=128)
 
 
+class ZendeskTicketStatusSyncRequest(BaseModel):
+    zendesk_status: str = Field(pattern="^(new|open|pending|hold|solved|closed)$")
+    updated_at: str | None = Field(default=None, max_length=64)
+
+
 class AssetUploadIntentRequest(BaseModel):
     ticket_id: str = Field(min_length=1, max_length=128)
     customer_id: str = Field(min_length=1, max_length=128)
@@ -4673,6 +4678,8 @@ _ACCOUNT_CASE_SUMMARY_FIELDS = (
     "route_low_confidence",
     "route_error",
     "route_correction",
+    "zendesk_ticket_status",
+    "zendesk_status_synced_at",
     "created_at",
     "updated_at",
 )
@@ -6126,6 +6133,11 @@ async def get_zendesk_account_comment_sync_target(zendesk_ticket_id: str) -> dic
             if account_case_id
             else None
         ),
+        "status_endpoint": (
+            f"/api/integrations/zendesk/account-cases/{normalized_ticket_id}/status"
+            if account_case_id
+            else None
+        ),
     }
 
 
@@ -6195,6 +6207,50 @@ async def sync_zendesk_account_comments(
         "synced_at": result.get("synced_at"),
         "comments_revision": result.get("comments_revision"),
         **trigger,
+    }
+
+
+@app.put(
+    "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status",
+    dependencies=[Depends(require_zendesk_account_sync_token)],
+)
+async def sync_zendesk_account_ticket_status(
+    zendesk_ticket_id: str,
+    request: ZendeskTicketStatusSyncRequest,
+) -> dict[str, Any]:
+    normalized_ticket_id = _normalize_zendesk_comment_sync_ticket_id(zendesk_ticket_id)
+    account_case = await async_to_thread(
+        ticket_repository.get_account_case_by_ticket_id,
+        normalized_ticket_id,
+    )
+    if not isinstance(account_case, dict):
+        raise HTTPException(status_code=404, detail="Account Case not found")
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    if not account_case_id:
+        raise HTTPException(status_code=409, detail="Account Case has no canonical id")
+
+    try:
+        result = await async_to_thread(
+            ticket_repository.update_account_case_zendesk_status,
+            account_case_id=account_case_id,
+            zendesk_status=request.zendesk_status,
+            synced_at=now_iso(),
+            source_updated_at=request.updated_at,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Account Case not found") from exc
+    return {
+        "status": str(result.get("status") or "updated"),
+        "is_account_case": True,
+        "zendesk_ticket_id": normalized_ticket_id,
+        "account_case_id": account_case_id,
+        "zendesk_ticket_status": result.get("zendesk_ticket_status"),
+        "automation_status": result.get("automation_status"),
+        "local_ticket_closed": bool(result.get("local_ticket_closed")),
+        "restored_automation_status": result.get("restored_automation_status"),
+        "synced_at": result.get("zendesk_status_synced_at"),
     }
 
 

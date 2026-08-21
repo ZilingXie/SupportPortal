@@ -1224,6 +1224,48 @@ button:disabled {
   color: var(--ink-muted);
 }
 
+.zendesk-status-badge.zendesk-status--new {
+  background: var(--surface-container-high);
+  color: var(--ink-muted);
+}
+
+.zendesk-status-badge.zendesk-status--open {
+  background: #dde9f7;
+  color: var(--primary);
+}
+
+.zendesk-status-badge.zendesk-status--pending {
+  background: #fff0d8;
+  color: var(--warning);
+}
+
+.zendesk-status-badge.zendesk-status--hold {
+  background: #e6e4f6;
+  color: var(--secondary);
+}
+
+.zendesk-status-badge.zendesk-status--solved {
+  background: #dceff1;
+  color: var(--success);
+}
+
+.zendesk-status-badge.zendesk-status--closed {
+  background: var(--surface-container-high);
+  color: var(--ink-muted);
+}
+
+.zendesk-status-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.zendesk-status-synced-at {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
 .workbench {
   min-width: 0;
   max-width: 100%;

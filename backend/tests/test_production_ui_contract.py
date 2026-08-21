@@ -31,7 +31,23 @@ class ProductionUiContractTests(unittest.TestCase):
         self.assertIn("/shared-ui/composer.js", html)
         self.assertIn("./styles.css", html)
         self.assertIn("./app.js", html)
-        self.assertIn("20260819-automated-public-1", html)
+        self.assertIn("20260821-zendesk-status-1", html)
+
+    def test_production_app_renders_zendesk_ticket_status(self) -> None:
+        app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")
+        styles = Path("ui/production-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("ZENDESK_STATUS_META", app_source)
+        self.assertIn('"On hold"', app_source)
+        self.assertIn("renderZendeskStatusBadge(item)", app_source)
+        self.assertIn("renderZendeskStatusMetaRow(item)", app_source)
+        self.assertIn("Zendesk status", app_source)
+        self.assertIn("Not synced", app_source)
+        self.assertIn("zendesk_ticket_status", app_source)
+        self.assertIn("zendesk_status_synced_at", app_source)
+        self.assertIn("zendesk-status--solved", styles)
+        self.assertIn("zendesk-status--closed", styles)
+        self.assertIn("zendesk-status-synced-at", styles)
 
     def test_production_app_prefixes_api_calls_with_production_base(self) -> None:
         app_source = Path("ui/production-ui/app.js").read_text(encoding="utf-8")
