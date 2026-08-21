@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-20T11:22:39Z",
-  "source_base_commit": "1020e2e26c9b673003ab592ae4da7044865a9893",
-  "registry_digest": "6f2dee24493068bf621f84c896eeef354936583cc284b811e379838208202082",
+  "generated_at": "2026-08-21T02:26:48Z",
+  "source_base_commit": "d6e603ffc71d6a97267edc6f4062e6b41d7cdc99",
+  "registry_digest": "dc7a1e835cc905ede92d9c84127f99909ad10fa786bbc626111a8b69e2078233",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1133,7 +1133,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "zendesk-delivery"
       ],
       "status": "active",
-      "task_count": 9,
+      "task_count": 10,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -7365,6 +7365,41 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-20",
           "event": "completed",
           "summary": "PR#829 合并（main=1020e2e）；本地官方栈与 EC2 生产栈均部署重启，/health 与 build ref 匹配，镜像内初始延迟 90s marker 验证通过，标记完成。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-83",
+      "title": "AI 接管 PUT 自动补 Zendesk 必填字段 SDK Product（为空时默认 video_calling）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "12893 实测（PR#829 的 details 捕获）定位 422 真因：Zendesk 字段级 required 字段 31503099534100 \"SDK Product (Selectable)\" 为空时拒绝一切 API 工单更新（RecordInvalid \"needed\"），与路由窗口/时机无关；此前 12878/12879/12880 的手动成功都是因为人工在 UI 接手时被表单强制填了该字段。Zendesk 侧无法修改（用户确认），改为代码侧：assignment PUT 在该字段为空时自动带上默认值 video_calling，已有值（人工已选）一律不覆盖；快照与手动 GET 路径同样判定。",
+      "next_action": "finalize 合并后部署 EC2，在 12893 上实测手动 Take Ownership（字段仍为空）验证自动填充生效。",
+      "acceptance_criteria": [
+        "assign_ticket_to_configured_ai 的 PUT 在字段 31503099534100 为空/缺失时附带默认值 video_calling；字段已有任何值（如人工选的 voice_calling）时完全不附带，不覆盖人工选择。",
+        "ownership_snapshot 路径与手动 GET 路径使用同一判定（custom_fields 中该字段非空才算已填）。",
+        "already_assigned 早退路径行为不变；其余 PUT 字段（assignee_id/group_id/safe_update/updated_stamp）语义不变。",
+        "现有 ownership/assignment/intake/worker/comment 回归套件全部保持通过。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/tests/test_zendesk_ticket_assignment.py"
+      ],
+      "created_at": "2026-08-21",
+      "updated_at": "2026-08-21",
+      "history": [
+        {
+          "at": "2026-08-21",
+          "event": "created",
+          "summary": "12893 追踪中由 failure_detail 的 details 捕获定位真因（required 字段而非路由窗口），用户决策采用代码侧自动填 video_calling。"
         }
       ],
       "legacy_refs": [],

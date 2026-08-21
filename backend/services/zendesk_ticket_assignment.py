@@ -18,6 +18,13 @@ from backend.services.zendesk_comments import (
 ZENDESK_TICKET_API_BASE = "https://agoraio.zendesk.com/api/v2/tickets"
 ZENDESK_USER_API_BASE = "https://agoraio.zendesk.com/api/v2/users"
 ZENDESK_AI_ASSIGNEE_EMAIL_ENV = "ZENDESK_AI_ASSIGNEE_EMAIL"
+# Zendesk ticket fields with field-level `required` reject every API ticket
+# update with 422 RecordInvalid "... needed" while they are empty, which is
+# what blocked the AI ownership assignment PUT on AC-12878/12879/12880/12893.
+# Fill the default product only when the ticket has no value yet; never
+# overwrite a value a human already chose.
+ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID = "31503099534100"
+ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE = "video_calling"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +51,17 @@ class ZendeskOwnershipSnapshot:
     human_replied: bool
     blocking_comment_id: str | None
     unresolved_public_comment_id: str | None
+    required_field_missing: bool = True
+
+
+def _assignment_required_field_missing(ticket: dict[str, Any]) -> bool:
+    for entry in ticket.get("custom_fields") or []:
+        if (
+            isinstance(entry, dict)
+            and str(entry.get("id") or "") == ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID
+        ):
+            return not str(entry.get("value") or "").strip()
+    return True
 
 
 def _assignment_error(
@@ -332,6 +350,7 @@ def read_ticket_ownership_snapshot(
         human_replied=blocking_comment_id is not None,
         blocking_comment_id=blocking_comment_id,
         unresolved_public_comment_id=unresolved_public_comment_id,
+        required_field_missing=_assignment_required_field_missing(ticket),
     )
 
 
@@ -369,6 +388,7 @@ def assign_ticket_to_configured_ai(
         current_assignee_id = str(ownership_snapshot.assignee_id or "").strip()
         group_id = str(ownership_snapshot.group_id or "").strip() or None
         updated_stamp = str(ownership_snapshot.ticket_updated_at or "").strip()
+        required_field_missing = ownership_snapshot.required_field_missing
     else:
         ticket_payload, _ = _request(
             method="GET",
@@ -379,6 +399,7 @@ def assign_ticket_to_configured_ai(
         current_assignee_id = str(current_ticket.get("assignee_id") or "").strip()
         group_id = str(current_ticket.get("group_id") or "").strip() or None
         updated_stamp = str(current_ticket.get("updated_at") or "").strip()
+        required_field_missing = _assignment_required_field_missing(current_ticket)
     if current_assignee_id == assignee_id and group_id == target_group_id:
         return ZendeskAssignmentResult(
             ticket_id=normalized_ticket_id,
@@ -394,17 +415,18 @@ def assign_ticket_to_configured_ai(
 
     if not updated_stamp:
         raise _assignment_error("outcome_unknown", error_code="zendesk_ticket_updated_at_missing")
+    update_payload: dict[str, Any] = {
+        "assignee_id": int(assignee_id),
+        "group_id": int(target_group_id),
+        "safe_update": True,
+        "updated_stamp": updated_stamp,
+    }
+    if required_field_missing:
+        update_payload[ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID] = ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE
     updated_payload, status_code = _request(
         method="PUT",
         url=f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json",
-        data={
-            "ticket": {
-                "assignee_id": int(assignee_id),
-                "group_id": int(target_group_id),
-                "safe_update": True,
-                "updated_stamp": updated_stamp,
-            }
-        },
+        data={"ticket": update_payload},
         timeout_seconds=timeout,
     )
     updated_ticket = updated_payload.get("ticket") if isinstance(updated_payload.get("ticket"), dict) else {}
