@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T05:42:31Z",
-  "source_base_commit": "9587d44a47ead19cde7e940392c96141b196781a",
-  "registry_digest": "49afcd6da259a8804d96f877d6b87e002e56a9dc0695dc453209e7d5ddfcffbc",
+  "generated_at": "2026-08-21T07:19:44Z",
+  "source_base_commit": "2568819792cef37fce6fdede853da6d1ebbb423a",
+  "registry_digest": "bc3f110d37860fc7c40dde602568c9ba846b86b8d08578e605eb1d112bf46f29",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1176,6 +1176,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Status sync endpoint + repository transition tests",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync backend.tests.test_account_zendesk_status_sync_postgres",
           "details": "9 全绿：token 401/422/404、solved 联动关闭（resolved+closed_at+automation_status=closed+prior 快照+审计事件）、unchanged/stale_ignored、重开恢复 automation、status_endpoint 字段、summary/detail payload 带出新字段；Postgres 契约（同事务 SQL 参数数、重开不写工单、unchanged/stale 零写入、缺案 KeyError）。"
+        },
+        {
+          "type": "test",
+          "label": "n8n offset timestamp boundary",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync",
+          "details": "覆盖 n8n 的 2026-08-21T03:09:00.862-04:00，API 接受并将 zendesk_status_updated_at 规范化为 2026-08-21T07:09:00.862000+00:00；非法日期与 zendesk_status=ticket id 仍返回 422。"
         },
         {
           "type": "test",
@@ -7600,10 +7606,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "n8n 同步 Zendesk 工单状态到 /account 与 /production 并联动关闭本地 case",
       "status": "done",
       "owner": "zac",
-      "summary": "n8n 监听 Zendesk 工单状态变更事件后，通过新的集成端点把状态推回 SupportPortal。新增 PUT /api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status（X-Zendesk-Account-Sync-Token 认证，与 comment sync 同模式）：n8n 对 staging 源与 production 源各调一次已有 comment-sync-target 归属检测，命中者接收推送；端点幂等可重放，带旧 updated_at 的事件 stale_ignored。solved/closed 在同一事务联动关闭：support_tickets.status=resolved + closed_at（与 p1-51 solved 读回同语义）+ automation_status=closed（AI 自动回复停机，UI 手动回复不受影响），prior automation_status 存 automation_context 快照；Zendesk 重开时恢复。support_account_cases 新增 zendesk_ticket_status / zendesk_status_updated_at / zendesk_status_synced_at 三列（迁移双库执行）。/account 与 /production UI 列表徽章 + 详情 meta 行显示 Zendesk 状态。",
+      "summary": "n8n 监听 Zendesk 工单状态变更事件后，通过新的集成端点把状态推回 SupportPortal。新增 PUT /api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status（X-Zendesk-Account-Sync-Token 认证，与 comment sync 同模式）：n8n 对 staging 源与 production 源各调一次已有 comment-sync-target 归属检测，命中者接收推送；端点幂等可重放，带旧 updated_at 的事件 stale_ignored。solved/closed 在同一事务联动关闭：support_tickets.status=resolved + closed_at（与 p1-51 solved 读回同语义）+ automation_status=closed（AI 自动回复停机，UI 手动回复不受影响），prior automation_status 存 automation_context 快照；Zendesk 重开时恢复。support_account_cases 新增 zendesk_ticket_status / zendesk_status_updated_at / zendesk_status_synced_at 三列（迁移双库执行）。/account 与 /production UI 列表徽章 + 详情 meta 行显示 Zendesk 状态；n8n ISO-8601 offset 时间在共享 status-sync API 边界规范化为 UTC。",
       "next_action": "",
       "acceptance_criteria": [
         "PUT status 端点：token 认证（401/503 语义与 comment sync 一致）、404 非本栈工单、422 非法状态；重复同状态返回 unchanged，旧 updated_at 返回 stale_ignored，可安全重放。",
+        "updated_at 接受带时区 offset 的 ISO-8601 timestamp 并在比较/存储前规范化为 UTC；非法日期与将 ticket id 映射到 zendesk_status 均返回 422。",
         "solved/closed 联动：同事务置 support_tickets.status=resolved + closed_at + automation_status=closed，并记录 prior 快照；solved→非 solved 重开时恢复 prior automation_status。",
         "审计事件 account_zendesk_status_synced（actor zendesk_n8n）仅在状态实际变化时记录。",
         "comment-sync-target 响应新增 status_endpoint 字段。",
@@ -7617,6 +7624,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Status sync endpoint + repository transition tests",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync backend.tests.test_account_zendesk_status_sync_postgres",
           "details": "9 全绿：token 401/422/404、solved 联动关闭（resolved+closed_at+automation_status=closed+prior 快照+审计事件）、unchanged/stale_ignored、重开恢复 automation、status_endpoint 字段、summary/detail payload 带出新字段；Postgres 契约（同事务 SQL 参数数、重开不写工单、unchanged/stale 零写入、缺案 KeyError）。"
+        },
+        {
+          "type": "test",
+          "label": "n8n offset timestamp boundary",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync",
+          "details": "覆盖 n8n 的 2026-08-21T03:09:00.862-04:00，API 接受并将 zendesk_status_updated_at 规范化为 2026-08-21T07:09:00.862000+00:00；非法日期与 zendesk_status=ticket id 仍返回 422。"
         },
         {
           "type": "test",
@@ -7664,6 +7677,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "completed",
           "summary": "PR#837 合并（main=9587d44），双库迁移、双栈部署与双源 live 验证通过（production 12896 真实 solved 缺口被补齐），标记完成；n8n 侧工作流由用户按契约文档配置。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "reopened",
+          "summary": "n8n 首次状态同步暴露 updated_at 带 -04:00 offset 的兼容性边界，同时确认 422 样例实际将 Zendesk ticket id 映射到了 zendesk_status；重新打开任务补齐日期解析与错误映射回归。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "completed",
+          "summary": "共享 /account 与 /production status-sync API 接受 n8n 带时区 ISO-8601 updated_at，规范化为 UTC 并对非法日期返回 422；保留严格 zendesk_status 枚举，补齐错误字段映射回归。"
         }
       ],
       "legacy_refs": [],

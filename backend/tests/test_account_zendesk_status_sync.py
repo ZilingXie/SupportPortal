@@ -88,6 +88,15 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
     def test_status_sync_requires_token_and_membership_and_valid_status(self) -> None:
         self.assertEqual(self.client.put(self.status_url, json={"zendesk_status": "open"}).status_code, 401)
         self.assertEqual(self.push_status("reopened").status_code, 422)
+        mapped_ticket_id = self.push_status("12896")
+        self.assertEqual(mapped_ticket_id.status_code, 422)
+        self.assertIn("zendesk_status", mapped_ticket_id.text)
+        invalid_date = self.push_status("open", updated_at="2026/08/21 03:09:00")
+        self.assertEqual(invalid_date.status_code, 422)
+        self.assertIn("updated_at", invalid_date.text)
+        numeric_date = self.push_status("open", updated_at=12896)  # type: ignore[arg-type]
+        self.assertEqual(numeric_date.status_code, 422)
+        self.assertIn("updated_at", numeric_date.text)
         missing = self.client.put(
             "/api/integrations/zendesk/account-cases/999999/status",
             headers=self.headers,
@@ -103,6 +112,15 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
         self.assertEqual(
             target.json()["status_endpoint"],
             f"/api/integrations/zendesk/account-cases/{self.ticket_id}/status",
+        )
+
+    def test_n8n_offset_timestamp_is_accepted_and_canonicalized_to_utc(self) -> None:
+        response = self.push_status("pending", updated_at="2026-08-21T03:09:00.862-04:00")
+        self.assertEqual(response.status_code, 200, response.text)
+        account_case = self.repository.get_account_case(self.case_id)
+        self.assertEqual(
+            account_case["zendesk_status_updated_at"],
+            "2026-08-21T07:09:00.862000+00:00",
         )
 
     def test_solved_closes_local_case_and_stops_automation(self) -> None:
