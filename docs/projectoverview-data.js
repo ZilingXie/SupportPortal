@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T05:30:43Z",
-  "source_base_commit": "c90513bba3d25ce2c98bf4cf8c1318a2dc546b64",
-  "registry_digest": "2eae1aba166b7e8aa7a03c74989f10be47c355506aa136ac05e25cc88632310d",
+  "generated_at": "2026-08-21T05:42:31Z",
+  "source_base_commit": "9587d44a47ead19cde7e940392c96141b196781a",
+  "registry_digest": "49afcd6da259a8804d96f877d6b87e002e56a9dc0695dc453209e7d5ddfcffbc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1181,7 +1181,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Regression suites",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_intake backend.tests.test_account_reply_publication_postgres backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_automation_ownership backend.tests.test_workspace_api backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment backend.tests.test_zendesk_comments backend.tests.test_account_reply_version_fence backend.tests.test_account_slack_n8n",
-          "details": "572 通过（8 skip 为无 DSN 的 Postgres 用例）；UI 契约（account/production 含新徽章断言与版本串）另 55 通过。"
+          "details": "572 通过（8 skip 为无 DSN 的 Postgres 用例）；UI 契约（account/production 含新徽章断言与版本串 20260821-zendesk-status-1）另 55 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Migrations applied to both databases",
+          "command": "psql $TICKET_DB_MIGRATION_DSN / $PRODUCTION_TICKET_DB_DSN -f backend/sql/migrations/2026_08_21_account_zendesk_status_sync.sql（staging 需 migration DSN，runtime 角色非 owner）",
+          "details": "2026-08-21 对 supportportal（TICKET_DB_MIGRATION_DSN，zac）与 supportportal_production（runtime DSN）各执行迁移；information_schema 确认两库 zendesk_ticket_status/zendesk_status_updated_at/zendesk_status_synced_at 三列齐全。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local official stack + EC2 production deploy",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote；ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space",
+          "details": "PR#837 合并（main=9587d44）后双栈部署：本地 /health ok app_build.ref=9587d44a47ea（local_lightweight）；EC2 外部 https://support.stellarix.space/health ok 同 ref（full）。/account 与 /production 页面均 serving app.js?v=20260821-zendesk-status-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live status sync on both origins",
+          "command": "curl -X PUT -H 'X-Zendesk-Account-Sync-Token: …' -d '{\"zendesk_status\":…}' http://127.0.0.1:8080/api/integrations/zendesk/account-cases/12862/status 与 https://support.stellarix.space/production/api/integrations/zendesk/account-cases/12896/status",
+          "details": "staging 源（12862）：target 返回 status_endpoint、push open→updated、重放→unchanged、审计事件落库。production 源（12896，Zendesk 实测 solved 而本地仍 open 的真实缺口）：push solved→updated+local_ticket_closed=true；DB 终态 support_tickets=resolved+closed_at、case zendesk=solved automation=closed prior=automation、审计 closed=true。n8n 工作流待用户按 docs/integrations/n8n/zendesk_account_status_sync.md 配置。"
         }
       ],
       "source_refs": [
@@ -1194,7 +1212,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 12,
-      "done_count": 10,
+      "done_count": 11,
       "blocked_count": 0
     },
     {
@@ -7580,10 +7598,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-85",
       "title": "n8n 同步 Zendesk 工单状态到 /account 与 /production 并联动关闭本地 case",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "n8n 监听 Zendesk 工单状态变更事件后，通过新的集成端点把状态推回 SupportPortal。新增 PUT /api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status（X-Zendesk-Account-Sync-Token 认证，与 comment sync 同模式）：n8n 对 staging 源与 production 源各调一次已有 comment-sync-target 归属检测，命中者接收推送；端点幂等可重放，带旧 updated_at 的事件 stale_ignored。solved/closed 在同一事务联动关闭：support_tickets.status=resolved + closed_at（与 p1-51 solved 读回同语义）+ automation_status=closed（AI 自动回复停机，UI 手动回复不受影响），prior automation_status 存 automation_context 快照；Zendesk 重开时恢复。support_account_cases 新增 zendesk_ticket_status / zendesk_status_updated_at / zendesk_status_synced_at 三列（迁移双库执行）。/account 与 /production UI 列表徽章 + 详情 meta 行显示 Zendesk 状态。",
-      "next_action": "合并后双栈部署与迁移，live 验证 staging/production 两源推送与 UI 展示。",
+      "next_action": "",
       "acceptance_criteria": [
         "PUT status 端点：token 认证（401/503 语义与 comment sync 一致）、404 非本栈工单、422 非法状态；重复同状态返回 unchanged，旧 updated_at 返回 stale_ignored，可安全重放。",
         "solved/closed 联动：同事务置 support_tickets.status=resolved + closed_at + automation_status=closed，并记录 prior 快照；solved→非 solved 重开时恢复 prior automation_status。",
@@ -7604,7 +7622,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Regression suites",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_comment_sync_postgres backend.tests.test_account_intake backend.tests.test_account_reply_publication_postgres backend.tests.test_worker backend.tests.test_repository_configuration backend.tests.test_account_automation_ownership backend.tests.test_workspace_api backend.tests.test_account_full_reroute backend.tests.test_account_reroute_dispatch backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment backend.tests.test_zendesk_comments backend.tests.test_account_reply_version_fence backend.tests.test_account_slack_n8n",
-          "details": "572 通过（8 skip 为无 DSN 的 Postgres 用例）；UI 契约（account/production 含新徽章断言与版本串）另 55 通过。"
+          "details": "572 通过（8 skip 为无 DSN 的 Postgres 用例）；UI 契约（account/production 含新徽章断言与版本串 20260821-zendesk-status-1）另 55 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Migrations applied to both databases",
+          "command": "psql $TICKET_DB_MIGRATION_DSN / $PRODUCTION_TICKET_DB_DSN -f backend/sql/migrations/2026_08_21_account_zendesk_status_sync.sql（staging 需 migration DSN，runtime 角色非 owner）",
+          "details": "2026-08-21 对 supportportal（TICKET_DB_MIGRATION_DSN，zac）与 supportportal_production（runtime DSN）各执行迁移；information_schema 确认两库 zendesk_ticket_status/zendesk_status_updated_at/zendesk_status_synced_at 三列齐全。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local official stack + EC2 production deploy",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote；ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space",
+          "details": "PR#837 合并（main=9587d44）后双栈部署：本地 /health ok app_build.ref=9587d44a47ea（local_lightweight）；EC2 外部 https://support.stellarix.space/health ok 同 ref（full）。/account 与 /production 页面均 serving app.js?v=20260821-zendesk-status-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live status sync on both origins",
+          "command": "curl -X PUT -H 'X-Zendesk-Account-Sync-Token: …' -d '{\"zendesk_status\":…}' http://127.0.0.1:8080/api/integrations/zendesk/account-cases/12862/status 与 https://support.stellarix.space/production/api/integrations/zendesk/account-cases/12896/status",
+          "details": "staging 源（12862）：target 返回 status_endpoint、push open→updated、重放→unchanged、审计事件落库。production 源（12896，Zendesk 实测 solved 而本地仍 open 的真实缺口）：push solved→updated+local_ticket_closed=true；DB 终态 support_tickets=resolved+closed_at、case zendesk=solved automation=closed prior=automation、审计 closed=true。n8n 工作流待用户按 docs/integrations/n8n/zendesk_account_status_sync.md 配置。"
         }
       ],
       "source_refs": [
@@ -7623,6 +7659,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "created",
           "summary": "用户提出 n8n 监听 Zendesk 状态变更并同步到 /account 与 /production；确认采用联动关闭（solved/closed 停 AI 自动回复）+ 列表与详情双展示。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "completed",
+          "summary": "PR#837 合并（main=9587d44），双库迁移、双栈部署与双源 live 验证通过（production 12896 真实 solved 缺口被补齐），标记完成；n8n 侧工作流由用户按契约文档配置。"
         }
       ],
       "legacy_refs": [],
