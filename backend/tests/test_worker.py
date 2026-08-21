@@ -238,7 +238,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
             status_code=200,
             already_assigned=False,
         )
-        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116634341396"}, clear=False), patch.object(
             worker, "ticket_repository", repository
         ), patch.object(
             worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
@@ -253,7 +253,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
 
         assign_reviewer.assert_called_once_with(
             ticket_id="12895",
-            reviewer_email="xieziling@agora.io",
+            reviewer_user_id="31116634341396",
         )
         event_calls = [
             call for call in repository.record_event.call_args_list
@@ -273,7 +273,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
             "is_public": False,
             "target_status": None,
         }
-        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116634341396"}, clear=False), patch.object(
             worker, "ticket_repository", repository
         ), patch.object(
             worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
@@ -303,7 +303,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
             "is_public": True,
             "target_status": None,
         }
-        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116634341396"}, clear=False), patch.object(
             worker, "ticket_repository", repository
         ), patch.object(
             worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
@@ -327,7 +327,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
             "is_public": True,
             "target_status": None,
         }
-        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": "xieziling@agora.io"}, clear=False), patch.object(
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116634341396"}, clear=False), patch.object(
             worker, "ticket_repository", repository
         ), patch.object(
             worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
@@ -361,7 +361,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
             "is_public": True,
             "target_status": None,
         }
-        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_EMAIL": ""}, clear=False), patch.object(
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": ""}, clear=False), patch.object(
             worker, "ticket_repository", repository
         ), patch.object(
             worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
