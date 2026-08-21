@@ -6106,6 +6106,22 @@ def _normalize_zendesk_comment_sync_ticket_id(value: Any) -> str:
     return normalized
 
 
+def _canonical_zendesk_source_updated_at(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="updated_at must be a valid ISO-8601 timestamp",
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
 @app.get(
     "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comment-sync-target",
     dependencies=[Depends(require_zendesk_account_sync_token)],
@@ -6231,13 +6247,14 @@ async def sync_zendesk_account_ticket_status(
     if not account_case_id:
         raise HTTPException(status_code=409, detail="Account Case has no canonical id")
 
+    source_updated_at = _canonical_zendesk_source_updated_at(request.updated_at)
     try:
         result = await async_to_thread(
             ticket_repository.update_account_case_zendesk_status,
             account_case_id=account_case_id,
             zendesk_status=request.zendesk_status,
             synced_at=now_iso(),
-            source_updated_at=request.updated_at,
+            source_updated_at=source_updated_at,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Account Case not found") from exc

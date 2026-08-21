@@ -45,7 +45,9 @@ Body type: JSON
   `closed` (422 otherwise).
 - `updated_at` is the Zendesk ticket `updated_at` from the same event. It is
   optional, but sending it lets SupportPortal drop out-of-order or replayed
-  events (`stale_ignored`).
+  events (`stale_ignored`). ISO-8601 timestamps with a timezone offset are
+  accepted, including n8n's `2026-08-21T03:09:00.862-04:00` form; SupportPortal
+  canonicalizes accepted timestamps to UTC before comparing or storing them.
 - A 404 means the ticket is not an Account Case of that stack; treat it as a
   membership miss, not a delivery failure.
 
