@@ -66,9 +66,49 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
                     "group_id": 29388501432596,
                     "safe_update": True,
                     "updated_stamp": "2026-08-20T07:03:44Z",
+                    "31503099534100": "video_calling",
                 }
             },
         )
+
+    def test_assignment_fills_required_field_only_when_ticket_value_is_empty(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-20T07:03:44Z", "custom_fields": [{"id": 31503099534100, "value": "voice_calling"}]}}),
+            _FakeResponse({"ticket": {"id": 12807, "assignee_id": 48557297720084, "group_id": 29388501432596}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            assign_ticket_to_configured_ai(ticket_id="12807")
+
+        update_request = urlopen.call_args_list[2].args[0]
+        self.assertEqual(
+            json.loads(update_request.data.decode("utf-8")),
+            {
+                "ticket": {
+                    "assignee_id": 48557297720084,
+                    "group_id": 29388501432596,
+                    "safe_update": True,
+                    "updated_stamp": "2026-08-20T07:03:44Z",
+                }
+            },
+        )
+
+    def test_ownership_snapshot_reports_required_field_state(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12875, "assignee_id": 31116634341396, "group_id": 27216254064148, "updated_at": "2026-08-20T07:05:37Z", "custom_fields": [{"id": 31503099534100, "value": "video_calling"}]}}),
+            _FakeResponse({"comments": [], "users": [], "next_page": None}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ):
+            snapshot = read_ticket_ownership_snapshot(ticket_id="12875")
+
+        self.assertFalse(snapshot.required_field_missing)
 
     def test_already_assigned_does_not_put(self) -> None:
         responses = [
@@ -248,6 +288,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
         self.assertTrue(snapshot.human_replied)
         self.assertEqual(snapshot.blocking_comment_id, "3")
         self.assertIsNone(snapshot.unresolved_public_comment_id)
+        self.assertTrue(snapshot.required_field_missing)
 
     def test_ownership_snapshot_marks_unknown_public_author_unresolved(self) -> None:
         responses = [
