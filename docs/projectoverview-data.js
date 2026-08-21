@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T02:45:43Z",
-  "source_base_commit": "2879a7235073ed8a65ad553ae437f462892433da",
-  "registry_digest": "5874771f810e37075de04e4e2a248f8f9c966e82ba348022b8d8fcce9dde976c",
+  "generated_at": "2026-08-21T02:52:20Z",
+  "source_base_commit": "0cffc5950cc0025b867b2e3e5953daf88b6f7dd0",
+  "registry_digest": "12cbbf74a459527a1fe43af1500013e2cc139f040ebf8eff9cab57448972a9f1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1122,6 +1122,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 production stack deploy + live markers",
           "command": "ssh zacbot ./deployment/deploy_ec2.sh --branch main（auto-deploy 自动执行）+ docker exec deployment-api_production-1 python -c \"...import DEFAULT_ASSIGNMENT_INITIAL_DELAY, _assignment_initial_delay...\" + curl https://support.stellarix.space/health",
           "details": "2026-08-20 EC2 生产栈（main=1020e2e）：api/worker_query/worker_aux production 容器全部运行 supportportal-app:1020e2e26c9b；域名 /health status=ok build=1020e2e26c9b；生产容器内 DEFAULT_ASSIGNMENT_INITIAL_DELAY=90.0、_assignment_initial_delay()=90.0。真实 90s 等待路径待下一个 production 自动化工单自然验证。"
+        },
+        {
+          "type": "test",
+          "label": "Autofill payload tests",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_automation_ownership",
+          "details": "34 全绿：字段为空时 PUT 附带 custom_fields:[{id:31503099534100,value:video_calling}]；字段已有值（voice_calling）时完全不附带；快照 required_field_missing 两种取值解析正确。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_comment_sync backend.tests.test_zendesk_comments",
+          "details": "301 通过（worktree 需从仓库根执行 link_worktree_env.sh）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local official stack restart + marker",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_api_1 python -c \"from backend.services.zendesk_ticket_assignment import ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID, ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE; print(...)\"",
+          "details": "2026-08-21 官方栈（app_build.ref=0cffc5950cc0，/health ok）容器内常量 31503099534100/video_calling 生效。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 production deploy + live takeover on 12893",
+          "command": "ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space + docker exec deployment-api_production-1 python -c \"assign_ticket_to_configured_ai(ticket_id='12893')\"",
+          "details": "2026-08-21 EC2 生产栈部署 0cffc5950cc0（域名 /health ok）。真实验证链：① 顶层键形式实测被忽略（12893 PUT 仍 422 needed，detail 完整捕获）；② custom_fields 数组形式对 12893 实测 200 并写入 video_calling；③ 部署修正版后经生产容器调用 assign_ticket_to_configured_ai 成功：assignee=48557297720084（AI agent）、group=29388501432596、sdk_product=video_calling。全新工单的 PUT 内自动填充路径待下一个真实 production 自动化工单自然验证。"
         }
       ],
       "source_refs": [
@@ -1134,7 +1158,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 10,
-      "done_count": 8,
+      "done_count": 9,
       "blocked_count": 0
     },
     {
@@ -7377,10 +7401,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-83",
       "title": "AI 接管 PUT 自动补 Zendesk 必填字段 SDK Product（为空时默认 video_calling）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "12893 实测（PR#829 的 details 捕获）定位 422 真因：Zendesk 字段级 required 字段 31503099534100 \"SDK Product (Selectable)\" 为空时拒绝一切 API 工单更新（RecordInvalid \"needed\"），与路由窗口/时机无关；此前 12878/12879/12880 的手动成功都是因为人工在 UI 接手时被表单强制填了该字段。Zendesk 侧无法修改（用户确认），改为代码侧：assignment PUT 在该字段为空时自动带上默认值 video_calling，已有值（人工已选）一律不覆盖；快照与手动 GET 路径同样判定。",
-      "next_action": "修正 custom_fields 数组形式后重新部署 EC2,在 12893 上验证接管成功并标记完成。",
+      "next_action": "",
       "acceptance_criteria": [
         "assign_ticket_to_configured_ai 的 PUT 在字段 31503099534100 为空/缺失时附带默认值 video_calling；字段已有任何值（如人工选的 voice_calling）时完全不附带，不覆盖人工选择。",
         "ownership_snapshot 路径与手动 GET 路径使用同一判定（custom_fields 中该字段非空才算已填）。",
@@ -7388,7 +7412,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有 ownership/assignment/intake/worker/comment 回归套件全部保持通过。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Autofill payload tests",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_automation_ownership",
+          "details": "34 全绿：字段为空时 PUT 附带 custom_fields:[{id:31503099534100,value:video_calling}]；字段已有值（voice_calling）时完全不附带；快照 required_field_missing 两种取值解析正确。"
+        },
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_account_intake backend.tests.test_account_zendesk_comment backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_assignment backend.tests.test_account_zendesk_comment_sync backend.tests.test_zendesk_comments",
+          "details": "301 通过（worktree 需从仓库根执行 link_worktree_env.sh）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local official stack restart + marker",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_api_1 python -c \"from backend.services.zendesk_ticket_assignment import ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID, ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE; print(...)\"",
+          "details": "2026-08-21 官方栈（app_build.ref=0cffc5950cc0，/health ok）容器内常量 31503099534100/video_calling 生效。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 production deploy + live takeover on 12893",
+          "command": "ssh zacbot ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space + docker exec deployment-api_production-1 python -c \"assign_ticket_to_configured_ai(ticket_id='12893')\"",
+          "details": "2026-08-21 EC2 生产栈部署 0cffc5950cc0（域名 /health ok）。真实验证链：① 顶层键形式实测被忽略（12893 PUT 仍 422 needed，detail 完整捕获）；② custom_fields 数组形式对 12893 实测 200 并写入 video_calling；③ 部署修正版后经生产容器调用 assign_ticket_to_configured_ai 成功：assignee=48557297720084（AI agent）、group=29388501432596、sdk_product=video_calling。全新工单的 PUT 内自动填充路径待下一个真实 production 自动化工单自然验证。"
+        }
+      ],
       "source_refs": [
         "backend/services/zendesk_ticket_assignment.py",
         "backend/tests/test_zendesk_ticket_assignment.py"
@@ -7405,6 +7454,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "updated",
           "summary": "首版（PR#831）用顶层 \"\u003cfield_id>\": \"\u003cvalue>\" 形式被该 Zendesk 账户静默忽略（12893 实测 PUT 仍报 needed）；改为 custom_fields 数组形式（12893 实测 200 并成功写入 video_calling）。"
+        },
+        {
+          "at": "2026-08-21",
+          "event": "completed",
+          "summary": "PR#831（顶层键形式）+ PR#832（custom_fields 数组修正）合并；EC2 生产栈部署 0cffc5950cc0，12893 实测接管成功且字段写入 video_calling，标记完成。"
         }
       ],
       "legacy_refs": [],
