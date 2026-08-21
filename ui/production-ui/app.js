@@ -2498,7 +2498,7 @@ async function routeActiveCaseBackToQueue() {
   try {
     const response = await accountFetch(
       `/api/account/cases/${encodeURIComponent(caseId)}/zendesk-route-back-to-queue`,
-      { method: "POST", cache: "no-store" }
+      { method: "POST", cache: "no-store", timeoutMs: 120_000 }
     );
     if (handleAccountAuthFailure(response)) return;
     const payload = await readResponsePayload(response);
@@ -2513,10 +2513,16 @@ async function routeActiveCaseBackToQueue() {
       fetchTickets({ force: true, renderOnUpdate: false }),
     ]);
     const status = String(payload.status || "");
+    const emailStatus = String(payload.notification_email_status || "");
+    const emailNotice = emailStatus === "sent"
+      ? " Notification email sent."
+      : emailStatus === "failed"
+        ? " Notification email failed."
+        : "";
     if (status === "assigned" || status === "already_human_owned") {
-      showToast("Assigned by Zendesk");
+      showToast(`Assigned by Zendesk.${emailNotice}`.trim());
     } else {
-      showToast(`Queued in group ${String(payload.group_id || payload.source_group_id || "")}`.trim());
+      showToast(`Queued in group ${String(payload.group_id || payload.source_group_id || "")}.${emailNotice}`.trim());
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not route this ticket back to Zendesk.";

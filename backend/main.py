@@ -123,6 +123,7 @@ from backend.services.internal_email_payload import (
     InternalEmailRecipientResolutionError,
     resolve_account_internal_email_recipient,
 )
+from backend.services.graph_mail import send_graph_mail
 from backend.services.account_automation_ownership import (
     OWNERSHIP_EVENT_TYPE,
     ensure_production_automation_ownership,
@@ -4951,8 +4952,14 @@ async def assign_account_case_to_zendesk_ai(
     )
 
 
+ROUTE_BACK_NOTIFICATION_EMAIL = "xieziling@agora.io"
+
+
 def _account_zendesk_route_back_payload(
-    *, account_case_id: str, result: ZendeskRouteBackResult
+    *,
+    account_case_id: str,
+    result: ZendeskRouteBackResult,
+    notification_email_status: str,
 ) -> dict[str, Any]:
     return {
         "status": result.status,
@@ -4962,7 +4969,56 @@ def _account_zendesk_route_back_payload(
         "group_id": result.group_id,
         "source_group_id": result.source_group_id,
         "updated": result.updated,
+        "notification_email_status": notification_email_status,
+        "notification_email_recipient": ROUTE_BACK_NOTIFICATION_EMAIL,
     }
+
+
+def _send_zendesk_route_back_notification(
+    *,
+    account_case_id: str,
+    zendesk_ticket_id: str,
+    status: str,
+    group_id: str | None,
+    assignee_id: str | None,
+    reply_jobs_cancelled: int,
+    triggered_at: str,
+    failure_code: str | None = None,
+) -> tuple[str, str | None]:
+    normalized_status = str(status or "unknown").strip() or "unknown"
+    subject = (
+        f"[SupportPortal] Zendesk ticket #{zendesk_ticket_id} route-back: "
+        f"{normalized_status}"
+    )
+    body_lines = [
+        "A Production SupportPortal case ran Route back to queue.",
+        "",
+        f"Account Case ID: {account_case_id}",
+        f"Zendesk ticket: https://agoraio.zendesk.com/agent/tickets/{zendesk_ticket_id}",
+        f"Result: {normalized_status}",
+        f"Group ID: {group_id or 'unavailable'}",
+        f"Assignee ID: {assignee_id or 'unassigned'}",
+        f"Pending AI reply jobs cancelled: {int(reply_jobs_cancelled or 0)}",
+        f"Triggered at: {triggered_at}",
+    ]
+    if failure_code:
+        body_lines.append(f"Failure code: {failure_code}")
+    try:
+        send_graph_mail(
+            to_address=ROUTE_BACK_NOTIFICATION_EMAIL,
+            subject=subject,
+            body="\n".join(body_lines),
+            content_type="Text",
+        )
+    except Exception as exc:  # Route-back may already be committed; report without replaying it.
+        LOGGER.exception(
+            "Zendesk route-back notification email failed account_case_id=%s ticket_id=%s status=%s",
+            account_case_id,
+            zendesk_ticket_id,
+            normalized_status,
+        )
+        return "failed", type(exc).__name__
+    return "sent", None
 
 
 @app.post("/api/account/cases/{account_case_id}/zendesk-route-back-to-queue")
@@ -5065,6 +5121,17 @@ async def route_account_case_back_to_zendesk_queue(
             failure_detail=getattr(exc, "detail", None),
         )
         await async_to_thread(ticket_repository.save_account_case, account_case)
+        notification_email_status, notification_email_error = await async_to_thread(
+            _send_zendesk_route_back_notification,
+            account_case_id=normalized_case_id,
+            zendesk_ticket_id=zendesk_ticket_id,
+            status=handoff_status,
+            group_id=str(prior_ownership.get("group_id") or "").strip() or None,
+            assignee_id=str(prior_ownership.get("assignee_id") or "").strip() or None,
+            reply_jobs_cancelled=cancelled_jobs,
+            triggered_at=failure_at,
+            failure_code=exc.error_code,
+        )
         await async_to_thread(
             ticket_repository.record_workspace_audit_event,
             "account_zendesk_route_back_to_queue",
@@ -5077,6 +5144,9 @@ async def route_account_case_back_to_zendesk_queue(
                 "failure_category": exc.category,
                 "zendesk_status_code": exc.status_code,
                 "reply_jobs_cancelled": cancelled_jobs,
+                "notification_email_status": notification_email_status,
+                "notification_email_recipient": ROUTE_BACK_NOTIFICATION_EMAIL,
+                "notification_email_error": notification_email_error,
             },
             created_at=timestamp,
         )
@@ -5097,6 +5167,16 @@ async def route_account_case_back_to_zendesk_queue(
         group_id=result.group_id,
     )
     await async_to_thread(ticket_repository.save_account_case, account_case)
+    notification_email_status, notification_email_error = await async_to_thread(
+        _send_zendesk_route_back_notification,
+        account_case_id=normalized_case_id,
+        zendesk_ticket_id=result.ticket_id,
+        status=result.status,
+        group_id=result.group_id,
+        assignee_id=result.assignee_id,
+        reply_jobs_cancelled=cancelled_jobs,
+        triggered_at=completed_at,
+    )
     await async_to_thread(
         ticket_repository.record_workspace_audit_event,
         "account_zendesk_route_back_to_queue",
@@ -5110,12 +5190,16 @@ async def route_account_case_back_to_zendesk_queue(
             "source_group_id": result.source_group_id,
             "zendesk_updated": result.updated,
             "reply_jobs_cancelled": cancelled_jobs,
+            "notification_email_status": notification_email_status,
+            "notification_email_recipient": ROUTE_BACK_NOTIFICATION_EMAIL,
+            "notification_email_error": notification_email_error,
         },
         created_at=completed_at,
     )
     return _account_zendesk_route_back_payload(
         account_case_id=normalized_case_id,
         result=result,
+        notification_email_status=notification_email_status,
     )
 
 
