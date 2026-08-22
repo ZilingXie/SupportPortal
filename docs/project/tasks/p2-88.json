@@ -101,6 +101,11 @@
     },
     {
       "at": "2026-08-22",
+      "event": "execution_token_dependency_order",
+      "summary": "release-003 线上验证发现空 body 请求先触发 422 校验而非 401 鉴权；执行 token 检查从 handler 内移到路由级 Depends，保证鉴权先于请求体校验，测试补充空 body 无 token 必须 401 的断言。"
+    },
+    {
+      "at": "2026-08-22",
       "event": "created",
       "summary": "根据三环境 Route/Automation 迁移计划创建实施任务。"
     },

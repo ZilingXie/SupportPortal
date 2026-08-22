@@ -77,6 +77,8 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                     headers={"Authorization": "Bearer wrong"},
                 )
                 self.assertEqual(wrong.status_code, 401)
+                empty_body = client.post("/v1/cases", json={})
+                self.assertEqual(empty_body.status_code, 401)
                 self.assertEqual(client.post("/v1/reset").status_code, 401)
                 self.assertEqual(
                     client.post("/v1/reruns", json={"request_id": "r", "case_id": "AC-1", "rerun_of_execution_id": "e"}).status_code,
