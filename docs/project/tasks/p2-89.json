@@ -47,6 +47,11 @@
   "history": [
     {
       "at": "2026-08-23",
+      "event": "token_gate_delegated_submit_fix",
+      "summary": "release-20260823-001 线上浏览器验收发现 token 门提交无响应：connectToken 经 appRoot 委托监听取 event.currentTarget 得到的是容器 div 而非表单，new FormData(div) 抛 TypeError 被 void 调用静默吞掉。改为从 event.target 取 HTMLFormElement，三份 UI 重新生成并随 release-20260823-002 重新部署。"
+    },
+    {
+      "at": "2026-08-23",
       "event": "created",
       "summary": "承接 p2-88 报告中 T1（rerun 真实现）与 T6（UI 迭代）并扩展为三环境控制台与旧端点的模板级对齐：staging 取 /account 模板、preproduction/production 取 /production 模板，route correction/review 明确排除。"
     }
