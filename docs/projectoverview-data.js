@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T17:47:33Z",
-  "source_base_commit": "2ffcfa0a09a6ae46ad2e2e1678df2cbe5c61f10d",
-  "registry_digest": "60af870e9345bf17158aec3438509b23a4c4fe50d370dd1e862cc8b61df316ef",
+  "generated_at": "2026-08-22T18:48:36Z",
+  "source_base_commit": "e5f31e67b23cf0a2ca4ccfe79716b51254cb7c12",
+  "registry_digest": "0f624a2ea22c82a024cd07dad56dc49e011ff5311930bf54e36deef0def049cf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1675,6 +1675,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credentials 401 blocks real side-effect acceptance",
           "command": "容器内 GET agoraio.zendesk.com/api/v2/tickets/12895.json",
           "details": "preproduction 与主栈 api_production 容器使用 .env 的 zendesk_basic_auth 均 401；该值不含冒号（非 email:token 格式），疑似 Zendesk token 轮换后未更新 EC2 .env。真实 Zendesk 写入验收（preproduction internal 全链路、production internal/external 与 readback）与主栈 /production 自动投递均被阻塞，等待运维更新凭据。"
+        },
+        {
+          "type": "deployment",
+          "label": "Zendesk credential resolved, verification probes all green",
+          "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
+          "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
         }
       ],
       "source_refs": [
@@ -7911,7 +7917,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "等待运维将 EC2 .env 的 zendesk_basic_auth 更新为有效的 email:token 值（当前值无冒号、所有 Zendesk 调用 401，主栈 /production 同样受影响）：凭据修复后用新 request_id 重跑 preproduction allowlist 工单的 side-effect 全链路（ownership + internal comment + status + delivery ledger + readback）和 production 12895 internal 链路，external comment 由用户指定受控工单验证；随后三环境保持 release-20260822-005；旧端点切流仍需单独批准。",
+      "next_action": "Zendesk 凭据已由运维修复（verify_split_environments.sh 36/36 全绿）。真实写入验收（preproduction allowlist 工单 internal 全链路、production internal/external 与 Zendesk readback）按用户指示暂缓、不使用真实工单测试，待用户明确批准测试工单或由用户在 UI 自行执行；三环境保持 release-20260822-005；旧端点切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -7920,9 +7926,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "三套环境复用现有项目 DSN，但使用 supportportal_staging、supportportal_preproduction、supportportal_production 独立 schema 和 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张独立 execution table；Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
         "按 staging -> preproduction -> production 完成契约、镜像内容、fake Zendesk、远程 Zendesk readback、回滚和官方栈验证；旧端点退出需要单独切流批准。"
       ],
-      "blockers": [
-        "EC2 .env 的 zendesk_basic_auth 值不含冒号（非 email:token 格式），preproduction/production 与主栈 /production 容器对 agoraio.zendesk.com 全部 401；side-effect 真实写入验收与 Zendesk readback 被阻塞，等待运维更新 Zendesk token。"
-      ],
+      "blockers": [],
       "evidence": [
         {
           "type": "test",
@@ -7995,6 +7999,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credentials 401 blocks real side-effect acceptance",
           "command": "容器内 GET agoraio.zendesk.com/api/v2/tickets/12895.json",
           "details": "preproduction 与主栈 api_production 容器使用 .env 的 zendesk_basic_auth 均 401；该值不含冒号（非 email:token 格式），疑似 Zendesk token 轮换后未更新 EC2 .env。真实 Zendesk 写入验收（preproduction internal 全链路、production internal/external 与 readback）与主栈 /production 自动投递均被阻塞，等待运维更新凭据。"
+        },
+        {
+          "type": "deployment",
+          "label": "Zendesk credential resolved, verification probes all green",
+          "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
+          "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
         }
       ],
       "source_refs": [
