@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T12:53:02Z",
-  "source_base_commit": "f0a21d8232dd123e65f40a1c60c73bdbac840c2b",
-  "registry_digest": "cd1472e2e6c95fa5ca72a79e67c3f12e1c7f7b595159069ff4eb5aef0ac09259",
+  "generated_at": "2026-08-22T14:35:17Z",
+  "source_base_commit": "9426e82d90452fc99a0647dd948a953af9274ff3",
+  "registry_digest": "3bfcfde190f2811a40dfe36fa3338f8e6a207784c3dabba99e4cb367ae2eea2c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1645,6 +1645,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Environment-specific automation execution tables",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_execution_store backend.tests.test_automation_contracts",
           "details": "验证 execution store 使用 schema-qualified 的 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张表，表名非法或未按环境绑定时 fail closed。"
+        },
+        {
+          "type": "test",
+          "label": "Split nginx automation edge attachment",
+          "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment",
+          "details": "验证 split deploy 在启动环境服务前将正在运行的官方 nginx 幂等接入 supportportal_automation_edge，不重建 nginx；nginx 不存在时 fail closed，避免容器 health 正常但外部路径因 Docker DNS 不可达而持续 502。"
         }
       ],
       "source_refs": [
@@ -7881,7 +7887,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "在 EC2 本机运行 build_automation_release.sh 生成 local release manifest，再按 staging -> preproduction -> production 完成逐环境 health、镜像内容、Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
+      "next_action": "在 EC2 同步 nginx automation edge 修复后，重新执行 staging release deploy 并验证 staging/preproduction 外部 health；随后经明确批准部署 production，完成 Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -7933,6 +7939,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Environment-specific automation execution tables",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_execution_store backend.tests.test_automation_contracts",
           "details": "验证 execution store 使用 schema-qualified 的 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张表，表名非法或未按环境绑定时 fail closed。"
+        },
+        {
+          "type": "test",
+          "label": "Split nginx automation edge attachment",
+          "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment",
+          "details": "验证 split deploy 在启动环境服务前将正在运行的官方 nginx 幂等接入 supportportal_automation_edge，不重建 nginx；nginx 不存在时 fail closed，避免容器 health 正常但外部路径因 Docker DNS 不可达而持续 502。"
         }
       ],
       "source_refs": [
@@ -7987,6 +7999,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-22",
           "event": "environment_specific_execution_tables",
           "summary": "按用户修正将 execution ledger 从共享表改为三张环境专属表，并在 Compose、资源 identity 和部署校验中显式绑定表名。"
+        },
+        {
+          "at": "2026-08-22",
+          "event": "nginx_automation_edge_attachment",
+          "summary": "修复 split 环境后启动时官方 nginx 未加入 automation edge 导致的 502；deploy 脚本改为幂等连接共享网络且不重建 nginx。"
         }
       ],
       "legacy_refs": [

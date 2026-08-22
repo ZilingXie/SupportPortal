@@ -42,6 +42,8 @@ DEPLOY_PRODUCTION_APPROVED=1 \
 
 split deployment 现在遵循 `--branch` 和 `--skip-pull`：默认会检查工作树、fetch 目标分支并执行 fast-forward pull；使用 `--skip-pull` 时，调用方必须自行保证工作树已经处于目标 commit。
 
+每次 split deployment 还会检查官方 nginx 容器是否已加入 `supportportal_automation_edge`。缺失时脚本使用 `docker network connect` 幂等接入，不重建或重启 nginx；nginx 未运行或接入失败时，脚本会在启动目标 split 服务前明确失败。这样先于 split 环境启动的旧 nginx 也能通过 Docker DNS 解析 `automation_staging`、`automation_preproduction` 和 `automation_production`。
+
 Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如可在 EC2 上分别执行 `openssl rand -hex 32` 生成三个 token，再填入 `ROUTE_STAGING_SERVICE_TOKEN`、`ROUTE_PREPRODUCTION_SERVICE_TOKEN` 和 `ROUTE_PRODUCTION_SERVICE_TOKEN`。不要把 token 放进 release manifest 或提交到 Git。
 
 ## 3. 验收顺序
