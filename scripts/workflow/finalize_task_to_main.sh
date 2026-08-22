@@ -175,7 +175,13 @@ else
   info "Reusing existing PR $pr_url"
 fi
 
-gh pr merge "$pr_url" --squash --auto --match-head-commit "$head_sha"
+# Try an immediate squash merge first. With no required status checks
+# configured on main, a queued auto-merge never receives a check-run event and
+# stalls until the poll timeout; --auto remains the fallback for the day the
+# repository gains required checks or review gates.
+if ! gh pr merge "$pr_url" --squash --match-head-commit "$head_sha" >/dev/null 2>&1; then
+  gh pr merge "$pr_url" --squash --auto --match-head-commit "$head_sha"
+fi
 
 merge_timeout_seconds="${CODEX_PR_MERGE_TIMEOUT_SECONDS:-300}"
 poll_interval_seconds="${CODEX_PR_POLL_INTERVAL_SECONDS:-2}"

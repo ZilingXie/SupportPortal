@@ -167,6 +167,21 @@ if [[ -z "${AWS_DEFAULT_REGION:-}" && -n "${ASSET_S3_REGION:-}" ]]; then
   export AWS_DEFAULT_REGION="$ASSET_S3_REGION"
 fi
 
+# The split automation networks are declared external in the compose file, so
+# podman-compose aborts during `up` when they do not exist yet on this host
+# (deploy_ec2.sh normally creates them on the EC2 host). Create any missing
+# network idempotently before the stack starts.
+for automation_network in \
+  "${AUTOMATION_EDGE_NETWORK_NAME:-supportportal_automation_edge}" \
+  "${AUTOMATION_STAGING_INTERNAL_NETWORK_NAME:-supportportal_automation_internal_staging}" \
+  "${AUTOMATION_PREPRODUCTION_INTERNAL_NETWORK_NAME:-supportportal_automation_internal_preproduction}" \
+  "${AUTOMATION_PRODUCTION_INTERNAL_NETWORK_NAME:-supportportal_automation_internal_production}"; do
+  if ! podman network exists "${automation_network}" >/dev/null 2>&1; then
+    podman network create "${automation_network}" >/dev/null
+    info "Created missing external compose network: ${automation_network}"
+  fi
+done
+
 export APP_BUILD_REF
 export APP_BUILD_TIME
 export APP_RUNTIME_IMAGE
