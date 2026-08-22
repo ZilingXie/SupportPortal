@@ -172,6 +172,11 @@
       "at": "2026-08-22",
       "event": "acceptance_remediation_outbound_and_auth",
       "summary": "线上验收发现 --internal 网络阻断 route 出站 LLM 调用后，automation 网络改为非 internal 创建并对既存 internal 网络 fail closed；执行端点增加每环境 Bearer token 鉴权（compose 映射 AUTOMATION_*_EXECUTION_TOKEN，deploy 必填校验，三 UI 提供输入），production 未知写路径统一 404。"
+    },
+    {
+      "at": "2026-08-23",
+      "event": "ui_parity_split_to_p2_89",
+      "summary": "报告任务包 T1（rerun 真实现）与 T6（design.md 覆盖 + UI 迭代）及三环境 UI/功能对齐旧端点的工作分流到新任务 p2-89 承接；本任务保留拆分环境基础设施与真实写入验收（T3）、切流（T4）范围。"
     }
   ],
   "legacy_refs": ["p2-73", "p2-74"],

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T18:48:36Z",
-  "source_base_commit": "e5f31e67b23cf0a2ca4ccfe79716b51254cb7c12",
-  "registry_digest": "0f624a2ea22c82a024cd07dad56dc49e011ff5311930bf54e36deef0def049cf",
+  "generated_at": "2026-08-22T19:43:20Z",
+  "source_base_commit": "6fdca359605827c739994591341ed089e3c41110",
+  "registry_digest": "90047c6bda78ced869e22dc1e1a5f71b737b813cb2ebbe6354ca96e882d815cf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1681,6 +1681,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credential resolved, verification probes all green",
           "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
           "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
+        },
+        {
+          "type": "test",
+          "label": "Split runtime query/rerun/reset contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_execution_store backend.tests.test_automation_contracts backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation backend.tests.test_route_service_contract backend.tests.test_split_environment_deployment backend.tests.test_build_automation_release backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_account_automation_ownership",
+          "details": "122 项相关测试通过。新增覆盖：GET /v1/executions 无 token 401、分页/status 过滤/case 查找/status_counts 同快照、execution payload 持久化原始 request 字段；GET /v1/executions/{id} 401/404/200；rerun 创建链式新 execution（新 request_id、rerun_of_execution_id 可追溯、原记录不可变、旧记录 422 execution_request_not_persisted、case 不匹配 404）；staging reset 清空并返回 deleted_count、preproduction reset 404；production runtime 具备列表/详情端点且 OpenAPI 仍无 rerun/reset；production UI bundle 物理不含 rerun 字符串。"
+        },
+        {
+          "type": "test",
+          "label": "Static syntax checks for the three console UIs",
+          "command": "node --check ui/automation-staging/app.js && node --check ui/automation-preproduction/app.js && node --check ui/automation-production/app.js",
+          "details": "三份 app.js 通过 node --check；staging/preproduction 主体逐字节一致（仅 ENV 常量块不同），production 变体由同一源生成并剥离 rerun 代码块（含 ENV 键与文案），满足镜像物理排除契约的 UI 侧约束。"
         }
       ],
       "source_refs": [
@@ -1690,7 +1702,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 7,
+      "task_count": 8,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -8084,11 +8096,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-22",
           "event": "acceptance_remediation_outbound_and_auth",
           "summary": "线上验收发现 --internal 网络阻断 route 出站 LLM 调用后，automation 网络改为非 internal 创建并对既存 internal 网络 fail closed；执行端点增加每环境 Bearer token 鉴权（compose 映射 AUTOMATION_*_EXECUTION_TOKEN，deploy 必填校验，三 UI 提供输入），production 未知写路径统一 404。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "ui_parity_split_to_p2_89",
+          "summary": "报告任务包 T1（rerun 真实现）与 T6（design.md 覆盖 + UI 迭代）及三环境 UI/功能对齐旧端点的工作分流到新任务 p2-89 承接；本任务保留拆分环境基础设施与真实写入验收（T3）、切流（T4）范围。"
         }
       ],
       "legacy_refs": [
         "p2-73",
         "p2-74"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-89",
+      "title": "三环境控制台 UI 与功能对齐旧端点",
+      "status": "active",
+      "owner": "zac",
+      "summary": "将 /automation/staging、/automation/preproduction、/automation/production 三个 UI 从最小表单页升级为与旧端点同款的工作台：staging 对齐 /account 模板、preproduction 与 production 对齐 /production 模板，route correction/route review 不做。后端新增 execution 列表/详情查询端点（Bearer 鉴权）、rerun 真实现（持久化原始请求、新 execution 链）、reset 真实现（仅 staging，清空执行记录表）。旧 /account 与 /production 端点和页面零改动。",
+      "next_action": "代码与测试已完成，待 finalize 合并后构建新 release 并按 staging -> preproduction -> production 部署到 EC2，跑 verify_split_environments.sh 并做线上 UI 验证（staging 端到端、preprod/prod 只读 + human_review 路径；不做真实 Zendesk 写入）。",
+      "acceptance_criteria": [
+        "三个 /automation/* UI 提供与旧端点同款的工作台布局：execution token 门、侧边栏执行历史（状态过滤+计数、Case 搜索、分页）、执行表单、详情视图（meta 网格、customer question + AI reply 问答时间线、delivery ledger 表、折叠 raw JSON）。",
+        "GET /v1/executions 与 GET /v1/executions/{id} 在 staging/preproduction/production 三个 runtime 均可用且强制 Bearer execution token；列表返回分页、过滤与 status_counts，同一快照。",
+        "POST /v1/reruns 真实创建新 execution：execution 记录持久化原始请求字段（向后兼容读取），rerun 以新 request_id 复用同一执行路径并记录 rerun_of_execution_id 链，原 execution 不可变；production OpenAPI 仍无 rerun/reset。",
+        "POST /v1/reset（仅 staging）真实清空本环境执行记录表并返回 deleted_count；preproduction/production 维持 404。",
+        "UI 危险操作（rerun/reset）使用冻结 case_id/ticket 的确认弹窗；按钮可见性由 /v1/capabilities 驱动；outcome_unknown 露出 reconcile 入口；failed 状态 aria-live。",
+        "不做 route correction/route review；不新增跨环境转发与 route back to queue；不写真实 Zendesk 工单。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Split runtime query/rerun/reset contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_execution_store backend.tests.test_automation_contracts backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation backend.tests.test_route_service_contract backend.tests.test_split_environment_deployment backend.tests.test_build_automation_release backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_account_automation_ownership",
+          "details": "122 项相关测试通过。新增覆盖：GET /v1/executions 无 token 401、分页/status 过滤/case 查找/status_counts 同快照、execution payload 持久化原始 request 字段；GET /v1/executions/{id} 401/404/200；rerun 创建链式新 execution（新 request_id、rerun_of_execution_id 可追溯、原记录不可变、旧记录 422 execution_request_not_persisted、case 不匹配 404）；staging reset 清空并返回 deleted_count、preproduction reset 404；production runtime 具备列表/详情端点且 OpenAPI 仍无 rerun/reset；production UI bundle 物理不含 rerun 字符串。"
+        },
+        {
+          "type": "test",
+          "label": "Static syntax checks for the three console UIs",
+          "command": "node --check ui/automation-staging/app.js && node --check ui/automation-preproduction/app.js && node --check ui/automation-production/app.js",
+          "details": "三份 app.js 通过 node --check；staging/preproduction 主体逐字节一致（仅 ENV 常量块不同），production 变体由同一源生成并剥离 rerun 代码块（含 ENV 键与文案），满足镜像物理排除契约的 UI 侧约束。"
+        }
+      ],
+      "source_refs": [
+        "backend/automation_runtime.py",
+        "backend/automation_production_runtime.py",
+        "backend/services/automation_execution_store.py",
+        "backend/services/automation_rerun_contracts.py",
+        "ui/automation-staging",
+        "ui/automation-preproduction",
+        "ui/automation-production",
+        "ui/account-ui",
+        "ui/production-ui",
+        "design.md",
+        "docs/split_environments_report.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "承接 p2-88 报告中 T1（rerun 真实现）与 T6（UI 迭代）并扩展为三环境控制台与旧端点的模板级对齐：staging 取 /account 模板、preproduction/production 取 /production 模板，route correction/review 明确排除。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",
@@ -9276,7 +9354,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
         "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
-        "/automation/staging、/automation/preproduction、/automation/production 提供三套独立 Route/Automation 执行环境与 UI，执行 API 强制 Bearer token，Production 镜像物理排除 rerun，旧 /account 与 /production 入口保留。",
+        "/automation/staging、/automation/preproduction、/automation/production 提供三套独立 Route/Automation 执行环境与控制台 UI（staging 对齐 /account 模板、preproduction/production 对齐 /production 模板）：Execution token 门、执行历史列表（状态过滤+计数、Case 搜索、分页）、详情视图（meta、问答时间线、delivery ledger）、rerun 真实现（staging/preproduction）与 reset（staging 清空执行记录）；执行与查询 API 强制 Bearer token，Production 镜像与 UI 物理排除 rerun，旧 /account 与 /production 入口保留。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

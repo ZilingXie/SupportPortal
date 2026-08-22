@@ -79,6 +79,8 @@ DEPLOY_PRODUCTION_APPROVED=1 ./deployment/deploy_ec2.sh --branch main --environm
 
 ### T1 · Rerun 真实实现（P1 · 代码 · 独立可并行）
 
+> **状态更新（2026-08-23）：** 已由 p2-89 承接并完成实现——execution 持久化原始请求字段（向后兼容读取，旧记录 rerun 返回 422 `execution_request_not_persisted`）、`/v1/reruns` 以新 request_id 创建链式新 execution、staging/preproduction UI 提供 rerun 入口、production UI/镜像维持物理排除。
+
 **背景：** 非 production runtime 的 `POST /v1/reruns` 目前只返回 `accepted`，不创建新 execution——与设计"Preproduction rerun 创建新 execution"存在差距。且 execution 记录未持久化原始请求字段（question/subject/ticket 等），真 rerun 无从重建输入。
 
 **范围：**
@@ -129,6 +131,8 @@ DEPLOY_PRODUCTION_APPROVED=1 ./deployment/deploy_ec2.sh --branch main --environm
 **冲突域：** docs、verify 脚本；与 T1 的 UI 无关。
 
 ### T6 · design.md 覆盖检查与 UI 迭代评估（P3 · 小 · 独立）
+
+> **状态更新（2026-08-23）：** 已由 p2-89 承接——design.md 新增 6.10 三环境控制台条目（模板映射、token 门、历史/详情布局、危险操作确认、capabilities 驱动）；UI 迭代（执行历史列表、详情视图、rerun/reset/reconcile 入口）已随 p2-89 实施并超出本任务包的原评估范围（对齐 /account、/production 工作台布局，route correction/review 排除）。
 
 **范围：** 检查 `design.md` 是否覆盖三个 automation UI 的设计条目（规则：新/改 UI 必须以 design.md 为源）；缺失则补条目；评估 UI 迭代需求（如 execution 历史列表、rerun 入口展示——与 T1 联动处仅做标注不实施）。
 **验收：** design.md 状态明确（已覆盖/补充合并）；迭代建议列表产出。

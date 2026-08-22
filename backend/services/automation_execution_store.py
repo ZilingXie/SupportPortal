@@ -159,3 +159,86 @@ class AutomationExecutionStore:
         if row is None:
             return None
         return copy.deepcopy(row[0] if isinstance(row[0], dict) else json.loads(row[0]))
+
+    def list_executions(
+        self,
+        *,
+        status: str | None = None,
+        case_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return one page of executions plus total and per-status counts.
+
+        ``status_counts`` follows the search context (``case_id``) but ignores the
+        ``status`` filter itself so every filter chip shows its own count from the
+        same snapshot.
+        """
+        normalized_status = str(status or "").strip() or None
+        normalized_case_id = str(case_id or "").strip() or None
+        if self.in_memory:
+            with self._lock:
+                records = [copy.deepcopy(item) for item in self._memory.values()]
+            if normalized_case_id is not None:
+                records = [item for item in records if item.get("case_id") == normalized_case_id]
+            status_counts: dict[str, int] = {}
+            for item in records:
+                key = str(item.get("status") or "")
+                status_counts[key] = status_counts.get(key, 0) + 1
+            if normalized_status is not None:
+                records = [item for item in records if str(item.get("status") or "") == normalized_status]
+            records.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+            total = len(records)
+            items = records[offset : offset + limit]
+            return {"items": items, "total": total, "status_counts": status_counts}
+        self.ensure_schema()
+        page_filters: list[str] = []
+        count_filters: list[str] = []
+        parameters: list[Any] = []
+        count_parameters: list[Any] = []
+        if normalized_status is not None:
+            page_filters.append("status=%s")
+            parameters.append(normalized_status)
+        if normalized_case_id is not None:
+            page_filters.append("case_id=%s")
+            parameters.append(normalized_case_id)
+            count_filters.append("case_id=%s")
+            count_parameters.append(normalized_case_id)
+        page_where = f" WHERE {' AND '.join(page_filters)}" if page_filters else ""
+        count_where = f" WHERE {' AND '.join(count_filters)}" if count_filters else ""
+        with psycopg.connect(self._dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {self._table()}{page_where}",
+                    parameters,
+                )
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    f"SELECT status, COUNT(*) FROM {self._table()}{count_where} GROUP BY status",
+                    count_parameters,
+                )
+                status_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
+                cursor.execute(
+                    f"SELECT payload FROM {self._table()}{page_where} ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                    [*parameters, limit, offset],
+                )
+                items = [
+                    copy.deepcopy(row[0] if isinstance(row[0], dict) else json.loads(row[0]))
+                    for row in cursor.fetchall()
+                ]
+        return {"items": items, "total": total, "status_counts": status_counts}
+
+    def delete_all(self) -> int:
+        """Delete every execution row in this environment's table."""
+        if self.in_memory:
+            with self._lock:
+                deleted = len(self._memory)
+                self._memory.clear()
+            return deleted
+        self.ensure_schema()
+        with psycopg.connect(self._dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(f"DELETE FROM {self._table()}")
+                deleted = int(cursor.rowcount)
+            connection.commit()
+        return deleted

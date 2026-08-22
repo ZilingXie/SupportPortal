@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from backend.services.automation_contracts import (
@@ -83,6 +83,7 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/cases", dependencies=[Depends(_require_execution_token)])
     async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
+        request_record = request.model_dump(mode="json")
         try:
             visibility = validate_ticket_policy(environment, request.zendesk_ticket_id, request.comment_visibility)
         except ValueError as exc:
@@ -110,14 +111,14 @@ def create_app() -> FastAPI:
         try:
             route_result = await call_route(route_request)
         except RouteServiceError as exc:
-            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": "failed", "failure_code": exc.code, "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "created_at": _now()})
+            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": "failed", "failure_code": exc.code, "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "created_at": _now()})
             raise HTTPException(status_code=502, detail={"code": exc.code, "execution": failed}) from exc
         preparation_status = str(route_result.action_plan.get("preparation_status") or "").strip()
         route_eligible = bool(route_result.automation.get("eligible")) and preparation_status == "prepared"
         if not route_eligible:
             status = "human_review" if preparation_status == "human_review" else "failed"
             failure_code = None if status == "human_review" else "route_preparation_failed"
-            record = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": status, "failure_code": failure_code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "side_effects": [], "created_at": _now()})
+            record = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": status, "failure_code": failure_code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "side_effects": [], "created_at": _now()})
             if status == "failed":
                 raise HTTPException(status_code=502, detail={"code": failure_code, "execution": record})
             return {"status": status, "environment": environment.value, "execution": record}
@@ -131,6 +132,7 @@ def create_app() -> FastAPI:
         store.save({
             "request_id": request.request_id,
             "case_id": request.case_id,
+            "request": request_record,
             "status": "pending",
             "route_result": route_result.model_dump(mode="json"),
             "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None},
@@ -153,11 +155,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail=exc.code) from exc
         except SideEffectError as exc:
             failure_status = "outcome_unknown" if exc.outcome_unknown else "failed"
-            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": failure_status, "failure_code": exc.code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "side_effects": exc.completed_operations, "delivery_ledger": merge_delivery_ledger(delivery_ledger, exc.completed_operations, outcome_unknown=exc.outcome_unknown), "created_at": _now()})
+            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": failure_status, "failure_code": exc.code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "side_effects": exc.completed_operations, "delivery_ledger": merge_delivery_ledger(delivery_ledger, exc.completed_operations, outcome_unknown=exc.outcome_unknown), "created_at": _now()})
             raise HTTPException(status_code=502, detail={"code": exc.code, "execution": failed}) from exc
         record = store.save({
             "request_id": request.request_id,
             "case_id": request.case_id,
+            "request": request_record,
             "status": "completed",
             "route_result": route_result.model_dump(mode="json"),
             "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None, "ownership": policy.performs_ownership, "status": policy.performs_status, "zendesk_delivery": True},
@@ -166,6 +169,35 @@ def create_app() -> FastAPI:
             "created_at": _now(),
         })
         return {"status": "completed", "environment": environment.value, "execution": record}
+
+    @app.get("/v1/executions", dependencies=[Depends(_require_execution_token)])
+    async def list_executions(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=10, ge=1, le=50),
+        status: str | None = None,
+        case_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = store.list_executions(
+            status=status,
+            case_id=case_id,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+        )
+        return {
+            "environment": environment.value,
+            "executions": result["items"],
+            "page": page,
+            "page_size": page_size,
+            "total": result["total"],
+            "status_counts": result["status_counts"],
+        }
+
+    @app.get("/v1/executions/{execution_id}", dependencies=[Depends(_require_execution_token)])
+    async def get_execution(execution_id: str) -> dict[str, Any]:
+        record = store.get(execution_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="execution not found")
+        return {"environment": environment.value, "execution": record}
 
     @app.post("/v1/executions/{execution_id}/reconcile", dependencies=[Depends(_require_execution_token)])
     async def reconcile_execution(execution_id: str, request: ExecutionReconcileRequest) -> dict[str, Any]:
