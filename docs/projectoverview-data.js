@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T14:35:17Z",
-  "source_base_commit": "9426e82d90452fc99a0647dd948a953af9274ff3",
-  "registry_digest": "3bfcfde190f2811a40dfe36fa3338f8e6a207784c3dabba99e4cb367ae2eea2c",
+  "generated_at": "2026-08-22T15:39:46Z",
+  "source_base_commit": "ed56a357184c81725b71588aeb66384219461b29",
+  "registry_digest": "f48df9561e9b7e0bbfec1ccb7fae175410c6a9c4fdf77c73395218b8e3bacb4c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1651,6 +1651,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Split nginx automation edge attachment",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment",
           "details": "验证 split deploy 在启动环境服务前将正在运行的官方 nginx 幂等接入 supportportal_automation_edge，不重建 nginx；nginx 不存在时 fail closed，避免容器 health 正常但外部路径因 Docker DNS 不可达而持续 502。"
+        },
+        {
+          "type": "test",
+          "label": "Acceptance remediation: outbound networks, execution tokens, unknown write paths",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_route_service_contract backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership backend.tests.test_automation_execution_store backend.tests.test_build_automation_release backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation",
+          "details": "2026-08-22 线上验收发现 staging 执行链 502 route_http_error：route 容器只挂在 --internal 网络上无法出站解析 LLM API。修复为 automation 网络不再 --internal 创建、既存 internal 网络 fail closed 并要求人工迁移；同时 /v1/cases、rerun、reset、reconcile 增加 AUTOMATION_EXECUTION_TOKEN Bearer 鉴权（三 UI 提供 token 输入）、production 未知写路径返回 404、deploy 校验三个 AUTOMATION_*_EXECUTION_TOKEN 必填。116 项相关测试通过。"
         }
       ],
       "source_refs": [
@@ -7887,7 +7893,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "在 EC2 同步 nginx automation edge 修复后，重新执行 staging release deploy 并验证 staging/preproduction 外部 health；随后经明确批准部署 production，完成 Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
+      "next_action": "部署验收修复（automation 网络去掉 --internal、执行端点 Bearer token 鉴权、production 未知写路径 404）：在 EC2 迁移三个 internal 网络并配置三个 AUTOMATION_*_EXECUTION_TOKEN 后，构建新 release 按 staging -> preproduction -> production 重新部署；随后完成带 token 的 staging 端到端探针、preproduction allowlist internal 全链路、production internal/external 与 Zendesk readback、三环境 rollback drill；旧端点切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -7945,6 +7951,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Split nginx automation edge attachment",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment",
           "details": "验证 split deploy 在启动环境服务前将正在运行的官方 nginx 幂等接入 supportportal_automation_edge，不重建 nginx；nginx 不存在时 fail closed，避免容器 health 正常但外部路径因 Docker DNS 不可达而持续 502。"
+        },
+        {
+          "type": "test",
+          "label": "Acceptance remediation: outbound networks, execution tokens, unknown write paths",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_route_service_contract backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership backend.tests.test_automation_execution_store backend.tests.test_build_automation_release backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation",
+          "details": "2026-08-22 线上验收发现 staging 执行链 502 route_http_error：route 容器只挂在 --internal 网络上无法出站解析 LLM API。修复为 automation 网络不再 --internal 创建、既存 internal 网络 fail closed 并要求人工迁移；同时 /v1/cases、rerun、reset、reconcile 增加 AUTOMATION_EXECUTION_TOKEN Bearer 鉴权（三 UI 提供 token 输入）、production 未知写路径返回 404、deploy 校验三个 AUTOMATION_*_EXECUTION_TOKEN 必填。116 项相关测试通过。"
         }
       ],
       "source_refs": [
@@ -8004,6 +8016,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-22",
           "event": "nginx_automation_edge_attachment",
           "summary": "修复 split 环境后启动时官方 nginx 未加入 automation edge 导致的 502；deploy 脚本改为幂等连接共享网络且不重建 nginx。"
+        },
+        {
+          "at": "2026-08-22",
+          "event": "acceptance_remediation_outbound_and_auth",
+          "summary": "线上验收发现 --internal 网络阻断 route 出站 LLM 调用后，automation 网络改为非 internal 创建并对既存 internal 网络 fail closed；执行端点增加每环境 Bearer token 鉴权（compose 映射 AUTOMATION_*_EXECUTION_TOKEN，deploy 必填校验，三 UI 提供输入），production 未知写路径统一 404。"
         }
       ],
       "legacy_refs": [
@@ -9196,6 +9213,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
         "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
+        "/automation/staging、/automation/preproduction、/automation/production 提供三套独立 Route/Automation 执行环境与 UI，执行 API 强制 Bearer token，Production 镜像物理排除 rerun，旧 /account 与 /production 入口保留。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

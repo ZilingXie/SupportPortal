@@ -145,7 +145,7 @@ resolve_env_value() {
 }
 
 ensure_automation_networks() {
-  local network_key network_name
+  local network_key network_name internal_flag
   for network_key in \
     AUTOMATION_EDGE_NETWORK_NAME \
     AUTOMATION_STAGING_INTERNAL_NETWORK_NAME \
@@ -159,13 +159,17 @@ ensure_automation_networks() {
       AUTOMATION_PRODUCTION_INTERNAL_NETWORK_NAME) network_name="${network_name:-supportportal_automation_internal_production}" ;;
     esac
     if docker network inspect "${network_name}" >/dev/null 2>&1; then
+      # Split Route containers call external LLM APIs and Automation containers
+      # reach the project database, so every automation network must allow
+      # outbound traffic. Internal-only networks left over from older deploys
+      # must be migrated manually before redeploying.
+      internal_flag="$(docker network inspect --format '{{.Internal}}' "${network_name}" 2>/dev/null || true)"
+      if [[ "${internal_flag}" == "true" ]]; then
+        fail "Network ${network_name} is internal; stop its split compose project, run 'docker network rm ${network_name}', then redeploy so it is recreated with outbound access"
+      fi
       continue
     fi
-    if [[ "${network_key}" != "AUTOMATION_EDGE_NETWORK_NAME" ]]; then
-      docker network create --internal "${network_name}" >/dev/null || fail "Unable to create shared automation network: ${network_name}"
-    else
-      docker network create "${network_name}" >/dev/null || fail "Unable to create shared automation network: ${network_name}"
-    fi
+    docker network create "${network_name}" >/dev/null || fail "Unable to create shared automation network: ${network_name}"
     log "Created shared automation network: ${network_name}"
   done
 }
@@ -618,6 +622,7 @@ split_environment_config() {
   SPLIT_DB_TABLE_DEFAULT=""
   SPLIT_QUEUE_DEFAULT=""
   SPLIT_EVENT_DEFAULT=""
+  SPLIT_EXECUTION_TOKEN_KEY=""
   case "${environment}" in
     staging)
       SPLIT_ROUTE_SERVICE="route_staging"
@@ -637,6 +642,7 @@ split_environment_config() {
       SPLIT_EVENT_DEFAULT="automation.events.staging"
       SPLIT_RESOURCE_ID="staging"
       SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
+      SPLIT_EXECUTION_TOKEN_KEY="AUTOMATION_STAGING_EXECUTION_TOKEN"
       SPLIT_SERVICES=(route_staging automation_staging)
       ;;
     preproduction)
@@ -657,6 +663,7 @@ split_environment_config() {
       SPLIT_EVENT_DEFAULT="automation.events.preproduction"
       SPLIT_RESOURCE_ID="preproduction"
       SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
+      SPLIT_EXECUTION_TOKEN_KEY="AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN"
       SPLIT_SERVICES=(route_preproduction automation_preproduction)
       ;;
     production)
@@ -677,6 +684,7 @@ split_environment_config() {
       SPLIT_EVENT_DEFAULT="automation.events.production"
       SPLIT_RESOURCE_ID="production"
       SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
+      SPLIT_EXECUTION_TOKEN_KEY="AUTOMATION_PRODUCTION_EXECUTION_TOKEN"
       SPLIT_SERVICES=(route_production automation_production)
       ;;
     route-staging)
@@ -788,6 +796,10 @@ deploy_split_environment() {
   fi
   token_value="$(resolve_env_value "${SPLIT_TOKEN_KEY}")"
   [[ -n "${token_value}" ]] || fail "${SPLIT_TOKEN_KEY} is required"
+  if [[ -n "${SPLIT_EXECUTION_TOKEN_KEY}" ]]; then
+    token_value="$(resolve_env_value "${SPLIT_EXECUTION_TOKEN_KEY}")"
+    [[ -n "${token_value}" ]] || fail "${SPLIT_EXECUTION_TOKEN_KEY} is required"
+  fi
   if [[ -n "${SPLIT_DB_KEY}" ]]; then
     db_value="$(resolve_env_value "${SPLIT_DB_KEY}")"
     if [[ -z "${db_value}" ]]; then

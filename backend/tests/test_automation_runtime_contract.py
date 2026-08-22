@@ -13,6 +13,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
         env = {
             "AUTOMATION_ENVIRONMENT": environment,
             "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1",
+            "AUTOMATION_EXECUTION_TOKEN": "execution-token",
             "ROUTE_SERVICE_URL": "http://route.test",
             "ROUTE_SERVICE_TOKEN": "token",
             "PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": "123",
@@ -35,6 +36,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 result = client.post(
                     "/v1/cases",
                     json={"request_id": "req-1", "case_id": "AC-1", "question": "hello"},
+                    headers={"Authorization": "Bearer execution-token"},
                 )
                 self.assertEqual(result.status_code, 200)
                 self.assertEqual(result.json()["execution"]["policy"]["zendesk_delivery"], False)
@@ -54,13 +56,39 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 missing_visibility = client.post(
                     "/v1/cases",
                     json={"request_id": "req-2", "case_id": "AC-2", "zendesk_ticket_id": "123", "question": "hello"},
+                    headers={"Authorization": "Bearer execution-token"},
                 )
                 self.assertEqual(missing_visibility.status_code, 422)
                 rerun = client.post(
                     "/v1/reruns",
                     json={"request_id": "req-rerun", "case_id": "AC-2", "rerun_of_execution_id": "exec-1"},
+                    headers={"Authorization": "Bearer execution-token"},
                 )
                 self.assertEqual(rerun.status_code, 404)
+
+    def test_execution_endpoints_require_bearer_token(self):
+        with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            with TestClient(create_app()) as client:
+                missing = client.post("/v1/cases", json={"request_id": "req-401", "case_id": "AC-1", "question": "hello"})
+                self.assertEqual(missing.status_code, 401)
+                wrong = client.post(
+                    "/v1/cases",
+                    json={"request_id": "req-401", "case_id": "AC-1", "question": "hello"},
+                    headers={"Authorization": "Bearer wrong"},
+                )
+                self.assertEqual(wrong.status_code, 401)
+                self.assertEqual(client.post("/v1/reset").status_code, 401)
+                self.assertEqual(
+                    client.post("/v1/reruns", json={"request_id": "r", "case_id": "AC-1", "rerun_of_execution_id": "e"}).status_code,
+                    401,
+                )
+                call.assert_not_awaited()
+
+    def test_unknown_write_paths_return_not_found(self):
+        with self._client("production"):
+            with TestClient(create_app()) as client:
+                self.assertEqual(client.post("/v1/not-a-route", json={}).status_code, 404)
+                self.assertEqual(client.delete("/anything").status_code, 404)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from backend.services.automation_contracts import (
@@ -40,6 +40,12 @@ from backend.services.route_client import RouteServiceError, call_route
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _require_execution_token(authorization: str | None) -> None:
+    expected = str(os.getenv("AUTOMATION_EXECUTION_TOKEN") or "").strip()
+    if not expected or str(authorization or "") != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail="invalid automation execution token")
 
 
 def create_app() -> FastAPI:
@@ -76,7 +82,8 @@ def create_app() -> FastAPI:
         return {"environment": environment.value, "rerun": False, "reset": False, "comment_visibility": ["internal", "external"], "resources": resource_identity}
 
     @app.post("/v1/cases")
-    async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
+    async def execute_case(request: AutomationExecutionRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        _require_execution_token(authorization)
         try:
             visibility = validate_ticket_policy(environment, request.zendesk_ticket_id, request.comment_visibility)
         except ValueError as exc:
@@ -162,7 +169,8 @@ def create_app() -> FastAPI:
         return {"status": "completed", "environment": environment.value, "execution": record}
 
     @app.post("/v1/executions/{execution_id}/reconcile")
-    async def reconcile_execution(execution_id: str, request: ExecutionReconcileRequest) -> dict[str, Any]:
+    async def reconcile_execution(execution_id: str, request: ExecutionReconcileRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        _require_execution_token(authorization)
         record = store.get(execution_id)
         if record is None:
             raise HTTPException(status_code=404, detail="execution not found")
@@ -220,6 +228,10 @@ def create_app() -> FastAPI:
             updated_ledger.append(updated)
         updated = store.save({**record, "status": "completed", "delivery_ledger": updated_ledger, "reconciled": True})
         return {"status": "completed", "environment": environment.value, "execution": updated, "reconciled": True}
+
+    @app.api_route("/{path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+    async def unknown_write_path(path: str) -> dict[str, str]:
+        raise HTTPException(status_code=404, detail="not found")
 
     ui_dir = Path(__file__).resolve().parent.parent / "ui" / "automation-production"
     if ui_dir.exists():

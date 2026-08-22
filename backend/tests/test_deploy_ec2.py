@@ -227,6 +227,14 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     network_name = args[-1]
                     networks_path = state_dir / "networks.txt"
                     networks = set(networks_path.read_text(encoding="utf-8").splitlines()) if networks_path.exists() else set()
+                    if network_name in networks and "--format" in args:
+                        internal_networks = set(
+                            item.strip()
+                            for item in os.environ.get("FAKE_INTERNAL_NETWORKS", "").split(",")
+                            if item.strip()
+                        )
+                        print("true" if network_name in internal_networks else "false")
+                        sys.exit(0)
                     sys.exit(0 if network_name in networks else 1)
 
                 if args[:2] == ["network", "create"]:
@@ -870,6 +878,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -889,6 +898,10 @@ class DeployEc2ScriptTests(unittest.TestCase):
         ]
         self.assertIn(["network", "create", "supportportal_automation_edge"], network_creates)
         self.assertIn(
+            ["network", "create", "supportportal_automation_internal_staging"],
+            network_creates,
+        )
+        self.assertNotIn(
             ["network", "create", "--internal", "supportportal_automation_internal_staging"],
             network_creates,
         )
@@ -904,6 +917,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-b
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-b
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -943,6 +957,76 @@ class DeployEc2ScriptTests(unittest.TestCase):
             [["network", "connect", "supportportal_automation_edge", "nginx-container-id"]],
         )
 
+    def test_split_deploy_fails_closed_when_automation_network_is_internal(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        first = self._run_script("--environment", "staging", "--skip-pull")
+        self.assertEqual(first.returncode, 0, msg=first.stdout + first.stderr)
+        up_calls_before = len(
+            [
+                call
+                for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+                if "up" in call["argv"]
+            ]
+        )
+
+        second = self._run_script(
+            "--environment",
+            "staging",
+            "--skip-pull",
+            extra_env={"FAKE_INTERNAL_NETWORKS": "supportportal_automation_internal_staging"},
+        )
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("is internal", second.stdout + second.stderr)
+        up_calls_after = len(
+            [
+                call
+                for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+                if "up" in call["argv"]
+            ]
+        )
+        self.assertEqual(up_calls_after, up_calls_before)
+
+    def test_split_deploy_requires_execution_token(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        result = self._run_script("--environment", "staging", "--skip-pull")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AUTOMATION_STAGING_EXECUTION_TOKEN is required", result.stdout + result.stderr)
+
     def test_split_deploy_loads_release_manifest_without_manual_image_variables(self) -> None:
         self._write(
             self.repo,
@@ -951,6 +1035,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 """\
                 TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -1055,6 +1140,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1086,6 +1172,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1115,6 +1202,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
             textwrap.dedent(
                 """\
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1171,6 +1259,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_PREPRODUCTION_IMAGE=registry.example/route@sha256:route-preproduction
                 AUTOMATION_PREPRODUCTION_IMAGE=registry.example/automation@sha256:automation-preproduction
                 ROUTE_PREPRODUCTION_SERVICE_TOKEN=route-token
+                AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN=execution-token
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -1202,6 +1291,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
                 AUTOMATION_PRODUCTION_IMAGE=registry.example/automation@sha256:automation-production
                 ROUTE_PRODUCTION_SERVICE_TOKEN=route-token
+                AUTOMATION_PRODUCTION_EXECUTION_TOKEN=execution-token
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -1240,6 +1330,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
