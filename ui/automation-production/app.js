@@ -813,6 +813,8 @@ function renderDetailView() {
   const actionPlan = execution.route_result?.action_plan;
   const ticketId = executionTicketId(execution);
   const visibility = visibilityLabel(execution.policy?.comment_visibility);
+  let extraActionButtonHtml = "";
+  let chainRowHtml = "";
   const needsReconcile = String(execution.status || "") === "outcome_unknown";
   const { primary, secondary } = routeParts(execution);
   return `
@@ -827,6 +829,7 @@ function renderDetailView() {
           ${execution.reconciled ? '<span class="route-label">Reconciled</span>' : ""}
         </div>
         <div class="actions">
+          ${extraActionButtonHtml}
           ${needsReconcile ? `<button class="primary-button primary-button--small" type="button" data-action="run-reconcile" ${state.isReconciling ? "disabled" : ""}><span class="material-symbols-outlined">fact_check</span>${state.isReconciling ? "Reconciling..." : "Reconcile"}</button>` : ""}
         </div>
       </header>
@@ -842,6 +845,7 @@ function renderDetailView() {
         <div class="meta-row meta-row--route-result"><span class="meta-label">Route result</span><span class="meta-value meta-row--route-result-value">${escapeHtml([primary, secondary].filter(Boolean).join(" / ") || "manual review")}</span></div>
         <div class="meta-row"><span class="meta-label">Automation eligible</span><span class="meta-value">${escapeHtml(String(automation?.eligible ?? "unknown"))}</span></div>
         <div class="meta-row"><span class="meta-label">Preparation status</span><span class="meta-value">${escapeHtml(String(actionPlan?.preparation_status || "—"))}</span></div>
+        ${chainRowHtml}
         <div class="meta-row"><span class="meta-label">Created</span><span class="meta-value"><time datetime="${escapeHtml(execution.created_at || "")}">${escapeHtml(formatTimestamp(execution.created_at))}</time></span></div>
         <div class="meta-row"><span class="meta-label">Updated</span><span class="meta-value"><time datetime="${escapeHtml(execution.updated_at || "")}">${escapeHtml(formatTimestamp(execution.updated_at))}</time></span></div>
       </div>
@@ -901,6 +905,7 @@ function render() {
     return;
   }
   const showReset = Boolean(state.capabilities?.reset);
+  let extraModalHtml = "";
   appRoot.innerHTML = `
     <main class="account-shell">
       <aside class="side-panel">
@@ -951,6 +956,7 @@ function render() {
         </div>
       </section>
     </main>
+    ${extraModalHtml}
     ${renderResetConfirmation()}
   `;
 }

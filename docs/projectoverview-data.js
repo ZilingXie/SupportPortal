@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T20:16:37Z",
-  "source_base_commit": "47a0c9d651d1012ce9b232118273575b7ef19f54",
-  "registry_digest": "11d13ac0667c34f8fcd41237db4e662ba8af5b3e60c27ca52839dfbd8591be6c",
+  "generated_at": "2026-08-22T21:03:10Z",
+  "source_base_commit": "d668302fcff9ff9106f595499a831a8450b91086",
+  "registry_digest": "0d523f7a93cb298e811b76954de5dc71aadc755c71968bbe62cb2be3b6817972",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8188,6 +8188,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-23",
       "updated_at": "2026-08-23",
       "history": [
+        {
+          "at": "2026-08-23",
+          "event": "sentinel_template_leak_fix",
+          "summary": "release-20260823-003 浏览器验收发现 staging/preproduction 页面泄漏 /*__RERUN_START__*/ 文本：哨兵标记位于模板字符串内部。重构为 JS 变量（中性命名 extraActionButtonHtml/chainRowHtml/extraModalHtml，production 剥离后保留空默认值），静态资源版本升至 v3，随 release-20260823-004 部署；同时记录 EC2 构建 lesson：构建前必须先 git fetch，-002 曾因 stale origin/main 引用从旧 commit 构建。"
+        },
         {
           "at": "2026-08-23",
           "event": "token_gate_delegated_submit_fix",

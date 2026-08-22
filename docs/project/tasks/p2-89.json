@@ -47,6 +47,11 @@
   "history": [
     {
       "at": "2026-08-23",
+      "event": "sentinel_template_leak_fix",
+      "summary": "release-20260823-003 浏览器验收发现 staging/preproduction 页面泄漏 /*__RERUN_START__*/ 文本：哨兵标记位于模板字符串内部。重构为 JS 变量（中性命名 extraActionButtonHtml/chainRowHtml/extraModalHtml，production 剥离后保留空默认值），静态资源版本升至 v3，随 release-20260823-004 部署；同时记录 EC2 构建 lesson：构建前必须先 git fetch，-002 曾因 stale origin/main 引用从旧 commit 构建。"
+    },
+    {
+      "at": "2026-08-23",
       "event": "token_gate_delegated_submit_fix",
       "summary": "release-20260823-001 线上浏览器验收发现 token 门提交无响应：connectToken 经 appRoot 委托监听取 event.currentTarget 得到的是容器 div 而非表单，new FormData(div) 抛 TypeError 被 void 调用静默吞掉。改为从 event.target 取 HTMLFormElement，三份 UI 重新生成并随 release-20260823-002 重新部署。"
     },
@@ -56,7 +61,9 @@
       "summary": "承接 p2-88 报告中 T1（rerun 真实现）与 T6（UI 迭代）并扩展为三环境控制台与旧端点的模板级对齐：staging 取 /account 模板、preproduction/production 取 /production 模板，route correction/review 明确排除。"
     }
   ],
-  "legacy_refs": ["p2-88"],
+  "legacy_refs": [
+    "p2-88"
+  ],
   "legacy_ids": [],
   "phase_id": "phase-2",
   "module_id": "account-automation",
