@@ -70,3 +70,22 @@ Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如�
 ## 5. 迁移兼容
 
 未传 `--release` 时，脚本仍接受 `.env` 中的六个 digest image 变量，供已有主机迁移和紧急恢复使用；这条兼容路径仍可能执行 Compose pull。新发布流程应始终在目标 EC2 上使用 release builder 和 `--release`。
+
+## 6. 本地开发部署（podman）
+
+本地（非 EC2）验证 split 环境改动时，不需要走 EC2 release 流程：
+
+```bash
+scripts/workflow/start_local_split_environments.sh              # 构建并启动三环境
+scripts/workflow/start_local_split_environments.sh --skip-build # 未改代码时快速重启
+```
+
+脚本行为与安全默认：
+
+- 从**当前工作树**构建三个 role 镜像（task worktree 里可直接验证未提交改动；脏工作树的镜像 tag 会带 `-wip` 后缀），build marker 为当前 HEAD。
+- 前置条件：root `.env` 有 `TICKET_DB_DSN`。三个 `AUTOMATION_*_EXECUTION_TOKEN` 缺失时自动生成并追加到 root `.env`。`PRODUCTION_TICKET_DB_DSN` 缺失时跳过本地 production 环境。
+- 每个环境一个独立 compose project（与 EC2 同名），官方本地栈重启不会波及 split 容器。
+- 入口是一个**专用本地 nginx**（默认 `http://localhost:18080/automation/*`，端口可用 `SUPPORTPORTAL_LOCAL_SPLIT_PORT` 覆盖）：官方 nginx 配置硬编码了 Docker 嵌入式 DNS（`resolver 127.0.0.11`），在 podman 下变量 upstream 会全部 502，因此本地 split 栈自带静态 upstream 的独立入口。
+- **本地 Zendesk 副作用默认关闭**（fail-closed）且 preproduction allowlist 默认为空：本地执行到 side-effect 阶段会被显式拒绝而不是写 Zendesk。需要本地真实写入时再在 `.env` 显式配置 `*_ZENDESK_SIDE_EFFECTS_ENABLED=1`、`*_TARGET_TICKET_STATUS` 与 allowlist。
+- 本地 staging/preproduction 与 EC2 共用同一 RDS 的 execution 表（append-only 记录，按 request_id 幂等），本地验证产生的记录同样落库可查。
+- 启动后自动验证：三环境 `/health` 200、未授权 POST 401。
