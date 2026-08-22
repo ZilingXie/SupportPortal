@@ -1056,6 +1056,11 @@ volumes:
   huggingface_cache:
 
 networks:
+  # podman-compose requires an explicit declaration when a service references
+  # the implicit default network alongside named networks (docker-compose
+  # resolves `default` automatically).
+  default:
+    name: deployment_default
   automation_edge:
     name: ${AUTOMATION_EDGE_NETWORK_NAME:-supportportal_automation_edge}
     external: true

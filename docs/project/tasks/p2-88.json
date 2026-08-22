@@ -96,6 +96,11 @@
   "history": [
     {
       "at": "2026-08-22",
+      "event": "local_stack_compose_default_network_compat",
+      "summary": "修复 split compose 顶层未显式声明 default 网络导致本地官方 podman-compose 栈无法重启的问题；networks 顶层增加 default: deployment_default 声明，podman-compose config 与 compose 相关测试通过。"
+    },
+    {
+      "at": "2026-08-22",
       "event": "created",
       "summary": "根据三环境 Route/Automation 迁移计划创建实施任务。"
     },
