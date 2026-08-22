@@ -46,3 +46,4 @@ vendor/cusmem/*_complete.xlsx
 vendor/cusmem/communities.xlsx
 vendor/cusmem/comparison_*.json
 vendor/cusmem/GBT+25338.1-2019.pdf
+.deployments/

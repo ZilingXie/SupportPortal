@@ -264,7 +264,7 @@ def ownership_gate_eligible(account_case: dict[str, Any]) -> bool:
         in {"human_review_required", "human_review"}
     )
     return bool(
-        processing_profile == "production"
+        processing_profile in {"preproduction", "production"}
         and zendesk_ticket_id
         and (
             locally_stopped
