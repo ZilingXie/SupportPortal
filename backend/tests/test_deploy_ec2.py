@@ -178,6 +178,20 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
                 if args[:1] == ["inspect"]:
                     format_value = args[args.index("--format") + 1]
+                    if ".NetworkSettings.Networks" in format_value:
+                        networks_path = state_dir / "nginx_networks.txt"
+                        if networks_path.exists():
+                            networks = set(networks_path.read_text(encoding="utf-8").splitlines())
+                        else:
+                            networks = set(
+                                item.strip()
+                                for item in os.environ.get("FAKE_NGINX_NETWORKS", "deployment_default").split(",")
+                                if item.strip()
+                            )
+                        target = format_value.split('Networks "', 1)[1].split('"', 1)[0]
+                        if target in networks:
+                            print("attached")
+                        sys.exit(0)
                     previous_image_id = os.environ.get(
                         "FAKE_PREVIOUS_IMAGE_ID",
                         "sha256:previous-image-id",
@@ -220,6 +234,17 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     with (state_dir / "networks.txt").open("a", encoding="utf-8") as handle:
                         handle.write(network_name + "\\n")
                     print(network_name)
+                    sys.exit(0)
+
+                if args[:2] == ["network", "connect"]:
+                    if os.environ.get("FAKE_DOCKER_NETWORK_CONNECT_EXIT_CODE") == "1":
+                        print("network connect failed", file=sys.stderr)
+                        sys.exit(1)
+                    network_name = args[-2]
+                    networks_path = state_dir / "nginx_networks.txt"
+                    networks = set(networks_path.read_text(encoding="utf-8").splitlines()) if networks_path.exists() else set()
+                    networks.add(network_name)
+                    networks_path.write_text("\\n".join(sorted(networks)) + "\\n", encoding="utf-8")
                     sys.exit(0)
 
                 if args[:1] != ["compose"]:
@@ -284,6 +309,8 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
                 if "ps" in args:
                     if "-q" in args:
+                        if args[-1] == "nginx" and os.environ.get("FAKE_NGINX_CONTAINER_MISSING") == "1":
+                            sys.exit(0)
                         print(f"{args[-1]}-container-id")
                     else:
                         print("NAME\\napi up")
@@ -906,6 +933,15 @@ class DeployEc2ScriptTests(unittest.TestCase):
         rollback_again_manifest = manifest.read_text()
         self.assertIn("route_image=registry.example/route@sha256:route-b", rollback_again_manifest)
         self.assertIn("previous_route_image=registry.example/route@sha256:route-a", rollback_again_manifest)
+        nginx_connects = [
+            call["argv"]
+            for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            if call["argv"][:2] == ["network", "connect"]
+        ]
+        self.assertEqual(
+            nginx_connects,
+            [["network", "connect", "supportportal_automation_edge", "nginx-container-id"]],
+        )
 
     def test_split_deploy_loads_release_manifest_without_manual_image_variables(self) -> None:
         self._write(
@@ -972,6 +1008,13 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertIn("Using local split images; skipping docker compose pull.", result.stdout + result.stderr)
         calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
         self.assertFalse(any("pull" in call["argv"] for call in calls))
+        connect_index = next(
+            index
+            for index, call in enumerate(calls)
+            if call["argv"][:2] == ["network", "connect"]
+        )
+        up_index = next(index for index, call in enumerate(calls) if "up" in call["argv"])
+        self.assertLess(connect_index, up_index)
         self.assertTrue((self.repo / ".deployments/staging.manifest").exists())
         self.assertIn("db_table=automation_executions_staging", (self.repo / ".deployments/staging.manifest").read_text())
         up_call = next(call for call in calls if "up" in call["argv"] and "--no-build" in call["argv"])
@@ -1002,6 +1045,68 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 "AUTOMATION_PRODUCTION_BUILD_TIME": "2026-08-22T01:02:03Z",
             },
         )
+
+    def test_split_deploy_fails_before_service_start_when_official_nginx_is_missing(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--environment",
+            "staging",
+            "--skip-pull",
+            extra_env={"FAKE_NGINX_CONTAINER_MISSING": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Official nginx container is not running", result.stdout + result.stderr)
+        calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any("up" in call["argv"] for call in calls))
+
+    def test_split_deploy_fails_before_service_start_when_nginx_network_connect_fails(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--environment",
+            "staging",
+            "--skip-pull",
+            extra_env={"FAKE_DOCKER_NETWORK_CONNECT_EXIT_CODE": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unable to attach official nginx", result.stdout + result.stderr)
+        calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any("up" in call["argv"] for call in calls))
 
     def test_release_manifest_image_id_mismatch_fails_before_network_or_compose_changes(self) -> None:
         self._write(

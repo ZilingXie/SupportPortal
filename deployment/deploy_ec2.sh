@@ -170,6 +170,23 @@ ensure_automation_networks() {
   done
 }
 
+ensure_nginx_automation_edge_network() {
+  local network_name nginx_container_id attached
+  network_name="$(resolve_env_value AUTOMATION_EDGE_NETWORK_NAME)"
+  network_name="${network_name:-supportportal_automation_edge}"
+  nginx_container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps -q nginx | sed -n '1p')"
+  [[ -n "${nginx_container_id}" ]] || fail "Official nginx container is not running; cannot expose split automation services"
+  attached="$(docker inspect --format "{{with index .NetworkSettings.Networks \"${network_name}\"}}attached{{end}}" "${nginx_container_id}")" \
+    || fail "Unable to inspect official nginx container networks: ${nginx_container_id}"
+  if [[ "${attached}" == "attached" ]]; then
+    log "Official nginx is already attached to ${network_name}."
+    return 0
+  fi
+  docker network connect "${network_name}" "${nginx_container_id}" \
+    || fail "Unable to attach official nginx to ${network_name}"
+  log "Attached official nginx to ${network_name}."
+}
+
 export_env_value() {
   local key="$1"
   local value="$2"
@@ -796,6 +813,7 @@ deploy_split_environment() {
     [[ "${DEPLOY_PRODUCTION_APPROVED:-0}" == "1" ]] || fail "Production split deployment requires DEPLOY_PRODUCTION_APPROVED=1"
   fi
   ensure_automation_networks
+  ensure_nginx_automation_edge_network
   log "Deploying split environment ${environment} as project ${SPLIT_PROJECT_NAME} with route=${route_image} automation=${automation_image:-n/a}"
   if [[ "${route_image}" == localhost/* && ( -z "${automation_image}" || "${automation_image}" == localhost/* ) ]]; then
     log "Using local split images; skipping docker compose pull."

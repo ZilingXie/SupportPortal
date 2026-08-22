@@ -47,6 +47,8 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("--rollback", deploy)
         self.assertIn("previous_route_image", deploy)
         self.assertIn("ensure_automation_networks", deploy)
+        self.assertIn("ensure_nginx_automation_edge_network", deploy)
+        self.assertIn('docker network connect "${network_name}" "${nginx_container_id}"', deploy)
 
     def test_production_bundle_has_no_rerun_ui_or_main_module(self):
         production_js = (ROOT / "ui/automation-production/app.js").read_text().lower()
