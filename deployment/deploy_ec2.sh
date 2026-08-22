@@ -33,6 +33,10 @@ SPLIT_PROJECT_NAME=""
 SPLIT_DB_SCHEMA_KEY=""
 SPLIT_QUEUE_KEY=""
 SPLIT_EVENT_KEY=""
+SPLIT_DB_FALLBACK_KEY=""
+SPLIT_DB_SCHEMA_DEFAULT=""
+SPLIT_QUEUE_DEFAULT=""
+SPLIT_EVENT_DEFAULT=""
 SPLIT_RESOURCE_ID=""
 
 log() {
@@ -515,7 +519,7 @@ validate_local_image_identity() {
 
 load_release_manifest() {
   local manifest_path="$RELEASE_MANIFEST"
-  local key value image_id image_id_key manifest_release manifest_commit
+  local key value image_id image_id_key manifest_release manifest_commit manifest_build_time
   [[ "${ROLLBACK_SPLIT}" == "0" ]] || fail "--release/--release-manifest cannot be combined with --rollback"
   [[ -z "${RELEASE_ID}" || -z "${RELEASE_MANIFEST}" ]] || fail "Use either --release or --release-manifest, not both"
   if [[ -n "${RELEASE_ID}" ]]; then
@@ -540,9 +544,24 @@ load_release_manifest() {
   done
   manifest_release="$(manifest_value "${manifest_path}" release_id)"
   manifest_commit="$(manifest_value "${manifest_path}" commit)"
+  manifest_build_time="$(manifest_value "${manifest_path}" build_time)"
   [[ -z "${manifest_release}" || "${manifest_release}" == "${RELEASE_ID:-${manifest_release}}" ]] || fail "Release manifest id does not match --release: ${manifest_release}"
+  if [[ -n "${manifest_commit}" ]]; then
+    for key in \
+      ROUTE_STAGING_BUILD_REF ROUTE_PREPRODUCTION_BUILD_REF ROUTE_PRODUCTION_BUILD_REF \
+      AUTOMATION_STAGING_BUILD_REF AUTOMATION_PREPRODUCTION_BUILD_REF AUTOMATION_PRODUCTION_BUILD_REF; do
+      export_env_value "${key}" "${manifest_commit}"
+    done
+  fi
+  if [[ -n "${manifest_build_time}" ]]; then
+    for key in \
+      ROUTE_STAGING_BUILD_TIME ROUTE_PREPRODUCTION_BUILD_TIME ROUTE_PRODUCTION_BUILD_TIME \
+      AUTOMATION_STAGING_BUILD_TIME AUTOMATION_PREPRODUCTION_BUILD_TIME AUTOMATION_PRODUCTION_BUILD_TIME; do
+      export_env_value "${key}" "${manifest_build_time}"
+    done
+  fi
   RELEASE_MANIFEST="${manifest_path}"
-  log "Loaded release manifest ${RELEASE_MANIFEST} (release=${manifest_release:-unknown} commit=${manifest_commit:-unknown})"
+  log "Loaded release manifest ${RELEASE_MANIFEST} (release=${manifest_release:-unknown} commit=${manifest_commit:-unknown} build_time=${manifest_build_time:-unknown})"
 }
 
 prepare_split_source() {
@@ -574,6 +593,10 @@ split_environment_config() {
   SPLIT_DB_SCHEMA_KEY=""
   SPLIT_QUEUE_KEY=""
   SPLIT_EVENT_KEY=""
+  SPLIT_DB_FALLBACK_KEY=""
+  SPLIT_DB_SCHEMA_DEFAULT=""
+  SPLIT_QUEUE_DEFAULT=""
+  SPLIT_EVENT_DEFAULT=""
   case "${environment}" in
     staging)
       SPLIT_ROUTE_SERVICE="route_staging"
@@ -582,9 +605,13 @@ split_environment_config() {
       SPLIT_IMAGE_KEY="AUTOMATION_STAGING_IMAGE"
       SPLIT_IMAGE_KEYS=(ROUTE_STAGING_IMAGE AUTOMATION_STAGING_IMAGE)
       SPLIT_DB_KEY="AUTOMATION_STAGING_DB_DSN"
+      SPLIT_DB_FALLBACK_KEY="TICKET_DB_DSN"
       SPLIT_DB_SCHEMA_KEY="AUTOMATION_STAGING_DB_SCHEMA"
+      SPLIT_DB_SCHEMA_DEFAULT="supportportal_staging"
       SPLIT_QUEUE_KEY="AUTOMATION_STAGING_QUEUE"
+      SPLIT_QUEUE_DEFAULT="automation.staging"
       SPLIT_EVENT_KEY="AUTOMATION_STAGING_EVENT_CHANNEL"
+      SPLIT_EVENT_DEFAULT="automation.events.staging"
       SPLIT_RESOURCE_ID="staging"
       SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_staging automation_staging)
@@ -596,9 +623,13 @@ split_environment_config() {
       SPLIT_IMAGE_KEY="AUTOMATION_PREPRODUCTION_IMAGE"
       SPLIT_IMAGE_KEYS=(ROUTE_PREPRODUCTION_IMAGE AUTOMATION_PREPRODUCTION_IMAGE)
       SPLIT_DB_KEY="AUTOMATION_PREPRODUCTION_DB_DSN"
+      SPLIT_DB_FALLBACK_KEY="TICKET_DB_DSN"
       SPLIT_DB_SCHEMA_KEY="AUTOMATION_PREPRODUCTION_DB_SCHEMA"
+      SPLIT_DB_SCHEMA_DEFAULT="supportportal_preproduction"
       SPLIT_QUEUE_KEY="AUTOMATION_PREPRODUCTION_QUEUE"
+      SPLIT_QUEUE_DEFAULT="automation.preproduction"
       SPLIT_EVENT_KEY="AUTOMATION_PREPRODUCTION_EVENT_CHANNEL"
+      SPLIT_EVENT_DEFAULT="automation.events.preproduction"
       SPLIT_RESOURCE_ID="preproduction"
       SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_preproduction automation_preproduction)
@@ -610,9 +641,13 @@ split_environment_config() {
       SPLIT_IMAGE_KEY="AUTOMATION_PRODUCTION_IMAGE"
       SPLIT_IMAGE_KEYS=(ROUTE_PRODUCTION_IMAGE AUTOMATION_PRODUCTION_IMAGE)
       SPLIT_DB_KEY="AUTOMATION_PRODUCTION_DB_DSN"
+      SPLIT_DB_FALLBACK_KEY="PRODUCTION_TICKET_DB_DSN"
       SPLIT_DB_SCHEMA_KEY="AUTOMATION_PRODUCTION_DB_SCHEMA"
+      SPLIT_DB_SCHEMA_DEFAULT="supportportal_production"
       SPLIT_QUEUE_KEY="AUTOMATION_PRODUCTION_QUEUE"
+      SPLIT_QUEUE_DEFAULT="automation.production"
       SPLIT_EVENT_KEY="AUTOMATION_PRODUCTION_EVENT_CHANNEL"
+      SPLIT_EVENT_DEFAULT="automation.events.production"
       SPLIT_RESOURCE_ID="production"
       SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_production automation_production)
@@ -728,10 +763,20 @@ deploy_split_environment() {
   [[ -n "${token_value}" ]] || fail "${SPLIT_TOKEN_KEY} is required"
   if [[ -n "${SPLIT_DB_KEY}" ]]; then
     db_value="$(resolve_env_value "${SPLIT_DB_KEY}")"
-    [[ -n "${db_value}" ]] || fail "${SPLIT_DB_KEY} is required"
+    if [[ -z "${db_value}" ]]; then
+      db_value="$(resolve_env_value "${SPLIT_DB_FALLBACK_KEY}")"
+    fi
+    [[ -n "${db_value}" ]] || fail "${SPLIT_DB_KEY} or ${SPLIT_DB_FALLBACK_KEY} is required"
+    export_env_value "${SPLIT_DB_KEY}" "${db_value}"
     db_schema="$(resolve_env_value "${SPLIT_DB_SCHEMA_KEY}")"
+    db_schema="${db_schema:-${SPLIT_DB_SCHEMA_DEFAULT}}"
+    export_env_value "${SPLIT_DB_SCHEMA_KEY}" "${db_schema}"
     queue_name="$(resolve_env_value "${SPLIT_QUEUE_KEY}")"
+    queue_name="${queue_name:-${SPLIT_QUEUE_DEFAULT}}"
+    export_env_value "${SPLIT_QUEUE_KEY}" "${queue_name}"
     event_channel="$(resolve_env_value "${SPLIT_EVENT_KEY}")"
+    event_channel="${event_channel:-${SPLIT_EVENT_DEFAULT}}"
+    export_env_value "${SPLIT_EVENT_KEY}" "${event_channel}"
     [[ -n "${db_schema}" && -n "${queue_name}" && -n "${event_channel}" ]] || fail "${environment} DB/schema/queue/event identity is incomplete"
   fi
   if [[ "${environment}" == "production" || "${environment}" == "route-production" ]]; then

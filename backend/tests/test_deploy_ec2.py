@@ -97,6 +97,40 @@ class DeployEc2ScriptTests(unittest.TestCase):
                                 "app_build_ref": os.environ.get("APP_BUILD_REF"),
                                 "app_build_time": os.environ.get("APP_BUILD_TIME"),
                                 "app_runtime_image": os.environ.get("APP_RUNTIME_IMAGE"),
+                                "build_refs": {
+                                    key: os.environ.get(key)
+                                    for key in (
+                                        "ROUTE_STAGING_BUILD_REF",
+                                        "ROUTE_PREPRODUCTION_BUILD_REF",
+                                        "ROUTE_PRODUCTION_BUILD_REF",
+                                        "AUTOMATION_STAGING_BUILD_REF",
+                                        "AUTOMATION_PREPRODUCTION_BUILD_REF",
+                                        "AUTOMATION_PRODUCTION_BUILD_REF",
+                                    )
+                                },
+                                "build_times": {
+                                    key: os.environ.get(key)
+                                    for key in (
+                                        "ROUTE_STAGING_BUILD_TIME",
+                                        "ROUTE_PREPRODUCTION_BUILD_TIME",
+                                        "ROUTE_PRODUCTION_BUILD_TIME",
+                                        "AUTOMATION_STAGING_BUILD_TIME",
+                                        "AUTOMATION_PREPRODUCTION_BUILD_TIME",
+                                        "AUTOMATION_PRODUCTION_BUILD_TIME",
+                                    )
+                                },
+                                "automation_staging_db_dsn": os.environ.get("AUTOMATION_STAGING_DB_DSN"),
+                                "automation_staging_db_schema": os.environ.get("AUTOMATION_STAGING_DB_SCHEMA"),
+                                "automation_staging_queue": os.environ.get("AUTOMATION_STAGING_QUEUE"),
+                                "automation_staging_event_channel": os.environ.get("AUTOMATION_STAGING_EVENT_CHANNEL"),
+                                "automation_preproduction_db_dsn": os.environ.get("AUTOMATION_PREPRODUCTION_DB_DSN"),
+                                "automation_preproduction_db_schema": os.environ.get("AUTOMATION_PREPRODUCTION_DB_SCHEMA"),
+                                "automation_preproduction_queue": os.environ.get("AUTOMATION_PREPRODUCTION_QUEUE"),
+                                "automation_preproduction_event_channel": os.environ.get("AUTOMATION_PREPRODUCTION_EVENT_CHANNEL"),
+                                "automation_production_db_dsn": os.environ.get("AUTOMATION_PRODUCTION_DB_DSN"),
+                                "automation_production_db_schema": os.environ.get("AUTOMATION_PRODUCTION_DB_SCHEMA"),
+                                "automation_production_queue": os.environ.get("AUTOMATION_PRODUCTION_QUEUE"),
+                                "automation_production_event_channel": os.environ.get("AUTOMATION_PRODUCTION_EVENT_CHANNEL"),
                                 "prompt_release_id": os.environ.get("PROMPT_RELEASE_ID"),
                                 "prompt_release_required": os.environ.get("PROMPT_RELEASE_REQUIRED"),
                             }
@@ -876,11 +910,8 @@ class DeployEc2ScriptTests(unittest.TestCase):
             ".env",
             textwrap.dedent(
                 """\
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
-                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
-                AUTOMATION_STAGING_QUEUE=automation-staging
-                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -901,6 +932,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 [
                     "release_id=release-42",
                     "commit=a50ff400b635",
+                    "build_time=2026-08-22T01:02:03Z",
                     f"ROUTE_STAGING_IMAGE={route_image}",
                     f"ROUTE_STAGING_IMAGE_ID={route_image_id}",
                     f"ROUTE_PREPRODUCTION_IMAGE={route_image}",
@@ -938,6 +970,33 @@ class DeployEc2ScriptTests(unittest.TestCase):
         calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
         self.assertFalse(any("pull" in call["argv"] for call in calls))
         self.assertTrue((self.repo / ".deployments/staging.manifest").exists())
+        up_call = next(call for call in calls if "up" in call["argv"] and "--no-build" in call["argv"])
+        self.assertEqual(up_call["automation_staging_db_dsn"], "postgresql://ticket:test@db.local/tickets")
+        self.assertEqual(up_call["automation_staging_db_schema"], "supportportal_staging")
+        self.assertEqual(up_call["automation_staging_queue"], "automation.staging")
+        self.assertEqual(up_call["automation_staging_event_channel"], "automation.events.staging")
+        self.assertEqual(
+            up_call["build_refs"],
+            {
+                "ROUTE_STAGING_BUILD_REF": "a50ff400b635",
+                "ROUTE_PREPRODUCTION_BUILD_REF": "a50ff400b635",
+                "ROUTE_PRODUCTION_BUILD_REF": "a50ff400b635",
+                "AUTOMATION_STAGING_BUILD_REF": "a50ff400b635",
+                "AUTOMATION_PREPRODUCTION_BUILD_REF": "a50ff400b635",
+                "AUTOMATION_PRODUCTION_BUILD_REF": "a50ff400b635",
+            },
+        )
+        self.assertEqual(
+            up_call["build_times"],
+            {
+                "ROUTE_STAGING_BUILD_TIME": "2026-08-22T01:02:03Z",
+                "ROUTE_PREPRODUCTION_BUILD_TIME": "2026-08-22T01:02:03Z",
+                "ROUTE_PRODUCTION_BUILD_TIME": "2026-08-22T01:02:03Z",
+                "AUTOMATION_STAGING_BUILD_TIME": "2026-08-22T01:02:03Z",
+                "AUTOMATION_PREPRODUCTION_BUILD_TIME": "2026-08-22T01:02:03Z",
+                "AUTOMATION_PRODUCTION_BUILD_TIME": "2026-08-22T01:02:03Z",
+            },
+        )
 
     def test_release_manifest_image_id_mismatch_fails_before_network_or_compose_changes(self) -> None:
         self._write(
@@ -991,6 +1050,70 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(self._compose_verbs(), [])
         calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
         self.assertFalse(any(call["argv"][:2] == ["network", "create"] for call in calls))
+
+    def test_preproduction_reuses_account_database_with_environment_defaults(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                ROUTE_PREPRODUCTION_IMAGE=registry.example/route@sha256:route-preproduction
+                AUTOMATION_PREPRODUCTION_IMAGE=registry.example/automation@sha256:automation-preproduction
+                ROUTE_PREPRODUCTION_SERVICE_TOKEN=route-token
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        result = self._run_script("--environment", "preproduction", "--skip-pull")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        up_call = next(
+            call
+            for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(up_call["automation_preproduction_db_dsn"], "postgresql://ticket:test@db.local/tickets")
+        self.assertEqual(up_call["automation_preproduction_db_schema"], "supportportal_preproduction")
+        self.assertEqual(up_call["automation_preproduction_queue"], "automation.preproduction")
+        self.assertEqual(up_call["automation_preproduction_event_channel"], "automation.events.preproduction")
+
+    def test_production_reuses_production_database_with_environment_defaults(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
+                AUTOMATION_PRODUCTION_IMAGE=registry.example/automation@sha256:automation-production
+                ROUTE_PRODUCTION_SERVICE_TOKEN=route-token
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--environment",
+            "production",
+            "--skip-pull",
+            extra_env={"DEPLOY_PRODUCTION_APPROVED": "1"},
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        up_call = next(
+            call
+            for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            if "up" in call["argv"] and "--no-build" in call["argv"]
+        )
+        self.assertEqual(up_call["automation_production_db_dsn"], "postgresql://ticket:test@db.local/tickets-production")
+        self.assertEqual(up_call["automation_production_db_schema"], "supportportal_production")
+        self.assertEqual(up_call["automation_production_queue"], "automation.production")
+        self.assertEqual(up_call["automation_production_event_channel"], "automation.events.production")
 
     def test_split_deploy_honors_branch_pull_before_loading_images(self) -> None:
         remote = self.root / "remote.git"
