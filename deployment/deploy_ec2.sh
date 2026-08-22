@@ -13,6 +13,8 @@ SKIP_EXTERNAL_CHECK=0
 FOLLOW_LOGS=0
 TARGET_ENVIRONMENT=""
 ROLLBACK_SPLIT=0
+RELEASE_ID=""
+RELEASE_MANIFEST=""
 DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}"
 DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
 ROLLBACK_IMAGE=""
@@ -51,6 +53,9 @@ Options:
   -b, --branch <branch>      Deploy from the given git branch (default: current branch)
   -d, --domain <domain>      External domain for HTTPS health check (default: support.stellarix.space)
       --environment <name>   Deploy one split environment: staging, preproduction, production, route-staging, route-preproduction, route-production
+      --release <id>          Load split image pointers from .deployments/releases/<id>.env
+      --release-manifest <path>
+                              Load split image pointers from an explicit manifest path
       --rollback              Restore the previous image pointers for --environment
       --skip-pull            Skip git fetch/pull
       --skip-external-check  Skip https://<domain>/health check
@@ -61,6 +66,7 @@ Examples:
   ./deployment/deploy_ec2.sh
   ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space
   ./deployment/deploy_ec2.sh --skip-pull --logs
+  ./deployment/deploy_ec2.sh --environment staging --release main-a50ff400b635
   ./deployment/deploy_ec2.sh --environment staging --skip-pull
   ./deployment/deploy_ec2.sh --environment staging --rollback --skip-pull
 EOF
@@ -425,6 +431,16 @@ parse_args() {
         TARGET_ENVIRONMENT="$2"
         shift 2
         ;;
+      --release)
+        [[ $# -ge 2 ]] || fail "--release requires a value"
+        RELEASE_ID="$2"
+        shift 2
+        ;;
+      --release-manifest)
+        [[ $# -ge 2 ]] || fail "--release-manifest requires a path"
+        RELEASE_MANIFEST="$2"
+        shift 2
+        ;;
       --rollback)
         ROLLBACK_SPLIT=1
         shift
@@ -457,6 +473,67 @@ manifest_value() {
   local key="$2"
   [[ -f "${manifest_path}" ]] || return 0
   awk -F= -v key="${key}" '$1 == key { sub("^[^=]*=", "", $0); print; exit }' "${manifest_path}"
+}
+
+validate_release_id() {
+  local value="$1"
+  [[ "${value}" =~ ^[A-Za-z0-9._-]+$ ]] || fail "Invalid release id: ${value}"
+}
+
+validate_release_image() {
+  local key="$1"
+  local value="$2"
+  [[ "${value}" != *replace* && "${value}" =~ ^.+@sha256:[0-9a-fA-F]{64}$ ]] || fail "${key} in release manifest must be an immutable digest image pointer"
+}
+
+load_release_manifest() {
+  local manifest_path="$RELEASE_MANIFEST"
+  local key value manifest_release manifest_commit
+  [[ "${ROLLBACK_SPLIT}" == "0" ]] || fail "--release/--release-manifest cannot be combined with --rollback"
+  [[ -z "${RELEASE_ID}" || -z "${RELEASE_MANIFEST}" ]] || fail "Use either --release or --release-manifest, not both"
+  if [[ -n "${RELEASE_ID}" ]]; then
+    validate_release_id "${RELEASE_ID}"
+    manifest_path="${PROJECT_ROOT}/.deployments/releases/${RELEASE_ID}.env"
+  fi
+  [[ -n "${manifest_path}" ]] || fail "A release id or release manifest path is required"
+  if [[ "${manifest_path}" != /* ]]; then
+    manifest_path="${PROJECT_ROOT}/${manifest_path}"
+  fi
+  [[ -f "${manifest_path}" ]] || fail "Release manifest not found: ${manifest_path}"
+  for key in \
+    ROUTE_STAGING_IMAGE ROUTE_PREPRODUCTION_IMAGE ROUTE_PRODUCTION_IMAGE \
+    AUTOMATION_STAGING_IMAGE AUTOMATION_PREPRODUCTION_IMAGE AUTOMATION_PRODUCTION_IMAGE; do
+    value="$(manifest_value "${manifest_path}" "${key}")"
+    validate_release_image "${key}" "${value}"
+    export_env_value "${key}" "${value}"
+  done
+  manifest_release="$(manifest_value "${manifest_path}" release_id)"
+  manifest_commit="$(manifest_value "${manifest_path}" commit)"
+  [[ -z "${manifest_release}" || "${manifest_release}" == "${RELEASE_ID:-${manifest_release}}" ]] || fail "Release manifest id does not match --release: ${manifest_release}"
+  RELEASE_MANIFEST="${manifest_path}"
+  log "Loaded release manifest ${RELEASE_MANIFEST} (release=${manifest_release:-unknown} commit=${manifest_commit:-unknown})"
+}
+
+prepare_split_source() {
+  local current_branch target_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  [[ "${current_branch}" != "HEAD" ]] || fail "Detached HEAD detected. Checkout a branch first."
+  target_branch="${TARGET_BRANCH:-${current_branch}}"
+  if [[ "${SKIP_PULL}" -eq 0 ]]; then
+    [[ -z "$(git status --porcelain)" ]] || fail "Working tree is not clean. Commit/stash changes before split deployment, or use --skip-pull."
+    log "Fetching latest refs from origin..."
+    git fetch origin --prune
+    git show-ref --verify --quiet "refs/remotes/origin/${target_branch}" || fail "Remote branch not found: origin/${target_branch}"
+    if [[ "${current_branch}" != "${target_branch}" ]]; then
+      log "Switching branch ${current_branch} -> ${target_branch}"
+      git checkout "${target_branch}"
+    fi
+    log "Pulling latest code from origin/${target_branch}..."
+    git pull --ff-only origin "${target_branch}"
+  else
+    log "Skipping git pull for split deployment."
+  fi
+  log "Resolved split deploy commit: branch=$(git rev-parse --abbrev-ref HEAD) commit=$(git_head_summary)"
 }
 
 split_environment_config() {
@@ -580,6 +657,9 @@ deploy_split_environment() {
   else
     previous_route_image="${current_manifest_route_image}"
     previous_automation_image="${current_manifest_automation_image}"
+    if [[ -z "${RELEASE_MANIFEST}" ]]; then
+      log "No release manifest supplied; using legacy image variables from ${ENV_FILE}."
+    fi
     for image_key in "${SPLIT_IMAGE_KEYS[@]}"; do
       image_value="$(resolve_env_value "${image_key}")"
       [[ -n "${image_value}" && "${image_value}" != *replace* && "${image_value}" == *@sha256:* ]] || fail "${image_key} must be an immutable digest image pointer"
@@ -788,7 +868,14 @@ main() {
     fi
   fi
 
+  if [[ ( -n "${RELEASE_ID}" || -n "${RELEASE_MANIFEST}" ) && -z "${TARGET_ENVIRONMENT}" ]]; then
+    fail "--release/--release-manifest requires --environment"
+  fi
   if [[ -n "${TARGET_ENVIRONMENT}" ]]; then
+    prepare_split_source
+    if [[ -n "${RELEASE_ID}" || -n "${RELEASE_MANIFEST}" ]]; then
+      load_release_manifest
+    fi
     deploy_split_environment "${TARGET_ENVIRONMENT}"
     exit 0
   fi

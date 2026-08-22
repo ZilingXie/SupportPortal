@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T09:25:32Z",
-  "source_base_commit": "017dd2e8f515ec70c241fb5ecbe91ffd3b98511a",
-  "registry_digest": "b6faab6c36cef285401cfe32ec98f668e27baae35e01f1266a2d854b3b611b40",
+  "generated_at": "2026-08-22T10:01:37Z",
+  "source_base_commit": "a50ff400b635317d7505e420a31a31a14fec4039",
+  "registry_digest": "422b0355ebcf53f80da10c4422a92fdd954b8f2adb6c6adc4842eb7c01156ffb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1627,6 +1627,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Per-operation delivery ledger and staging Zendesk deny boundary",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract",
           "details": "delivery ledger/reconciliation 相关测试通过；execution 记录 ownership/comment/status 的稳定 delivery key、attempt、ticket/status 绑定和 completed/outcome_unknown 状态，并验证 staging Zendesk client boundary 显式拒绝出站；reconcile 必须由服务端 Zendesk readback 产生证据。"
+        },
+        {
+          "type": "test",
+          "label": "Release builder and manifest promotion contract",
+          "command": ".venv/bin/python -m unittest backend.tests.test_build_automation_release backend.tests.test_deploy_ec2",
+          "details": "fake Docker 回归通过：release builder 构建并 push route/automation/production 三种 role，生成六个 image pointer；split deploy 可读取 release manifest，manifest 缺失时在 network/compose 变更前 fail closed。"
         }
       ],
       "source_refs": [
@@ -7863,12 +7869,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、数据库、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "在 Docker-capable host 上构建六个镜像并完成逐环境 health、镜像内容、Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
+      "next_action": "在 Docker-capable host 上运行 build_automation_release.sh 生成 release manifest，再按 staging -> preproduction -> production 完成逐环境 health、镜像内容、Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/DB/queue/credentials 与 build marker。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
         "staging 只做内部记录、无真实 Zendesk 出站、允许 rerun/reset；preproduction 只允许 allowlisted ticket，执行 ownership/status 和 Zendesk internal comment，允许 rerun；production 执行真实动作、每次显式选择 internal/external comment、禁止 rerun。",
-        "六个 immutable image pointers 可独立部署和回滚；Production Automation image manifest、runtime application bundle、OpenAPI 和 UI 不含 rerun。",
+        "release builder 一次构建 route、automation、production 三种 role 并生成六个 immutable image pointers；deploy_ec2.sh 可按 release manifest 晋升和回滚，Production Automation image manifest、runtime application bundle、OpenAPI 和 UI 不含 rerun。",
         "三套 DB、Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
         "按 staging -> preproduction -> production 完成契约、镜像内容、fake Zendesk、远程 Zendesk readback、回滚和官方栈验证；旧端点退出需要单独切流批准。"
       ],
@@ -7897,6 +7903,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Per-operation delivery ledger and staging Zendesk deny boundary",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract",
           "details": "delivery ledger/reconciliation 相关测试通过；execution 记录 ownership/comment/status 的稳定 delivery key、attempt、ticket/status 绑定和 completed/outcome_unknown 状态，并验证 staging Zendesk client boundary 显式拒绝出站；reconcile 必须由服务端 Zendesk readback 产生证据。"
+        },
+        {
+          "type": "test",
+          "label": "Release builder and manifest promotion contract",
+          "command": ".venv/bin/python -m unittest backend.tests.test_build_automation_release backend.tests.test_deploy_ec2",
+          "details": "fake Docker 回归通过：release builder 构建并 push route/automation/production 三种 role，生成六个 image pointer；split deploy 可读取 release manifest，manifest 缺失时在 network/compose 变更前 fail closed。"
         }
       ],
       "source_refs": [
@@ -7912,6 +7924,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "deployment/docker-compose.single-host.yml",
         "deployment/nginx/supportportal.conf",
         "deployment/deploy_ec2.sh",
+        "deployment/build_automation_release.sh",
+        "docs/deploy_automation_release.md",
         "backend/Dockerfile",
         "ui/account-ui",
         "ui/production-ui",
@@ -7929,6 +7943,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-22",
           "event": "acceptance_remediation",
           "summary": "修复 split rollback manifest 双指针、Production rerun 物理隔离和服务端 Zendesk readback；本地 targeted/deploy 回归通过，Docker/EC2 gate 保留待外部执行。"
+        },
+        {
+          "at": "2026-08-22",
+          "event": "release_promotion_automation",
+          "summary": "新增三 role release builder 和 immutable manifest；split deploy 支持按 release 晋升，不再要求手工填写六个 image digest。"
         }
       ],
       "legacy_refs": [

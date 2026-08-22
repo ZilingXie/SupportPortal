@@ -860,6 +860,88 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertIn("route_image=registry.example/route@sha256:route-b", rollback_again_manifest)
         self.assertIn("previous_route_image=registry.example/route@sha256:route-a", rollback_again_manifest)
 
+    def test_split_deploy_loads_release_manifest_without_manual_image_variables(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+        release_dir = self.repo / ".deployments/releases"
+        release_dir.mkdir(parents=True)
+        route_digest = "registry.example/route@sha256:" + ("1" * 64)
+        automation_digest = "registry.example/automation@sha256:" + ("2" * 64)
+        production_digest = "registry.example/automation-production@sha256:" + ("3" * 64)
+        self._write(
+            self.repo,
+            ".deployments/releases/release-42.env",
+            "\n".join(
+                [
+                    "release_id=release-42",
+                    "commit=a50ff400b635",
+                    f"ROUTE_STAGING_IMAGE={route_digest}",
+                    f"ROUTE_PREPRODUCTION_IMAGE={route_digest}",
+                    f"ROUTE_PRODUCTION_IMAGE={route_digest}",
+                    f"AUTOMATION_STAGING_IMAGE={automation_digest}",
+                    f"AUTOMATION_PREPRODUCTION_IMAGE={automation_digest}",
+                    f"AUTOMATION_PRODUCTION_IMAGE={production_digest}",
+                    "",
+                ]
+            ),
+        )
+
+        result = self._run_script("--environment", "staging", "--release", "release-42", "--skip-pull")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Loaded release manifest", result.stdout + result.stderr)
+        self.assertIn(f"route={route_digest}", result.stdout + result.stderr)
+        self.assertIn(f"automation={automation_digest}", result.stdout + result.stderr)
+        self.assertTrue((self.repo / ".deployments/staging.manifest").exists())
+
+    def test_split_deploy_honors_branch_pull_before_loading_images(self) -> None:
+        remote = self.root / "remote.git"
+        _git(["init", "--bare", str(remote)], cwd=self.root)
+        _git(["remote", "add", "origin", str(remote)], cwd=self.repo)
+        _git(["push", "--set-upstream", "origin", "main"], cwd=self.repo)
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        result = self._run_script("--environment", "staging", "--branch", "main")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Pulling latest code from origin/main", result.stdout + result.stderr)
+
+    def test_release_manifest_missing_fails_before_network_or_compose_changes(self) -> None:
+        result = self._run_script("--environment", "staging", "--release", "missing", "--skip-pull")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Release manifest not found", result.stdout + result.stderr)
+        self.assertEqual(self._read_json_lines(self.state_dir / "docker_calls.jsonl"), [])
+
     def test_split_rollback_without_environment_fails_closed(self) -> None:
         result = self._run_script("--rollback", "--skip-pull")
 
