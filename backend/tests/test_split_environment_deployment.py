@@ -87,6 +87,39 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         ):
             self.assertIn(module, route_block)
 
+    def test_local_split_startup_script_contract(self):
+        script = (ROOT / "scripts/workflow/start_local_split_environments.sh").read_text()
+        # Builds the three image roles from the current working tree.
+        self.assertIn("--build-arg \"AUTOMATION_IMAGE_ROLE=${role}\"", script)
+        self.assertIn("build_role route", script)
+        self.assertIn("build_role automation", script)
+        self.assertIn("build_role production", script)
+        self.assertIn("--skip-build", script)
+        # Uncommitted changes must be visible in the image tag.
+        self.assertIn("-wip", script)
+        # Idempotent networks and auto-generated execution tokens.
+        self.assertIn("create_network_if_missing", script)
+        self.assertIn("ensure_token AUTOMATION_STAGING_EXECUTION_TOKEN", script)
+        self.assertIn("ensure_token AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN", script)
+        self.assertIn("ensure_token AUTOMATION_PRODUCTION_EXECUTION_TOKEN", script)
+        # One compose project per environment, mirroring the EC2 shape.
+        self.assertIn("supportportal-automation-${environment}", script)
+        self.assertIn("--profile automation", script)
+        # Production environment is conditional on the production DSN.
+        self.assertIn("PRODUCTION_TICKET_DB_DSN", script)
+        # Post-start verification covers health and the auth negative case
+        # through the dedicated local nginx.
+        self.assertIn('base="${LOCAL_NGINX_BASE}/automation/${environment}"', script)
+        self.assertIn('expect_http "${environment} /health" 200 "${base}/health"', script)
+        self.assertIn("unauthenticated POST is rejected", script)
+        # A dedicated nginx is required because the official config hardcodes
+        # Docker's embedded DNS resolver, which podman does not provide.
+        self.assertIn("127.0.0.11", script)
+        self.assertIn("supportportal-automation-nginx", script)
+        self.assertIn("18080", script)
+        # Local runs must not silently write Zendesk.
+        self.assertIn("side effects are disabled by default", script)
+
 
 if __name__ == "__main__":
     unittest.main()
