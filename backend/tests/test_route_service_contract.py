@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -60,14 +61,116 @@ class RouteServiceContractTest(unittest.TestCase):
                 body = response.json()
                 self.assertEqual(body["action_plan"]["side_effects"], [])
                 self.assertEqual(body["environment"], AutomationEnvironment.STAGING.value)
-                self.assertTrue(body["action_plan"]["reply_body"])
+                self.assertEqual(body["action_plan"]["preparation_status"], "human_review")
 
     def test_action_plan_is_prepared_without_side_effects(self):
         plan = prepare_action_plan(
-            classification={"handler_binding_status": "active", "missing_fields": ["workspace"]},
-            route={"execution_action": "enablement"},
+            subject="",
+            question="hello",
+            ticket_context=[],
+            customer_email=None,
+            customer_name=None,
+            case_id="AC-1",
+            route={"execution_action": "human_review_required", "route_family": "human_review", "classification": {}},
         )
-        self.assertIn("workspace", plan["reply_body"])
+        self.assertEqual(plan["preparation_status"], "human_review")
+        self.assertEqual(plan["reply_body"], "")
+        self.assertEqual(plan["side_effects"], [])
+
+    def test_enablement_preparation_returns_non_empty_reply_and_field_audit(self):
+        extraction = SimpleNamespace(
+            collected_fields={"app_id": "app-1"},
+            missing_fields=[],
+            follow_up="",
+            requires_human_review=False,
+            audit_payload=lambda: {"provider": "test", "status": "complete"},
+        )
+        result = SimpleNamespace(
+            customer_reply="Your request has been submitted.",
+            missing_fields=[],
+            collected_fields={"app_id": "app-1"},
+        )
+        route = {
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "classification": {
+                "agora_route": "automation",
+                "automation_subcategory": "enablement",
+            },
+        }
+        with patch("backend.services.route_preparation.extract_enablement_fields", return_value=extraction), patch(
+            "backend.services.route_preparation.build_enablement_automation_result_from_fields", return_value=result
+        ):
+            plan = prepare_action_plan(
+                subject="Enable my app",
+                question="Please enable app app-1",
+                ticket_context=[],
+                customer_email="customer@example.com",
+                customer_name="Customer",
+                case_id="AC-1",
+                route=route,
+            )
+        self.assertEqual(plan["preparation_status"], "prepared")
+        self.assertEqual(plan["reply_body"], "Your request has been submitted.")
+        self.assertEqual(plan["field_extraction"]["provider"], "test")
+        self.assertEqual(plan["side_effects"], [])
+
+    def test_empty_handler_reply_fails_closed(self):
+        extraction = SimpleNamespace(
+            collected_fields={"app_id": "app-1"},
+            missing_fields=[],
+            follow_up="",
+            requires_human_review=False,
+            audit_payload=lambda: {},
+        )
+        result = SimpleNamespace(customer_reply="", missing_fields=[], collected_fields={"app_id": "app-1"})
+        route = {
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "classification": {"agora_route": "automation", "automation_subcategory": "enablement"},
+        }
+        with patch("backend.services.route_preparation.extract_enablement_fields", return_value=extraction), patch(
+            "backend.services.route_preparation.build_enablement_automation_result_from_fields", return_value=result
+        ):
+            plan = prepare_action_plan(
+                subject="Enable my app",
+                question="Please enable app app-1",
+                ticket_context=[],
+                customer_email=None,
+                customer_name=None,
+                case_id="AC-2",
+                route=route,
+            )
+        self.assertEqual(plan["preparation_status"], "preparation_failed")
+        self.assertEqual(plan["reply_body"], "")
+
+    def test_account_suspension_preparation_returns_contact_confirmation(self):
+        extraction = SimpleNamespace(
+            collected_fields={"suspension_status_or_error": "suspended"},
+            requires_human_review=False,
+            audit_payload=lambda: {"status": "partial"},
+        )
+        route = {
+            "execution_action": "account_suspension",
+            "route_family": "automated",
+            "classification": {
+                "agora_route": "account_billing",
+                "account_billing_subcategory": "account_suspension",
+            },
+        }
+        with patch("backend.services.route_preparation.extract_account_suspension_fields", return_value=extraction):
+            plan = prepare_action_plan(
+                subject="Account suspended",
+                question="Please restore access",
+                ticket_context=[],
+                customer_email="customer@example.com",
+                customer_name="Customer",
+                case_id="AC-SUSP-1",
+                route=route,
+            )
+        self.assertEqual(plan["preparation_status"], "prepared")
+        self.assertIn("contact", plan["reply_body"].lower())
+        self.assertEqual(plan["reply_facts"]["reply_intent"], "account_suspension_contact_confirmation_request")
         self.assertEqual(plan["side_effects"], [])
 
 

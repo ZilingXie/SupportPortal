@@ -12,6 +12,7 @@ SKIP_PULL=0
 SKIP_EXTERNAL_CHECK=0
 FOLLOW_LOGS=0
 TARGET_ENVIRONMENT=""
+ROLLBACK_SPLIT=0
 DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}"
 DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
 ROLLBACK_IMAGE=""
@@ -25,6 +26,12 @@ CANDIDATE_PROMPT_RELEASE_CREATED="false"
 COMPOSE_PROFILE_ARGS=()
 SPLIT_SERVICES=()
 SPLIT_COMPOSE_ARGS=()
+SPLIT_IMAGE_KEYS=()
+SPLIT_PROJECT_NAME=""
+SPLIT_DB_SCHEMA_KEY=""
+SPLIT_QUEUE_KEY=""
+SPLIT_EVENT_KEY=""
+SPLIT_RESOURCE_ID=""
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -44,6 +51,7 @@ Options:
   -b, --branch <branch>      Deploy from the given git branch (default: current branch)
   -d, --domain <domain>      External domain for HTTPS health check (default: support.stellarix.space)
       --environment <name>   Deploy one split environment: staging, preproduction, production, route-staging, route-preproduction, route-production
+      --rollback              Restore the previous image pointers for --environment
       --skip-pull            Skip git fetch/pull
       --skip-external-check  Skip https://<domain>/health check
       --logs                 Follow key service logs after deployment
@@ -54,6 +62,7 @@ Examples:
   ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space
   ./deployment/deploy_ec2.sh --skip-pull --logs
   ./deployment/deploy_ec2.sh --environment staging --skip-pull
+  ./deployment/deploy_ec2.sh --environment staging --rollback --skip-pull
 EOF
 }
 
@@ -121,6 +130,32 @@ resolve_env_value() {
     return 0
   fi
   read_env_file_value "${key}"
+}
+
+ensure_automation_networks() {
+  local network_key network_name
+  for network_key in \
+    AUTOMATION_EDGE_NETWORK_NAME \
+    AUTOMATION_STAGING_INTERNAL_NETWORK_NAME \
+    AUTOMATION_PREPRODUCTION_INTERNAL_NETWORK_NAME \
+    AUTOMATION_PRODUCTION_INTERNAL_NETWORK_NAME; do
+    network_name="$(resolve_env_value "${network_key}")"
+    case "${network_key}" in
+      AUTOMATION_EDGE_NETWORK_NAME) network_name="${network_name:-supportportal_automation_edge}" ;;
+      AUTOMATION_STAGING_INTERNAL_NETWORK_NAME) network_name="${network_name:-supportportal_automation_internal_staging}" ;;
+      AUTOMATION_PREPRODUCTION_INTERNAL_NETWORK_NAME) network_name="${network_name:-supportportal_automation_internal_preproduction}" ;;
+      AUTOMATION_PRODUCTION_INTERNAL_NETWORK_NAME) network_name="${network_name:-supportportal_automation_internal_production}" ;;
+    esac
+    if docker network inspect "${network_name}" >/dev/null 2>&1; then
+      continue
+    fi
+    if [[ "${network_key}" != "AUTOMATION_EDGE_NETWORK_NAME" ]]; then
+      docker network create --internal "${network_name}" >/dev/null || fail "Unable to create shared automation network: ${network_name}"
+    else
+      docker network create "${network_name}" >/dev/null || fail "Unable to create shared automation network: ${network_name}"
+    fi
+    log "Created shared automation network: ${network_name}"
+  done
 }
 
 export_env_value() {
@@ -227,8 +262,8 @@ restore_previous_stack() {
   export_env_value PROMPT_RELEASE_ID "${PREVIOUS_PROMPT_RELEASE_ID}"
   export_env_value PROMPT_RELEASE_REQUIRED "$([[ -n "${PREVIOUS_PROMPT_RELEASE_ID}" ]] && printf true || printf false)"
 
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" down >/dev/null 2>&1 || true
-  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" up -d --no-build \
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" down >/dev/null 2>&1 || true
+  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" up -d --no-build \
     && wait_for_http_ok "Restored internal" "${internal_url}" "${timeout_seconds}" "${retry_interval_seconds}"; then
     log "Restored previous image ${PREVIOUS_IMAGE:-${PREVIOUS_IMAGE_ID}}."
     return 0
@@ -390,6 +425,10 @@ parse_args() {
         TARGET_ENVIRONMENT="$2"
         shift 2
         ;;
+      --rollback)
+        ROLLBACK_SPLIT=1
+        shift
+        ;;
       --skip-pull)
         SKIP_PULL=1
         shift
@@ -413,16 +452,32 @@ parse_args() {
   done
 }
 
+manifest_value() {
+  local manifest_path="$1"
+  local key="$2"
+  [[ -f "${manifest_path}" ]] || return 0
+  awk -F= -v key="${key}" '$1 == key { sub("^[^=]*=", "", $0); print; exit }' "${manifest_path}"
+}
+
 split_environment_config() {
   local environment="$1"
   SPLIT_SERVICES=()
+  SPLIT_IMAGE_KEYS=()
+  SPLIT_DB_SCHEMA_KEY=""
+  SPLIT_QUEUE_KEY=""
+  SPLIT_EVENT_KEY=""
   case "${environment}" in
     staging)
       SPLIT_ROUTE_SERVICE="route_staging"
       SPLIT_AUTOMATION_SERVICE="automation_staging"
       SPLIT_PATH="staging"
       SPLIT_IMAGE_KEY="AUTOMATION_STAGING_IMAGE"
+      SPLIT_IMAGE_KEYS=(ROUTE_STAGING_IMAGE AUTOMATION_STAGING_IMAGE)
       SPLIT_DB_KEY="AUTOMATION_STAGING_DB_DSN"
+      SPLIT_DB_SCHEMA_KEY="AUTOMATION_STAGING_DB_SCHEMA"
+      SPLIT_QUEUE_KEY="AUTOMATION_STAGING_QUEUE"
+      SPLIT_EVENT_KEY="AUTOMATION_STAGING_EVENT_CHANNEL"
+      SPLIT_RESOURCE_ID="staging"
       SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_staging automation_staging)
       ;;
@@ -431,7 +486,12 @@ split_environment_config() {
       SPLIT_AUTOMATION_SERVICE="automation_preproduction"
       SPLIT_PATH="preproduction"
       SPLIT_IMAGE_KEY="AUTOMATION_PREPRODUCTION_IMAGE"
+      SPLIT_IMAGE_KEYS=(ROUTE_PREPRODUCTION_IMAGE AUTOMATION_PREPRODUCTION_IMAGE)
       SPLIT_DB_KEY="AUTOMATION_PREPRODUCTION_DB_DSN"
+      SPLIT_DB_SCHEMA_KEY="AUTOMATION_PREPRODUCTION_DB_SCHEMA"
+      SPLIT_QUEUE_KEY="AUTOMATION_PREPRODUCTION_QUEUE"
+      SPLIT_EVENT_KEY="AUTOMATION_PREPRODUCTION_EVENT_CHANNEL"
+      SPLIT_RESOURCE_ID="preproduction"
       SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_preproduction automation_preproduction)
       ;;
@@ -440,7 +500,12 @@ split_environment_config() {
       SPLIT_AUTOMATION_SERVICE="automation_production"
       SPLIT_PATH="production"
       SPLIT_IMAGE_KEY="AUTOMATION_PRODUCTION_IMAGE"
+      SPLIT_IMAGE_KEYS=(ROUTE_PRODUCTION_IMAGE AUTOMATION_PRODUCTION_IMAGE)
       SPLIT_DB_KEY="AUTOMATION_PRODUCTION_DB_DSN"
+      SPLIT_DB_SCHEMA_KEY="AUTOMATION_PRODUCTION_DB_SCHEMA"
+      SPLIT_QUEUE_KEY="AUTOMATION_PRODUCTION_QUEUE"
+      SPLIT_EVENT_KEY="AUTOMATION_PRODUCTION_EVENT_CHANNEL"
+      SPLIT_RESOURCE_ID="production"
       SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_production automation_production)
       ;;
@@ -449,7 +514,9 @@ split_environment_config() {
       SPLIT_AUTOMATION_SERVICE=""
       SPLIT_PATH="staging"
       SPLIT_IMAGE_KEY="ROUTE_STAGING_IMAGE"
+      SPLIT_IMAGE_KEYS=(ROUTE_STAGING_IMAGE)
       SPLIT_DB_KEY=""
+      SPLIT_RESOURCE_ID="staging"
       SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_staging)
       ;;
@@ -458,7 +525,9 @@ split_environment_config() {
       SPLIT_AUTOMATION_SERVICE=""
       SPLIT_PATH="preproduction"
       SPLIT_IMAGE_KEY="ROUTE_PREPRODUCTION_IMAGE"
+      SPLIT_IMAGE_KEYS=(ROUTE_PREPRODUCTION_IMAGE)
       SPLIT_DB_KEY=""
+      SPLIT_RESOURCE_ID="preproduction"
       SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_preproduction)
       ;;
@@ -467,7 +536,9 @@ split_environment_config() {
       SPLIT_AUTOMATION_SERVICE=""
       SPLIT_PATH="production"
       SPLIT_IMAGE_KEY="ROUTE_PRODUCTION_IMAGE"
+      SPLIT_IMAGE_KEYS=(ROUTE_PRODUCTION_IMAGE)
       SPLIT_DB_KEY=""
+      SPLIT_RESOURCE_ID="production"
       SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
       SPLIT_SERVICES=(route_production)
       ;;
@@ -477,31 +548,69 @@ split_environment_config() {
 
 deploy_split_environment() {
   local environment="$1"
-  SPLIT_COMPOSE_ARGS=(--env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile automation)
-  local image_value token_value db_value
+  local image_value token_value db_value db_schema queue_name event_channel
+  local route_image automation_image previous_manifest previous_route_image previous_automation_image
+  local current_manifest_route_image current_manifest_automation_image
   split_environment_config "${environment}"
-  image_value="$(resolve_env_value "${SPLIT_IMAGE_KEY}")"
+  SPLIT_PROJECT_NAME="supportportal-automation-${environment}"
+  SPLIT_COMPOSE_ARGS=(--project-name "${SPLIT_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile automation)
+  previous_manifest="${PROJECT_ROOT}/.deployments/${environment}.manifest"
+  current_manifest_route_image="$(manifest_value "${previous_manifest}" route_image)"
+  current_manifest_automation_image="$(manifest_value "${previous_manifest}" automation_image)"
+  previous_route_image=""
+  previous_automation_image=""
+  route_image="$(resolve_env_value "${SPLIT_IMAGE_KEYS[0]}")"
+  automation_image=""
+  if [[ ${#SPLIT_IMAGE_KEYS[@]} -gt 1 ]]; then
+    automation_image="$(resolve_env_value "${SPLIT_IMAGE_KEYS[1]}")"
+  fi
+  if [[ "${ROLLBACK_SPLIT}" == "1" ]]; then
+    previous_route_image="${current_manifest_route_image}"
+    previous_automation_image="${current_manifest_automation_image}"
+    route_image="$(manifest_value "${previous_manifest}" previous_route_image)"
+    [[ -n "${previous_route_image}" ]] || fail "No previous route image pointer exists for ${environment}"
+    [[ -n "${route_image}" ]] || fail "No previous route image pointer exists for ${environment}"
+    export_env_value "${SPLIT_IMAGE_KEYS[0]}" "${route_image}"
+    if [[ ${#SPLIT_IMAGE_KEYS[@]} -gt 1 ]]; then
+      automation_image="$(manifest_value "${previous_manifest}" previous_automation_image)"
+      [[ -n "${previous_automation_image}" ]] || fail "No previous automation image pointer exists for ${environment}"
+      [[ -n "${automation_image}" ]] || fail "No previous automation image pointer exists for ${environment}"
+      export_env_value "${SPLIT_IMAGE_KEYS[1]}" "${automation_image}"
+    fi
+  else
+    previous_route_image="${current_manifest_route_image}"
+    previous_automation_image="${current_manifest_automation_image}"
+    for image_key in "${SPLIT_IMAGE_KEYS[@]}"; do
+      image_value="$(resolve_env_value "${image_key}")"
+      [[ -n "${image_value}" && "${image_value}" != *replace* && "${image_value}" == *@sha256:* ]] || fail "${image_key} must be an immutable digest image pointer"
+    done
+  fi
   token_value="$(resolve_env_value "${SPLIT_TOKEN_KEY}")"
-  [[ -n "${image_value}" && "${image_value}" != *replace* ]] || fail "${SPLIT_IMAGE_KEY} must be an immutable image pointer"
   [[ -n "${token_value}" ]] || fail "${SPLIT_TOKEN_KEY} is required"
   if [[ -n "${SPLIT_DB_KEY}" ]]; then
     db_value="$(resolve_env_value "${SPLIT_DB_KEY}")"
     [[ -n "${db_value}" ]] || fail "${SPLIT_DB_KEY} is required"
+    db_schema="$(resolve_env_value "${SPLIT_DB_SCHEMA_KEY}")"
+    queue_name="$(resolve_env_value "${SPLIT_QUEUE_KEY}")"
+    event_channel="$(resolve_env_value "${SPLIT_EVENT_KEY}")"
+    [[ -n "${db_schema}" && -n "${queue_name}" && -n "${event_channel}" ]] || fail "${environment} DB/schema/queue/event identity is incomplete"
   fi
-  if [[ "${environment}" == "production" ]]; then
+  if [[ "${environment}" == "production" || "${environment}" == "route-production" ]]; then
     [[ "${DEPLOY_PRODUCTION_APPROVED:-0}" == "1" ]] || fail "Production split deployment requires DEPLOY_PRODUCTION_APPROVED=1"
   fi
-  host_port="$(resolve_port)"
-  mkdir -p "${PROJECT_ROOT}/.deployments"
-  printf 'environment=%s\nimage_key=%s\nimage=%s\ncommit=%s\ntime=%s\n' \
-    "${environment}" "${SPLIT_IMAGE_KEY}" "${image_value}" "$(git rev-parse --short=12 HEAD)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    > "${PROJECT_ROOT}/.deployments/${environment}.manifest"
-  log "Deploying split environment ${environment} with ${SPLIT_IMAGE_KEY}=${image_value}"
+  ensure_automation_networks
+  log "Deploying split environment ${environment} as project ${SPLIT_PROJECT_NAME} with route=${route_image} automation=${automation_image:-n/a}"
   docker compose "${SPLIT_COMPOSE_ARGS[@]}" pull "${SPLIT_SERVICES[@]}"
   docker compose "${SPLIT_COMPOSE_ARGS[@]}" up -d --no-build "${SPLIT_SERVICES[@]}"
   for service in "${SPLIT_SERVICES[@]}"; do
     wait_for_split_service "${service}" "$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)" "$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)" || fail "${environment} ${service} health check failed"
   done
+  mkdir -p "${PROJECT_ROOT}/.deployments"
+  printf 'environment=%s\nproject=%s\nroute_image=%s\nautomation_image=%s\nprevious_route_image=%s\nprevious_automation_image=%s\ncommit=%s\ndb_schema=%s\nqueue=%s\nevent_channel=%s\nresource_id=%s\ntime=%s\n' \
+    "${environment}" "${SPLIT_PROJECT_NAME}" "${route_image}" "${automation_image}" \
+    "${previous_route_image}" "${previous_automation_image}" "$(git rev-parse --short=12 HEAD)" \
+    "${db_schema:-}" "${queue_name:-}" "${event_channel:-}" "${SPLIT_RESOURCE_ID}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > "${PROJECT_ROOT}/.deployments/${environment}.manifest"
   log "Split environment ${environment} deployed; rollback scope is ${SPLIT_SERVICES[*]} only."
 }
 
@@ -684,8 +793,11 @@ main() {
     exit 0
   fi
 
+  [[ "${ROLLBACK_SPLIT}" == "0" ]] || fail "--rollback requires --environment; refusing to run a full-stack deployment"
+
   prepare_compose_env
   resolve_compose_profile_args
+  ensure_automation_networks
 
   local current_branch target_branch
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -727,7 +839,7 @@ main() {
   fi
 
   log "Pre-building services before restart..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" build; then
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" build; then
     show_compose_diagnostics
     cleanup_rollback_image
     ROLLBACK_IMAGE=""
@@ -755,14 +867,14 @@ main() {
   fi
 
   log "Stopping services..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" down; then
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" down; then
     show_compose_diagnostics
     mark_candidate_prompt_release_failed "docker compose down failed" || true
     restore_previous_stack "http://127.0.0.1:${host_port}/health" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
     fail "docker compose down failed; rollback image retained: ${ROLLBACK_IMAGE:-unavailable}"
   fi
   log "Starting services (detached)..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]}" up -d; then
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" up -d; then
     show_compose_diagnostics
     mark_candidate_prompt_release_failed "docker compose up failed" || true
     restore_previous_stack "http://127.0.0.1:${host_port}/health" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true

@@ -162,6 +162,19 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     )
                     sys.exit(0)
 
+                if args[:2] == ["network", "inspect"]:
+                    network_name = args[-1]
+                    networks_path = state_dir / "networks.txt"
+                    networks = set(networks_path.read_text(encoding="utf-8").splitlines()) if networks_path.exists() else set()
+                    sys.exit(0 if network_name in networks else 1)
+
+                if args[:2] == ["network", "create"]:
+                    network_name = args[-1]
+                    with (state_dir / "networks.txt").open("a", encoding="utf-8") as handle:
+                        handle.write(network_name + "\\n")
+                    print(network_name)
+                    sys.exit(0)
+
                 if args[:1] != ["compose"]:
                     print("unexpected docker invocation", args, file=sys.stderr)
                     sys.exit(1)
@@ -175,6 +188,10 @@ class DeployEc2ScriptTests(unittest.TestCase):
                         )
                         sys.exit(1)
                     print("build ok")
+                    sys.exit(0)
+
+                if "pull" in args:
+                    print("pull ok")
                     sys.exit(0)
 
                 if "run" in args:
@@ -769,6 +786,87 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertIn("below required 40 GiB even after docker cache cleanup", result.stdout + result.stderr)
         self.assertEqual(self._docker_actions(), ["builder-prune", "image-prune"])
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
+
+    def test_split_rollback_swaps_current_and_previous_image_pointers(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+
+        first = self._run_script("--environment", "staging", "--skip-pull")
+        self.assertEqual(first.returncode, 0, msg=first.stdout + first.stderr)
+        network_creates = [
+            call["argv"]
+            for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            if call["argv"][:2] == ["network", "create"]
+        ]
+        self.assertIn(["network", "create", "supportportal_automation_edge"], network_creates)
+        self.assertIn(
+            ["network", "create", "--internal", "supportportal_automation_internal_staging"],
+            network_creates,
+        )
+        manifest = self.repo / ".deployments/staging.manifest"
+        self.assertIn("route_image=registry.example/route@sha256:route-a", manifest.read_text())
+        self.assertIn("previous_route_image=", manifest.read_text())
+
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-b
+                AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-b
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+        second = self._run_script("--environment", "staging", "--skip-pull")
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        second_manifest = manifest.read_text()
+        self.assertIn("route_image=registry.example/route@sha256:route-b", second_manifest)
+        self.assertIn("previous_route_image=registry.example/route@sha256:route-a", second_manifest)
+        self.assertIn("previous_automation_image=registry.example/automation@sha256:automation-a", second_manifest)
+
+        rollback = self._run_script("--environment", "staging", "--rollback", "--skip-pull")
+        self.assertEqual(rollback.returncode, 0, msg=rollback.stdout + rollback.stderr)
+        rollback_manifest = manifest.read_text()
+        self.assertIn("route_image=registry.example/route@sha256:route-a", rollback_manifest)
+        self.assertIn("previous_route_image=registry.example/route@sha256:route-b", rollback_manifest)
+        self.assertIn("automation_image=registry.example/automation@sha256:automation-a", rollback_manifest)
+        self.assertIn("previous_automation_image=registry.example/automation@sha256:automation-b", rollback_manifest)
+
+        rollback_again = self._run_script("--environment", "staging", "--rollback", "--skip-pull")
+        self.assertEqual(rollback_again.returncode, 0, msg=rollback_again.stdout + rollback_again.stderr)
+        rollback_again_manifest = manifest.read_text()
+        self.assertIn("route_image=registry.example/route@sha256:route-b", rollback_again_manifest)
+        self.assertIn("previous_route_image=registry.example/route@sha256:route-a", rollback_again_manifest)
+
+    def test_split_rollback_without_environment_fails_closed(self) -> None:
+        result = self._run_script("--rollback", "--skip-pull")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--rollback requires --environment", result.stdout + result.stderr)
+        self.assertFalse(any("build" in call["argv"] for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")))
+        self.assertFalse(any("down" in call["argv"] for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")))
 
 
 if __name__ == "__main__":

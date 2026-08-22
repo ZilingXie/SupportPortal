@@ -82,7 +82,15 @@ def create_app() -> FastAPI:
             "handler": classification.get("automation_handler"),
             "subcategory": classification.get("automation_subcategory"),
         }
-        action_plan = prepare_action_plan(classification=classification, route=route_payload)
+        action_plan = prepare_action_plan(
+            subject=request.subject,
+            question=request.question,
+            ticket_context=request.ticket_context,
+            customer_email=request.customer_email,
+            customer_name=request.customer_name,
+            case_id=request.case_id,
+            route=route_payload,
+        )
         return RouteResult(
             request_id=request.request_id,
             idempotency_key=request.idempotency_key,
