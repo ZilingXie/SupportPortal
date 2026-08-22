@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T17:10:21Z",
-  "source_base_commit": "6aefb3c91d178b374a5a1817a788af13ae64d7cb",
-  "registry_digest": "1b50d3257778076b2f12ab991c6a9cc6ae348e3acb88f97a217f1ccccb8eb6c3",
+  "generated_at": "2026-08-22T17:47:33Z",
+  "source_base_commit": "2ffcfa0a09a6ae46ad2e2e1678df2cbe5c61f10d",
+  "registry_digest": "60af870e9345bf17158aec3438509b23a4c4fe50d370dd1e862cc8b61df316ef",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1657,6 +1657,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Acceptance remediation: outbound networks, execution tokens, unknown write paths",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_route_service_contract backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership backend.tests.test_automation_execution_store backend.tests.test_build_automation_release backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation",
           "details": "2026-08-22 线上验收发现 staging 执行链 502 route_http_error：route 容器只挂在 --internal 网络上无法出站解析 LLM API。修复为 automation 网络不再 --internal 创建、既存 internal 网络 fail closed 并要求人工迁移；同时 /v1/cases、rerun、reset、reconcile 增加 AUTOMATION_EXECUTION_TOKEN Bearer 鉴权（三 UI 提供 token 输入）、production 未知写路径返回 404、deploy 校验三个 AUTOMATION_*_EXECUTION_TOKEN 必填。116 项相关测试通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Release-005 three-environment deployment and acceptance probes",
+          "command": "EC2 deploy_ec2.sh --release release-20260822-005（staging -> preproduction -> production）；curl /automation/*/health|capabilities|v1/cases",
+          "details": "2026-08-22 三环境迁移非 internal 网络并部署 release-20260822-005：三环境 health 200、capabilities 策略矩阵与设计一致；staging 带 token 探针 9 秒返回 prepared 并落库 automation_executions_staging（此前 502 route_http_error 已消除）；空 body 无/错 token 均 401（鉴权先于请求体校验）；production POST /v1/reruns 404；staging 容器无 Zendesk 凭据；旧 /account、/production 仍 200；PREPRODUCTION/PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1、TARGET_TICKET_STATUS=pending 已生效。preproduction allowlist 工单 12872/12895 验证 quota/unregistered/enablement-字段不足/suspension-prepared 各路由与 human_review 无副作用落库，suspension prepared 链路执行到 side-effect 调用并以 failed+pending ledger 正确落库。"
+        },
+        {
+          "type": "deployment",
+          "label": "Three-environment rollback drill",
+          "command": "EC2 deploy_ec2.sh --environment {staging,preproduction,production} --rollback 后重新 --release release-20260822-005",
+          "details": "2026-08-22 三环境各执行 rollback（staging/production 回退 release-20260822-004，preproduction 回退同版 previous）并恢复 release-20260822-005；全程 health 200，manifest current/previous 指针正确交替，回滚只影响目标 compose project。"
+        },
+        {
+          "type": "decision",
+          "label": "Zendesk credentials 401 blocks real side-effect acceptance",
+          "command": "容器内 GET agoraio.zendesk.com/api/v2/tickets/12895.json",
+          "details": "preproduction 与主栈 api_production 容器使用 .env 的 zendesk_basic_auth 均 401；该值不含冒号（非 email:token 格式），疑似 Zendesk token 轮换后未更新 EC2 .env。真实 Zendesk 写入验收（preproduction internal 全链路、production internal/external 与 readback）与主栈 /production 自动投递均被阻塞，等待运维更新凭据。"
         }
       ],
       "source_refs": [
@@ -7893,7 +7911,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "部署验收修复（automation 网络去掉 --internal、执行端点 Bearer token 鉴权、production 未知写路径 404）：在 EC2 迁移三个 internal 网络并配置三个 AUTOMATION_*_EXECUTION_TOKEN 后，构建新 release 按 staging -> preproduction -> production 重新部署；随后完成带 token 的 staging 端到端探针、preproduction allowlist internal 全链路、production internal/external 与 Zendesk readback、三环境 rollback drill；旧端点切流仍需单独批准。",
+      "next_action": "等待运维将 EC2 .env 的 zendesk_basic_auth 更新为有效的 email:token 值（当前值无冒号、所有 Zendesk 调用 401，主栈 /production 同样受影响）：凭据修复后用新 request_id 重跑 preproduction allowlist 工单的 side-effect 全链路（ownership + internal comment + status + delivery ledger + readback）和 production 12895 internal 链路，external comment 由用户指定受控工单验证；随后三环境保持 release-20260822-005；旧端点切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -7902,7 +7920,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "三套环境复用现有项目 DSN，但使用 supportportal_staging、supportportal_preproduction、supportportal_production 独立 schema 和 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张独立 execution table；Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
         "按 staging -> preproduction -> production 完成契约、镜像内容、fake Zendesk、远程 Zendesk readback、回滚和官方栈验证；旧端点退出需要单独切流批准。"
       ],
-      "blockers": [],
+      "blockers": [
+        "EC2 .env 的 zendesk_basic_auth 值不含冒号（非 email:token 格式），preproduction/production 与主栈 /production 容器对 agoraio.zendesk.com 全部 401；side-effect 真实写入验收与 Zendesk readback 被阻塞，等待运维更新 Zendesk token。"
+      ],
       "evidence": [
         {
           "type": "test",
@@ -7957,6 +7977,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Acceptance remediation: outbound networks, execution tokens, unknown write paths",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_route_service_contract backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership backend.tests.test_automation_execution_store backend.tests.test_build_automation_release backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation",
           "details": "2026-08-22 线上验收发现 staging 执行链 502 route_http_error：route 容器只挂在 --internal 网络上无法出站解析 LLM API。修复为 automation 网络不再 --internal 创建、既存 internal 网络 fail closed 并要求人工迁移；同时 /v1/cases、rerun、reset、reconcile 增加 AUTOMATION_EXECUTION_TOKEN Bearer 鉴权（三 UI 提供 token 输入）、production 未知写路径返回 404、deploy 校验三个 AUTOMATION_*_EXECUTION_TOKEN 必填。116 项相关测试通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Release-005 three-environment deployment and acceptance probes",
+          "command": "EC2 deploy_ec2.sh --release release-20260822-005（staging -> preproduction -> production）；curl /automation/*/health|capabilities|v1/cases",
+          "details": "2026-08-22 三环境迁移非 internal 网络并部署 release-20260822-005：三环境 health 200、capabilities 策略矩阵与设计一致；staging 带 token 探针 9 秒返回 prepared 并落库 automation_executions_staging（此前 502 route_http_error 已消除）；空 body 无/错 token 均 401（鉴权先于请求体校验）；production POST /v1/reruns 404；staging 容器无 Zendesk 凭据；旧 /account、/production 仍 200；PREPRODUCTION/PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1、TARGET_TICKET_STATUS=pending 已生效。preproduction allowlist 工单 12872/12895 验证 quota/unregistered/enablement-字段不足/suspension-prepared 各路由与 human_review 无副作用落库，suspension prepared 链路执行到 side-effect 调用并以 failed+pending ledger 正确落库。"
+        },
+        {
+          "type": "deployment",
+          "label": "Three-environment rollback drill",
+          "command": "EC2 deploy_ec2.sh --environment {staging,preproduction,production} --rollback 后重新 --release release-20260822-005",
+          "details": "2026-08-22 三环境各执行 rollback（staging/production 回退 release-20260822-004，preproduction 回退同版 previous）并恢复 release-20260822-005；全程 health 200，manifest current/previous 指针正确交替，回滚只影响目标 compose project。"
+        },
+        {
+          "type": "decision",
+          "label": "Zendesk credentials 401 blocks real side-effect acceptance",
+          "command": "容器内 GET agoraio.zendesk.com/api/v2/tickets/12895.json",
+          "details": "preproduction 与主栈 api_production 容器使用 .env 的 zendesk_basic_auth 均 401；该值不含冒号（非 email:token 格式），疑似 Zendesk token 轮换后未更新 EC2 .env。真实 Zendesk 写入验收（preproduction internal 全链路、production internal/external 与 readback）与主栈 /production 自动投递均被阻塞，等待运维更新凭据。"
         }
       ],
       "source_refs": [
