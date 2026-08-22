@@ -28,6 +28,21 @@ For each new entry, record:
 - Verification:
   - Text-level rule checks and `git diff --check`; no container restart.
 
+## 2026-08-22 - Project-level planning-with-files skill
+
+- Area or subsystem: Codex project tooling and long-running task planning
+- Prompt or model version: `planning-with-files` v3.11.1; application prompt/model configuration unchanged
+- Summary: Added the upstream `planning-with-files` skill under `.codex/skills/` so large multi-step tasks can explicitly opt into persistent `task_plan.md`, `findings.md`, and `progress.md` files. The skill does not require planning files for small fixes.
+- Reason: Cross-cutting migrations and investigations can outlive a context window, while small repairs should keep the normal lightweight workflow.
+- Affected files or config:
+  - `.codex/skills/planning-with-files/`
+- Expected behavior change:
+  - Large tasks may invoke `planning-with-files` and use its templates/scripts from the repository.
+  - Small fixes continue without creating planning files or changing the application runtime.
+  - Existing project `.codex/config.toml` and global Codex hooks are not overwritten by this change.
+- Verification:
+  - Skill metadata, bundled scripts/templates, shell syntax, Python compilation, and `git diff --check` pass; no application stack restart required.
+
 ## 2026-08-20 - Enablement internal-reply completion LLM adjudicator
 
 - Area or subsystem: Account Automation internal email reply loop (worker reply poller)
