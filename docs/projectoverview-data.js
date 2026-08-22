@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T18:48:36Z",
-  "source_base_commit": "e5f31e67b23cf0a2ca4ccfe79716b51254cb7c12",
-  "registry_digest": "0f624a2ea22c82a024cd07dad56dc49e011ff5311930bf54e36deef0def049cf",
+  "generated_at": "2026-08-22T19:27:01Z",
+  "source_base_commit": "6fdca359605827c739994591341ed089e3c41110",
+  "registry_digest": "d657c52192ff2b64b48196fe9705fab7a7f30c0446204ab1fbde2dc8edd2ea00",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1681,6 +1681,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credential resolved, verification probes all green",
           "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
           "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local podman split environment startup",
+          "command": "scripts/workflow/start_local_split_environments.sh [--skip-build]",
+          "details": "新增本地（podman）三环境启动脚本：从当前工作树构建三个 role 镜像（worktree 可验证未提交改动，脏树 tag 带 -wip）、幂等建网络、自动生成三个执行 token 写入 root .env、按 EC2 同名 project 启动三环境并验证 health 与 401 负例；本地 Zendesk 副作用默认关闭 fail-closed，PRODUCTION_TICKET_DB_DSN 缺失时跳过本地 production。配套文档见 docs/deploy_automation_release.md 第 6 节。"
         }
       ],
       "source_refs": [
@@ -8005,6 +8011,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credential resolved, verification probes all green",
           "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
           "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local podman split environment startup",
+          "command": "scripts/workflow/start_local_split_environments.sh [--skip-build]",
+          "details": "新增本地（podman）三环境启动脚本：从当前工作树构建三个 role 镜像（worktree 可验证未提交改动，脏树 tag 带 -wip）、幂等建网络、自动生成三个执行 token 写入 root .env、按 EC2 同名 project 启动三环境并验证 health 与 401 负例；本地 Zendesk 副作用默认关闭 fail-closed，PRODUCTION_TICKET_DB_DSN 缺失时跳过本地 production。配套文档见 docs/deploy_automation_release.md 第 6 节。"
         }
       ],
       "source_refs": [
