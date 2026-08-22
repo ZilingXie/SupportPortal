@@ -31,10 +31,12 @@ SPLIT_COMPOSE_ARGS=()
 SPLIT_IMAGE_KEYS=()
 SPLIT_PROJECT_NAME=""
 SPLIT_DB_SCHEMA_KEY=""
+SPLIT_DB_TABLE_KEY=""
 SPLIT_QUEUE_KEY=""
 SPLIT_EVENT_KEY=""
 SPLIT_DB_FALLBACK_KEY=""
 SPLIT_DB_SCHEMA_DEFAULT=""
+SPLIT_DB_TABLE_DEFAULT=""
 SPLIT_QUEUE_DEFAULT=""
 SPLIT_EVENT_DEFAULT=""
 SPLIT_RESOURCE_ID=""
@@ -591,10 +593,12 @@ split_environment_config() {
   SPLIT_SERVICES=()
   SPLIT_IMAGE_KEYS=()
   SPLIT_DB_SCHEMA_KEY=""
+  SPLIT_DB_TABLE_KEY=""
   SPLIT_QUEUE_KEY=""
   SPLIT_EVENT_KEY=""
   SPLIT_DB_FALLBACK_KEY=""
   SPLIT_DB_SCHEMA_DEFAULT=""
+  SPLIT_DB_TABLE_DEFAULT=""
   SPLIT_QUEUE_DEFAULT=""
   SPLIT_EVENT_DEFAULT=""
   case "${environment}" in
@@ -608,6 +612,8 @@ split_environment_config() {
       SPLIT_DB_FALLBACK_KEY="TICKET_DB_DSN"
       SPLIT_DB_SCHEMA_KEY="AUTOMATION_STAGING_DB_SCHEMA"
       SPLIT_DB_SCHEMA_DEFAULT="supportportal_staging"
+      SPLIT_DB_TABLE_KEY="AUTOMATION_STAGING_DB_TABLE"
+      SPLIT_DB_TABLE_DEFAULT="automation_executions_staging"
       SPLIT_QUEUE_KEY="AUTOMATION_STAGING_QUEUE"
       SPLIT_QUEUE_DEFAULT="automation.staging"
       SPLIT_EVENT_KEY="AUTOMATION_STAGING_EVENT_CHANNEL"
@@ -626,6 +632,8 @@ split_environment_config() {
       SPLIT_DB_FALLBACK_KEY="TICKET_DB_DSN"
       SPLIT_DB_SCHEMA_KEY="AUTOMATION_PREPRODUCTION_DB_SCHEMA"
       SPLIT_DB_SCHEMA_DEFAULT="supportportal_preproduction"
+      SPLIT_DB_TABLE_KEY="AUTOMATION_PREPRODUCTION_DB_TABLE"
+      SPLIT_DB_TABLE_DEFAULT="automation_executions_preproduction"
       SPLIT_QUEUE_KEY="AUTOMATION_PREPRODUCTION_QUEUE"
       SPLIT_QUEUE_DEFAULT="automation.preproduction"
       SPLIT_EVENT_KEY="AUTOMATION_PREPRODUCTION_EVENT_CHANNEL"
@@ -644,6 +652,8 @@ split_environment_config() {
       SPLIT_DB_FALLBACK_KEY="PRODUCTION_TICKET_DB_DSN"
       SPLIT_DB_SCHEMA_KEY="AUTOMATION_PRODUCTION_DB_SCHEMA"
       SPLIT_DB_SCHEMA_DEFAULT="supportportal_production"
+      SPLIT_DB_TABLE_KEY="AUTOMATION_PRODUCTION_DB_TABLE"
+      SPLIT_DB_TABLE_DEFAULT="automation_executions_production"
       SPLIT_QUEUE_KEY="AUTOMATION_PRODUCTION_QUEUE"
       SPLIT_QUEUE_DEFAULT="automation.production"
       SPLIT_EVENT_KEY="AUTOMATION_PRODUCTION_EVENT_CHANNEL"
@@ -691,7 +701,7 @@ split_environment_config() {
 
 deploy_split_environment() {
   local environment="$1"
-  local image_value token_value db_value db_schema queue_name event_channel
+  local image_value token_value db_value db_schema db_table queue_name event_channel
   local route_image route_image_id automation_image automation_image_id previous_manifest previous_route_image previous_automation_image
   local previous_route_image_id previous_automation_image_id current_manifest_route_image current_manifest_automation_image
   local current_manifest_route_image_id current_manifest_automation_image_id image_key image_id_key
@@ -771,13 +781,16 @@ deploy_split_environment() {
     db_schema="$(resolve_env_value "${SPLIT_DB_SCHEMA_KEY}")"
     db_schema="${db_schema:-${SPLIT_DB_SCHEMA_DEFAULT}}"
     export_env_value "${SPLIT_DB_SCHEMA_KEY}" "${db_schema}"
+    db_table="$(resolve_env_value "${SPLIT_DB_TABLE_KEY}")"
+    db_table="${db_table:-${SPLIT_DB_TABLE_DEFAULT}}"
+    export_env_value "${SPLIT_DB_TABLE_KEY}" "${db_table}"
     queue_name="$(resolve_env_value "${SPLIT_QUEUE_KEY}")"
     queue_name="${queue_name:-${SPLIT_QUEUE_DEFAULT}}"
     export_env_value "${SPLIT_QUEUE_KEY}" "${queue_name}"
     event_channel="$(resolve_env_value "${SPLIT_EVENT_KEY}")"
     event_channel="${event_channel:-${SPLIT_EVENT_DEFAULT}}"
     export_env_value "${SPLIT_EVENT_KEY}" "${event_channel}"
-    [[ -n "${db_schema}" && -n "${queue_name}" && -n "${event_channel}" ]] || fail "${environment} DB/schema/queue/event identity is incomplete"
+    [[ -n "${db_schema}" && -n "${db_table}" && -n "${queue_name}" && -n "${event_channel}" ]] || fail "${environment} DB/schema/table/queue/event identity is incomplete"
   fi
   if [[ "${environment}" == "production" || "${environment}" == "route-production" ]]; then
     [[ "${DEPLOY_PRODUCTION_APPROVED:-0}" == "1" ]] || fail "Production split deployment requires DEPLOY_PRODUCTION_APPROVED=1"
@@ -794,10 +807,10 @@ deploy_split_environment() {
     wait_for_split_service "${service}" "$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)" "$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)" || fail "${environment} ${service} health check failed"
   done
   mkdir -p "${PROJECT_ROOT}/.deployments"
-  printf 'environment=%s\nproject=%s\nroute_image=%s\nroute_image_id=%s\nautomation_image=%s\nautomation_image_id=%s\nprevious_route_image=%s\nprevious_route_image_id=%s\nprevious_automation_image=%s\nprevious_automation_image_id=%s\ncommit=%s\ndb_schema=%s\nqueue=%s\nevent_channel=%s\nresource_id=%s\ntime=%s\n' \
+  printf 'environment=%s\nproject=%s\nroute_image=%s\nroute_image_id=%s\nautomation_image=%s\nautomation_image_id=%s\nprevious_route_image=%s\nprevious_route_image_id=%s\nprevious_automation_image=%s\nprevious_automation_image_id=%s\ncommit=%s\ndb_schema=%s\ndb_table=%s\nqueue=%s\nevent_channel=%s\nresource_id=%s\ntime=%s\n' \
     "${environment}" "${SPLIT_PROJECT_NAME}" "${route_image}" "${route_image_id}" "${automation_image}" "${automation_image_id}" \
     "${previous_route_image}" "${previous_route_image_id}" "${previous_automation_image}" "${previous_automation_image_id}" "$(git rev-parse --short=12 HEAD)" \
-    "${db_schema:-}" "${queue_name:-}" "${event_channel:-}" "${SPLIT_RESOURCE_ID}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "${db_schema:-}" "${db_table:-}" "${queue_name:-}" "${event_channel:-}" "${SPLIT_RESOURCE_ID}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "${PROJECT_ROOT}/.deployments/${environment}.manifest"
   log "Split environment ${environment} deployed; rollback scope is ${SPLIT_SERVICES[*]} only."
 }

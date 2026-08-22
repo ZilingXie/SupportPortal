@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T12:31:06Z",
-  "source_base_commit": "3772b031ab371b20391723e78239a2a44f5e9767",
-  "registry_digest": "fafa1c178f47e294dd4f6b60d6c9879c8fd311f0e6c68ee01a167d83b50caba5",
+  "generated_at": "2026-08-22T12:53:02Z",
+  "source_base_commit": "f0a21d8232dd123e65f40a1c60c73bdbac840c2b",
+  "registry_digest": "cd1472e2e6c95fa5ca72a79e67c3f12e1c7f7b595159069ff4eb5aef0ac09259",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1639,6 +1639,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Existing database DSN fallback and split provenance",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_split_deploy_loads_release_manifest_without_manual_image_variables backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_preproduction_reuses_account_database_with_environment_defaults backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_production_reuses_production_database_with_environment_defaults",
           "details": "验证 staging/preproduction 缺少 AUTOMATION_*_DB_DSN 时复用 TICKET_DB_DSN，production 复用 PRODUCTION_TICKET_DB_DSN；三环境默认 schema/queue/event identity 由部署进程导出，release manifest commit/build_time 映射到 split route/automation build markers。"
+        },
+        {
+          "type": "test",
+          "label": "Environment-specific automation execution tables",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_execution_store backend.tests.test_automation_contracts",
+          "details": "验证 execution store 使用 schema-qualified 的 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张表，表名非法或未按环境绑定时 fail closed。"
         }
       ],
       "source_refs": [
@@ -7874,14 +7880,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "三套 Route 与 Automation 环境迁移",
       "status": "active",
       "owner": "zac",
-      "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
+      "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
       "next_action": "在 EC2 本机运行 build_automation_release.sh 生成 local release manifest，再按 staging -> preproduction -> production 完成逐环境 health、镜像内容、Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
       "acceptance_criteria": [
-        "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
+        "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
         "staging 只做内部记录、无真实 Zendesk 出站、允许 rerun/reset；preproduction 只允许 allowlisted ticket，执行 ownership/status 和 Zendesk internal comment，允许 rerun；production 执行真实动作、每次显式选择 internal/external comment、禁止 rerun。",
         "release builder 在同一台 EC2 本地一次构建 route、automation、production 三种 role，生成六个本地 image pointers 和对应 image IDs；deploy_ec2.sh 按 release manifest 校验本机镜像、晋升和回滚，不执行 registry push/pull，Production Automation image manifest、runtime application bundle、OpenAPI 和 UI 不含 rerun。",
-        "三套环境复用现有项目 DSN，但使用 supportportal_staging、supportportal_preproduction、supportportal_production 独立 schema；Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
+        "三套环境复用现有项目 DSN，但使用 supportportal_staging、supportportal_preproduction、supportportal_production 独立 schema 和 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张独立 execution table；Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
         "按 staging -> preproduction -> production 完成契约、镜像内容、fake Zendesk、远程 Zendesk readback、回滚和官方栈验证；旧端点退出需要单独切流批准。"
       ],
       "blockers": [],
@@ -7921,6 +7927,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Existing database DSN fallback and split provenance",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_split_deploy_loads_release_manifest_without_manual_image_variables backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_preproduction_reuses_account_database_with_environment_defaults backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_production_reuses_production_database_with_environment_defaults",
           "details": "验证 staging/preproduction 缺少 AUTOMATION_*_DB_DSN 时复用 TICKET_DB_DSN，production 复用 PRODUCTION_TICKET_DB_DSN；三环境默认 schema/queue/event identity 由部署进程导出，release manifest commit/build_time 映射到 split route/automation build markers。"
+        },
+        {
+          "type": "test",
+          "label": "Environment-specific automation execution tables",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_execution_store backend.tests.test_automation_contracts",
+          "details": "验证 execution store 使用 schema-qualified 的 automation_executions_staging、automation_executions_preproduction、automation_executions_production 三张表，表名非法或未按环境绑定时 fail closed。"
         }
       ],
       "source_refs": [
@@ -7970,6 +7982,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-22",
           "event": "existing_database_schema_fallback",
           "summary": "split deploy 默认复用现有 account/production DSN，以独立 schema、queue 和 event channel 隔离环境，并将 release manifest provenance 传入六个 split 服务。"
+        },
+        {
+          "at": "2026-08-22",
+          "event": "environment_specific_execution_tables",
+          "summary": "按用户修正将 execution ledger 从共享表改为三张环境专属表，并在 Compose、资源 identity 和部署校验中显式绑定表名。"
         }
       ],
       "legacy_refs": [
