@@ -2,7 +2,7 @@
 
 三套 split Automation 环境使用 release manifest 管理镜像版本，不要求操作人员手工填写六个 image pointer。本流程针对单台 EC2：EC2 在本机 build 镜像，本机 Compose 运行镜像，不依赖应用远端 registry。
 
-数据库不需要为 split 环境新建 PostgreSQL 实例或数据库。部署脚本默认使用现有项目 DSN：staging/preproduction 使用 `TICKET_DB_DSN`，production 使用 `PRODUCTION_TICKET_DB_DSN`；三套环境分别使用 `supportportal_staging`、`supportportal_preproduction`、`supportportal_production` schema。若 `.env` 显式设置对应的 `AUTOMATION_*_DB_DSN`，显式值优先，但部署脚本不会把解析出的 DSN 回写到 `.env`。
+数据库不需要为 split 环境新建 PostgreSQL 实例或数据库。部署脚本默认使用现有项目 DSN：staging/preproduction 使用 `TICKET_DB_DSN`，production 使用 `PRODUCTION_TICKET_DB_DSN`；三个环境分别写入独立表 `automation_executions_staging`、`automation_executions_preproduction`、`automation_executions_production`，不会共享 `automation_executions`。schema 仍分别为 `supportportal_staging`、`supportportal_preproduction`、`supportportal_production`。若 `.env` 显式设置对应的 `AUTOMATION_*_DB_DSN`，显式值优先，但部署脚本不会把解析出的 DSN 回写到 `.env`。
 
 ## 1. 构建 Release
 

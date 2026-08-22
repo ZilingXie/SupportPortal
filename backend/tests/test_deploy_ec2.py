@@ -121,14 +121,17 @@ class DeployEc2ScriptTests(unittest.TestCase):
                                 },
                                 "automation_staging_db_dsn": os.environ.get("AUTOMATION_STAGING_DB_DSN"),
                                 "automation_staging_db_schema": os.environ.get("AUTOMATION_STAGING_DB_SCHEMA"),
+                                "automation_staging_db_table": os.environ.get("AUTOMATION_STAGING_DB_TABLE"),
                                 "automation_staging_queue": os.environ.get("AUTOMATION_STAGING_QUEUE"),
                                 "automation_staging_event_channel": os.environ.get("AUTOMATION_STAGING_EVENT_CHANNEL"),
                                 "automation_preproduction_db_dsn": os.environ.get("AUTOMATION_PREPRODUCTION_DB_DSN"),
                                 "automation_preproduction_db_schema": os.environ.get("AUTOMATION_PREPRODUCTION_DB_SCHEMA"),
+                                "automation_preproduction_db_table": os.environ.get("AUTOMATION_PREPRODUCTION_DB_TABLE"),
                                 "automation_preproduction_queue": os.environ.get("AUTOMATION_PREPRODUCTION_QUEUE"),
                                 "automation_preproduction_event_channel": os.environ.get("AUTOMATION_PREPRODUCTION_EVENT_CHANNEL"),
                                 "automation_production_db_dsn": os.environ.get("AUTOMATION_PRODUCTION_DB_DSN"),
                                 "automation_production_db_schema": os.environ.get("AUTOMATION_PRODUCTION_DB_SCHEMA"),
+                                "automation_production_db_table": os.environ.get("AUTOMATION_PRODUCTION_DB_TABLE"),
                                 "automation_production_queue": os.environ.get("AUTOMATION_PRODUCTION_QUEUE"),
                                 "automation_production_event_channel": os.environ.get("AUTOMATION_PRODUCTION_EVENT_CHANNEL"),
                                 "prompt_release_id": os.environ.get("PROMPT_RELEASE_ID"),
@@ -970,9 +973,11 @@ class DeployEc2ScriptTests(unittest.TestCase):
         calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
         self.assertFalse(any("pull" in call["argv"] for call in calls))
         self.assertTrue((self.repo / ".deployments/staging.manifest").exists())
+        self.assertIn("db_table=automation_executions_staging", (self.repo / ".deployments/staging.manifest").read_text())
         up_call = next(call for call in calls if "up" in call["argv"] and "--no-build" in call["argv"])
         self.assertEqual(up_call["automation_staging_db_dsn"], "postgresql://ticket:test@db.local/tickets")
         self.assertEqual(up_call["automation_staging_db_schema"], "supportportal_staging")
+        self.assertEqual(up_call["automation_staging_db_table"], "automation_executions_staging")
         self.assertEqual(up_call["automation_staging_queue"], "automation.staging")
         self.assertEqual(up_call["automation_staging_event_channel"], "automation.events.staging")
         self.assertEqual(
@@ -1077,6 +1082,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
         self.assertEqual(up_call["automation_preproduction_db_dsn"], "postgresql://ticket:test@db.local/tickets")
         self.assertEqual(up_call["automation_preproduction_db_schema"], "supportportal_preproduction")
+        self.assertEqual(up_call["automation_preproduction_db_table"], "automation_executions_preproduction")
         self.assertEqual(up_call["automation_preproduction_queue"], "automation.preproduction")
         self.assertEqual(up_call["automation_preproduction_event_channel"], "automation.events.preproduction")
 
@@ -1112,6 +1118,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
         self.assertEqual(up_call["automation_production_db_dsn"], "postgresql://ticket:test@db.local/tickets-production")
         self.assertEqual(up_call["automation_production_db_schema"], "supportportal_production")
+        self.assertEqual(up_call["automation_production_db_table"], "automation_executions_production")
         self.assertEqual(up_call["automation_production_queue"], "automation.production")
         self.assertEqual(up_call["automation_production_event_channel"], "automation.events.production")
 

@@ -64,6 +64,7 @@ class AutomationContractsTest(unittest.TestCase):
                 "AUTOMATION_RESOURCE_ID": "staging",
                 "AUTOMATION_DB_RESOURCE_ID": "production",
                 "AUTOMATION_DB_SCHEMA": "supportportal_staging",
+                "AUTOMATION_DB_TABLE": "automation_executions_staging",
                 "AUTOMATION_REDIS_URL": "redis://automation_redis_staging:6379/0",
                 "AUTOMATION_QUEUE_NAME": "automation.staging",
                 "AUTOMATION_EVENT_CHANNEL": "automation.events.staging",
@@ -81,6 +82,7 @@ class AutomationContractsTest(unittest.TestCase):
                 "AUTOMATION_RESOURCE_ID": "staging",
                 "AUTOMATION_DB_RESOURCE_ID": "staging",
                 "AUTOMATION_DB_SCHEMA": "supportportal_staging",
+                "AUTOMATION_DB_TABLE": "automation_executions_staging",
                 "AUTOMATION_REDIS_URL": "redis://automation_redis_staging:6379/0",
                 "AUTOMATION_QUEUE_NAME": "automation.staging",
                 "AUTOMATION_EVENT_CHANNEL": "automation.events.staging",
@@ -89,6 +91,7 @@ class AutomationContractsTest(unittest.TestCase):
         ):
             identity = runtime_resource_identity(AutomationEnvironment.STAGING)
         self.assertEqual(identity["db_resource_id"], "staging")
+        self.assertEqual(identity["db_table"], "automation_executions_staging")
 
 
 if __name__ == "__main__":

@@ -169,6 +169,7 @@ def runtime_resource_identity(environment: AutomationEnvironment) -> dict[str, s
         "resource_id": str(os.getenv("AUTOMATION_RESOURCE_ID") or "").strip(),
         "db_resource_id": str(os.getenv("AUTOMATION_DB_RESOURCE_ID") or "").strip(),
         "db_schema": str(os.getenv("AUTOMATION_DB_SCHEMA") or "").strip(),
+        "db_table": str(os.getenv("AUTOMATION_DB_TABLE") or "").strip(),
         "redis_url": str(os.getenv("AUTOMATION_REDIS_URL") or "").strip(),
         "queue": str(os.getenv("AUTOMATION_QUEUE_NAME") or "").strip(),
         "event_channel": str(os.getenv("AUTOMATION_EVENT_CHANNEL") or "").strip(),
@@ -181,6 +182,8 @@ def runtime_resource_identity(environment: AutomationEnvironment) -> dict[str, s
             raise RuntimeError("AUTOMATION_RESOURCE_ID does not match AUTOMATION_ENVIRONMENT")
         if identity["db_resource_id"] != environment.value:
             raise RuntimeError("AUTOMATION_DB_RESOURCE_ID does not match AUTOMATION_ENVIRONMENT")
+        if environment.value not in identity["db_table"]:
+            raise RuntimeError("automation database table is not environment-scoped")
         if environment.value not in identity["redis_url"]:
             raise RuntimeError("AUTOMATION_REDIS_URL is not environment-scoped")
         if environment.value not in identity["queue"] or environment.value not in identity["event_channel"]:

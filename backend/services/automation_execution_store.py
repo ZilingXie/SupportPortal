@@ -24,15 +24,18 @@ class AutomationExecutionStore:
         self._memory: dict[str, dict[str, Any]] = {}
         self._dsn = str(os.getenv("AUTOMATION_DB_DSN") or "").strip()
         self._schema = str(os.getenv("AUTOMATION_DB_SCHEMA") or "supportportal").strip()
+        self._table_name = str(os.getenv("AUTOMATION_DB_TABLE") or f"automation_executions_{environment}").strip()
         if not self._schema.replace("_", "").isalnum():
             raise RuntimeError("AUTOMATION_DB_SCHEMA must be alphanumeric")
+        if not self._table_name.replace("_", "").isalnum():
+            raise RuntimeError("AUTOMATION_DB_TABLE must be alphanumeric")
 
     @property
     def in_memory(self) -> bool:
         return not self._dsn
 
     def _table(self) -> str:
-        return f'"{self._schema}"."automation_executions"'
+        return f'"{self._schema}"."{self._table_name}"'
 
     def ensure_schema(self) -> None:
         if self.in_memory:
