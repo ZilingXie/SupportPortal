@@ -70,6 +70,9 @@ class AutomationExecutionStore:
                     None,
                 )
                 if existing is not None:
+                    saved["execution_id"] = existing["execution_id"]
+                    saved["created_at"] = existing.get("created_at") or saved["created_at"]
+                    existing.update(saved)
                     return copy.deepcopy(existing)
                 self._memory[str(saved["execution_id"])] = saved
                 return copy.deepcopy(saved)
@@ -81,7 +84,10 @@ class AutomationExecutionStore:
                     INSERT INTO {self._table()}
                         (execution_id, request_id, environment, case_id, status, payload, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (request_id) DO UPDATE SET updated_at = EXCLUDED.updated_at
+                    ON CONFLICT (request_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        payload = EXCLUDED.payload,
+                        updated_at = EXCLUDED.updated_at
                     RETURNING execution_id, request_id, environment, case_id, status, payload,
                               created_at::text, updated_at::text
                     """,
@@ -110,6 +116,29 @@ class AutomationExecutionStore:
             updated_at=row[7],
         )
         return payload
+
+    def get_by_request_id(self, request_id: str) -> dict[str, Any] | None:
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            return None
+        if self.in_memory:
+            with self._lock:
+                value = next(
+                    (item for item in self._memory.values() if item.get("request_id") == normalized),
+                    None,
+                )
+                return copy.deepcopy(value) if value else None
+        self.ensure_schema()
+        with psycopg.connect(self._dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT payload FROM {self._table()} WHERE request_id=%s",
+                    (normalized,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return copy.deepcopy(row[0] if isinstance(row[0], dict) else json.loads(row[0]))
 
     def get(self, execution_id: str) -> dict[str, Any] | None:
         if self.in_memory:

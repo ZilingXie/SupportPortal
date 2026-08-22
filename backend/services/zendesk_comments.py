@@ -62,6 +62,12 @@ def zendesk_basic_auth_header() -> str:
 
 
 def _basic_auth_header() -> str:
+    if str(os.getenv("AUTOMATION_ENVIRONMENT") or "").strip().lower() == "staging":
+        raise ZendeskCommentError(
+            "permanent",
+            error_code="zendesk_outbound_forbidden_staging",
+            detail="staging automation cannot access Zendesk",
+        )
     return zendesk_basic_auth_header()
 
 

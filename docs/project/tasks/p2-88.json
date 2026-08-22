@@ -20,19 +20,25 @@
       "type": "test",
       "label": "Split Route/Automation contract regression",
       "command": ".venv/bin/python -m unittest backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership",
-      "details": "38 tests pass；覆盖 Route side-effect-free action plan、三环境 capability、production visibility、production OpenAPI 无 rerun/reset、preproduction ownership、六服务/profile 和 production UI/image contract。"
+      "details": "本轮 27 项 split/image/ledger/runtime 契约测试通过；覆盖 Route side-effect-free action plan、account_suspension preparation、三环境 capability、production visibility、production OpenAPI 无 rerun/reset、服务端 Zendesk delivery readback、preproduction ownership、六服务/profile 和 Route/production image exclusion contract。"
     },
     {
       "type": "test",
       "label": "Static syntax and configuration checks",
       "command": ".venv/bin/python -m py_compile ... && node --check ui/automation-production/app.js && bash -n deployment/deploy_ec2.sh && git diff --check",
-      "details": "Python/JavaScript 编译、deploy shell syntax、Compose YAML 静态解析和 diff whitespace 校验通过。"
+      "details": "Python/JavaScript 编译、UI node --check、deploy shell syntax、Compose YAML 静态资源身份解析和 diff whitespace 校验通过；deploy_ec2 fake-command 回归 18 项通过。"
     },
     {
       "type": "decision",
       "label": "Docker/EC2 runtime verification pending",
       "command": "docker compose config/build/up；Nginx runtime health；Zendesk remote readback；rollback drill",
-      "details": "当前工作机没有 Docker CLI；这些检查必须在 Docker-capable host/EC2 执行，不能由本地静态检查替代。"
+      "details": "当前工作机没有 Docker CLI，仅有 docker-compose 兼容命令；六镜像 build/up、Production filesystem inspect、Nginx runtime、Zendesk remote readback 与 rollback drill 必须在 Docker-capable host/EC2 执行，不能由本地静态检查替代。"
+    },
+    {
+      "type": "test",
+      "label": "Per-operation delivery ledger and staging Zendesk deny boundary",
+      "command": ".venv/bin/python -m unittest backend.tests.test_automation_delivery_ledger backend.tests.test_automation_delivery_reconciliation backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract",
+      "details": "delivery ledger/reconciliation 相关测试通过；execution 记录 ownership/comment/status 的稳定 delivery key、attempt、ticket/status 绑定和 completed/outcome_unknown 状态，并验证 staging Zendesk client boundary 显式拒绝出站；reconcile 必须由服务端 Zendesk readback 产生证据。"
     }
   ],
   "source_refs": [
@@ -42,6 +48,9 @@
     "backend/services/account_automation_ownership.py",
     "backend/services/account_zendesk_internal_comment.py",
     "backend/services/zendesk_comments.py",
+    "backend/services/automation_delivery_ledger.py",
+    "backend/services/automation_delivery_reconciliation.py",
+    "backend/services/automation_rerun_contracts.py",
     "deployment/docker-compose.single-host.yml",
     "deployment/nginx/supportportal.conf",
     "deployment/deploy_ec2.sh",
@@ -57,6 +66,11 @@
       "at": "2026-08-22",
       "event": "created",
       "summary": "根据三环境 Route/Automation 迁移计划创建实施任务。"
+    },
+    {
+      "at": "2026-08-22",
+      "event": "acceptance_remediation",
+      "summary": "修复 split rollback manifest 双指针、Production rerun 物理隔离和服务端 Zendesk readback；本地 targeted/deploy 回归通过，Docker/EC2 gate 保留待外部执行。"
     }
   ],
   "legacy_refs": ["p2-73", "p2-74"],

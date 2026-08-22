@@ -34,13 +34,33 @@ RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
         /app/backend/services/account_full_reroute.py \
         /app/backend/services/account_case_reroute.py \
         /app/backend/services/account_rerun_preflight.py \
-        /app/backend/services/account_rerun_recovery.py; \
+        /app/backend/services/account_rerun_recovery.py \
+        /app/backend/worker.py \
+        /app/backend/services/account_reply_jobs.py \
+        /app/backend/services/account_automation_delivery.py \
+        /app/backend/services/account_failure_alerts.py \
+        /app/backend/services/account_ai_execution.py \
+        /app/backend/services/internal_email_payload.py \
+        /app/backend/services/automation_persona.py \
+        /app/backend/services/rag_reset.py; \
       rm -rf /app/backend/scripts /app/backend/tests; \
       rm -rf /app/ui/automation-staging /app/ui/automation-preproduction \
         /app/ui/account-ui /app/ui/production-ui; \
     elif [ "${AUTOMATION_IMAGE_ROLE}" = "route" ]; then \
-      rm -f /app/backend/automation_runtime.py /app/backend/services/route_client.py \
-        /app/backend/services/automation_execution_store.py; \
+      rm -f /app/backend/main.py /app/backend/automation_runtime.py \
+        /app/backend/automation_production_runtime.py \
+        /app/backend/services/route_client.py \
+        /app/backend/services/automation_execution_store.py \
+        /app/backend/services/automation_delivery_reconciliation.py \
+        /app/backend/services/automation_side_effects.py \
+        /app/backend/services/automation_rerun_contracts.py \
+        /app/backend/services/account_automation_ownership.py \
+        /app/backend/services/zendesk_comments.py \
+        /app/backend/services/zendesk_ticket_assignment.py \
+        /app/backend/services/account_full_reroute.py \
+        /app/backend/services/account_case_reroute.py \
+        /app/backend/services/account_rerun_preflight.py \
+        /app/backend/services/account_rerun_recovery.py; \
       rm -rf /app/ui; \
     else \
       rm -f /app/backend/route_service.py; \

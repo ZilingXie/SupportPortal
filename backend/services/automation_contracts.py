@@ -70,11 +70,15 @@ class AutomationExecutionRequest(BaseModel):
     ticket_context: list[dict[str, str]] = Field(default_factory=list)
 
 
+class ExecutionReconcileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operations: list[dict[str, Any]] = Field(min_length=1)
+
+
 @dataclass(frozen=True)
 class EnvironmentPolicy:
     environment: AutomationEnvironment
-    allow_rerun: bool
-    allow_reset: bool
     writes_zendesk: bool
     performs_ownership: bool
     performs_status: bool
@@ -85,16 +89,12 @@ class EnvironmentPolicy:
 POLICIES: dict[AutomationEnvironment, EnvironmentPolicy] = {
     AutomationEnvironment.STAGING: EnvironmentPolicy(
         environment=AutomationEnvironment.STAGING,
-        allow_rerun=True,
-        allow_reset=True,
         writes_zendesk=False,
         performs_ownership=False,
         performs_status=False,
     ),
     AutomationEnvironment.PREPRODUCTION: EnvironmentPolicy(
         environment=AutomationEnvironment.PREPRODUCTION,
-        allow_rerun=True,
-        allow_reset=False,
         writes_zendesk=True,
         performs_ownership=True,
         performs_status=True,
@@ -102,8 +102,6 @@ POLICIES: dict[AutomationEnvironment, EnvironmentPolicy] = {
     ),
     AutomationEnvironment.PRODUCTION: EnvironmentPolicy(
         environment=AutomationEnvironment.PRODUCTION,
-        allow_rerun=False,
-        allow_reset=False,
         writes_zendesk=True,
         performs_ownership=True,
         performs_status=True,
@@ -162,3 +160,29 @@ def validate_ticket_policy(
         if not allowlist or normalized_ticket not in allowlist:
             raise ValueError("preproduction ticket is not in the configured allowlist")
     return visibility
+
+
+def runtime_resource_identity(environment: AutomationEnvironment) -> dict[str, str]:
+    """Return and, when enabled, validate the environment resource binding."""
+    identity = {
+        "environment": environment.value,
+        "resource_id": str(os.getenv("AUTOMATION_RESOURCE_ID") or "").strip(),
+        "db_resource_id": str(os.getenv("AUTOMATION_DB_RESOURCE_ID") or "").strip(),
+        "db_schema": str(os.getenv("AUTOMATION_DB_SCHEMA") or "").strip(),
+        "redis_url": str(os.getenv("AUTOMATION_REDIS_URL") or "").strip(),
+        "queue": str(os.getenv("AUTOMATION_QUEUE_NAME") or "").strip(),
+        "event_channel": str(os.getenv("AUTOMATION_EVENT_CHANNEL") or "").strip(),
+    }
+    if os.getenv("AUTOMATION_RUNTIME_REQUIRE_RESOURCES") == "1":
+        missing = [key for key, value in identity.items() if key != "environment" and not value]
+        if missing:
+            raise RuntimeError(f"automation resource identity missing: {', '.join(missing)}")
+        if identity["resource_id"] != environment.value:
+            raise RuntimeError("AUTOMATION_RESOURCE_ID does not match AUTOMATION_ENVIRONMENT")
+        if identity["db_resource_id"] != environment.value:
+            raise RuntimeError("AUTOMATION_DB_RESOURCE_ID does not match AUTOMATION_ENVIRONMENT")
+        if environment.value not in identity["redis_url"]:
+            raise RuntimeError("AUTOMATION_REDIS_URL is not environment-scoped")
+        if environment.value not in identity["queue"] or environment.value not in identity["event_channel"]:
+            raise RuntimeError("automation queue/channel is not environment-scoped")
+    return identity

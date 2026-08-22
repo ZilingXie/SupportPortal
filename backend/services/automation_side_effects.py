@@ -12,9 +12,11 @@ from backend.services.zendesk_comments import add_ticket_comment, update_ticket_
 
 
 class SideEffectError(RuntimeError):
-    def __init__(self, code: str, *, retryable: bool = False) -> None:
+    def __init__(self, code: str, *, retryable: bool = False, completed_operations: list[dict[str, Any]] | None = None, outcome_unknown: bool = False) -> None:
         self.code = code
         self.retryable = retryable
+        self.completed_operations = list(completed_operations or [])
+        self.outcome_unknown = outcome_unknown
         super().__init__(code)
 
 
@@ -30,6 +32,7 @@ def execute_side_effects(
     route: dict[str, Any],
     reply_body: str,
     visibility: CommentVisibility | None,
+    delivery_ledger: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     policy = policy_for(environment)
     if not policy.writes_zendesk:
@@ -45,6 +48,10 @@ def execute_side_effects(
     if visibility is None:
         raise SideEffectError("comment_visibility_missing")
 
+    ledger_by_operation = {
+        str(item.get("operation")): item for item in (delivery_ledger or [])
+    }
+
     account_case = {
         "account_case_id": case_id,
         "processing_profile": environment.value,
@@ -58,6 +65,8 @@ def execute_side_effects(
     ownership = ensure_production_automation_ownership(account_case, updated_at=_now())
     ownership_payload = {
         "operation": "take_ownership",
+        "delivery_key": ledger_by_operation.get("take_ownership", {}).get("delivery_key"),
+        "attempt": int(ledger_by_operation.get("take_ownership", {}).get("attempt") or 0) + 1,
         "status": ownership.state,
         "failure_code": ownership.failure_code,
         "assignee_id": ownership.assignee_id,
@@ -74,19 +83,39 @@ def execute_side_effects(
             solve=False,
         )
     except Exception as exc:
-        raise SideEffectError(type(exc).__name__) from exc
+        raise SideEffectError(type(exc).__name__, completed_operations=[ownership_payload], outcome_unknown=True) from exc
     try:
         observed_status = update_ticket_status(ticket_id=ticket_id, status=target_status)
     except Exception as exc:
-        raise SideEffectError(type(exc).__name__) from exc
+        completed = [
+            ownership_payload,
+            {
+                "operation": "comment",
+                "delivery_key": ledger_by_operation.get("comment", {}).get("delivery_key"),
+                "attempt": int(ledger_by_operation.get("comment", {}).get("attempt") or 0) + 1,
+                "status": "completed",
+                "comment_id": comment.comment_id,
+                "visibility": visibility.value,
+                "public": visibility == CommentVisibility.EXTERNAL,
+            },
+        ]
+        raise SideEffectError(type(exc).__name__, completed_operations=completed, outcome_unknown=True) from exc
     return [
         ownership_payload,
         {
             "operation": "comment",
+            "delivery_key": ledger_by_operation.get("comment", {}).get("delivery_key"),
+            "attempt": int(ledger_by_operation.get("comment", {}).get("attempt") or 0) + 1,
             "status": "completed",
             "comment_id": comment.comment_id,
             "visibility": visibility.value,
             "public": visibility == CommentVisibility.EXTERNAL,
         },
-        {"operation": "status", "status": "completed", "ticket_status": observed_status},
+        {
+            "operation": "status",
+            "delivery_key": ledger_by_operation.get("status", {}).get("delivery_key"),
+            "attempt": int(ledger_by_operation.get("status", {}).get("attempt") or 0) + 1,
+            "status": "completed",
+            "ticket_status": observed_status,
+        },
     ]
