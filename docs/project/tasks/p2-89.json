@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-89",
   "title": "三环境控制台 UI 与功能对齐旧端点",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "将 /automation/staging、/automation/preproduction、/automation/production 三个 UI 从最小表单页升级为与旧端点同款的工作台：staging 对齐 /account 模板、preproduction 与 production 对齐 /production 模板，route correction/route review 不做。后端新增 execution 列表/详情查询端点（Bearer 鉴权）、rerun 真实现（持久化原始请求、新 execution 链）、reset 真实现（仅 staging，清空执行记录表）。旧 /account 与 /production 端点和页面零改动。",
-  "next_action": "代码与测试已完成，待 finalize 合并后构建新 release 并按 staging -> preproduction -> production 部署到 EC2，跑 verify_split_environments.sh 并做线上 UI 验证（staging 端到端、preprod/prod 只读 + human_review 路径；不做真实 Zendesk 写入）。",
+  "next_action": "已完成。三环境控制台与旧端点模板级对齐已上线 release-20260823-004 并完成线上验收；真实 Zendesk 写入验收（T3）与旧端点切流（T4）仍由 p2-88 跟踪。",
   "acceptance_criteria": [
     "三个 /automation/* UI 提供与旧端点同款的工作台布局：execution token 门、侧边栏执行历史（状态过滤+计数、Case 搜索、分页）、执行表单、详情视图（meta 网格、customer question + AI reply 问答时间线、delivery ledger 表、折叠 raw JSON）。",
     "GET /v1/executions 与 GET /v1/executions/{id} 在 staging/preproduction/production 三个 runtime 均可用且强制 Bearer execution token；列表返回分页、过滤与 status_counts，同一快照。",
@@ -27,6 +27,18 @@
       "label": "Static syntax checks for the three console UIs",
       "command": "node --check ui/automation-staging/app.js && node --check ui/automation-preproduction/app.js && node --check ui/automation-production/app.js",
       "details": "三份 app.js 通过 node --check；staging/preproduction 主体逐字节一致（仅 ENV 常量块不同），production 变体由同一源生成并剥离 rerun 代码块（含 ENV 键与文案），满足镜像物理排除契约的 UI 侧约束。"
+    },
+    {
+      "type": "deployment",
+      "label": "Release-20260823-001..004 three-environment rollout",
+      "command": "EC2 build_automation_release.sh + deploy_ec2.sh（staging -> preproduction -> production，DEPLOY_PRODUCTION_APPROVED=1）+ verify_split_environments.sh",
+      "details": "2026-08-23 依次部署 release-001/002/003/004：-001 首次上线新控制台与查询/rerun/reset 端点；-002 因 EC2 构建时 origin/main 引用未刷新（stale ref，manifest commit=47a0c9d）实际仍为旧代码，改为先 git fetch 再构建；-003 修复 token 门委托 submit 取 currentTarget 导致 FormData(div) 抛错的缺陷（manifest commit=d668302）；-004 修复模板字符串内哨兵标记渲染为可见文本的缺陷并升静态版本 v3（manifest commit=d3e1941）。每轮部署前后 verify_split_environments.sh 全部通过。"
+    },
+    {
+      "type": "test",
+      "label": "Live browser acceptance of the three consoles",
+      "command": "浏览器实测 http://ec2-52-71-106-188.compute-1.amazonaws.com:8080/automation/{staging,preproduction,production}/",
+      "details": "staging：token 门 -> 工作台（6 条历史、状态过滤计数 All6/Prepared5/Failed1、Case 搜索、分页）-> 详情（meta 网格、Rerun of 链路回溯、请求区、问答时间线、折叠 raw JSON）-> rerun 确认弹窗（冻结 Case ID）-> 状态过滤 -> reset 确认弹窗与执行（toast 6 executions deleted、列表清空）；API 实测 POST /v1/cases 落库含 request 字段、POST /v1/reruns 产生链式新 execution、GET 列表/详情 401/200。preproduction：ticket 必填、锁定 internal、无 reset、能力行 rerun enabled/reset disabled/visibility internal、4 条历史。production：visibility 下拉 internal/external、无 rerun/reset、空态、production rerun 404、bundle 无 rerun 字符串。未做任何真实 Zendesk 写入（T3 按用户指示暂缓，12895 未动）。"
     }
   ],
   "source_refs": [
