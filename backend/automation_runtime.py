@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from backend.services.automation_contracts import (
     AutomationEnvironment,
@@ -103,8 +104,13 @@ def create_app() -> FastAPI:
             "resources": resource_identity,
         }
 
-    @app.post("/v1/cases", dependencies=[Depends(_require_execution_token)])
-    async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
+    async def _run_execution(
+        request: AutomationExecutionRequest,
+        *,
+        rerun_of_execution_id: str | None = None,
+    ) -> dict[str, Any]:
+        request_record = request.model_dump(mode="json")
+        chain = {"rerun_of_execution_id": rerun_of_execution_id} if rerun_of_execution_id else {}
         try:
             visibility = validate_ticket_policy(
                 environment,
@@ -134,7 +140,7 @@ def create_app() -> FastAPI:
         try:
             route_result = await call_route(route_request)
         except RouteServiceError as exc:
-            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": "failed", "failure_code": exc.code, "policy": {"environment": environment.value}, "created_at": _now()})
+            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": "failed", "failure_code": exc.code, "policy": {"environment": environment.value}, "request": request_record, **chain, "created_at": _now()})
             raise HTTPException(status_code=502, detail={"code": exc.code, "execution": failed}) from exc
         side_effects: list[dict[str, Any]] = []
         execution_status = "prepared"
@@ -143,7 +149,7 @@ def create_app() -> FastAPI:
         if policy.writes_zendesk and not route_eligible:
             execution_status = "human_review" if preparation_status == "human_review" else "failed"
             failure_code = None if execution_status == "human_review" else "route_preparation_failed"
-            record = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": execution_status, "failure_code": failure_code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "side_effects": [], "created_at": _now()})
+            record = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": execution_status, "failure_code": failure_code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, **chain, "side_effects": [], "created_at": _now()})
             if execution_status == "failed":
                 raise HTTPException(status_code=502, detail={"code": failure_code, "execution": record})
             return {"status": execution_status, "environment": environment.value, "execution": record}
@@ -158,6 +164,8 @@ def create_app() -> FastAPI:
             store.save({
                 "request_id": request.request_id,
                 "case_id": request.case_id,
+                "request": request_record,
+                **chain,
                 "status": "pending",
                 "route_result": route_result.model_dump(mode="json"),
                 "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None},
@@ -183,6 +191,8 @@ def create_app() -> FastAPI:
                     {
                         "request_id": request.request_id,
                         "case_id": request.case_id,
+                        "request": request_record,
+                        **chain,
                         "status": failure_status,
                         "failure_code": exc.code,
                         "route_result": route_result.model_dump(mode="json"),
@@ -197,6 +207,8 @@ def create_app() -> FastAPI:
             {
                 "request_id": request.request_id,
                 "case_id": request.case_id,
+                "request": request_record,
+                **chain,
                 "status": execution_status,
                 "route_result": route_result.model_dump(mode="json"),
                 "policy": {
@@ -217,6 +229,39 @@ def create_app() -> FastAPI:
             "execution": record,
         }
 
+    @app.post("/v1/cases", dependencies=[Depends(_require_execution_token)])
+    async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
+        return await _run_execution(request)
+
+    @app.get("/v1/executions", dependencies=[Depends(_require_execution_token)])
+    async def list_executions(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=10, ge=1, le=50),
+        status: str | None = None,
+        case_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = store.list_executions(
+            status=status,
+            case_id=case_id,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+        )
+        return {
+            "environment": environment.value,
+            "executions": result["items"],
+            "page": page,
+            "page_size": page_size,
+            "total": result["total"],
+            "status_counts": result["status_counts"],
+        }
+
+    @app.get("/v1/executions/{execution_id}", dependencies=[Depends(_require_execution_token)])
+    async def get_execution(execution_id: str) -> dict[str, Any]:
+        record = store.get(execution_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="execution not found")
+        return {"environment": environment.value, "execution": record}
+
     @app.post("/v1/reruns", dependencies=[Depends(_require_execution_token)])
     async def rerun_case(request: RerunRequest) -> dict[str, Any]:
         if not allow_rerun:
@@ -224,12 +269,23 @@ def create_app() -> FastAPI:
         record = store.get(request.rerun_of_execution_id)
         if record is None or record.get("case_id") != request.case_id:
             raise HTTPException(status_code=404, detail="execution not found")
-        return {
-            "status": "accepted",
-            "environment": environment.value,
-            "request_id": request.request_id,
-            "rerun_of_execution_id": request.rerun_of_execution_id,
-        }
+        original_request = record.get("request") if isinstance(record.get("request"), dict) else None
+        if original_request is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "execution_request_not_persisted", "execution_id": record.get("execution_id")},
+            )
+        try:
+            rebuilt = AutomationExecutionRequest(
+                **{**original_request, "request_id": request.request_id, "case_id": request.case_id}
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "execution_request_invalid", "detail": str(exc)},
+            ) from exc
+        result = await _run_execution(rebuilt, rerun_of_execution_id=request.rerun_of_execution_id)
+        return {**result, "rerun_of_execution_id": request.rerun_of_execution_id}
 
     @app.post("/v1/executions/{execution_id}/reconcile", dependencies=[Depends(_require_execution_token)])
     async def reconcile_execution(execution_id: str, request: ExecutionReconcileRequest) -> dict[str, Any]:
@@ -295,7 +351,8 @@ def create_app() -> FastAPI:
     async def reset_case() -> dict[str, Any]:
         if not allow_reset:
             raise HTTPException(status_code=404, detail="reset is not available in this environment")
-        return {"status": "accepted", "environment": environment.value}
+        deleted_count = store.delete_all()
+        return {"status": "completed", "environment": environment.value, "deleted_count": deleted_count}
 
     @app.api_route("/{path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
     async def unknown_write_path(path: str) -> dict[str, str]:

@@ -402,6 +402,19 @@
    - HTML 通过内联颜色、`bgcolor` 和 `color-scheme: only light` 提供兼容 fallback；不得声明 `prefers-color-scheme: dark` 或暗色 `[data-ogsc]` 覆盖。若实机验证确有必要，`[data-ogsc]` 只能重新声明同一套浅色 token。
    - 颜色 token 必须集中在共享模板中并满足正文 WCAG AA 对比度；不得添加远程字体、图片、脚本或追踪资源。每次模板变更都必须在 Outlook for Mac 深色和浅色主题中做视觉验收。
 
+### 6.10 Automation Environment Consoles (`/automation/staging`、`/automation/preproduction`、`/automation/production`)
+1. 三个控制台复用第 3–5 章 token 与组件规则及 `ui/account-ui`/`ui/production-ui` 的既有样式表：staging 取 `/account` 模板（品牌与文案风格、无 Zendesk ticket 字段的执行表单），preproduction 与 production 取 `/production` 模板（表单必填 Zendesk ticket ID；production 另需显式 comment visibility 下拉，preproduction 固定 internal 并在界面明示）。
+2. 三个控制台没有用户体系，使用与登录页同构的 Execution token 门：无 token 时不加载任何数据；任一请求返回 401 时清除本地 token、回到 token 门并显示错误。token 按环境独立存 localStorage，不跨环境共享。
+3. 侧边栏为执行历史工作台：状态过滤 chips（All、pending、prepared、completed、human_review、failed、outcome_unknown）显示服务端 `status_counts`；Case ID 搜索使用紧凑单行输入；列表项展示 case_id、状态徽标与本地化时间；分页只渲染服务端当前页。filter 计数、当前页与 total 必须来自同一响应快照。
+4. 详情视图按 `/account` detail 的信息层级组织：meta 网格（Execution ID、Request ID、Case ID、Ticket #、Source、Status、Comment visibility、Rerun of、Created）→ 请求区（subject/customer/question）→ 路由结果区（route 分类、automation eligibility、preparation status、action plan 摘要）→ delivery ledger 表 → 折叠 raw JSON。raw JSON 仅作调试用途，默认折叠。
+5. 问答时间线固定两条消息：`CUSTOMER REQUEST`（原始 question）与 `AI REPLY`（route_result.action_plan.reply_body）。AI REPLY 附带投递状态：无 Zendesk 交付的环境显示 `Not delivered (policy)`；有交付时显示 ledger 中 comment 操作的状态（pending/completed/outcome_unknown）。
+6. delivery ledger 表逐行列出 take_ownership、comment、update_ticket_status 操作：操作名、目标 ticket、visibility（internal/external 必须以文字标签表达，不得只靠颜色）、状态与错误码；`outcome_unknown` 行必须提示可通过 Reconcile 复核。
+7. `Rerun this execution` 与 `Reset environment` 属于危险操作，放 detail header 独立 action 区（reset 位于侧边栏环境区），确认弹窗必须冻结目标 case_id（有 ticket 时同时冻结 ticket 号）；preproduction 的 rerun 弹窗必须说明 eligible 路由会向 Zendesk 工单写入 internal comment。运行期间所有 rerun/reset 入口禁用。
+8. 按钮可见性由 `/v1/capabilities` 驱动：`rerun=false` 的环境不渲染 rerun 入口，`reset=false` 的环境不渲染 reset 入口；capabilities 请求失败时按最保守策略隐藏危险操作。
+9. `outcome_unknown` 的 execution 必须在列表徽标与详情中同时以颜色与文字表达，并提供 Reconcile 入口（调用 `/v1/executions/{id}/reconcile`）；`failed`/`human_review` 状态使用 `aria-live="polite"` 文字提示，不得只靠颜色。
+10. 409 `execution_requires_reconcile` 与携带 execution 记录的 502 错误必须结构化展示：显示错误码、关联 execution 摘要并提供跳转；纯文本 detail 才降级为普通错误文案。所有 API 请求使用 `cache: "no-store"`。
+11. route correction、route review、跨环境转发（Run in Production 类）与 route back to queue 明确不在三个控制台范围内，不得以禁用态按钮占位。
+
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
    - `loading`

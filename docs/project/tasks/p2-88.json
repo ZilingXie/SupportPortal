@@ -187,6 +187,11 @@
     },
     {
       "at": "2026-08-23",
+      "event": "ui_parity_split_to_p2_89",
+      "summary": "报告任务包 T1（rerun 真实现）与 T6（design.md 覆盖 + UI 迭代）及三环境 UI/功能对齐旧端点的工作分流到新任务 p2-89 承接；本任务保留拆分环境基础设施与真实写入验收（T3）、切流（T4）范围。"
+    },
+    {
+      "at": "2026-08-23",
       "event": "n8n_cutover_design",
       "summary": "T4 方案先行：产出 n8n 切流设计文档（/automation/*/v1/cases 端点契约与字段映射、Company ID 灰度分流、token 统一 runbook），并同步更新三个 n8n 集成契约文档的 token 段落；未改任何运行时代码与线上配置，实施待 T3 与用户批准。"
     }

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from backend.automation_runtime import create_app
 from backend.services.automation_contracts import AutomationEnvironment, RouteResult
+from backend.services.automation_execution_store import AutomationExecutionStore
 
 
 class AutomationRuntimeContractTest(unittest.TestCase):
@@ -112,6 +113,134 @@ class AutomationRuntimeContractTest(unittest.TestCase):
             with TestClient(create_app()) as client:
                 self.assertEqual(client.post("/v1/not-a-route", json={}).status_code, 404)
                 self.assertEqual(client.delete("/anything").status_code, 404)
+
+    def _staging_route(self, request_id: str, case_id: str) -> RouteResult:
+        return RouteResult(
+            request_id=request_id,
+            idempotency_key=f"staging:route:{request_id}",
+            environment=AutomationEnvironment.STAGING,
+            case_id=case_id,
+            route={"execution_action": "human_review_required"},
+            automation={"eligible": False},
+        )
+
+    def test_list_and_detail_executions_require_token_and_persist_request(self):
+        with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            call.return_value = self._staging_route("req-l2", "AC-L2")
+            headers = {"Authorization": "Bearer execution-token"}
+            with TestClient(create_app()) as client:
+                self.assertEqual(client.get("/v1/executions").status_code, 401)
+                for index in range(3):
+                    result = client.post(
+                        "/v1/cases",
+                        json={"request_id": f"req-l{index}", "case_id": f"AC-L{index}", "question": f"q{index}", "subject": f"s{index}"},
+                        headers=headers,
+                    )
+                    self.assertEqual(result.status_code, 200)
+                listing = client.get("/v1/executions?page=1&page_size=2", headers=headers)
+                self.assertEqual(listing.status_code, 200)
+                payload = listing.json()
+                self.assertEqual(payload["total"], 3)
+                self.assertEqual(payload["page"], 1)
+                self.assertEqual(payload["page_size"], 2)
+                self.assertEqual(len(payload["executions"]), 2)
+                self.assertEqual(payload["status_counts"], {"prepared": 3})
+                self.assertEqual(payload["executions"][0]["request"]["question"], "q2")
+                filtered = client.get("/v1/executions?status=human_review", headers=headers)
+                self.assertEqual(filtered.json()["total"], 0)
+                case_lookup = client.get("/v1/executions?case_id=AC-L1", headers=headers)
+                self.assertEqual(case_lookup.json()["total"], 1)
+                execution_id = payload["executions"][0]["execution_id"]
+                detail = client.get(f"/v1/executions/{execution_id}", headers=headers)
+                self.assertEqual(detail.status_code, 200)
+                self.assertEqual(detail.json()["execution"]["execution_id"], execution_id)
+                self.assertEqual(client.get(f"/v1/executions/{execution_id}").status_code, 401)
+                self.assertEqual(client.get("/v1/executions/exec-none", headers=headers).status_code, 404)
+
+    def test_rerun_creates_chained_execution_and_original_is_immutable(self):
+        with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            call.return_value = self._staging_route("req-r1", "AC-R1")
+            headers = {"Authorization": "Bearer execution-token"}
+            with TestClient(create_app()) as client:
+                first = client.post(
+                    "/v1/cases",
+                    json={"request_id": "req-r1", "case_id": "AC-R1", "question": "original question"},
+                    headers=headers,
+                )
+                self.assertEqual(first.status_code, 200)
+                original = first.json()["execution"]
+                self.assertEqual(original["request"]["question"], "original question")
+                rerun = client.post(
+                    "/v1/reruns",
+                    json={"request_id": "req-r2", "case_id": "AC-R1", "rerun_of_execution_id": original["execution_id"]},
+                    headers=headers,
+                )
+                self.assertEqual(rerun.status_code, 200)
+                payload = rerun.json()
+                self.assertEqual(payload["status"], "prepared")
+                self.assertEqual(payload["rerun_of_execution_id"], original["execution_id"])
+                self.assertNotEqual(payload["execution"]["execution_id"], original["execution_id"])
+                self.assertEqual(payload["execution"]["rerun_of_execution_id"], original["execution_id"])
+                self.assertEqual(payload["execution"]["request"]["question"], "original question")
+                detail = client.get(f"/v1/executions/{original['execution_id']}", headers=headers).json()["execution"]
+                self.assertNotIn("rerun_of_execution_id", detail)
+                self.assertEqual(client.get("/v1/executions", headers=headers).json()["total"], 2)
+
+    def test_rerun_rejects_legacy_records_and_case_mismatch(self):
+        with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            call.return_value = self._staging_route("req-legacy", "AC-LEGACY")
+            headers = {"Authorization": "Bearer execution-token"}
+            with TestClient(create_app()) as client:
+                first = client.post(
+                    "/v1/cases",
+                    json={"request_id": "req-legacy", "case_id": "AC-LEGACY", "question": "q"},
+                    headers=headers,
+                )
+                original = first.json()["execution"]
+                mismatch = client.post(
+                    "/v1/reruns",
+                    json={"request_id": "req-x", "case_id": "AC-OTHER", "rerun_of_execution_id": original["execution_id"]},
+                    headers=headers,
+                )
+                self.assertEqual(mismatch.status_code, 404)
+                missing = client.post(
+                    "/v1/reruns",
+                    json={"request_id": "req-x", "case_id": "AC-LEGACY", "rerun_of_execution_id": "exec-none"},
+                    headers=headers,
+                )
+                self.assertEqual(missing.status_code, 404)
+                legacy_record = dict(original)
+                legacy_record.pop("request")
+                with patch.object(AutomationExecutionStore, "get", return_value=legacy_record):
+                    legacy = client.post(
+                        "/v1/reruns",
+                        json={"request_id": "req-x", "case_id": "AC-LEGACY", "rerun_of_execution_id": legacy_record["execution_id"]},
+                        headers=headers,
+                    )
+                self.assertEqual(legacy.status_code, 422)
+                self.assertEqual(legacy.json()["detail"]["code"], "execution_request_not_persisted")
+
+    def test_reset_staging_deletes_all_executions_and_preproduction_404(self):
+        with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            call.return_value = self._staging_route("req-s1", "AC-S1")
+            headers = {"Authorization": "Bearer execution-token"}
+            with TestClient(create_app()) as client:
+                for index in range(2):
+                    result = client.post(
+                        "/v1/cases",
+                        json={"request_id": f"req-s{index}", "case_id": f"AC-S{index}", "question": "q"},
+                        headers=headers,
+                    )
+                    self.assertEqual(result.status_code, 200)
+                reset = client.post("/v1/reset", headers=headers)
+                self.assertEqual(reset.status_code, 200)
+                self.assertEqual(reset.json()["status"], "completed")
+                self.assertEqual(reset.json()["deleted_count"], 2)
+                self.assertEqual(client.get("/v1/executions", headers=headers).json()["total"], 0)
+        with self._client("preproduction"), TestClient(create_app()) as client:
+            self.assertEqual(
+                client.post("/v1/reset", headers={"Authorization": "Bearer execution-token"}).status_code, 404
+            )
 
 
 if __name__ == "__main__":

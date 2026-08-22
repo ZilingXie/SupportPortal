@@ -56,6 +56,50 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                 self.assertEqual(client.post("/v1/not-a-route", json={}).status_code, 404)
                 self.assertEqual(client.put("/anything").status_code, 404)
 
+    def test_production_lists_and_reads_executions_with_token(self):
+        from backend.services.automation_contracts import AutomationEnvironment, RouteResult
+
+        route_result = RouteResult(
+            request_id="req-list",
+            idempotency_key="production:route:req-list",
+            environment=AutomationEnvironment.PRODUCTION,
+            case_id="AC-LIST",
+            route={"execution_action": "human_review_required"},
+            automation={"eligible": False},
+            action_plan={"preparation_status": "human_review"},
+        )
+        with patch.dict(
+            os.environ,
+            {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "AUTOMATION_EXECUTION_TOKEN": "execution-token"},
+            clear=False,
+        ), patch("backend.automation_production_runtime.call_route", new_callable=AsyncMock, return_value=route_result):
+            with TestClient(create_app()) as client:
+                self.assertEqual(client.get("/v1/executions").status_code, 401)
+                headers = {"Authorization": "Bearer execution-token"}
+                created = client.post(
+                    "/v1/cases",
+                    json={"request_id": "req-list", "case_id": "AC-LIST", "zendesk_ticket_id": "123", "question": "hello", "comment_visibility": "internal"},
+                    headers=headers,
+                )
+                self.assertEqual(created.status_code, 200)
+                execution_id = created.json()["execution"]["execution_id"]
+                listing = client.get("/v1/executions", headers=headers)
+                self.assertEqual(listing.status_code, 200)
+                payload = listing.json()
+                self.assertEqual(payload["total"], 1)
+                self.assertEqual(payload["status_counts"], {"human_review": 1})
+                self.assertEqual(payload["executions"][0]["request"]["comment_visibility"], "internal")
+                detail = client.get(f"/v1/executions/{execution_id}", headers=headers)
+                self.assertEqual(detail.status_code, 200)
+                self.assertEqual(detail.json()["execution"]["request"]["zendesk_ticket_id"], "123")
+                self.assertEqual(client.get(f"/v1/executions/{execution_id}").status_code, 401)
+                self.assertEqual(client.get("/v1/executions/exec-none", headers=headers).status_code, 404)
+                paths = client.get("/openapi.json").json()["paths"]
+                self.assertIn("/v1/executions", paths)
+                self.assertIn("/v1/executions/{execution_id}", paths)
+                self.assertNotIn("/v1/reruns", paths)
+                self.assertNotIn("/v1/reset", paths)
+
     def test_human_review_route_never_runs_zendesk_side_effects(self):
         from backend.services.automation_contracts import AutomationEnvironment, RouteResult
 
