@@ -243,6 +243,13 @@ class WorkflowScriptTests(unittest.TestCase):
         _git(["clone", str(bare), str(repo)], cwd=self.root)
         _git(["config", "user.name", "Workflow Tester"], cwd=repo)
         _git(["config", "user.email", "workflow@example.com"], cwd=repo)
+        # Mirrors the real repository, where task workspaces under .worktrees/
+        # are excluded via .git/info/exclude so create_task_worktree.sh accepts
+        # them as untracked-but-ignored artifacts.
+        exclude_path = repo / ".git" / "info" / "exclude"
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        with exclude_path.open("a", encoding="utf-8") as handle:
+            handle.write(".worktrees/\n.planning/\n")
         return bare, seed, repo
 
     def _init_remote_repo_on_main(self) -> tuple[Path, Path, Path]:
@@ -496,6 +503,11 @@ class WorkflowScriptTests(unittest.TestCase):
                     return 0
 
                 if subcommand == "merge":
+                    if os.environ.get("GH_FAKE_MERGE_DEFER_ONCE") == "1" and not state.get("merge_deferred_once"):
+                        state["merge_deferred_once"] = True
+                        save_state(state)
+                        print("merge deferred once", file=sys.stderr)
+                        return 1
                     identifier = first_positional(argv, 2)
                     pr = find_pr(state, identifier)
                     if not pr:
@@ -813,6 +825,14 @@ class WorkflowScriptTests(unittest.TestCase):
                     if {auxiliary_present!r}:
                         lines.append("pod_deploymentlw")
                     print("\\n".join(lines))
+                elif args[:2] == ["network", "exists"]:
+                    networks_path = state_dir / "podman_networks.txt"
+                    networks = set(networks_path.read_text(encoding="utf-8").split()) if networks_path.exists() else set()
+                    sys.exit(0 if args[2] in networks else 1)
+                elif args[:2] == ["network", "create"]:
+                    with (state_dir / "podman_networks.txt").open("a", encoding="utf-8") as handle:
+                        handle.write(args[2] + "\\n")
+                    print(args[2])
                 elif args[:1] == ["port"]:
                     container = args[1]
                     if container == "deployment_nginx_1":
@@ -922,10 +942,10 @@ class WorkflowScriptTests(unittest.TestCase):
 
         result = self._run_workflow("create_task_worktree.sh", repo, "Engineer Opt")
 
-        expected_path = self.home / ".config" / "superpowers" / "worktrees" / "repo" / "engineer-opt"
+        expected_path = repo / ".worktrees" / "engineer-opt"
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Created task branch codex/engineer-opt.", result.stdout)
-        self.assertIn(f"Worktree path: {expected_path}", result.stdout)
+        self.assertIn(f"Project-local task workspace path: {expected_path.resolve()}", result.stdout)
         self.assertEqual(_git(["branch", "--show-current"], cwd=repo).stdout.strip(), "main")
         self.assertEqual(_git(["status", "--short"], cwd=repo).stdout.strip(), "")
         self.assertTrue(expected_path.is_dir())
@@ -955,7 +975,7 @@ class WorkflowScriptTests(unittest.TestCase):
 
         result = self._run_workflow("create_task_worktree.sh", repo, "Engineer Opt")
 
-        expected_path = self.home / ".config" / "superpowers" / "worktrees" / "repo" / "engineer-opt-2"
+        expected_path = repo / ".worktrees" / "engineer-opt-2"
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Created task branch codex/engineer-opt-2.", result.stdout)
         self.assertTrue(expected_path.is_dir())
@@ -1014,6 +1034,40 @@ class WorkflowScriptTests(unittest.TestCase):
             self.assertTrue(str(call["app_build_time"]).strip())
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_restart_single_host_stack_creates_missing_automation_networks(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add local runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+        restart_env = {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "RESTART_TEST_STATE_DIR": str(state_dir),
+        }
+
+        first = self._run_workflow("restart_single_host_stack.sh", repo, extra_env=restart_env)
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        networks_path = state_dir / "podman_networks.txt"
+        created = set(networks_path.read_text(encoding="utf-8").split())
+        self.assertTrue(
+            {
+                "supportportal_automation_edge",
+                "supportportal_automation_internal_staging",
+                "supportportal_automation_internal_preproduction",
+                "supportportal_automation_internal_production",
+            }.issubset(created),
+            msg=f"expected automation networks to be created, got: {sorted(created)}",
+        )
+
+        # An already existing network must not be recreated on the next restart.
+        networks_path.write_text("supportportal_automation_edge\n", encoding="utf-8")
+        second = self._run_workflow("restart_single_host_stack.sh", repo, extra_env=restart_env)
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+        entries = networks_path.read_text(encoding="utf-8").split()
+        self.assertEqual(entries.count("supportportal_automation_edge"), 1)
 
     def test_restart_single_host_stack_build_failure_leaves_current_stack_running(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
@@ -1350,7 +1404,7 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "--no-build", "ps"])
+        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "nginx", "worker_aux", "ps"])
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
         for call in calls:
             self.assertEqual(
@@ -1834,7 +1888,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Compatibility wrapper", result.stdout)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "--no-build", "ps"])
+        self.assertEqual([call["argv"][-1] for call in calls], ["config", "build", "down", "nginx", "worker_aux", "ps"])
         for call in calls:
             self.assertEqual(
                 call["argv"][:6],
@@ -2135,10 +2189,10 @@ class WorkflowScriptTests(unittest.TestCase):
 
         result = self._run_workflow("rehome_task_worktree.sh", repo, "codex/example-task")
 
-        expected_path = self.home / ".config" / "superpowers" / "worktrees" / "repo" / "example-task"
+        expected_path = repo / ".worktrees" / "example-task"
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Root workspace is back on clean main.", result.stdout)
-        self.assertIn(f"Task branch codex/example-task now lives at {expected_path}", result.stdout)
+        self.assertIn(f"Task branch codex/example-task now lives at project-local workspace {expected_path.resolve()}", result.stdout)
         self.assertEqual(_git(["branch", "--show-current"], cwd=repo).stdout.strip(), "main")
         self.assertEqual(_git(["status", "--short"], cwd=repo).stdout.strip(), "")
         self.assertTrue(expected_path.is_dir())
@@ -2217,8 +2271,36 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertTrue(any(call[:2] == ["pr", "create"] for call in calls))
         merge_call = next(call for call in calls if call[:2] == ["pr", "merge"])
         self.assertIn("--squash", merge_call)
-        self.assertIn("--auto", merge_call)
+        self.assertIn("--match-head-commit", merge_call)
+        self.assertNotIn("--auto", merge_call)
         self.assertNotIn("--delete-branch", merge_call)
+
+    def test_finalize_task_to_main_falls_back_to_auto_merge_when_immediate_merge_rejected(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "task change\n")
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        env = self._fake_gh_env(fake_bin, state_dir, bare)
+        env["GH_FAKE_MERGE_DEFER_ONCE"] = "1"
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            "--commit-message",
+            "Complete task branch",
+            extra_env=env,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Merged PR", result.stdout)
+        merge_calls = [call for call in self._read_fake_gh_calls(state_dir) if call[:2] == ["pr", "merge"]]
+        self.assertEqual(len(merge_calls), 2)
+        self.assertNotIn("--auto", merge_calls[0])
+        self.assertIn("--squash", merge_calls[0])
+        self.assertIn("--auto", merge_calls[1])
 
     def test_finalize_task_to_main_refreshes_branch_from_latest_origin_main(self) -> None:
         bare, seed, repo = self._init_remote_repo_on_main()
