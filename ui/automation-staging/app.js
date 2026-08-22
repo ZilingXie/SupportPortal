@@ -871,8 +871,16 @@ function renderDetailView() {
   const actionPlan = execution.route_result?.action_plan;
   const ticketId = executionTicketId(execution);
   const visibility = visibilityLabel(execution.policy?.comment_visibility);
+  let extraActionButtonHtml = "";
+  let chainRowHtml = "";
 /*__RERUN_START__*/
   const canRerun = Boolean(state.capabilities?.rerun);
+  extraActionButtonHtml = canRerun
+    ? `<button class="danger-button" type="button" data-action="open-rerun-confirmation" ${state.isRerunning ? "disabled" : ""}><span class="material-symbols-outlined">sync</span>Rerun this execution</button>`
+    : "";
+  chainRowHtml = execution.rerun_of_execution_id
+    ? `<div class="meta-row"><span class="meta-label">Rerun of</span><span class="meta-value"><button class="ghost-button" type="button" data-action="open-execution" data-id="${escapeHtml(execution.rerun_of_execution_id)}">${escapeHtml(execution.rerun_of_execution_id)}</button></span></div>`
+    : "";
 /*__RERUN_END__*/
   const needsReconcile = String(execution.status || "") === "outcome_unknown";
   const { primary, secondary } = routeParts(execution);
@@ -888,9 +896,7 @@ function renderDetailView() {
           ${execution.reconciled ? '<span class="route-label">Reconciled</span>' : ""}
         </div>
         <div class="actions">
-/*__RERUN_START__*/
-          ${canRerun ? `<button class="danger-button" type="button" data-action="open-rerun-confirmation" ${state.isRerunning ? "disabled" : ""}><span class="material-symbols-outlined">sync</span>Rerun this execution</button>` : ""}
-/*__RERUN_END__*/
+          ${extraActionButtonHtml}
           ${needsReconcile ? `<button class="primary-button primary-button--small" type="button" data-action="run-reconcile" ${state.isReconciling ? "disabled" : ""}><span class="material-symbols-outlined">fact_check</span>${state.isReconciling ? "Reconciling..." : "Reconcile"}</button>` : ""}
         </div>
       </header>
@@ -906,9 +912,7 @@ function renderDetailView() {
         <div class="meta-row meta-row--route-result"><span class="meta-label">Route result</span><span class="meta-value meta-row--route-result-value">${escapeHtml([primary, secondary].filter(Boolean).join(" / ") || "manual review")}</span></div>
         <div class="meta-row"><span class="meta-label">Automation eligible</span><span class="meta-value">${escapeHtml(String(automation?.eligible ?? "unknown"))}</span></div>
         <div class="meta-row"><span class="meta-label">Preparation status</span><span class="meta-value">${escapeHtml(String(actionPlan?.preparation_status || "—"))}</span></div>
-/*__RERUN_START__*/
-        ${execution.rerun_of_execution_id ? `<div class="meta-row"><span class="meta-label">Rerun of</span><span class="meta-value"><button class="ghost-button" type="button" data-action="open-execution" data-id="${escapeHtml(execution.rerun_of_execution_id)}">${escapeHtml(execution.rerun_of_execution_id)}</button></span></div>` : ""}
-/*__RERUN_END__*/
+        ${chainRowHtml}
         <div class="meta-row"><span class="meta-label">Created</span><span class="meta-value"><time datetime="${escapeHtml(execution.created_at || "")}">${escapeHtml(formatTimestamp(execution.created_at))}</time></span></div>
         <div class="meta-row"><span class="meta-label">Updated</span><span class="meta-value"><time datetime="${escapeHtml(execution.updated_at || "")}">${escapeHtml(formatTimestamp(execution.updated_at))}</time></span></div>
       </div>
@@ -999,6 +1003,10 @@ function render() {
     return;
   }
   const showReset = Boolean(state.capabilities?.reset);
+  let extraModalHtml = "";
+/*__RERUN_START__*/
+  extraModalHtml = renderRerunConfirmation();
+/*__RERUN_END__*/
   appRoot.innerHTML = `
     <main class="account-shell">
       <aside class="side-panel">
@@ -1049,9 +1057,7 @@ function render() {
         </div>
       </section>
     </main>
-/*__RERUN_START__*/
-    ${renderRerunConfirmation()}
-/*__RERUN_END__*/
+    ${extraModalHtml}
     ${renderResetConfirmation()}
   `;
 }
