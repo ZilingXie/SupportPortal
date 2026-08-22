@@ -19,7 +19,10 @@ PRODUCTION_ACCOUNT_SLACK_N8N_TIMEOUT_SECONDS=15
 Both n8n webhooks use Header Auth with `X-N8n-Request-Token`. The value must be
 the same as `n8n_request_token` in the Production API/worker environment. Keep
 the token in n8n credentials and the deployment environment; never put it in a
-workflow export.
+workflow export. Under the unified-token convention (`automation_environments_cutover.md` §6),
+`n8n_request_token` carries the same secret as `ZENDESK_ACCOUNT_SYNC_TOKEN` and
+the three `AUTOMATION_*_EXECUTION_TOKEN` values, while keeping its own
+`X-N8n-Request-Token` header name.
 
 ## Delivery workflow
 
