@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T15:39:46Z",
-  "source_base_commit": "ed56a357184c81725b71588aeb66384219461b29",
-  "registry_digest": "f48df9561e9b7e0bbfec1ccb7fae175410c6a9c4fdf77c73395218b8e3bacb4c",
+  "generated_at": "2026-08-22T16:00:01Z",
+  "source_base_commit": "6e00bb3953f20843fd80614852dc959a6f72729d",
+  "registry_digest": "3abe8273497af9d4a5d5a65a9b298163b93a2d1fb5c4dad2a39ccf4ffe585705",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7982,6 +7982,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-22",
       "updated_at": "2026-08-22",
       "history": [
+        {
+          "at": "2026-08-22",
+          "event": "local_stack_compose_default_network_compat",
+          "summary": "修复 split compose 顶层未显式声明 default 网络导致本地官方 podman-compose 栈无法重启的问题；networks 顶层增加 default: deployment_default 声明，podman-compose config 与 compose 相关测试通过。"
+        },
         {
           "at": "2026-08-22",
           "event": "created",
