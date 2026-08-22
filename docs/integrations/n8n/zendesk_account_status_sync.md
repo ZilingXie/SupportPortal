@@ -10,7 +10,7 @@ when Zendesk reports `solved`/`closed`.
 
 - Set the n8n environment variable `SUPPORTPORTAL_BASE_URL` to the SupportPortal staging origin (reused from the comment sync workflow).
 - Set the n8n environment variable `SUPPORTPORTAL_PRODUCTION_BASE_URL` to the production origin (for example `https://<host>/production`).
-- Set the n8n environment variable `ZENDESK_ACCOUNT_SYNC_TOKEN` to the same secret as SupportPortal's `ZENDESK_ACCOUNT_SYNC_TOKEN` (one token is shared by both stacks).
+- Set the n8n environment variable `ZENDESK_ACCOUNT_SYNC_TOKEN` to the same secret as SupportPortal's `ZENDESK_ACCOUNT_SYNC_TOKEN` (one token is shared by both stacks). The endpoint also accepts `Authorization: Bearer <token>` as a fallback, so this workflow can reuse the single Bearer credential described in `automation_environments_cutover.md` §6.
 - Register the webhook URL in Zendesk for ticket updated events. The workflow is safe to replay because SupportPortal is idempotent per status value and ignores stale `updated_at` events.
 
 ## Flow

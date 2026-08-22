@@ -5,7 +5,7 @@ This export is a redacted n8n companion workflow for `/account`. It does not cre
 ## Configure before importing
 
 - Set the n8n environment variable `SUPPORTPORTAL_BASE_URL` to the SupportPortal origin.
-- Set the n8n environment variable `ZENDESK_ACCOUNT_SYNC_TOKEN` to the same secret as SupportPortal's `ZENDESK_ACCOUNT_SYNC_TOKEN`.
+- Set the n8n environment variable `ZENDESK_ACCOUNT_SYNC_TOKEN` to the same secret as SupportPortal's `ZENDESK_ACCOUNT_SYNC_TOKEN`. The endpoint also accepts `Authorization: Bearer <token>` when the `X-Zendesk-Account-Sync-Token` header is absent, so a single n8n Header Auth credential (`Authorization: Bearer <token>`) can serve this workflow and the `/automation/*/v1/cases` intake; see `automation_environments_cutover.md` §6 for the unified-token convention.
 - Configure the Zendesk API credential on the `Get_Case_Comment` node. The export contains no Zendesk token, cookie, or Authorization value.
 - Register the webhook URL in Zendesk for ticket updates that include comment changes. The workflow is safe to replay because SupportPortal performs the Account membership check, snapshot completeness check, stale check, and idempotent comment upsert.
 

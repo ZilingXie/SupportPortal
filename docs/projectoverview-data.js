@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T19:43:20Z",
-  "source_base_commit": "6fdca359605827c739994591341ed089e3c41110",
-  "registry_digest": "90047c6bda78ced869e22dc1e1a5f71b737b813cb2ebbe6354ca96e882d815cf",
+  "generated_at": "2026-08-22T19:45:03Z",
+  "source_base_commit": "840ececc41fdcaf9dd1b24b29804e7c3a035af99",
+  "registry_digest": "ec389fd244f6adeb0fbdb9b4d2d6a0d1668aae45610dd38635c00d118b32d17c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1681,6 +1681,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credential resolved, verification probes all green",
           "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
           "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local podman split environment startup",
+          "command": "scripts/workflow/start_local_split_environments.sh [--skip-build]",
+          "details": "新增本地（podman）三环境启动脚本：从当前工作树构建三个 role 镜像（worktree 可验证未提交改动，脏树 tag 带 -wip）、幂等建网络、自动生成三个执行 token 写入 root .env、按 EC2 同名 project 启动三环境并验证 health 与 401 负例；本地 Zendesk 副作用默认关闭 fail-closed，PRODUCTION_TICKET_DB_DSN 缺失时跳过本地 production。配套文档见 docs/deploy_automation_release.md 第 6 节。"
+        },
+        {
+          "type": "document",
+          "label": "T4 n8n cutover design (company-ID canary + unified token)",
+          "command": "docs/integrations/n8n/automation_environments_cutover.md",
+          "details": "2026-08-23 产出 T4 方案先行设计：确认 /automation/{env}/v1/cases 新工单投递端点已存在且已验证，评论/状态同步在新环境无等价端点、保持旧端点；production 采用克隆工作流 + TARGET_COMPANY_IDS 互斥名单灰度分流（零双写、可回滚）；token 统一为同一密钥值贯穿 AUTOMATION_{三环境}_EXECUTION_TOKEN、ZENDESK_ACCOUNT_SYNC_TOKEN、n8n_request_token（旧同步端点已支持 Bearer 回退，backend/main.py require_zendesk_account_sync_token），n8n 单个 Bearer 凭据覆盖全部入向调用。含 EC2/n8n 操作 runbook、双写防护红线与验证清单；实施待 T3 完成与用户批准。"
         },
         {
           "type": "test",
@@ -7929,7 +7941,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "Zendesk 凭据已由运维修复（verify_split_environments.sh 36/36 全绿）。真实写入验收（preproduction allowlist 工单 internal 全链路、production internal/external 与 Zendesk readback）按用户指示暂缓、不使用真实工单测试，待用户明确批准测试工单或由用户在 UI 自行执行；三环境保持 release-20260822-005；旧端点切流仍需单独批准。",
+      "next_action": "Zendesk 凭据已由运维修复（verify_split_environments.sh 36/36 全绿）。真实写入验收（preproduction allowlist 工单 internal 全链路、production internal/external 与 Zendesk readback）按用户指示暂缓、不使用真实工单测试，待用户明确批准测试工单或由用户在 UI 自行执行；三环境保持 release-20260822-005。T4 旧端点切流设计已产出（docs/integrations/n8n/automation_environments_cutover.md：Company ID 灰度分流 + 统一 token 纯配置方案）；n8n/EC2 实施仍待 T3 完成与用户单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -8017,6 +8029,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Zendesk credential resolved, verification probes all green",
           "command": "EC2 deploy_ec2.sh --release release-20260822-005（preproduction/production recreate）+ ./deployment/verify_split_environments.sh",
           "details": "2026-08-23 运维更新 EC2 .env 的 zendesk_basic_auth 并 recreate preproduction/production 容器后，verify_split_environments.sh 36/36 全部通过（三环境 health/capabilities/鉴权/404/容器不变量/网络/route 出站/Zendesk 凭据只读 GET/旧端点）。真实工单写入验收按用户指示暂缓，不动真实工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Local podman split environment startup",
+          "command": "scripts/workflow/start_local_split_environments.sh [--skip-build]",
+          "details": "新增本地（podman）三环境启动脚本：从当前工作树构建三个 role 镜像（worktree 可验证未提交改动，脏树 tag 带 -wip）、幂等建网络、自动生成三个执行 token 写入 root .env、按 EC2 同名 project 启动三环境并验证 health 与 401 负例；本地 Zendesk 副作用默认关闭 fail-closed，PRODUCTION_TICKET_DB_DSN 缺失时跳过本地 production。配套文档见 docs/deploy_automation_release.md 第 6 节。"
+        },
+        {
+          "type": "document",
+          "label": "T4 n8n cutover design (company-ID canary + unified token)",
+          "command": "docs/integrations/n8n/automation_environments_cutover.md",
+          "details": "2026-08-23 产出 T4 方案先行设计：确认 /automation/{env}/v1/cases 新工单投递端点已存在且已验证，评论/状态同步在新环境无等价端点、保持旧端点；production 采用克隆工作流 + TARGET_COMPANY_IDS 互斥名单灰度分流（零双写、可回滚）；token 统一为同一密钥值贯穿 AUTOMATION_{三环境}_EXECUTION_TOKEN、ZENDESK_ACCOUNT_SYNC_TOKEN、n8n_request_token（旧同步端点已支持 Bearer 回退，backend/main.py require_zendesk_account_sync_token），n8n 单个 Bearer 凭据覆盖全部入向调用。含 EC2/n8n 操作 runbook、双写防护红线与验证清单；实施待 T3 完成与用户批准。"
         }
       ],
       "source_refs": [
@@ -8040,7 +8064,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "design.md"
       ],
       "created_at": "2026-08-22",
-      "updated_at": "2026-08-22",
+      "updated_at": "2026-08-23",
       "history": [
         {
           "at": "2026-08-22",
@@ -8101,6 +8125,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "ui_parity_split_to_p2_89",
           "summary": "报告任务包 T1（rerun 真实现）与 T6（design.md 覆盖 + UI 迭代）及三环境 UI/功能对齐旧端点的工作分流到新任务 p2-89 承接；本任务保留拆分环境基础设施与真实写入验收（T3）、切流（T4）范围。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "n8n_cutover_design",
+          "summary": "T4 方案先行：产出 n8n 切流设计文档（/automation/*/v1/cases 端点契约与字段映射、Company ID 灰度分流、token 统一 runbook），并同步更新三个 n8n 集成契约文档的 token 段落；未改任何运行时代码与线上配置，实施待 T3 与用户批准。"
         }
       ],
       "legacy_refs": [
