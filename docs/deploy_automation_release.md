@@ -2,6 +2,8 @@
 
 三套 split Automation 环境使用 release manifest 管理镜像版本，不要求操作人员手工填写六个 image pointer。本流程针对单台 EC2：EC2 在本机 build 镜像，本机 Compose 运行镜像，不依赖应用远端 registry。
 
+数据库不需要为 split 环境新建 PostgreSQL 实例或数据库。部署脚本默认使用现有项目 DSN：staging/preproduction 使用 `TICKET_DB_DSN`，production 使用 `PRODUCTION_TICKET_DB_DSN`；三套环境分别使用 `supportportal_staging`、`supportportal_preproduction`、`supportportal_production` schema。若 `.env` 显式设置对应的 `AUTOMATION_*_DB_DSN`，显式值优先，但部署脚本不会把解析出的 DSN 回写到 `.env`。
+
 ## 1. 构建 Release
 
 在将要运行 SupportPortal 的 EC2 上，从干净的目标 commit 执行：
@@ -39,6 +41,8 @@ DEPLOY_PRODUCTION_APPROVED=1 \
 `--release` 会加载 manifest，检查目标本地 image tag 的 image ID 与 manifest 一致，然后由 Compose 使用本地镜像启动选定环境。它不会执行 `docker compose pull`、不会重新 build 镜像，也不会修改 `.env`。如果镜像不存在或 tag 已被覆盖，部署会在创建 automation 网络和修改 Compose 之前失败。
 
 split deployment 现在遵循 `--branch` 和 `--skip-pull`：默认会检查工作树、fetch 目标分支并执行 fast-forward pull；使用 `--skip-pull` 时，调用方必须自行保证工作树已经处于目标 commit。
+
+Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如可在 EC2 上分别执行 `openssl rand -hex 32` 生成三个 token，再填入 `ROUTE_STAGING_SERVICE_TOKEN`、`ROUTE_PREPRODUCTION_SERVICE_TOKEN` 和 `ROUTE_PRODUCTION_SERVICE_TOKEN`。不要把 token 放进 release manifest 或提交到 Git。
 
 ## 3. 验收顺序
 

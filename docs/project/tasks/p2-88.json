@@ -4,14 +4,14 @@
   "title": "三套 Route 与 Automation 环境迁移",
   "status": "active",
   "owner": "zac",
-  "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、数据库、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
+  "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
   "next_action": "在 EC2 本机运行 build_automation_release.sh 生成 local release manifest，再按 staging -> preproduction -> production 完成逐环境 health、镜像内容、Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
   "acceptance_criteria": [
-    "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/DB/queue/credentials 与 build marker。",
+    "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
     "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
     "staging 只做内部记录、无真实 Zendesk 出站、允许 rerun/reset；preproduction 只允许 allowlisted ticket，执行 ownership/status 和 Zendesk internal comment，允许 rerun；production 执行真实动作、每次显式选择 internal/external comment、禁止 rerun。",
     "release builder 在同一台 EC2 本地一次构建 route、automation、production 三种 role，生成六个本地 image pointers 和对应 image IDs；deploy_ec2.sh 按 release manifest 校验本机镜像、晋升和回滚，不执行 registry push/pull，Production Automation image manifest、runtime application bundle、OpenAPI 和 UI 不含 rerun。",
-    "三套 DB、Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
+    "三套环境复用现有项目 DSN，但使用 supportportal_staging、supportportal_preproduction、supportportal_production 独立 schema；Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
     "按 staging -> preproduction -> production 完成契约、镜像内容、fake Zendesk、远程 Zendesk readback、回滚和官方栈验证；旧端点退出需要单独切流批准。"
   ],
   "blockers": [],
@@ -45,6 +45,12 @@
       "label": "Release builder and manifest promotion contract",
       "command": ".venv/bin/python -m unittest backend.tests.test_build_automation_release backend.tests.test_deploy_ec2",
       "details": "fake Docker 回归通过：release builder 在本地构建 route/automation/production 三种 role，生成本地 tag、六个 image pointer 和 image ID；split deploy 校验本地 image ID、跳过 compose pull，image 缺失/不匹配或 manifest 缺失时在 network/compose 变更前 fail closed；旧 digest 迁移和 rollback 契约仍通过。"
+    },
+    {
+      "type": "test",
+      "label": "Existing database DSN fallback and split provenance",
+      "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_split_deploy_loads_release_manifest_without_manual_image_variables backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_preproduction_reuses_account_database_with_environment_defaults backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_production_reuses_production_database_with_environment_defaults",
+      "details": "验证 staging/preproduction 缺少 AUTOMATION_*_DB_DSN 时复用 TICKET_DB_DSN，production 复用 PRODUCTION_TICKET_DB_DSN；三环境默认 schema/queue/event identity 由部署进程导出，release manifest commit/build_time 映射到 split route/automation build markers。"
     }
   ],
   "source_refs": [
@@ -89,6 +95,11 @@
       "at": "2026-08-22",
       "event": "local_release_alignment",
       "summary": "按单台 EC2 原始部署模型移除 release builder 的 registry push 和 split deploy 的 release pull；manifest 改为本地 image tag + image ID，并在 Compose/network 变更前校验本机镜像身份。"
+    },
+    {
+      "at": "2026-08-22",
+      "event": "existing_database_schema_fallback",
+      "summary": "split deploy 默认复用现有 account/production DSN，以独立 schema、queue 和 event channel 隔离环境，并将 release manifest provenance 传入六个 split 服务。"
     }
   ],
   "legacy_refs": ["p2-73", "p2-74"],
