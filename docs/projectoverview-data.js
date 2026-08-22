@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T16:00:01Z",
-  "source_base_commit": "6e00bb3953f20843fd80614852dc959a6f72729d",
-  "registry_digest": "3abe8273497af9d4a5d5a65a9b298163b93a2d1fb5c4dad2a39ccf4ffe585705",
+  "generated_at": "2026-08-22T16:40:14Z",
+  "source_base_commit": "90439b7eb8fdfeb6e79a8d53d8be2f1e477ee22f",
+  "registry_digest": "2faa9db5184c4e7c622d81a41f48e03f1e83a36c9dc8db4a33f07b0f600431f7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7986,6 +7986,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-22",
           "event": "local_stack_compose_default_network_compat",
           "summary": "修复 split compose 顶层未显式声明 default 网络导致本地官方 podman-compose 栈无法重启的问题；networks 顶层增加 default: deployment_default 声明，podman-compose config 与 compose 相关测试通过。"
+        },
+        {
+          "at": "2026-08-22",
+          "event": "execution_token_dependency_order",
+          "summary": "release-003 线上验证发现空 body 请求先触发 422 校验而非 401 鉴权；执行 token 检查从 handler 内移到路由级 Depends，保证鉴权先于请求体校验，测试补充空 body 无 token 必须 401 的断言。"
         },
         {
           "at": "2026-08-22",
