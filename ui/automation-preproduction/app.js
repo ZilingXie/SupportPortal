@@ -159,8 +159,8 @@ async function loadCapabilities() {
 
 async function connectToken(event) {
   event?.preventDefault();
-  const form = event?.currentTarget;
-  const token = String(new FormData(form).get("execution_token") || "").trim();
+  const form = event?.target instanceof HTMLFormElement ? event.target : null;
+  const token = form ? String(new FormData(form).get("execution_token") || "").trim() : "";
   if (!token) {
     state.tokenError = "Enter the execution bearer token.";
     render();

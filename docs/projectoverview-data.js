@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T19:45:03Z",
-  "source_base_commit": "840ececc41fdcaf9dd1b24b29804e7c3a035af99",
-  "registry_digest": "ec389fd244f6adeb0fbdb9b4d2d6a0d1668aae45610dd38635c00d118b32d17c",
+  "generated_at": "2026-08-22T20:16:37Z",
+  "source_base_commit": "47a0c9d651d1012ce9b232118273575b7ef19f54",
+  "registry_digest": "11d13ac0667c34f8fcd41237db4e662ba8af5b3e60c27ca52839dfbd8591be6c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8188,6 +8188,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-23",
       "updated_at": "2026-08-23",
       "history": [
+        {
+          "at": "2026-08-23",
+          "event": "token_gate_delegated_submit_fix",
+          "summary": "release-20260823-001 线上浏览器验收发现 token 门提交无响应：connectToken 经 appRoot 委托监听取 event.currentTarget 得到的是容器 div 而非表单，new FormData(div) 抛 TypeError 被 void 调用静默吞掉。改为从 event.target 取 HTMLFormElement，三份 UI 重新生成并随 release-20260823-002 重新部署。"
+        },
         {
           "at": "2026-08-23",
           "event": "created",
