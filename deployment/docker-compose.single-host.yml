@@ -10,6 +10,150 @@ services:
       - ./nginx/supportportal.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
 
+  route_staging:
+    profiles: ["automation"]
+    image: ${ROUTE_STAGING_IMAGE:-localhost/supportportal-route-staging:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.automation
+      args:
+        AUTOMATION_IMAGE_ROLE: route
+        APP_BUILD_REF: ${ROUTE_STAGING_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${ROUTE_STAGING_BUILD_TIME:-}
+    command: ["uvicorn", "backend.route_service:app", "--host", "0.0.0.0", "--port", "8100"]
+    env_file: [../.env]
+    environment:
+      AUTOMATION_ENVIRONMENT: staging
+      ROUTE_SERVICE_TOKEN: ${ROUTE_STAGING_SERVICE_TOKEN:-}
+      APP_BUILD_REF: ${ROUTE_STAGING_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${ROUTE_STAGING_BUILD_TIME:-}
+      RUNTIME_PROFILE: route
+    expose: ["8100"]
+    restart: unless-stopped
+
+  route_preproduction:
+    profiles: ["automation"]
+    image: ${ROUTE_PREPRODUCTION_IMAGE:-localhost/supportportal-route-preproduction:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.automation
+      args:
+        AUTOMATION_IMAGE_ROLE: route
+        APP_BUILD_REF: ${ROUTE_PREPRODUCTION_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${ROUTE_PREPRODUCTION_BUILD_TIME:-}
+    command: ["uvicorn", "backend.route_service:app", "--host", "0.0.0.0", "--port", "8100"]
+    env_file: [../.env]
+    environment:
+      AUTOMATION_ENVIRONMENT: preproduction
+      ROUTE_SERVICE_TOKEN: ${ROUTE_PREPRODUCTION_SERVICE_TOKEN:-}
+      APP_BUILD_REF: ${ROUTE_PREPRODUCTION_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${ROUTE_PREPRODUCTION_BUILD_TIME:-}
+      RUNTIME_PROFILE: route
+    expose: ["8100"]
+    restart: unless-stopped
+
+  route_production:
+    profiles: ["automation"]
+    image: ${ROUTE_PRODUCTION_IMAGE:-localhost/supportportal-route-production:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.automation
+      args:
+        AUTOMATION_IMAGE_ROLE: route
+        APP_BUILD_REF: ${ROUTE_PRODUCTION_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${ROUTE_PRODUCTION_BUILD_TIME:-}
+    command: ["uvicorn", "backend.route_service:app", "--host", "0.0.0.0", "--port", "8100"]
+    env_file: [../.env]
+    environment:
+      AUTOMATION_ENVIRONMENT: production
+      ROUTE_SERVICE_TOKEN: ${ROUTE_PRODUCTION_SERVICE_TOKEN:-}
+      APP_BUILD_REF: ${ROUTE_PRODUCTION_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${ROUTE_PRODUCTION_BUILD_TIME:-}
+      RUNTIME_PROFILE: route
+    expose: ["8100"]
+    restart: unless-stopped
+
+  automation_staging:
+    profiles: ["automation"]
+    image: ${AUTOMATION_STAGING_IMAGE:-localhost/supportportal-automation-staging:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.automation
+      args:
+        AUTOMATION_IMAGE_ROLE: automation
+        APP_BUILD_REF: ${AUTOMATION_STAGING_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${AUTOMATION_STAGING_BUILD_TIME:-}
+    command: ["uvicorn", "backend.automation_runtime:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: [../.env]
+    environment:
+      AUTOMATION_ENVIRONMENT: staging
+      AUTOMATION_DB_DSN: ${AUTOMATION_STAGING_DB_DSN:-}
+      AUTOMATION_DB_SCHEMA: ${AUTOMATION_STAGING_DB_SCHEMA:-supportportal_staging}
+      AUTOMATION_RUNTIME_ALLOW_MEMORY: ${AUTOMATION_RUNTIME_ALLOW_MEMORY:-0}
+      AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED: "0"
+      ROUTE_SERVICE_URL: http://route_staging:8100
+      ROUTE_SERVICE_TOKEN: ${ROUTE_STAGING_SERVICE_TOKEN:-}
+      APP_BUILD_REF: ${AUTOMATION_STAGING_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${AUTOMATION_STAGING_BUILD_TIME:-}
+    expose: ["8000"]
+    depends_on: [route_staging]
+    restart: unless-stopped
+
+  automation_preproduction:
+    profiles: ["automation"]
+    image: ${AUTOMATION_PREPRODUCTION_IMAGE:-localhost/supportportal-automation-preproduction:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.automation
+      args:
+        AUTOMATION_IMAGE_ROLE: automation
+        APP_BUILD_REF: ${AUTOMATION_PREPRODUCTION_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${AUTOMATION_PREPRODUCTION_BUILD_TIME:-}
+    command: ["uvicorn", "backend.automation_runtime:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: [../.env]
+    environment:
+      AUTOMATION_ENVIRONMENT: preproduction
+      AUTOMATION_DB_DSN: ${AUTOMATION_PREPRODUCTION_DB_DSN:-}
+      AUTOMATION_DB_SCHEMA: ${AUTOMATION_PREPRODUCTION_DB_SCHEMA:-supportportal_preproduction}
+      AUTOMATION_RUNTIME_ALLOW_MEMORY: ${AUTOMATION_RUNTIME_ALLOW_MEMORY:-0}
+      PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST: ${PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST:-}
+      AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED: ${PREPRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED:-0}
+      AUTOMATION_TARGET_TICKET_STATUS: ${PREPRODUCTION_TARGET_TICKET_STATUS:-}
+      ROUTE_SERVICE_URL: http://route_preproduction:8100
+      ROUTE_SERVICE_TOKEN: ${ROUTE_PREPRODUCTION_SERVICE_TOKEN:-}
+      APP_BUILD_REF: ${AUTOMATION_PREPRODUCTION_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${AUTOMATION_PREPRODUCTION_BUILD_TIME:-}
+    expose: ["8000"]
+    depends_on: [route_preproduction]
+    restart: unless-stopped
+
+  automation_production:
+    profiles: ["automation"]
+    image: ${AUTOMATION_PRODUCTION_IMAGE:-localhost/supportportal-automation-production:unknown}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.automation
+      args:
+        AUTOMATION_IMAGE_ROLE: production
+        APP_BUILD_REF: ${AUTOMATION_PRODUCTION_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${AUTOMATION_PRODUCTION_BUILD_TIME:-}
+    command: ["uvicorn", "backend.automation_production_runtime:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: [../.env]
+    environment:
+      AUTOMATION_ENVIRONMENT: production
+      AUTOMATION_DB_DSN: ${AUTOMATION_PRODUCTION_DB_DSN:-}
+      AUTOMATION_DB_SCHEMA: ${AUTOMATION_PRODUCTION_DB_SCHEMA:-supportportal_production}
+      AUTOMATION_RUNTIME_ALLOW_MEMORY: ${AUTOMATION_RUNTIME_ALLOW_MEMORY:-0}
+      AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED: ${PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED:-0}
+      AUTOMATION_TARGET_TICKET_STATUS: ${PRODUCTION_TARGET_TICKET_STATUS:-}
+      ROUTE_SERVICE_URL: http://route_production:8100
+      ROUTE_SERVICE_TOKEN: ${ROUTE_PRODUCTION_SERVICE_TOKEN:-}
+      APP_BUILD_REF: ${AUTOMATION_PRODUCTION_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${AUTOMATION_PRODUCTION_BUILD_TIME:-}
+    expose: ["8000"]
+    depends_on: [route_production]
+    restart: unless-stopped
+
   api:
     image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     build:

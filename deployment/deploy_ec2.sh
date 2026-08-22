@@ -11,6 +11,7 @@ TARGET_BRANCH=""
 SKIP_PULL=0
 SKIP_EXTERNAL_CHECK=0
 FOLLOW_LOGS=0
+TARGET_ENVIRONMENT=""
 DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}"
 DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
 ROLLBACK_IMAGE=""
@@ -22,6 +23,8 @@ PREVIOUS_PROMPT_RELEASE_ID=""
 CANDIDATE_PROMPT_RELEASE_ID=""
 CANDIDATE_PROMPT_RELEASE_CREATED="false"
 COMPOSE_PROFILE_ARGS=()
+SPLIT_SERVICES=()
+SPLIT_COMPOSE_ARGS=()
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -40,6 +43,7 @@ Usage:
 Options:
   -b, --branch <branch>      Deploy from the given git branch (default: current branch)
   -d, --domain <domain>      External domain for HTTPS health check (default: support.stellarix.space)
+      --environment <name>   Deploy one split environment: staging, preproduction, production, route-staging, route-preproduction, route-production
       --skip-pull            Skip git fetch/pull
       --skip-external-check  Skip https://<domain>/health check
       --logs                 Follow key service logs after deployment
@@ -49,6 +53,7 @@ Examples:
   ./deployment/deploy_ec2.sh
   ./deployment/deploy_ec2.sh --branch main --domain support.stellarix.space
   ./deployment/deploy_ec2.sh --skip-pull --logs
+  ./deployment/deploy_ec2.sh --environment staging --skip-pull
 EOF
 }
 
@@ -380,6 +385,11 @@ parse_args() {
         DOMAIN="$2"
         shift 2
         ;;
+      --environment)
+        [[ $# -ge 2 ]] || fail "--environment requires a value"
+        TARGET_ENVIRONMENT="$2"
+        shift 2
+        ;;
       --skip-pull)
         SKIP_PULL=1
         shift
@@ -400,6 +410,116 @@ parse_args() {
         fail "Unknown option: $1 (use --help)"
         ;;
     esac
+  done
+}
+
+split_environment_config() {
+  local environment="$1"
+  SPLIT_SERVICES=()
+  case "${environment}" in
+    staging)
+      SPLIT_ROUTE_SERVICE="route_staging"
+      SPLIT_AUTOMATION_SERVICE="automation_staging"
+      SPLIT_PATH="staging"
+      SPLIT_IMAGE_KEY="AUTOMATION_STAGING_IMAGE"
+      SPLIT_DB_KEY="AUTOMATION_STAGING_DB_DSN"
+      SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
+      SPLIT_SERVICES=(route_staging automation_staging)
+      ;;
+    preproduction)
+      SPLIT_ROUTE_SERVICE="route_preproduction"
+      SPLIT_AUTOMATION_SERVICE="automation_preproduction"
+      SPLIT_PATH="preproduction"
+      SPLIT_IMAGE_KEY="AUTOMATION_PREPRODUCTION_IMAGE"
+      SPLIT_DB_KEY="AUTOMATION_PREPRODUCTION_DB_DSN"
+      SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
+      SPLIT_SERVICES=(route_preproduction automation_preproduction)
+      ;;
+    production)
+      SPLIT_ROUTE_SERVICE="route_production"
+      SPLIT_AUTOMATION_SERVICE="automation_production"
+      SPLIT_PATH="production"
+      SPLIT_IMAGE_KEY="AUTOMATION_PRODUCTION_IMAGE"
+      SPLIT_DB_KEY="AUTOMATION_PRODUCTION_DB_DSN"
+      SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
+      SPLIT_SERVICES=(route_production automation_production)
+      ;;
+    route-staging)
+      SPLIT_ROUTE_SERVICE="route_staging"
+      SPLIT_AUTOMATION_SERVICE=""
+      SPLIT_PATH="staging"
+      SPLIT_IMAGE_KEY="ROUTE_STAGING_IMAGE"
+      SPLIT_DB_KEY=""
+      SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
+      SPLIT_SERVICES=(route_staging)
+      ;;
+    route-preproduction)
+      SPLIT_ROUTE_SERVICE="route_preproduction"
+      SPLIT_AUTOMATION_SERVICE=""
+      SPLIT_PATH="preproduction"
+      SPLIT_IMAGE_KEY="ROUTE_PREPRODUCTION_IMAGE"
+      SPLIT_DB_KEY=""
+      SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
+      SPLIT_SERVICES=(route_preproduction)
+      ;;
+    route-production)
+      SPLIT_ROUTE_SERVICE="route_production"
+      SPLIT_AUTOMATION_SERVICE=""
+      SPLIT_PATH="production"
+      SPLIT_IMAGE_KEY="ROUTE_PRODUCTION_IMAGE"
+      SPLIT_DB_KEY=""
+      SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
+      SPLIT_SERVICES=(route_production)
+      ;;
+    *) fail "Unsupported split environment: ${environment}" ;;
+  esac
+}
+
+deploy_split_environment() {
+  local environment="$1"
+  SPLIT_COMPOSE_ARGS=(--env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile automation)
+  local image_value token_value db_value
+  split_environment_config "${environment}"
+  image_value="$(resolve_env_value "${SPLIT_IMAGE_KEY}")"
+  token_value="$(resolve_env_value "${SPLIT_TOKEN_KEY}")"
+  [[ -n "${image_value}" && "${image_value}" != *replace* ]] || fail "${SPLIT_IMAGE_KEY} must be an immutable image pointer"
+  [[ -n "${token_value}" ]] || fail "${SPLIT_TOKEN_KEY} is required"
+  if [[ -n "${SPLIT_DB_KEY}" ]]; then
+    db_value="$(resolve_env_value "${SPLIT_DB_KEY}")"
+    [[ -n "${db_value}" ]] || fail "${SPLIT_DB_KEY} is required"
+  fi
+  if [[ "${environment}" == "production" ]]; then
+    [[ "${DEPLOY_PRODUCTION_APPROVED:-0}" == "1" ]] || fail "Production split deployment requires DEPLOY_PRODUCTION_APPROVED=1"
+  fi
+  host_port="$(resolve_port)"
+  mkdir -p "${PROJECT_ROOT}/.deployments"
+  printf 'environment=%s\nimage_key=%s\nimage=%s\ncommit=%s\ntime=%s\n' \
+    "${environment}" "${SPLIT_IMAGE_KEY}" "${image_value}" "$(git rev-parse --short=12 HEAD)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > "${PROJECT_ROOT}/.deployments/${environment}.manifest"
+  log "Deploying split environment ${environment} with ${SPLIT_IMAGE_KEY}=${image_value}"
+  docker compose "${SPLIT_COMPOSE_ARGS[@]}" pull "${SPLIT_SERVICES[@]}"
+  docker compose "${SPLIT_COMPOSE_ARGS[@]}" up -d --no-build "${SPLIT_SERVICES[@]}"
+  for service in "${SPLIT_SERVICES[@]}"; do
+    wait_for_split_service "${service}" "$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)" "$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)" || fail "${environment} ${service} health check failed"
+  done
+  log "Split environment ${environment} deployed; rollback scope is ${SPLIT_SERVICES[*]} only."
+}
+
+wait_for_split_service() {
+  local service="$1"
+  local timeout_seconds="$2"
+  local retry_interval_seconds="$3"
+  local start_ts current_ts elapsed
+  start_ts="$(date +%s)"
+  while true; do
+    if docker compose "${SPLIT_COMPOSE_ARGS[@]}" exec -T "${service}" python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)' >/dev/null 2>&1 || \
+       docker compose "${SPLIT_COMPOSE_ARGS[@]}" exec -T "${service}" python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8100/health", timeout=3)' >/dev/null 2>&1; then
+      return 0
+    fi
+    current_ts="$(date +%s)"
+    elapsed=$((current_ts - start_ts))
+    (( elapsed >= timeout_seconds )) && return 1
+    sleep "${retry_interval_seconds}"
   done
 }
 
@@ -557,6 +677,11 @@ main() {
     else
       fail "Missing ${ENV_FILE} and .env.example"
     fi
+  fi
+
+  if [[ -n "${TARGET_ENVIRONMENT}" ]]; then
+    deploy_split_environment "${TARGET_ENVIRONMENT}"
+    exit 0
   fi
 
   prepare_compose_env

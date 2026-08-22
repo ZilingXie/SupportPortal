@@ -74,6 +74,9 @@ class OwnershipGateEligibilityTests(unittest.TestCase):
     def test_production_automated_case_is_eligible(self):
         self.assertTrue(ownership_gate_eligible(_production_case()))
 
+    def test_preproduction_automated_case_is_eligible(self):
+        self.assertTrue(ownership_gate_eligible(_production_case(processing_profile="preproduction")))
+
     def test_released_case_remains_fenced_after_route_metadata_changes(self):
         self.assertTrue(
             ownership_gate_eligible(

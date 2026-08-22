@@ -1,0 +1,50 @@
+FROM python:3.11-slim
+
+ARG APP_BUILD_REF=unknown
+ARG APP_BUILD_TIME=
+ARG AUTOMATION_IMAGE_ROLE=automation
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    APP_BUILD_REF=${APP_BUILD_REF} \
+    APP_BUILD_TIME=${APP_BUILD_TIME}
+
+WORKDIR /app
+
+COPY requirements.base.txt /app/requirements.base.txt
+RUN python -m pip install --upgrade pip && \
+    python -m pip install --no-cache-dir -r /app/requirements.base.txt
+
+# Build from a complete source staging directory, then remove the legacy
+# runtime and test-only files from the final filesystem. Production never
+# receives backend.main.py or the account rerun modules/UI.
+COPY backend /tmp/backend-src/backend
+COPY ui /tmp/backend-src/ui
+COPY docs /tmp/backend-src/docs
+COPY dictionary /tmp/backend-src/dictionary
+RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
+    cp -a /tmp/backend-src/backend/. /app/backend/ && \
+    cp -a /tmp/backend-src/ui/. /app/ui/ && \
+    cp -a /tmp/backend-src/docs/. /app/docs/ && \
+    cp -a /tmp/backend-src/dictionary/. /app/dictionary/ && \
+    if [ "${AUTOMATION_IMAGE_ROLE}" = "production" ]; then \
+      rm -f /app/backend/main.py \
+        /app/backend/automation_runtime.py \
+        /app/backend/services/automation_rerun_contracts.py \
+        /app/backend/services/account_full_reroute.py \
+        /app/backend/services/account_case_reroute.py \
+        /app/backend/services/account_rerun_preflight.py \
+        /app/backend/services/account_rerun_recovery.py; \
+      rm -rf /app/backend/scripts /app/backend/tests; \
+      rm -rf /app/ui/automation-staging /app/ui/automation-preproduction \
+        /app/ui/account-ui /app/ui/production-ui; \
+    elif [ "${AUTOMATION_IMAGE_ROLE}" = "route" ]; then \
+      rm -f /app/backend/automation_runtime.py /app/backend/services/route_client.py \
+        /app/backend/services/automation_execution_store.py; \
+      rm -rf /app/ui; \
+    else \
+      rm -f /app/backend/route_service.py; \
+    fi && \
+    rm -rf /tmp/backend-src
+
+EXPOSE 8000 8100

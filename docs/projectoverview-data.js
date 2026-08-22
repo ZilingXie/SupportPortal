@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-21T09:26:09Z",
-  "source_base_commit": "eec5e20b8d01918a71be9c449a6b99aff1f3fa8c",
-  "registry_digest": "780404a1531eed110ba124416d46566dbc7af1e39824d4a93372373e4be8bb85",
+  "generated_at": "2026-08-22T07:47:01Z",
+  "source_base_commit": "a6bacaf3f77fd303f3cca22389d41674cdadcb3c",
+  "registry_digest": "56da408415de089ad014cd49bfb26c7e79d7fda8781a63966ab9f69867cca6db",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1603,6 +1603,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live isolation verification",
           "command": "deploy_ec2.sh + restart_single_host_stack.sh; container env probe; worker logs",
           "result": "PR #815 + #816 deployed (main 6a30eb1; local stack health ref 6a30eb11d5b9). Staging container namespace '[staging]' -> subject '[staging][Enablement Request]'; production container empty -> unchanged subject. Staging worker noise for ticket 12872 stopped immediately (namespace filter); production 12804 claim-time loop terminated via terminal dismissal (0 warnings in the last minute)."
+        },
+        {
+          "type": "test",
+          "label": "Split Route/Automation contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership",
+          "details": "38 tests pass；覆盖 Route side-effect-free action plan、三环境 capability、production visibility、production OpenAPI 无 rerun/reset、preproduction ownership、六服务/profile 和 production UI/image contract。"
+        },
+        {
+          "type": "test",
+          "label": "Static syntax and configuration checks",
+          "command": ".venv/bin/python -m py_compile ... && node --check ui/automation-production/app.js && bash -n deployment/deploy_ec2.sh && git diff --check",
+          "details": "Python/JavaScript 编译、deploy shell syntax、Compose YAML 静态解析和 diff whitespace 校验通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Docker/EC2 runtime verification pending",
+          "command": "docker compose config/build/up；Nginx runtime health；Zendesk remote readback；rollback drill",
+          "details": "当前工作机没有 Docker CLI；这些检查必须在 Docker-capable host/EC2 执行，不能由本地静态检查替代。"
         }
       ],
       "source_refs": [
@@ -1612,7 +1630,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 6,
+      "task_count": 7,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -7831,6 +7849,76 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "zendesk-connection"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-88",
+      "title": "三套 Route 与 Automation 环境迁移",
+      "status": "active",
+      "owner": "zac",
+      "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、数据库、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
+      "next_action": "在 Docker-capable host 上构建六个镜像并完成逐环境 health、镜像内容、Zendesk readback 与 rollback 验证；旧端点切流仍需单独批准。",
+      "acceptance_criteria": [
+        "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/DB/queue/credentials 与 build marker。",
+        "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
+        "staging 只做内部记录、无真实 Zendesk 出站、允许 rerun/reset；preproduction 只允许 allowlisted ticket，执行 ownership/status 和 Zendesk internal comment，允许 rerun；production 执行真实动作、每次显式选择 internal/external comment、禁止 rerun。",
+        "六个 immutable image pointers 可独立部署和回滚；Production Automation image manifest、runtime application bundle、OpenAPI 和 UI 不含 rerun。",
+        "三套 DB、Redis/queue、secret、Route token 和 compose project 不交叉污染；deploy_ec2.sh 不默认整栈 down。",
+        "按 staging -> preproduction -> production 完成契约、镜像内容、fake Zendesk、远程 Zendesk readback、回滚和官方栈验证；旧端点退出需要单独切流批准。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Split Route/Automation contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_automation_contracts backend.tests.test_account_automation_ownership",
+          "details": "38 tests pass；覆盖 Route side-effect-free action plan、三环境 capability、production visibility、production OpenAPI 无 rerun/reset、preproduction ownership、六服务/profile 和 production UI/image contract。"
+        },
+        {
+          "type": "test",
+          "label": "Static syntax and configuration checks",
+          "command": ".venv/bin/python -m py_compile ... && node --check ui/automation-production/app.js && bash -n deployment/deploy_ec2.sh && git diff --check",
+          "details": "Python/JavaScript 编译、deploy shell syntax、Compose YAML 静态解析和 diff whitespace 校验通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Docker/EC2 runtime verification pending",
+          "command": "docker compose config/build/up；Nginx runtime health；Zendesk remote readback；rollback drill",
+          "details": "当前工作机没有 Docker CLI；这些检查必须在 Docker-capable host/EC2 执行，不能由本地静态检查替代。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/services/account_route_pipeline.py",
+        "backend/services/account_admin.py",
+        "backend/services/account_automation_ownership.py",
+        "backend/services/account_zendesk_internal_comment.py",
+        "backend/services/zendesk_comments.py",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/nginx/supportportal.conf",
+        "deployment/deploy_ec2.sh",
+        "backend/Dockerfile",
+        "ui/account-ui",
+        "ui/production-ui",
+        "design.md"
+      ],
+      "created_at": "2026-08-22",
+      "updated_at": "2026-08-22",
+      "history": [
+        {
+          "at": "2026-08-22",
+          "event": "created",
+          "summary": "根据三环境 Route/Automation 迁移计划创建实施任务。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-73",
+        "p2-74"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     }
   ],
   "meetings": [

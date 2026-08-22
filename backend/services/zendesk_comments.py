@@ -349,3 +349,45 @@ def add_internal_comment(*, ticket_id: str, body: str, timeout_seconds: float = 
         solve=False,
         timeout_seconds=timeout_seconds,
     )
+
+
+def update_ticket_status(
+    *,
+    ticket_id: str,
+    status: str,
+    timeout_seconds: float = 15.0,
+) -> str:
+    """Update and read back a Zendesk ticket status without adding a comment."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    normalized_status = str(status or "").strip().lower()
+    if not normalized_ticket_id or not normalized_status:
+        raise ZendeskCommentError("permanent", error_code="zendesk_ticket_status_input_invalid")
+    url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps({"ticket": {"status": normalized_status}}, ensure_ascii=False).encode("utf-8"),
+        method="PUT",
+        headers={
+            "Authorization": _basic_auth_header(),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+            if status_code < 200 or status_code >= 300:
+                raise ZendeskCommentError(
+                    _http_status_category(status_code), status_code=status_code, error_code="zendesk_http_error"
+                )
+            payload = _decode_json_response(response)
+    except ZendeskCommentError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise _zendesk_request_error(exc) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_status_update_outcome_unknown") from exc
+    observed = _ticket_status_from_payload(payload)
+    if observed != normalized_status:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_status_unverified")
+    return observed
