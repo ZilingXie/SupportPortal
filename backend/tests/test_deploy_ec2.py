@@ -126,6 +126,16 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 if args[:2] == ["image", "inspect"]:
                     if os.environ.get("FAKE_CANDIDATE_IMAGE_MISSING") == "1":
                         sys.exit(1)
+                    if "--format" in args:
+                        image_ref = args[-1]
+                        if "supportportal-automation-production:" in image_ref:
+                            image_id = os.environ.get("FAKE_PRODUCTION_IMAGE_ID", "sha256:" + "c" * 64)
+                        elif "supportportal-automation:" in image_ref:
+                            image_id = os.environ.get("FAKE_AUTOMATION_IMAGE_ID", "sha256:" + "b" * 64)
+                        else:
+                            image_id = os.environ.get("FAKE_ROUTE_IMAGE_ID", "sha256:" + "a" * 64)
+                        print(image_id)
+                        sys.exit(0)
                     print("candidate image present")
                     sys.exit(0)
 
@@ -878,9 +888,12 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
         release_dir = self.repo / ".deployments/releases"
         release_dir.mkdir(parents=True)
-        route_digest = "registry.example/route@sha256:" + ("1" * 64)
-        automation_digest = "registry.example/automation@sha256:" + ("2" * 64)
-        production_digest = "registry.example/automation-production@sha256:" + ("3" * 64)
+        route_image = "localhost/supportportal-route:release-42"
+        automation_image = "localhost/supportportal-automation:release-42"
+        production_image = "localhost/supportportal-automation-production:release-42"
+        route_image_id = "sha256:" + ("a" * 64)
+        automation_image_id = "sha256:" + ("b" * 64)
+        production_image_id = "sha256:" + ("c" * 64)
         self._write(
             self.repo,
             ".deployments/releases/release-42.env",
@@ -888,24 +901,96 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 [
                     "release_id=release-42",
                     "commit=a50ff400b635",
-                    f"ROUTE_STAGING_IMAGE={route_digest}",
-                    f"ROUTE_PREPRODUCTION_IMAGE={route_digest}",
-                    f"ROUTE_PRODUCTION_IMAGE={route_digest}",
-                    f"AUTOMATION_STAGING_IMAGE={automation_digest}",
-                    f"AUTOMATION_PREPRODUCTION_IMAGE={automation_digest}",
-                    f"AUTOMATION_PRODUCTION_IMAGE={production_digest}",
+                    f"ROUTE_STAGING_IMAGE={route_image}",
+                    f"ROUTE_STAGING_IMAGE_ID={route_image_id}",
+                    f"ROUTE_PREPRODUCTION_IMAGE={route_image}",
+                    f"ROUTE_PREPRODUCTION_IMAGE_ID={route_image_id}",
+                    f"ROUTE_PRODUCTION_IMAGE={route_image}",
+                    f"ROUTE_PRODUCTION_IMAGE_ID={route_image_id}",
+                    f"AUTOMATION_STAGING_IMAGE={automation_image}",
+                    f"AUTOMATION_STAGING_IMAGE_ID={automation_image_id}",
+                    f"AUTOMATION_PREPRODUCTION_IMAGE={automation_image}",
+                    f"AUTOMATION_PREPRODUCTION_IMAGE_ID={automation_image_id}",
+                    f"AUTOMATION_PRODUCTION_IMAGE={production_image}",
+                    f"AUTOMATION_PRODUCTION_IMAGE_ID={production_image_id}",
                     "",
                 ]
             ),
         )
 
-        result = self._run_script("--environment", "staging", "--release", "release-42", "--skip-pull")
+        result = self._run_script(
+            "--environment",
+            "staging",
+            "--release",
+            "release-42",
+            "--skip-pull",
+            extra_env={
+                "FAKE_ROUTE_IMAGE_ID": route_image_id,
+                "FAKE_AUTOMATION_IMAGE_ID": automation_image_id,
+            },
+        )
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("Loaded release manifest", result.stdout + result.stderr)
-        self.assertIn(f"route={route_digest}", result.stdout + result.stderr)
-        self.assertIn(f"automation={automation_digest}", result.stdout + result.stderr)
+        self.assertIn(f"route={route_image}", result.stdout + result.stderr)
+        self.assertIn(f"automation={automation_image}", result.stdout + result.stderr)
+        self.assertIn("Using local split images; skipping docker compose pull.", result.stdout + result.stderr)
+        calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any("pull" in call["argv"] for call in calls))
         self.assertTrue((self.repo / ".deployments/staging.manifest").exists())
+
+    def test_release_manifest_image_id_mismatch_fails_before_network_or_compose_changes(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                ROUTE_STAGING_SERVICE_TOKEN=route-token
+                AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
+                AUTOMATION_STAGING_DB_SCHEMA=automation_staging
+                AUTOMATION_STAGING_QUEUE=automation-staging
+                AUTOMATION_STAGING_EVENT_CHANNEL=automation-staging-events
+                DEPLOY_HEALTH_TIMEOUT_SECONDS=1
+                DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
+                """
+            ),
+        )
+        release_dir = self.repo / ".deployments/releases"
+        release_dir.mkdir(parents=True)
+        route_image = "localhost/supportportal-route:release-mismatch"
+        automation_image = "localhost/supportportal-automation:release-mismatch"
+        production_image = "localhost/supportportal-automation-production:release-mismatch"
+        self._write(
+            self.repo,
+            ".deployments/releases/release-mismatch.env",
+            "\n".join(
+                [
+                    "release_id=release-mismatch",
+                    "commit=main",
+                    f"ROUTE_STAGING_IMAGE={route_image}",
+                    "ROUTE_STAGING_IMAGE_ID=sha256:" + ("d" * 64),
+                    f"ROUTE_PREPRODUCTION_IMAGE={route_image}",
+                    "ROUTE_PREPRODUCTION_IMAGE_ID=sha256:" + ("d" * 64),
+                    f"ROUTE_PRODUCTION_IMAGE={route_image}",
+                    "ROUTE_PRODUCTION_IMAGE_ID=sha256:" + ("d" * 64),
+                    f"AUTOMATION_STAGING_IMAGE={automation_image}",
+                    "AUTOMATION_STAGING_IMAGE_ID=sha256:" + ("b" * 64),
+                    f"AUTOMATION_PREPRODUCTION_IMAGE={automation_image}",
+                    "AUTOMATION_PREPRODUCTION_IMAGE_ID=sha256:" + ("b" * 64),
+                    f"AUTOMATION_PRODUCTION_IMAGE={production_image}",
+                    "AUTOMATION_PRODUCTION_IMAGE_ID=sha256:" + ("c" * 64),
+                    "",
+                ]
+            ),
+        )
+
+        result = self._run_script("--environment", "staging", "--release", "release-mismatch", "--skip-pull")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("local image ID mismatch", result.stdout + result.stderr)
+        self.assertEqual(self._compose_verbs(), [])
+        calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any(call["argv"][:2] == ["network", "create"] for call in calls))
 
     def test_split_deploy_honors_branch_pull_before_loading_images(self) -> None:
         remote = self.root / "remote.git"

@@ -68,18 +68,18 @@ class BuildAutomationReleaseTests(unittest.TestCase):
                 args = sys.argv[1:]
                 with (state / "docker_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(args) + "\\n")
-                if args[:1] == ["build"] or args[:1] == ["push"]:
+                if args[:1] == ["build"]:
                     sys.exit(0)
                 if args[:2] == ["image", "inspect"]:
                     tag = args[-1]
                     repository = tag.rsplit(":", 1)[0]
                     if repository.endswith("supportportal-route"):
-                        digest = "1" * 64
+                        image_id = "1" * 64
                     elif repository.endswith("supportportal-automation-production"):
-                        digest = "3" * 64
+                        image_id = "3" * 64
                     else:
-                        digest = "2" * 64
-                    print(f"{repository}@sha256:{digest}")
+                        image_id = "2" * 64
+                    print(f"sha256:{image_id}")
                     sys.exit(0)
                 print(f"unexpected docker invocation: {args}", file=sys.stderr)
                 sys.exit(1)
@@ -101,7 +101,7 @@ class BuildAutomationReleaseTests(unittest.TestCase):
         )
 
     def test_builds_three_roles_and_writes_promotable_manifest(self) -> None:
-        result = self._run("--registry", "registry.example/supportportal", "--release-id", "release-42")
+        result = self._run("--release-id", "release-42")
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         manifest = self.repo / ".deployments/releases/release-42.env"
@@ -111,22 +111,26 @@ class BuildAutomationReleaseTests(unittest.TestCase):
             if line.strip()
         )
         self.assertEqual(values["release_id"], "release-42")
-        self.assertRegex(values["ROUTE_STAGING_IMAGE"], r"@sha256:[0-9a-f]{64}$")
+        self.assertEqual(values["ROUTE_STAGING_IMAGE"], "localhost/supportportal-route:release-42")
+        self.assertRegex(values["ROUTE_STAGING_IMAGE_ID"], r"^sha256:[0-9a-f]{64}$")
         self.assertEqual(values["ROUTE_STAGING_IMAGE"], values["ROUTE_PRODUCTION_IMAGE"])
+        self.assertEqual(values["ROUTE_STAGING_IMAGE_ID"], values["ROUTE_PRODUCTION_IMAGE_ID"])
         self.assertEqual(values["AUTOMATION_STAGING_IMAGE"], values["AUTOMATION_PREPRODUCTION_IMAGE"])
+        self.assertEqual(values["AUTOMATION_STAGING_IMAGE_ID"], values["AUTOMATION_PREPRODUCTION_IMAGE_ID"])
         self.assertNotEqual(values["AUTOMATION_STAGING_IMAGE"], values["AUTOMATION_PRODUCTION_IMAGE"])
+        self.assertNotEqual(values["AUTOMATION_STAGING_IMAGE_ID"], values["AUTOMATION_PRODUCTION_IMAGE_ID"])
 
         calls = [json.loads(line) for line in (self.state_dir / "docker_calls.jsonl").read_text().splitlines()]
         builds = [call for call in calls if call[:1] == ["build"]]
         pushes = [call for call in calls if call[:1] == ["push"]]
         self.assertEqual(len(builds), 3)
-        self.assertEqual(len(pushes), 3)
+        self.assertEqual(len(pushes), 0)
         self.assertIn("AUTOMATION_IMAGE_ROLE=production", builds[-1])
 
     def test_dirty_worktree_fails_before_building(self) -> None:
         self._write(self.repo, "dirty.txt", "uncommitted\n")
 
-        result = self._run("--registry", "registry.example/supportportal")
+        result = self._run()
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Working tree is not clean", result.stdout + result.stderr)

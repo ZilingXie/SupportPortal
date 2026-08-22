@@ -1,34 +1,33 @@
 # Automation Release Promotion
 
-三套 split Automation 环境使用 release manifest 管理镜像版本，不要求操作人员手工填写六个 image digest。
+三套 split Automation 环境使用 release manifest 管理镜像版本，不要求操作人员手工填写六个 image pointer。本流程针对单台 EC2：EC2 在本机 build 镜像，本机 Compose 运行镜像，不依赖应用远端 registry。
 
 ## 1. 构建 Release
 
-在 Docker 已安装、并且已经完成 registry 登录的构建主机上，从干净的目标 commit 执行：
+在将要运行 SupportPortal 的 EC2 上，从干净的目标 commit 执行：
 
 ```bash
 ./deployment/build_automation_release.sh \
-  --registry registry.example/supportportal \
   --release-id release-20260822-001
 ```
 
 脚本只构建三个 Dockerfile role：
 
-- `route`：Staging、Preproduction、Production 复用同一个 immutable digest。
-- `automation`：Staging 和 Preproduction 复用同一个包含 rerun 的 digest。
-- `production`：Production 使用独立 digest，镜像中不包含 rerun/reset 执行面。
+- `route`：Staging、Preproduction、Production 复用同一个本地 image tag 和 image ID。
+- `automation`：Staging 和 Preproduction 复用同一个包含 rerun 的本地 image tag 和 image ID。
+- `production`：Production 使用独立 role 镜像，镜像中不包含 rerun/reset 执行面。
 
-构建、push 和 digest 读取都成功后，脚本生成：
+三次本地 build 和 image ID 读取都成功后，脚本生成：
 
 ```text
 .deployments/releases/release-20260822-001.env
 ```
 
-该文件只保存 release 元数据和六个 image pointer，不保存 registry 密码或 Zendesk 凭据。
+该文件只保存 release 元数据、六个本地 image pointer 和对应 image ID，不保存 registry 密码或 Zendesk 凭据。不要把该 manifest 或本机镜像复制到另一台主机；当前流程的发布边界是同一台 EC2。
 
 ## 2. 晋升环境
 
-将 release manifest 放到 EC2 仓库的同一路径后，使用 `--branch` 让部署脚本同步目标 commit，再逐环境部署：
+builder 已在 EC2 本机生成 manifest 后，使用 `--branch` 让部署脚本同步目标 commit，再逐环境部署：
 
 ```bash
 ./deployment/deploy_ec2.sh --branch main --environment staging --release release-20260822-001
@@ -37,7 +36,7 @@ DEPLOY_PRODUCTION_APPROVED=1 \
   ./deployment/deploy_ec2.sh --branch main --environment production --release release-20260822-001
 ```
 
-`--release` 会加载 manifest 并导出六个 image pointer，随后由 Compose pull 并启动选定环境。它不会重新 build 镜像，也不会修改 `.env`。
+`--release` 会加载 manifest，检查目标本地 image tag 的 image ID 与 manifest 一致，然后由 Compose 使用本地镜像启动选定环境。它不会执行 `docker compose pull`、不会重新 build 镜像，也不会修改 `.env`。如果镜像不存在或 tag 已被覆盖，部署会在创建 automation 网络和修改 Compose 之前失败。
 
 split deployment 现在遵循 `--branch` 和 `--skip-pull`：默认会检查工作树、fetch 目标分支并执行 fast-forward pull；使用 `--skip-pull` 时，调用方必须自行保证工作树已经处于目标 commit。
 
@@ -59,4 +58,4 @@ split deployment 现在遵循 `--branch` 和 `--skip-pull`：默认会检查工�
 
 ## 5. 迁移兼容
 
-未传 `--release` 时，脚本仍接受 `.env` 中的六个 image 变量，供已有主机迁移和紧急恢复使用。新发布流程应始终使用 release builder 和 `--release`，避免手工编辑 digest。
+未传 `--release` 时，脚本仍接受 `.env` 中的六个 digest image 变量，供已有主机迁移和紧急恢复使用；这条兼容路径仍可能执行 Compose pull。新发布流程应始终在目标 EC2 上使用 release builder 和 `--release`。
