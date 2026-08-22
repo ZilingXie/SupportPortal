@@ -44,13 +44,18 @@ split deployment 现在遵循 `--branch` 和 `--skip-pull`：默认会检查工�
 
 每次 split deployment 还会检查官方 nginx 容器是否已加入 `supportportal_automation_edge`。缺失时脚本使用 `docker network connect` 幂等接入，不重建或重启 nginx；nginx 未运行或接入失败时，脚本会在启动目标 split 服务前明确失败。这样先于 split 环境启动的旧 nginx 也能通过 Docker DNS 解析 `automation_staging`、`automation_preproduction` 和 `automation_production`。
 
+automation 网络不再以 `--internal` 创建：Route 容器需要出站访问 LLM API，Automation 容器需要出站连接项目数据库。部署脚本发现既存网络是 internal 时会 fail closed；此时先停止对应 split compose project，执行 `docker network rm <network>` 删除该网络，再重新部署让其以出站可用的形式重建。
+
 Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如可在 EC2 上分别执行 `openssl rand -hex 32` 生成三个 token，再填入 `ROUTE_STAGING_SERVICE_TOKEN`、`ROUTE_PREPRODUCTION_SERVICE_TOKEN` 和 `ROUTE_PRODUCTION_SERVICE_TOKEN`。不要把 token 放进 release manifest 或提交到 Git。
+
+每个环境还需要一个执行 token（生成方式同上）：`AUTOMATION_STAGING_EXECUTION_TOKEN`、`AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN`、`AUTOMATION_PRODUCTION_EXECUTION_TOKEN`。Automation 的 `/v1/cases`、rerun、reset 和 reconcile 端点都要求 `Authorization: Bearer <execution token>`；token 缺失或错误时执行请求返回 401，未在 `.env` 配置 token 的环境所有执行请求都会被拒绝。三个 Automation UI 各自提供 Execution token 输入框，输入值保存在浏览器 localStorage。
 
 ## 3. 验收顺序
 
-- Staging：确认 `/v1/capabilities` 允许 rerun/reset，且 `zendesk=false`。
-- Preproduction：只使用 allowlisted ticket，确认 ownership/status 和 internal comment，`public=false`。
-- Production：确认 rerun/reset 不存在；使用受控 ticket 分别验证 `comment_visibility=internal` 和 `comment_visibility=external`，并核对 Zendesk readback 与 delivery ledger。
+- Staging：确认 `/v1/capabilities` 允许 rerun/reset，且 `zendesk=false`；带执行 token 提交一个 case，确认链路执行成功且无任何 Zendesk 出站。
+- Preproduction：在 `.env` 配置 `PREPRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PREPRODUCTION_TARGET_TICKET_STATUS`（如 `pending`）并 recreate 容器后，只使用 allowlisted ticket，确认 ownership/status 和 internal comment，`public=false`。
+- Production：确认 rerun/reset 不存在；在 `.env` 配置 `PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PRODUCTION_TARGET_TICKET_STATUS` 并 recreate 容器后，使用受控 ticket 分别验证 `comment_visibility=internal` 和 `comment_visibility=external`，并核对 Zendesk readback 与 delivery ledger。
+- 三个开关（`*_ZENDESK_SIDE_EFFECTS_ENABLED`）默认为 0、`AUTOMATION_TARGET_TICKET_STATUS` 默认为空；未显式开启时真实执行会以 `zendesk_side_effects_not_enabled` 或 `automation_target_ticket_status_missing` fail closed，不会写 Zendesk。
 
 ## 4. 回滚
 
