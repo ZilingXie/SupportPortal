@@ -53,7 +53,7 @@ Options:
   -b, --branch <branch>      Deploy from the given git branch (default: current branch)
   -d, --domain <domain>      External domain for HTTPS health check (default: support.stellarix.space)
       --environment <name>   Deploy one split environment: staging, preproduction, production, route-staging, route-preproduction, route-production
-      --release <id>          Load split image pointers from .deployments/releases/<id>.env
+      --release <id>          Load local split image pointers from .deployments/releases/<id>.env
       --release-manifest <path>
                               Load split image pointers from an explicit manifest path
       --rollback              Restore the previous image pointers for --environment
@@ -483,12 +483,39 @@ validate_release_id() {
 validate_release_image() {
   local key="$1"
   local value="$2"
-  [[ "${value}" != *replace* && "${value}" =~ ^.+@sha256:[0-9a-fA-F]{64}$ ]] || fail "${key} in release manifest must be an immutable digest image pointer"
+  local expected_repository
+  case "${key}" in
+    ROUTE_*) expected_repository="localhost/supportportal-route" ;;
+    AUTOMATION_STAGING_IMAGE|AUTOMATION_PREPRODUCTION_IMAGE) expected_repository="localhost/supportportal-automation" ;;
+    AUTOMATION_PRODUCTION_IMAGE) expected_repository="localhost/supportportal-automation-production" ;;
+    *) fail "Unsupported release image key: ${key}" ;;
+  esac
+  [[ "${value}" == "${expected_repository}:"* ]] || fail "${key} in release manifest must use ${expected_repository}:<release-id>"
+  validate_release_id "${value#*:}"
+}
+
+validate_release_image_id() {
+  local key="$1"
+  local value="$2"
+  [[ "${value}" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "${key} in release manifest must be a Docker image ID"
+}
+
+validate_local_image_identity() {
+  local image_key="$1"
+  local image_ref="$2"
+  local expected_image_id="$3"
+  local actual_image_id
+  [[ -n "${expected_image_id}" ]] || return 0
+  actual_image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}" 2>/dev/null || true)"
+  actual_image_id="$(trim "${actual_image_id}")"
+  [[ -n "${actual_image_id}" ]] || fail "${image_key} local image is missing: ${image_ref}"
+  [[ "${actual_image_id}" == "${expected_image_id}" ]] || fail "${image_key} local image ID mismatch: expected ${expected_image_id}, found ${actual_image_id} (${image_ref})"
+  log "Verified ${image_key} local image ${image_ref} (${actual_image_id})"
 }
 
 load_release_manifest() {
   local manifest_path="$RELEASE_MANIFEST"
-  local key value manifest_release manifest_commit
+  local key value image_id image_id_key manifest_release manifest_commit
   [[ "${ROLLBACK_SPLIT}" == "0" ]] || fail "--release/--release-manifest cannot be combined with --rollback"
   [[ -z "${RELEASE_ID}" || -z "${RELEASE_MANIFEST}" ]] || fail "Use either --release or --release-manifest, not both"
   if [[ -n "${RELEASE_ID}" ]]; then
@@ -505,7 +532,11 @@ load_release_manifest() {
     AUTOMATION_STAGING_IMAGE AUTOMATION_PREPRODUCTION_IMAGE AUTOMATION_PRODUCTION_IMAGE; do
     value="$(manifest_value "${manifest_path}" "${key}")"
     validate_release_image "${key}" "${value}"
+    image_id_key="${key}_ID"
+    image_id="$(manifest_value "${manifest_path}" "${image_id_key}")"
+    validate_release_image_id "${image_id_key}" "${image_id}"
     export_env_value "${key}" "${value}"
+    export_env_value "${image_id_key}" "${image_id}"
   done
   manifest_release="$(manifest_value "${manifest_path}" release_id)"
   manifest_commit="$(manifest_value "${manifest_path}" commit)"
@@ -626,44 +657,72 @@ split_environment_config() {
 deploy_split_environment() {
   local environment="$1"
   local image_value token_value db_value db_schema queue_name event_channel
-  local route_image automation_image previous_manifest previous_route_image previous_automation_image
-  local current_manifest_route_image current_manifest_automation_image
+  local route_image route_image_id automation_image automation_image_id previous_manifest previous_route_image previous_automation_image
+  local previous_route_image_id previous_automation_image_id current_manifest_route_image current_manifest_automation_image
+  local current_manifest_route_image_id current_manifest_automation_image_id image_key image_id_key
   split_environment_config "${environment}"
   SPLIT_PROJECT_NAME="supportportal-automation-${environment}"
   SPLIT_COMPOSE_ARGS=(--project-name "${SPLIT_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile automation)
   previous_manifest="${PROJECT_ROOT}/.deployments/${environment}.manifest"
   current_manifest_route_image="$(manifest_value "${previous_manifest}" route_image)"
   current_manifest_automation_image="$(manifest_value "${previous_manifest}" automation_image)"
+  current_manifest_route_image_id="$(manifest_value "${previous_manifest}" route_image_id)"
+  current_manifest_automation_image_id="$(manifest_value "${previous_manifest}" automation_image_id)"
   previous_route_image=""
   previous_automation_image=""
+  previous_route_image_id=""
+  previous_automation_image_id=""
   route_image="$(resolve_env_value "${SPLIT_IMAGE_KEYS[0]}")"
+  route_image_id="$(resolve_env_value "${SPLIT_IMAGE_KEYS[0]}_ID")"
   automation_image=""
+  automation_image_id=""
   if [[ ${#SPLIT_IMAGE_KEYS[@]} -gt 1 ]]; then
     automation_image="$(resolve_env_value "${SPLIT_IMAGE_KEYS[1]}")"
+    automation_image_id="$(resolve_env_value "${SPLIT_IMAGE_KEYS[1]}_ID")"
   fi
   if [[ "${ROLLBACK_SPLIT}" == "1" ]]; then
     previous_route_image="${current_manifest_route_image}"
     previous_automation_image="${current_manifest_automation_image}"
+    previous_route_image_id="${current_manifest_route_image_id}"
+    previous_automation_image_id="${current_manifest_automation_image_id}"
     route_image="$(manifest_value "${previous_manifest}" previous_route_image)"
     [[ -n "${previous_route_image}" ]] || fail "No previous route image pointer exists for ${environment}"
     [[ -n "${route_image}" ]] || fail "No previous route image pointer exists for ${environment}"
+    route_image_id="$(manifest_value "${previous_manifest}" previous_route_image_id)"
     export_env_value "${SPLIT_IMAGE_KEYS[0]}" "${route_image}"
+    export_env_value "${SPLIT_IMAGE_KEYS[0]}_ID" "${route_image_id}"
     if [[ ${#SPLIT_IMAGE_KEYS[@]} -gt 1 ]]; then
       automation_image="$(manifest_value "${previous_manifest}" previous_automation_image)"
       [[ -n "${previous_automation_image}" ]] || fail "No previous automation image pointer exists for ${environment}"
       [[ -n "${automation_image}" ]] || fail "No previous automation image pointer exists for ${environment}"
+      automation_image_id="$(manifest_value "${previous_manifest}" previous_automation_image_id)"
       export_env_value "${SPLIT_IMAGE_KEYS[1]}" "${automation_image}"
+      export_env_value "${SPLIT_IMAGE_KEYS[1]}_ID" "${automation_image_id}"
     fi
   else
     previous_route_image="${current_manifest_route_image}"
     previous_automation_image="${current_manifest_automation_image}"
+    previous_route_image_id="${current_manifest_route_image_id}"
+    previous_automation_image_id="${current_manifest_automation_image_id}"
     if [[ -z "${RELEASE_MANIFEST}" ]]; then
       log "No release manifest supplied; using legacy image variables from ${ENV_FILE}."
+      for image_key in "${SPLIT_IMAGE_KEYS[@]}"; do
+        image_value="$(resolve_env_value "${image_key}")"
+        [[ -n "${image_value}" && "${image_value}" != *replace* && "${image_value}" == *@sha256:* ]] || fail "${image_key} must be an immutable digest image pointer"
+      done
     fi
+  fi
+  if [[ -n "${RELEASE_MANIFEST}" ]]; then
     for image_key in "${SPLIT_IMAGE_KEYS[@]}"; do
       image_value="$(resolve_env_value "${image_key}")"
-      [[ -n "${image_value}" && "${image_value}" != *replace* && "${image_value}" == *@sha256:* ]] || fail "${image_key} must be an immutable digest image pointer"
+      image_id_key="${image_key}_ID"
+      validate_local_image_identity "${image_key}" "${image_value}" "$(resolve_env_value "${image_id_key}")"
     done
+  elif [[ "${route_image}" == localhost/* || "${automation_image:-}" == localhost/* ]]; then
+    validate_local_image_identity "${SPLIT_IMAGE_KEYS[0]}" "${route_image}" "${route_image_id}"
+    if [[ ${#SPLIT_IMAGE_KEYS[@]} -gt 1 ]]; then
+      validate_local_image_identity "${SPLIT_IMAGE_KEYS[1]}" "${automation_image}" "${automation_image_id}"
+    fi
   fi
   token_value="$(resolve_env_value "${SPLIT_TOKEN_KEY}")"
   [[ -n "${token_value}" ]] || fail "${SPLIT_TOKEN_KEY} is required"
@@ -680,15 +739,19 @@ deploy_split_environment() {
   fi
   ensure_automation_networks
   log "Deploying split environment ${environment} as project ${SPLIT_PROJECT_NAME} with route=${route_image} automation=${automation_image:-n/a}"
-  docker compose "${SPLIT_COMPOSE_ARGS[@]}" pull "${SPLIT_SERVICES[@]}"
+  if [[ "${route_image}" == localhost/* && ( -z "${automation_image}" || "${automation_image}" == localhost/* ) ]]; then
+    log "Using local split images; skipping docker compose pull."
+  else
+    docker compose "${SPLIT_COMPOSE_ARGS[@]}" pull "${SPLIT_SERVICES[@]}"
+  fi
   docker compose "${SPLIT_COMPOSE_ARGS[@]}" up -d --no-build "${SPLIT_SERVICES[@]}"
   for service in "${SPLIT_SERVICES[@]}"; do
     wait_for_split_service "${service}" "$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)" "$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)" || fail "${environment} ${service} health check failed"
   done
   mkdir -p "${PROJECT_ROOT}/.deployments"
-  printf 'environment=%s\nproject=%s\nroute_image=%s\nautomation_image=%s\nprevious_route_image=%s\nprevious_automation_image=%s\ncommit=%s\ndb_schema=%s\nqueue=%s\nevent_channel=%s\nresource_id=%s\ntime=%s\n' \
-    "${environment}" "${SPLIT_PROJECT_NAME}" "${route_image}" "${automation_image}" \
-    "${previous_route_image}" "${previous_automation_image}" "$(git rev-parse --short=12 HEAD)" \
+  printf 'environment=%s\nproject=%s\nroute_image=%s\nroute_image_id=%s\nautomation_image=%s\nautomation_image_id=%s\nprevious_route_image=%s\nprevious_route_image_id=%s\nprevious_automation_image=%s\nprevious_automation_image_id=%s\ncommit=%s\ndb_schema=%s\nqueue=%s\nevent_channel=%s\nresource_id=%s\ntime=%s\n' \
+    "${environment}" "${SPLIT_PROJECT_NAME}" "${route_image}" "${route_image_id}" "${automation_image}" "${automation_image_id}" \
+    "${previous_route_image}" "${previous_route_image_id}" "${previous_automation_image}" "${previous_automation_image_id}" "$(git rev-parse --short=12 HEAD)" \
     "${db_schema:-}" "${queue_name:-}" "${event_channel:-}" "${SPLIT_RESOURCE_ID}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "${PROJECT_ROOT}/.deployments/${environment}.manifest"
   log "Split environment ${environment} deployed; rollback scope is ${SPLIT_SERVICES[*]} only."

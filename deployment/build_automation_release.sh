@@ -5,13 +5,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 DOCKERFILE="${PROJECT_ROOT}/backend/Dockerfile.automation"
 RELEASE_DIR="${PROJECT_ROOT}/.deployments/releases"
+IMAGE_PREFIX="localhost/supportportal"
 
-REGISTRY=""
 RELEASE_ID=""
 MANIFEST_PATH=""
 COMMIT_REF=""
 BUILD_TIME=""
-BUILT_DIGEST=""
+BUILT_IMAGE_REF=""
+BUILT_IMAGE_ID=""
 
 log() {
   printf '[release] %s\n' "$*"
@@ -25,16 +26,18 @@ fail() {
 usage() {
   cat <<'EOF'
 Usage:
-  ./deployment/build_automation_release.sh --registry <registry> [options]
+  ./deployment/build_automation_release.sh [options]
 
 Options:
-      --registry <registry>   Registry prefix, for example registry.example/supportportal
       --release-id <id>        Release id (default: current 12-character commit)
       --manifest <path>        Output manifest path (default: .deployments/releases/<id>.env)
   -h, --help                  Show help
 
-The command builds and pushes three immutable role images:
+The command builds three local role images on the current host:
   route, automation (staging/preproduction), production (production only)
+
+The generated manifest contains local image references and image IDs. It does not
+push to or pull from a remote registry.
 EOF
 }
 
@@ -54,9 +57,9 @@ validate_identifier() {
   [[ "${value}" =~ ^[A-Za-z0-9._-]+$ ]] || fail "Invalid release id: ${value}"
 }
 
-validate_digest() {
+validate_image_id() {
   local value="$1"
-  [[ "${value}" =~ ^.+@sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker push did not return an immutable digest: ${value}"
+  [[ "${value}" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker image inspect did not return an immutable image ID: ${value}"
 }
 
 build_role_image() {
@@ -72,29 +75,37 @@ build_role_image() {
     --file "${DOCKERFILE}" \
     --tag "${tag}" \
     "${PROJECT_ROOT}"
-  log "Pushing ${tag}"
-  docker push "${tag}"
-  BUILT_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "${tag}" | head -n 1)"
-  BUILT_DIGEST="$(trim "${BUILT_DIGEST}")"
-  validate_digest "${BUILT_DIGEST}"
-  log "Published ${role} digest ${BUILT_DIGEST}"
+  BUILT_IMAGE_REF="${tag}"
+  BUILT_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${tag}")"
+  BUILT_IMAGE_ID="$(trim "${BUILT_IMAGE_ID}")"
+  validate_image_id "${BUILT_IMAGE_ID}"
+  log "Built ${role} image ${BUILT_IMAGE_REF} (${BUILT_IMAGE_ID})"
 }
 
 write_manifest() {
-  local route_digest="$1"
-  local automation_digest="$2"
-  local production_digest="$3"
+  local route_image="$1"
+  local route_image_id="$2"
+  local automation_image="$3"
+  local automation_image_id="$4"
+  local production_image="$5"
+  local production_image_id="$6"
   local output_dir temp_path
 
   output_dir="$(dirname -- "${MANIFEST_PATH}")"
   mkdir -p "${output_dir}"
   temp_path="$(mktemp "${MANIFEST_PATH}.tmp.XXXXXX")"
   trap 'rm -f -- "${temp_path}"' EXIT
-  printf 'release_id=%s\ncommit=%s\nbuild_time=%s\nroute_image=%s\nautomation_image=%s\nproduction_image=%s\nROUTE_STAGING_IMAGE=%s\nROUTE_PREPRODUCTION_IMAGE=%s\nROUTE_PRODUCTION_IMAGE=%s\nAUTOMATION_STAGING_IMAGE=%s\nAUTOMATION_PREPRODUCTION_IMAGE=%s\nAUTOMATION_PRODUCTION_IMAGE=%s\n' \
+  printf 'release_id=%s\ncommit=%s\nbuild_time=%s\nroute_image=%s\nroute_image_id=%s\nautomation_image=%s\nautomation_image_id=%s\nproduction_image=%s\nproduction_image_id=%s\nROUTE_STAGING_IMAGE=%s\nROUTE_STAGING_IMAGE_ID=%s\nROUTE_PREPRODUCTION_IMAGE=%s\nROUTE_PREPRODUCTION_IMAGE_ID=%s\nROUTE_PRODUCTION_IMAGE=%s\nROUTE_PRODUCTION_IMAGE_ID=%s\nAUTOMATION_STAGING_IMAGE=%s\nAUTOMATION_STAGING_IMAGE_ID=%s\nAUTOMATION_PREPRODUCTION_IMAGE=%s\nAUTOMATION_PREPRODUCTION_IMAGE_ID=%s\nAUTOMATION_PRODUCTION_IMAGE=%s\nAUTOMATION_PRODUCTION_IMAGE_ID=%s\n' \
     "${RELEASE_ID}" "${COMMIT_REF}" "${BUILD_TIME}" \
-    "${route_digest}" "${automation_digest}" "${production_digest}" \
-    "${route_digest}" "${route_digest}" "${route_digest}" \
-    "${automation_digest}" "${automation_digest}" "${production_digest}" \
+    "${route_image}" "${route_image_id}" \
+    "${automation_image}" "${automation_image_id}" \
+    "${production_image}" "${production_image_id}" \
+    "${route_image}" "${route_image_id}" \
+    "${route_image}" "${route_image_id}" \
+    "${route_image}" "${route_image_id}" \
+    "${automation_image}" "${automation_image_id}" \
+    "${automation_image}" "${automation_image_id}" \
+    "${production_image}" "${production_image_id}" \
     > "${temp_path}"
   chmod 0600 "${temp_path}"
   mv -f -- "${temp_path}" "${MANIFEST_PATH}"
@@ -105,11 +116,6 @@ write_manifest() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --registry)
-        [[ $# -ge 2 ]] || fail "--registry requires a value"
-        REGISTRY="${2%/}"
-        shift 2
-        ;;
       --release-id)
         [[ $# -ge 2 ]] || fail "--release-id requires a value"
         RELEASE_ID="$2"
@@ -135,10 +141,8 @@ main() {
   parse_args "$@"
   require_cmd docker
   require_cmd git
-  require_cmd head
   require_cmd mktemp
 
-  [[ -n "${REGISTRY}" ]] || fail "--registry is required"
   [[ -f "${DOCKERFILE}" ]] || fail "Dockerfile not found: ${DOCKERFILE}"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=all)" ]] || fail "Working tree is not clean; build from a clean commit"
 
@@ -151,14 +155,20 @@ main() {
     MANIFEST_PATH="${PROJECT_ROOT}/${MANIFEST_PATH}"
   fi
 
-  local route_digest automation_digest production_digest
-  build_role_image route "${REGISTRY}/supportportal-route"
-  route_digest="${BUILT_DIGEST}"
-  build_role_image automation "${REGISTRY}/supportportal-automation"
-  automation_digest="${BUILT_DIGEST}"
-  build_role_image production "${REGISTRY}/supportportal-automation-production"
-  production_digest="${BUILT_DIGEST}"
-  write_manifest "${route_digest}" "${automation_digest}" "${production_digest}"
+  local route_image route_image_id automation_image automation_image_id production_image production_image_id
+  build_role_image route "${IMAGE_PREFIX}-route"
+  route_image="${BUILT_IMAGE_REF}"
+  route_image_id="${BUILT_IMAGE_ID}"
+  build_role_image automation "${IMAGE_PREFIX}-automation"
+  automation_image="${BUILT_IMAGE_REF}"
+  automation_image_id="${BUILT_IMAGE_ID}"
+  build_role_image production "${IMAGE_PREFIX}-automation-production"
+  production_image="${BUILT_IMAGE_REF}"
+  production_image_id="${BUILT_IMAGE_ID}"
+  write_manifest \
+    "${route_image}" "${route_image_id}" \
+    "${automation_image}" "${automation_image_id}" \
+    "${production_image}" "${production_image_id}"
 }
 
 main "$@"
