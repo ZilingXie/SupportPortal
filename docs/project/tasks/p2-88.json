@@ -96,6 +96,11 @@
   "history": [
     {
       "at": "2026-08-22",
+      "event": "preproduction_human_review_return",
+      "summary": "preproduction 线上业务验收暴露非 production runtime 的 human_review 分支缺少 return，落入末尾 store.save 时引用未赋值 delivery_ledger 导致 500；与 production runtime 对齐补显式 return 并增加回归用例。"
+    },
+    {
+      "at": "2026-08-22",
       "event": "local_stack_compose_default_network_compat",
       "summary": "修复 split compose 顶层未显式声明 default 网络导致本地官方 podman-compose 栈无法重启的问题；networks 顶层增加 default: deployment_default 声明，podman-compose config 与 compose 相关测试通过。"
     },

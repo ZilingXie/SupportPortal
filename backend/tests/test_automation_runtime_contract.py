@@ -86,6 +86,27 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 )
                 call.assert_not_awaited()
 
+    def test_preproduction_human_review_returns_without_side_effects(self):
+        with self._client("preproduction"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            call.return_value = RouteResult(
+                request_id="req-hr",
+                idempotency_key="preproduction:route:req-hr",
+                environment=AutomationEnvironment.PREPRODUCTION,
+                case_id="AC-HR",
+                route={"execution_action": "human_review_required"},
+                automation={"eligible": False},
+                action_plan={"preparation_status": "human_review"},
+            )
+            with patch("backend.automation_runtime.execute_side_effects") as effects, TestClient(create_app()) as client:
+                response = client.post(
+                    "/v1/cases",
+                    json={"request_id": "req-hr", "case_id": "AC-HR", "zendesk_ticket_id": "123", "question": "hello"},
+                    headers={"Authorization": "Bearer execution-token"},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["status"], "human_review")
+                effects.assert_not_called()
+
     def test_unknown_write_paths_return_not_found(self):
         with self._client("production"):
             with TestClient(create_app()) as client:

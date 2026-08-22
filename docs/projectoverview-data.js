@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T16:40:14Z",
-  "source_base_commit": "90439b7eb8fdfeb6e79a8d53d8be2f1e477ee22f",
-  "registry_digest": "2faa9db5184c4e7c622d81a41f48e03f1e83a36c9dc8db4a33f07b0f600431f7",
+  "generated_at": "2026-08-22T17:10:21Z",
+  "source_base_commit": "6aefb3c91d178b374a5a1817a788af13ae64d7cb",
+  "registry_digest": "1b50d3257778076b2f12ab991c6a9cc6ae348e3acb88f97a217f1ccccb8eb6c3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7982,6 +7982,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-22",
       "updated_at": "2026-08-22",
       "history": [
+        {
+          "at": "2026-08-22",
+          "event": "preproduction_human_review_return",
+          "summary": "preproduction 线上业务验收暴露非 production runtime 的 human_review 分支缺少 return，落入末尾 store.save 时引用未赋值 delivery_ledger 导致 500；与 production runtime 对齐补显式 return 并增加回归用例。"
+        },
         {
           "at": "2026-08-22",
           "event": "local_stack_compose_default_network_compat",

@@ -146,6 +146,7 @@ def create_app() -> FastAPI:
             record = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": execution_status, "failure_code": failure_code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "side_effects": [], "created_at": _now()})
             if execution_status == "failed":
                 raise HTTPException(status_code=502, detail={"code": failure_code, "execution": record})
+            return {"status": execution_status, "environment": environment.value, "execution": record}
         elif policy.writes_zendesk:
             delivery_ledger = pending_delivery_ledger(
                 environment=environment.value,
