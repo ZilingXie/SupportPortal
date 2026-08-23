@@ -36,6 +36,11 @@
   "history": [
     {
       "at": "2026-08-23",
+      "event": "route_field_scope_label_fix",
+      "summary": "release-20260823-006 线上探针发现 route_counts 全落 uncategorized：真实 router payload 无 category/subcategory 键，实际字段为 scope_label/execution_action（UI 徽标靠 fallback 才显示）。store 的 SQL 表达式与 Python helper 对齐 UI 取值语义（category→scope_label、subcategory→execution_action 逐级 fallback），测试补 scope_label 形态记录，随 release-20260823-007 部署。"
+    },
+    {
+      "at": "2026-08-23",
       "event": "created",
       "summary": "用户反馈：三环境侧栏缺 Rerun（疑被 Reset environment 取代）、过滤器应为旧端点的路由两级过滤而非执行状态过滤。原拟 p2-91 编号已被并行 n8n 鉴权统一任务（PR#866）占用，改用 p2-92。"
     }
