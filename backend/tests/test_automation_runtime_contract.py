@@ -155,6 +155,53 @@ class AutomationRuntimeContractTest(unittest.TestCase):
             automation={"eligible": False},
         )
 
+    def test_list_executions_supports_route_filters_and_counts(self):
+        with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
+            routes = [
+                ("req-f0", "AC-F0", "conversation", "human_review_required"),
+                ("req-f1", "AC-F1", "account_billing", "account_suspension"),
+                ("req-f2", "AC-F2", "conversation", "follow_up"),
+            ]
+            call.side_effect = [
+                RouteResult(
+                    request_id=request_id,
+                    idempotency_key=f"staging:route:{request_id}",
+                    environment=AutomationEnvironment.STAGING,
+                    case_id=case_id,
+                    route={"category": category, "subcategory": subcategory},
+                    automation={"eligible": False},
+                )
+                for request_id, case_id, category, subcategory in routes
+            ]
+            headers = {"X-N8n-Request-Token": "execution-token"}
+            with TestClient(create_app()) as client:
+                for request_id, case_id, _, _ in routes:
+                    result = client.post(
+                        "/v1/cases",
+                        json={"request_id": request_id, "case_id": case_id, "question": "q"},
+                        headers=headers,
+                    )
+                    self.assertEqual(result.status_code, 200)
+                listing = client.get("/v1/executions", headers=headers)
+                payload = listing.json()
+                self.assertEqual(payload["total"], 3)
+                self.assertEqual(payload["route_counts"], {"conversation": 2, "account_billing": 1})
+                self.assertEqual(payload["route_subcategory_counts"], {})
+                filtered = client.get("/v1/executions?route_category=conversation", headers=headers)
+                filtered_payload = filtered.json()
+                self.assertEqual(filtered_payload["total"], 2)
+                self.assertTrue(all(item["route_result"]["route"]["category"] == "conversation" for item in filtered_payload["executions"]))
+                self.assertEqual(filtered_payload["route_counts"], {"conversation": 2, "account_billing": 1})
+                self.assertEqual(filtered_payload["route_subcategory_counts"], {"human_review_required": 1, "follow_up": 1})
+                subcategory = client.get(
+                    "/v1/executions?route_category=conversation&route_subcategory=follow_up", headers=headers
+                )
+                subcategory_payload = subcategory.json()
+                self.assertEqual(subcategory_payload["total"], 1)
+                self.assertEqual(subcategory_payload["executions"][0]["case_id"], "AC-F2")
+                empty = client.get("/v1/executions?route_category=unknown", headers=headers)
+                self.assertEqual(empty.json()["total"], 0)
+
     def test_list_and_detail_executions_require_token_and_persist_request(self):
         with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
             call.return_value = self._staging_route("req-l2", "AC-L2")

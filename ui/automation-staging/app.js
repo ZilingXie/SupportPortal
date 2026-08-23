@@ -41,7 +41,23 @@ const STATUS_META = {
   failed: { label: "Failed", className: "status-badge--not" },
   outcome_unknown: { label: "Outcome unknown", className: "status-badge--needs" },
 };
-const STATUS_ORDER = ["pending", "prepared", "completed", "human_review", "failed", "outcome_unknown"];
+const ROUTE_GROUP_LABELS = {
+  automation: "Automation",
+  account_billing: "Account & Billing",
+  backend_operation: "Backend Operation",
+  conversation: "Conversation",
+  human_review: "Human Review",
+  uncategorized: "Uncategorized",
+  quota: "Quota",
+  enablement: "Enablement",
+  fraud_account: "Fraud Account",
+  account_suspension: "Account Suspension",
+};
+
+function routeGroupLabel(category) {
+  const key = String(category || "").trim();
+  return ROUTE_GROUP_LABELS[key] || key.replaceAll("_", " ");
+}
 
 const state = {
   authorized: false,
@@ -52,8 +68,11 @@ const state = {
   executions: [],
   total: 0,
   statusCounts: {},
+  routeCounts: {},
+  routeSubcategoryCounts: {},
   page: 1,
-  statusFilter: "all",
+  routeGroup: "all",
+  routeSubcategory: "",
   historyLoading: false,
   historyError: "",
   caseSearchQuery: "",
@@ -68,6 +87,7 @@ const state = {
 /*__RERUN_START__*/
   rerunConfirmation: null,
   isRerunning: false,
+  rerunAll: { running: false, total: 0, processed: 0, succeeded: 0, failed: 0, failures: [], done: false, error: "" },
 /*__RERUN_END__*/
   resetConfirmationOpen: false,
   isResetting: false,
@@ -215,11 +235,12 @@ function disconnectToken() {
   render();
 }
 
-function executionsQueryString({ page = state.page, status = state.statusFilter } = {}) {
+function executionsQueryString({ page = state.page, routeGroup = state.routeGroup, routeSubcategory = state.routeSubcategory } = {}) {
   const params = new URLSearchParams();
   params.set("page", String(page));
   params.set("page_size", String(PAGE_SIZE));
-  if (status && status !== "all") params.set("status", status);
+  if (routeGroup && routeGroup !== "all") params.set("route_category", routeGroup);
+  if (routeGroup && routeGroup !== "all" && routeSubcategory) params.set("route_subcategory", routeSubcategory);
   return params.toString();
 }
 
@@ -232,6 +253,11 @@ async function loadExecutions({ page = state.page, renderOnUpdate = true } = {})
     state.executions = Array.isArray(payload.executions) ? payload.executions : [];
     state.total = Number(payload.total || 0);
     state.statusCounts = payload.status_counts && typeof payload.status_counts === "object" ? payload.status_counts : {};
+    state.routeCounts = payload.route_counts && typeof payload.route_counts === "object" ? payload.route_counts : {};
+    state.routeSubcategoryCounts =
+      payload.route_subcategory_counts && typeof payload.route_subcategory_counts === "object"
+        ? payload.route_subcategory_counts
+        : {};
     state.page = Number(payload.page || page);
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -368,6 +394,7 @@ function openRerunConfirmation() {
   const execution = state.activeExecution;
   if (!execution) return;
   state.rerunConfirmation = {
+    mode: "single",
     executionId: String(execution.execution_id || ""),
     caseId: String(execution.case_id || ""),
     ticketId: String(execution.request?.zendesk_ticket_id || ""),
@@ -375,9 +402,25 @@ function openRerunConfirmation() {
   render();
 }
 
+function openFullRerunConfirmation() {
+  if (!state.capabilities?.rerun || state.rerunAll?.running || state.isRerunning) return;
+  if (!state.total) {
+    state.historyError = "No executions to rerun.";
+    render();
+    return;
+  }
+  state.rerunConfirmation = { mode: "all", total: state.total };
+  render();
+}
+
 async function confirmRerun() {
   const snapshot = state.rerunConfirmation;
-  if (!snapshot || state.isRerunning) return;
+  if (!snapshot || state.isRerunning || state.rerunAll?.running) return;
+  if (snapshot.mode === "all") {
+    state.rerunConfirmation = null;
+    await runFullRerun();
+    return;
+  }
   state.isRerunning = true;
   render();
   try {
@@ -408,6 +451,85 @@ async function confirmRerun() {
     state.isRerunning = false;
     render();
   }
+}
+
+async function fetchAllExecutionTargets() {
+  const targets = [];
+  let page = 1;
+  for (;;) {
+    const payload = await apiRequest(`/v1/executions?page=${page}&page_size=50`);
+    const items = Array.isArray(payload.executions) ? payload.executions : [];
+    for (const item of items) {
+      targets.push({ executionId: String(item.execution_id || ""), caseId: String(item.case_id || "") });
+    }
+    if (!items.length || targets.length >= Number(payload.total || 0) || page >= 20) break;
+    page += 1;
+  }
+  return targets;
+}
+
+async function runFullRerun() {
+  const job = { running: true, total: 0, processed: 0, succeeded: 0, failed: 0, failures: [], done: false, error: "" };
+  state.rerunAll = job;
+  render();
+  try {
+    const targets = await fetchAllExecutionTargets();
+    job.total = targets.length;
+    if (!targets.length) {
+      job.running = false;
+      job.done = true;
+      render();
+      return;
+    }
+    render();
+    for (const target of targets) {
+      try {
+        await apiRequest("/v1/reruns", {
+          method: "POST",
+          body: JSON.stringify({
+            request_id: crypto.randomUUID(),
+            case_id: target.caseId,
+            rerun_of_execution_id: target.executionId,
+          }),
+        });
+        job.succeeded += 1;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          job.error = "Session expired. Sign in again.";
+          break;
+        }
+        job.failed += 1;
+        job.failures.push({ caseId: target.caseId, code: describeApiError(error, "failed") });
+        if (job.failures.length > 20) job.failures.shift();
+      }
+      job.processed += 1;
+      render();
+    }
+    job.running = false;
+    job.done = true;
+    showToast(`Rerun finished · ${job.succeeded} succeeded, ${job.failed} failed`);
+    await loadExecutions({ page: 1, renderOnUpdate: false });
+  } catch (error) {
+    job.running = false;
+    job.error = error instanceof Error ? error.message : "Rerun aborted";
+  } finally {
+    render();
+  }
+}
+
+function renderRerunAllStatus() {
+  const job = state.rerunAll;
+  if (!job || (!job.running && !job.done && !job.error)) return "";
+  const percent = job.total ? Math.round((job.processed / job.total) * 100) : 0;
+  return `
+    <div class="reroute-status ${job.error ? "reroute-status--error" : job.done ? "reroute-status--done" : ""}" aria-live="polite">
+      <div class="reroute-status__line"><strong>Rerun ${escapeHtml(ENV.environment)}</strong><span>${job.processed}/${job.total}</span></div>
+      <div class="reroute-progress"><span style="width:${percent}%"></span></div>
+      <div class="reroute-status__line"><span>succeeded ${job.succeeded} · failed ${job.failed}</span><span>${job.error ? "aborted" : job.done ? "done" : "running"}</span></div>
+      ${job.error ? `<div class="reroute-status__line"><span>${escapeHtml(job.error)}</span></div>` : ""}
+      ${job.failures.slice(0, 5).map((failure) => `<div class="reroute-status__line"><span>${escapeHtml(failure.caseId)}</span><span>${escapeHtml(failure.code)}</span></div>`).join("")}
+    </div>
+  `;
 }
 /*__RERUN_END__*/
 
@@ -583,27 +705,65 @@ function renderCaseSearch() {
   `;
 }
 
+function selectedRouteFilterLabel() {
+  if (state.routeGroup === "all") return "All";
+  const groupLabel = routeGroupLabel(state.routeGroup);
+  if (state.routeSubcategory) return `${groupLabel} / ${state.routeSubcategory}`;
+  return groupLabel;
+}
+
 function renderFilterControls() {
-  const counts = state.statusCounts || {};
+  const counts = state.routeCounts || {};
   const allCount = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
-  const chips = [{ id: "all", label: "All", count: allCount }].concat(
-    STATUS_ORDER.map((status) => ({ id: status, label: statusMeta(status).label, count: Number(counts[status] || 0) }))
+  const groups = [{ id: "all", label: "All", count: allCount }].concat(
+    Object.entries(counts)
+      .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])))
+      .map(([category, count]) => ({ id: category, label: routeGroupLabel(category), count: Number(count || 0) }))
   );
+  const subcategoryCounts = state.routeSubcategoryCounts || {};
+  const subcategoryOptions = Object.entries(subcategoryCounts)
+    .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])))
+    .map(([subcategory, count]) => ({ value: subcategory, label: subcategory || "—", count: Number(count || 0) }));
+  const selectDisabled = state.routeGroup === "all" || !subcategoryOptions.length;
   return `
-    <div class="route-filter" role="group" aria-label="Execution status filters">
-      ${chips
-        .map(
-          (chip) => `
+    <div class="route-filter" aria-label="Execution route filters">
+      <div class="route-filter__groups" role="group" aria-label="Route categories">
+        ${groups
+          .map(
+            (group) => `
             <button
-              class="filter-chip ${state.statusFilter === chip.id ? "filter-chip--active" : ""}"
+              class="route-filter__group-button ${state.routeGroup === group.id ? "route-filter__group-button--active" : ""} ${group.id === "all" ? "route-filter__group-button--all" : ""}"
               type="button"
-              data-action="set-status-filter"
-              data-value="${escapeHtml(chip.id)}"
-              aria-pressed="${state.statusFilter === chip.id}"
-            >${escapeHtml(chip.label)}<span class="filter-count">${chip.count}</span></button>
+              data-action="set-route-group"
+              data-value="${escapeHtml(group.id)}"
+              aria-pressed="${state.routeGroup === group.id}"
+            >${escapeHtml(group.label)}<span class="filter-count">${group.count}</span></button>
           `
-        )
-        .join("")}
+          )
+          .join("")}
+      </div>
+      <div class="route-filter__subcategory-field">
+        <label class="route-filter__label" for="automation-route-subcategory">Subcategory</label>
+        <select
+          class="route-filter__subcategory"
+          id="automation-route-subcategory"
+          data-action="set-route-subcategory"
+          ${selectDisabled ? "disabled" : ""}
+        >
+          ${
+            selectDisabled
+              ? '<option value="">No subcategories</option>'
+              : [`<option value="">All ${escapeHtml(routeGroupLabel(state.routeGroup))}</option>`]
+                  .concat(
+                    subcategoryOptions.map(
+                      (option) =>
+                        `<option value="${escapeHtml(option.value)}" ${state.routeSubcategory === option.value ? "selected" : ""}>${escapeHtml(option.label)} (${option.count})</option>`
+                    )
+                  )
+                  .join("")
+          }
+        </select>
+      </div>
     </div>
   `;
 }
@@ -632,7 +792,7 @@ function renderHistorySidebar() {
   return `
     ${renderCaseSearch()}
     ${renderFilterControls()}
-    <div class="history-section-title">${state.statusFilter === "all" ? "All" : statusMeta(state.statusFilter).label} executions (${state.total})</div>
+    <div class="history-section-title">${escapeHtml(selectedRouteFilterLabel())} executions (${state.total})</div>
     ${state.executions
       .map(
         (execution) => `
@@ -898,7 +1058,7 @@ function renderDetailView() {
 /*__RERUN_START__*/
   const canRerun = Boolean(state.capabilities?.rerun);
   extraActionButtonHtml = canRerun
-    ? `<button class="danger-button" type="button" data-action="open-rerun-confirmation" ${state.isRerunning ? "disabled" : ""}><span class="material-symbols-outlined">sync</span>Rerun this execution</button>`
+    ? `<button class="danger-button" type="button" data-action="open-rerun-confirmation" ${state.isRerunning || state.rerunAll?.running ? "disabled" : ""}><span class="material-symbols-outlined">sync</span>Rerun this execution</button>`
     : "";
   chainRowHtml = execution.rerun_of_execution_id
     ? `<div class="meta-row"><span class="meta-label">Rerun of</span><span class="meta-value"><button class="ghost-button" type="button" data-action="open-execution" data-id="${escapeHtml(execution.rerun_of_execution_id)}">${escapeHtml(execution.rerun_of_execution_id)}</button></span></div>`
@@ -963,6 +1123,33 @@ function renderDetailView() {
 function renderRerunConfirmation() {
   if (!state.rerunConfirmation) return "";
   const snapshot = state.rerunConfirmation;
+  if (snapshot.mode === "all") {
+    return `
+      <div class="reroute-modal-backdrop" data-action="close-rerun-confirmation">
+        <section class="reroute-modal" role="dialog" aria-modal="true" aria-labelledby="rerun-dialog-title">
+          <div class="reroute-modal__heading">
+            <span class="material-symbols-outlined" aria-hidden="true">sync</span>
+            <div>
+              <h2 id="rerun-dialog-title">Rerun all executions?</h2>
+              <p>Every execution in ${escapeHtml(ENV.environment)} runs again from its persisted original request.</p>
+            </div>
+          </div>
+          <ul>
+            <li>All <strong>${escapeHtml(String(snapshot.total))}</strong> execution records in this environment are targeted.</li>
+            <li>Each rerun creates a new execution; the original records stay unchanged.</li>
+            <li>Progress and per-case failures are shown in the sidebar while it runs.</li>
+            ${ENV.rerunWritesZendesk ? "<li>Eligible routes will write a new internal Zendesk comment on each ticket.</li>" : ""}
+          </ul>
+          <div class="reroute-modal__actions">
+            <button class="ghost-button" type="button" data-action="close-rerun-confirmation">Cancel</button>
+            <button class="primary-button" type="button" data-action="confirm-rerun" ${state.rerunAll?.running ? "disabled" : ""}>
+              Rerun all executions
+            </button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
   return `
     <div class="reroute-modal-backdrop" data-action="close-rerun-confirmation">
       <section class="reroute-modal" role="dialog" aria-modal="true" aria-labelledby="rerun-dialog-title">
@@ -1026,8 +1213,17 @@ function render() {
   }
   const showReset = Boolean(state.capabilities?.reset);
   let extraModalHtml = "";
+  let bulkActionButtonHtml = "";
+  let bulkStatusHtml = "";
 /*__RERUN_START__*/
   extraModalHtml = renderRerunConfirmation();
+  bulkActionButtonHtml = state.capabilities?.rerun
+    ? `<button class="reroute-button" type="button" data-action="open-full-rerun-confirmation" ${state.rerunAll?.running || state.isRerunning ? "disabled" : ""}>
+            <span class="material-symbols-outlined">sync</span>
+            Rerun
+          </button>`
+    : "";
+  bulkStatusHtml = renderRerunAllStatus();
 /*__RERUN_END__*/
   appRoot.innerHTML = `
     <main class="account-shell">
@@ -1044,6 +1240,7 @@ function render() {
             <span class="material-symbols-outlined">add</span>
             New execution
           </button>
+          ${bulkActionButtonHtml}
           ${showReset ? `
           <button class="reroute-button" type="button" data-action="open-reset-confirmation" ${state.isResetting ? "disabled" : ""}>
             <span class="material-symbols-outlined">delete_sweep</span>
@@ -1060,6 +1257,7 @@ function render() {
           <span><strong>admin</strong><small>${escapeHtml(renderCapabilityLine())}</small></span>
           <button class="icon-button" type="button" data-action="disconnect-token" aria-label="Sign out"><span class="material-symbols-outlined">logout</span></button>
         </div>
+        ${bulkStatusHtml}
         ${state.historyError ? `<div class="error-banner" role="alert"><span class="material-symbols-outlined">error</span>${escapeHtml(state.historyError)}</div>` : ""}
         <div class="history-stack" id="history-list">
           ${renderHistorySidebar()}
@@ -1095,8 +1293,9 @@ function handleAction(action, target) {
     case "disconnect-token":
       disconnectToken();
       break;
-    case "set-status-filter":
-      state.statusFilter = value || "all";
+    case "set-route-group":
+      state.routeGroup = value || "all";
+      state.routeSubcategory = "";
       state.page = 1;
       void loadExecutions({ page: 1 });
       break;
@@ -1115,6 +1314,9 @@ function handleAction(action, target) {
 /*__RERUN_START__*/
     case "open-rerun-confirmation":
       openRerunConfirmation();
+      break;
+    case "open-full-rerun-confirmation":
+      openFullRerunConfirmation();
       break;
     case "close-rerun-confirmation":
       state.rerunConfirmation = null;
@@ -1177,7 +1379,15 @@ appRoot.addEventListener("input", (event) => {
 
 appRoot.addEventListener("change", (event) => {
   const select = event.target instanceof HTMLSelectElement ? event.target : null;
-  if (!select || !select.name) return;
+  if (!select) return;
+  const action = String(select.dataset.action || "");
+  if (action === "set-route-subcategory") {
+    state.routeSubcategory = String(select.value || "");
+    state.page = 1;
+    void loadExecutions({ page: 1 });
+    return;
+  }
+  if (!select.name) return;
   if (Object.prototype.hasOwnProperty.call(state.form, select.name)) {
     state.form[select.name] = String(select.value || "");
   }

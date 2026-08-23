@@ -190,10 +190,14 @@ def create_app() -> FastAPI:
         page_size: int = Query(default=10, ge=1, le=50),
         status: str | None = None,
         case_id: str | None = None,
+        route_category: str | None = None,
+        route_subcategory: str | None = None,
     ) -> dict[str, Any]:
         result = store.list_executions(
             status=status,
             case_id=case_id,
+            route_category=route_category,
+            route_subcategory=route_subcategory,
             limit=page_size,
             offset=(page - 1) * page_size,
         )
@@ -204,6 +208,8 @@ def create_app() -> FastAPI:
             "page_size": page_size,
             "total": result["total"],
             "status_counts": result["status_counts"],
+            "route_counts": result["route_counts"],
+            "route_subcategory_counts": result["route_subcategory_counts"],
         }
 
     @app.get("/v1/executions/{execution_id}", dependencies=[Depends(_require_execution_token)])

@@ -17,6 +17,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+ROUTE_CATEGORY_SQL = "COALESCE(NULLIF(payload->'route_result'->'route'->>'category',''),'uncategorized')"
+ROUTE_SUBCATEGORY_SQL = "payload->'route_result'->'route'->>'subcategory'"
+
+
+def _route_field_of(record: dict[str, Any], field: str, default: str) -> str:
+    route_result = record.get("route_result") if isinstance(record.get("route_result"), dict) else {}
+    route = route_result.get("route") if isinstance(route_result.get("route"), dict) else {}
+    return str(route.get(field) or "").strip() or default
+
+
+def _route_category_of(record: dict[str, Any]) -> str:
+    return _route_field_of(record, "category", "uncategorized")
+
+
+def _route_subcategory_of(record: dict[str, Any]) -> str:
+    return _route_field_of(record, "subcategory", "")
+
+
 class AutomationExecutionStore:
     def __init__(self, *, environment: str) -> None:
         self.environment = environment
@@ -165,32 +183,59 @@ class AutomationExecutionStore:
         *,
         status: str | None = None,
         case_id: str | None = None,
+        route_category: str | None = None,
+        route_subcategory: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """Return one page of executions plus total and per-status counts.
+        """Return one page of executions plus totals and filter-facet counts.
 
-        ``status_counts`` follows the search context (``case_id``) but ignores the
-        ``status`` filter itself so every filter chip shows its own count from the
-        same snapshot.
+        ``status_counts``/``route_counts`` follow the search context (``case_id``)
+        but ignore the matching filter itself so every filter control shows its
+        own count from the same snapshot. ``route_subcategory_counts`` is only
+        populated when a ``route_category`` filter is selected.
         """
         normalized_status = str(status or "").strip() or None
         normalized_case_id = str(case_id or "").strip() or None
+        normalized_route_category = str(route_category or "").strip() or None
+        normalized_route_subcategory = str(route_subcategory or "").strip() or None
         if self.in_memory:
             with self._lock:
                 records = [copy.deepcopy(item) for item in self._memory.values()]
             if normalized_case_id is not None:
                 records = [item for item in records if item.get("case_id") == normalized_case_id]
+            context_records = records
             status_counts: dict[str, int] = {}
-            for item in records:
+            for item in context_records:
                 key = str(item.get("status") or "")
                 status_counts[key] = status_counts.get(key, 0) + 1
+            route_counts: dict[str, int] = {}
+            for item in context_records:
+                key = _route_category_of(item)
+                route_counts[key] = route_counts.get(key, 0) + 1
+            route_subcategory_counts: dict[str, int] = {}
+            if normalized_route_category is not None:
+                for item in context_records:
+                    if _route_category_of(item) != normalized_route_category:
+                        continue
+                    key = _route_subcategory_of(item)
+                    route_subcategory_counts[key] = route_subcategory_counts.get(key, 0) + 1
             if normalized_status is not None:
                 records = [item for item in records if str(item.get("status") or "") == normalized_status]
+            if normalized_route_category is not None:
+                records = [item for item in records if _route_category_of(item) == normalized_route_category]
+            if normalized_route_subcategory is not None:
+                records = [item for item in records if _route_subcategory_of(item) == normalized_route_subcategory]
             records.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
             total = len(records)
             items = records[offset : offset + limit]
-            return {"items": items, "total": total, "status_counts": status_counts}
+            return {
+                "items": items,
+                "total": total,
+                "status_counts": status_counts,
+                "route_counts": route_counts,
+                "route_subcategory_counts": route_subcategory_counts,
+            }
         self.ensure_schema()
         page_filters: list[str] = []
         count_filters: list[str] = []
@@ -204,8 +249,16 @@ class AutomationExecutionStore:
             parameters.append(normalized_case_id)
             count_filters.append("case_id=%s")
             count_parameters.append(normalized_case_id)
+        if normalized_route_category is not None:
+            page_filters.append(f"{ROUTE_CATEGORY_SQL}=%s")
+            parameters.append(normalized_route_category)
+        if normalized_route_subcategory is not None:
+            page_filters.append(f"{ROUTE_SUBCATEGORY_SQL}=%s")
+            parameters.append(normalized_route_subcategory)
         page_where = f" WHERE {' AND '.join(page_filters)}" if page_filters else ""
         count_where = f" WHERE {' AND '.join(count_filters)}" if count_filters else ""
+        subcategory_where_parts = list(count_filters) + [f"{ROUTE_CATEGORY_SQL}=%s"]
+        subcategory_where = " WHERE " + " AND ".join(subcategory_where_parts)
         with psycopg.connect(self._dsn) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -219,6 +272,18 @@ class AutomationExecutionStore:
                 )
                 status_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
                 cursor.execute(
+                    f"SELECT {ROUTE_CATEGORY_SQL} AS category, COUNT(*) FROM {self._table()}{count_where} GROUP BY 1 ORDER BY 2 DESC, 1",
+                    count_parameters,
+                )
+                route_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
+                route_subcategory_counts = {}
+                if normalized_route_category is not None:
+                    cursor.execute(
+                        f"SELECT {ROUTE_SUBCATEGORY_SQL} AS subcategory, COUNT(*) FROM {self._table()}{subcategory_where} GROUP BY 1 ORDER BY 2 DESC, 1",
+                        [*count_parameters, normalized_route_category],
+                    )
+                    route_subcategory_counts = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
+                cursor.execute(
                     f"SELECT payload FROM {self._table()}{page_where} ORDER BY created_at DESC LIMIT %s OFFSET %s",
                     [*parameters, limit, offset],
                 )
@@ -226,7 +291,13 @@ class AutomationExecutionStore:
                     copy.deepcopy(row[0] if isinstance(row[0], dict) else json.loads(row[0]))
                     for row in cursor.fetchall()
                 ]
-        return {"items": items, "total": total, "status_counts": status_counts}
+        return {
+            "items": items,
+            "total": total,
+            "status_counts": status_counts,
+            "route_counts": route_counts,
+            "route_subcategory_counts": route_subcategory_counts,
+        }
 
     def delete_all(self) -> int:
         """Delete every execution row in this environment's table."""

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T02:58:46Z",
-  "source_base_commit": "18ddc356aab8dc29df6bd1efbbd0b51fe71a5f9a",
-  "registry_digest": "225ccd413d9d04b02515300340293c26336f1419211e9f91fd0966baf16774ef",
+  "generated_at": "2026-08-23T03:12:04Z",
+  "source_base_commit": "1fe65abd11f438170249db58fa4833c8ef6b1c4a",
+  "registry_digest": "786747b2c03f77c313bd6178098d2cc3a51b28197b40ec1516f5da7b00cb079c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1741,6 +1741,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Unified token mechanism choice",
           "command": "用户决策（对话确认）",
           "details": "用户选定：统一使用 X-N8n-Request-Token、别的机制都不接受；automation 环境值来源直接读 n8n_request_token（单变量贯穿，含 compose/deploy/本地脚本契约变更），而非保留三个 AUTOMATION_*_EXECUTION_TOKEN 同值。"
+        },
+        {
+          "type": "test",
+          "label": "Route filter and sidebar rerun contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_execution_store backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment && node --check ui/automation-{staging,preproduction,production}/app.js",
+          "details": "33 项测试通过。新增覆盖：GET /v1/executions 的 route_category/route_subcategory 过滤、route_counts 与选中 category 的 route_subcategory_counts 同快照返回；production runtime 同参数透传。三份 app.js node --check 通过、staging/preproduction 主体一致、production bundle 无 rerun 字符串（全量 rerun 代码全部位于剥离块内，中性变量名 bulkActionButtonHtml/bulkStatusHtml）。"
         }
       ],
       "source_refs": [
@@ -1750,7 +1756,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 10,
+      "task_count": 11,
       "done_count": 7,
       "blocked_count": 0
     },
@@ -8384,6 +8390,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p2-88",
         "p2-85",
+        "p2-90"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-92",
+      "title": "三环境控制台补齐旧端点侧栏 Rerun 与路由两级过滤",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户观测三环境控制台与 /account、/production 仍有差异：侧栏缺 Rerun 按钮（只有 Reset environment），过滤器是执行状态而非旧 UI 的路由两级过滤。本任务：侧栏新增 Rerun（对全部 execution 逐个 POST /v1/reruns，确认弹窗+进度面板，capabilities 驱动，production 物理排除）；过滤器改为 /account 同款路由两级过滤（route category 主组按钮+计数、subcategory 下拉+计数），后端 list_executions 增加 route_category/route_subcategory 过滤与 route_counts。",
+      "next_action": "代码与测试完成，待 finalize 合并后构建 release-20260823-006 部署三环境并线上验证（含并行 #866 鉴权变更的一并上线）。",
+      "acceptance_criteria": [
+        "GET /v1/executions 支持 route_category/route_subcategory 过滤并返回 route_counts（各 category 计数）与选中 category 的 subcategory 计数，均与当前页同快照；status/case 过滤保持兼容。",
+        "侧栏按钮组为 New execution + Rerun（capabilities.rerun 时显示）+ Reset environment（仅 staging）+ Sign out；Rerun 打开确认弹窗（冻结目标数量，preproduction 提示会写 internal Zendesk 评论），确认后逐个 rerun 全部 execution 并在侧栏显示进度面板（processed/total、succeeded/failed、失败明细、aria-live）。",
+        "过滤器与 /account 同构：紧凑主组按钮（All+各 route category，含 facet count）+ 单个二级 subcategory 下拉（含计数，无子类目时禁用）；切换过滤重置到第一页。",
+        "production UI bundle 仍不含 rerun 字符串；production 无 Rerun 按钮（镜像物理排除契约保持）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Route filter and sidebar rerun contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_execution_store backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment && node --check ui/automation-{staging,preproduction,production}/app.js",
+          "details": "33 项测试通过。新增覆盖：GET /v1/executions 的 route_category/route_subcategory 过滤、route_counts 与选中 category 的 route_subcategory_counts 同快照返回；production runtime 同参数透传。三份 app.js node --check 通过、staging/preproduction 主体一致、production bundle 无 rerun 字符串（全量 rerun 代码全部位于剥离块内，中性变量名 bulkActionButtonHtml/bulkStatusHtml）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_execution_store.py",
+        "backend/automation_runtime.py",
+        "backend/automation_production_runtime.py",
+        "ui/automation-staging",
+        "ui/automation-preproduction",
+        "ui/automation-production",
+        "ui/account-ui",
+        "design.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户反馈：三环境侧栏缺 Rerun（疑被 Reset environment 取代）、过滤器应为旧端点的路由两级过滤而非执行状态过滤。原拟 p2-91 编号已被并行 n8n 鉴权统一任务（PR#866）占用，改用 p2-92。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-89",
         "p2-90"
       ],
       "legacy_ids": [],

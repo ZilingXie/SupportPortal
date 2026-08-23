@@ -38,7 +38,23 @@ const STATUS_META = {
   failed: { label: "Failed", className: "status-badge--not" },
   outcome_unknown: { label: "Outcome unknown", className: "status-badge--needs" },
 };
-const STATUS_ORDER = ["pending", "prepared", "completed", "human_review", "failed", "outcome_unknown"];
+const ROUTE_GROUP_LABELS = {
+  automation: "Automation",
+  account_billing: "Account & Billing",
+  backend_operation: "Backend Operation",
+  conversation: "Conversation",
+  human_review: "Human Review",
+  uncategorized: "Uncategorized",
+  quota: "Quota",
+  enablement: "Enablement",
+  fraud_account: "Fraud Account",
+  account_suspension: "Account Suspension",
+};
+
+function routeGroupLabel(category) {
+  const key = String(category || "").trim();
+  return ROUTE_GROUP_LABELS[key] || key.replaceAll("_", " ");
+}
 
 const state = {
   authorized: false,
@@ -49,8 +65,11 @@ const state = {
   executions: [],
   total: 0,
   statusCounts: {},
+  routeCounts: {},
+  routeSubcategoryCounts: {},
   page: 1,
-  statusFilter: "all",
+  routeGroup: "all",
+  routeSubcategory: "",
   historyLoading: false,
   historyError: "",
   caseSearchQuery: "",
@@ -208,11 +227,12 @@ function disconnectToken() {
   render();
 }
 
-function executionsQueryString({ page = state.page, status = state.statusFilter } = {}) {
+function executionsQueryString({ page = state.page, routeGroup = state.routeGroup, routeSubcategory = state.routeSubcategory } = {}) {
   const params = new URLSearchParams();
   params.set("page", String(page));
   params.set("page_size", String(PAGE_SIZE));
-  if (status && status !== "all") params.set("status", status);
+  if (routeGroup && routeGroup !== "all") params.set("route_category", routeGroup);
+  if (routeGroup && routeGroup !== "all" && routeSubcategory) params.set("route_subcategory", routeSubcategory);
   return params.toString();
 }
 
@@ -225,6 +245,11 @@ async function loadExecutions({ page = state.page, renderOnUpdate = true } = {})
     state.executions = Array.isArray(payload.executions) ? payload.executions : [];
     state.total = Number(payload.total || 0);
     state.statusCounts = payload.status_counts && typeof payload.status_counts === "object" ? payload.status_counts : {};
+    state.routeCounts = payload.route_counts && typeof payload.route_counts === "object" ? payload.route_counts : {};
+    state.routeSubcategoryCounts =
+      payload.route_subcategory_counts && typeof payload.route_subcategory_counts === "object"
+        ? payload.route_subcategory_counts
+        : {};
     state.page = Number(payload.page || page);
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -528,27 +553,65 @@ function renderCaseSearch() {
   `;
 }
 
+function selectedRouteFilterLabel() {
+  if (state.routeGroup === "all") return "All";
+  const groupLabel = routeGroupLabel(state.routeGroup);
+  if (state.routeSubcategory) return `${groupLabel} / ${state.routeSubcategory}`;
+  return groupLabel;
+}
+
 function renderFilterControls() {
-  const counts = state.statusCounts || {};
+  const counts = state.routeCounts || {};
   const allCount = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
-  const chips = [{ id: "all", label: "All", count: allCount }].concat(
-    STATUS_ORDER.map((status) => ({ id: status, label: statusMeta(status).label, count: Number(counts[status] || 0) }))
+  const groups = [{ id: "all", label: "All", count: allCount }].concat(
+    Object.entries(counts)
+      .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])))
+      .map(([category, count]) => ({ id: category, label: routeGroupLabel(category), count: Number(count || 0) }))
   );
+  const subcategoryCounts = state.routeSubcategoryCounts || {};
+  const subcategoryOptions = Object.entries(subcategoryCounts)
+    .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])))
+    .map(([subcategory, count]) => ({ value: subcategory, label: subcategory || "—", count: Number(count || 0) }));
+  const selectDisabled = state.routeGroup === "all" || !subcategoryOptions.length;
   return `
-    <div class="route-filter" role="group" aria-label="Execution status filters">
-      ${chips
-        .map(
-          (chip) => `
+    <div class="route-filter" aria-label="Execution route filters">
+      <div class="route-filter__groups" role="group" aria-label="Route categories">
+        ${groups
+          .map(
+            (group) => `
             <button
-              class="filter-chip ${state.statusFilter === chip.id ? "filter-chip--active" : ""}"
+              class="route-filter__group-button ${state.routeGroup === group.id ? "route-filter__group-button--active" : ""} ${group.id === "all" ? "route-filter__group-button--all" : ""}"
               type="button"
-              data-action="set-status-filter"
-              data-value="${escapeHtml(chip.id)}"
-              aria-pressed="${state.statusFilter === chip.id}"
-            >${escapeHtml(chip.label)}<span class="filter-count">${chip.count}</span></button>
+              data-action="set-route-group"
+              data-value="${escapeHtml(group.id)}"
+              aria-pressed="${state.routeGroup === group.id}"
+            >${escapeHtml(group.label)}<span class="filter-count">${group.count}</span></button>
           `
-        )
-        .join("")}
+          )
+          .join("")}
+      </div>
+      <div class="route-filter__subcategory-field">
+        <label class="route-filter__label" for="automation-route-subcategory">Subcategory</label>
+        <select
+          class="route-filter__subcategory"
+          id="automation-route-subcategory"
+          data-action="set-route-subcategory"
+          ${selectDisabled ? "disabled" : ""}
+        >
+          ${
+            selectDisabled
+              ? '<option value="">No subcategories</option>'
+              : [`<option value="">All ${escapeHtml(routeGroupLabel(state.routeGroup))}</option>`]
+                  .concat(
+                    subcategoryOptions.map(
+                      (option) =>
+                        `<option value="${escapeHtml(option.value)}" ${state.routeSubcategory === option.value ? "selected" : ""}>${escapeHtml(option.label)} (${option.count})</option>`
+                    )
+                  )
+                  .join("")
+          }
+        </select>
+      </div>
     </div>
   `;
 }
@@ -577,7 +640,7 @@ function renderHistorySidebar() {
   return `
     ${renderCaseSearch()}
     ${renderFilterControls()}
-    <div class="history-section-title">${state.statusFilter === "all" ? "All" : statusMeta(state.statusFilter).label} executions (${state.total})</div>
+    <div class="history-section-title">${escapeHtml(selectedRouteFilterLabel())} executions (${state.total})</div>
     ${state.executions
       .map(
         (execution) => `
@@ -928,6 +991,8 @@ function render() {
   }
   const showReset = Boolean(state.capabilities?.reset);
   let extraModalHtml = "";
+  let bulkActionButtonHtml = "";
+  let bulkStatusHtml = "";
   appRoot.innerHTML = `
     <main class="account-shell">
       <aside class="side-panel">
@@ -943,6 +1008,7 @@ function render() {
             <span class="material-symbols-outlined">add</span>
             New execution
           </button>
+          ${bulkActionButtonHtml}
           ${showReset ? `
           <button class="reroute-button" type="button" data-action="open-reset-confirmation" ${state.isResetting ? "disabled" : ""}>
             <span class="material-symbols-outlined">delete_sweep</span>
@@ -959,6 +1025,7 @@ function render() {
           <span><strong>admin</strong><small>${escapeHtml(renderCapabilityLine())}</small></span>
           <button class="icon-button" type="button" data-action="disconnect-token" aria-label="Sign out"><span class="material-symbols-outlined">logout</span></button>
         </div>
+        ${bulkStatusHtml}
         ${state.historyError ? `<div class="error-banner" role="alert"><span class="material-symbols-outlined">error</span>${escapeHtml(state.historyError)}</div>` : ""}
         <div class="history-stack" id="history-list">
           ${renderHistorySidebar()}
@@ -994,8 +1061,9 @@ function handleAction(action, target) {
     case "disconnect-token":
       disconnectToken();
       break;
-    case "set-status-filter":
-      state.statusFilter = value || "all";
+    case "set-route-group":
+      state.routeGroup = value || "all";
+      state.routeSubcategory = "";
       state.page = 1;
       void loadExecutions({ page: 1 });
       break;
@@ -1064,7 +1132,15 @@ appRoot.addEventListener("input", (event) => {
 
 appRoot.addEventListener("change", (event) => {
   const select = event.target instanceof HTMLSelectElement ? event.target : null;
-  if (!select || !select.name) return;
+  if (!select) return;
+  const action = String(select.dataset.action || "");
+  if (action === "set-route-subcategory") {
+    state.routeSubcategory = String(select.value || "");
+    state.page = 1;
+    void loadExecutions({ page: 1 });
+    return;
+  }
+  if (!select.name) return;
   if (Object.prototype.hasOwnProperty.call(state.form, select.name)) {
     state.form[select.name] = String(select.value || "");
   }
