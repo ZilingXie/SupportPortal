@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 import backend.main as main
 import backend.worker as worker
 from backend.services import billing_automation as billing_automation_service
+from backend.services.account_reply_jobs import create_account_reply_job
 from backend.services.account_reply_rag_fallback import RagFallbackOutcome
 from backend.repositories.ticket_repository import (
     ACCOUNT_RERUN_RESET_AI_ONLY,
@@ -7259,6 +7260,58 @@ class AccountIntakeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["automation_status"], "human_review_required")
         self.assertIn("reply_rag_fallback_escalation", payload["not_automated_reason"])
+
+    def test_rag_fallback_publication_creates_delivery_ledger_for_rerouted_case(self) -> None:
+        ticket_id = "TK-RAG-LEDGER"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "what is appid?",
+                        "created_at": "2026-08-23T00:00:00+00:00",
+                    }
+                ],
+                "created_at": "2026-08-23T00:00:00+00:00",
+                "updated_at": "2026-08-23T00:00:00+00:00",
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-RAG-LEDGER",
+                "billing_ticket_id": "AC-RAG-LEDGER",
+                "client_ticket_id": ticket_id,
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12999",
+                "route_family": "rag_product_support",
+                "execution_action": "rag",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-23T00:00:00+00:00",
+            }
+        )
+        job = create_account_reply_job(
+            self.repository,
+            ticket_id=ticket_id,
+            trigger_message_created_at="2026-08-23T00:00:00+00:00",
+            created_at="2026-08-23T00:00:00+00:00",
+            delay_seconds=0,
+            draft_content="You can find the App ID on the Projects page in Agora Console.",
+            reply_intent="rag_fallback_answer",
+        )
+        job["status"] = "publishing"
+        self.repository.save_account_reply_job(job)
+        with patch.object(worker, "_deliver_production_account_reply_to_zendesk"):
+            worker._publish_account_reply_job(job)
+        messages = self.repository.get_ticket(ticket_id)["messages"]
+        assistant = [m for m in messages if m.get("role") == "assistant"]
+        self.assertEqual(len(assistant), 1)
+        claim = self.repository.claim_account_zendesk_comment_delivery(
+            account_case_id="AC-RAG-LEDGER",
+            message_id=str(assistant[0].get("message_id") or ""),
+            claimed_at="2026-08-23T00:01:00+00:00",
+        )
+        self.assertNotEqual(claim.get("status"), "missing")
 
     def test_unexpected_reply_rag_fallback_disabled_keeps_legacy_silence(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
