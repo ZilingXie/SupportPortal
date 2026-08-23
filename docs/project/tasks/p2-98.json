@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-98",
+  "title": "测试控制台发信通道支持 SMTP（163 专用邮箱）",
+  "status": "done",
+  "owner": "zac",
+  "summary": "/automation/test 的专用测试邮箱从 Graph 单通道扩展为 transport 可选（AUTOMATION_TEST_MAIL_TRANSPORT=graph|smtp，默认 graph 不变）：smtp 通道走 SMTP_SSL（163：smtp.163.com:465+授权码；QQ 同理），缺 host/username/password 任一项 fail-closed 报缺失键名；页面横幅与 templates 接口的 configured/missing_config_keys 自动随通道切换；graph 通道行为与 p2-97 完全不变。选型过程：用户原想的 QQ AI 邮箱（unabletodisplay@agent.qq.com）是 Agent Mail 产品，仅有 CLI/OAuth 无 SMTP，不可用作服务端发件通道；确认改用 .env 中已有完整凭据的 163 专用邮箱 xieziling97@163.com。",
+  "next_action": "用户侧跟进：EC2 与本地 .env 填 AUTOMATION_TEST_MAIL_TRANSPORT=smtp + SMTP_HOST=smtp.163.com + USERNAME=xieziling97@163.com + PASSWORD=<163 授权码>，部署/重启 api_production 后按 runbook 步骤 0 做 enablement 基线探测。",
+  "acceptance_criteria": [
+    "AUTOMATION_TEST_MAIL_TRANSPORT=smtp 时：配置齐全正常发送（SMTP_SSL+login+send_message，From=登录邮箱）；缺 host/username/password 任一项时 configured=false、missing_config_keys 列出对应 env 键、发送抛 AutomationTestMailError 且不落 sent。",
+    "transport 非法值被拒绝并给出明确错误；graph 通道（默认）行为与 p2-97 完全不变（既有 18 个用例不改动仍通过）。",
+    "发送失败原因完整保留在 AutomationTestMailError 与追踪表 send_error（无静默重试）。",
+    ".env.example 与 runbook 前置检查更新两种通道的配置说明（163 当前采用，QQ 备选）。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "SMTP transport unit tests",
+      "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+      "details": "新增 5 用例：缺 host/username/password fail-closed（configured=false+缺失键清单+AutomationTestMailError）；SMTP_SSL+login+send_message 成功（From/To/Subject 头与超时/端口断言）；context 默认 sender=SMTP_USERNAME；发送失败原因包裹进异常；非法 transport 拒绝。与 p2-97 既有 18 用例（graph 默认路径）合计 23 个全过。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_test_mail.py",
+    "backend/tests/test_automation_test_console.py",
+    ".env.example",
+    "docs/testing/production_ticket_regression_runbook.md"
+  ],
+  "created_at": "2026-08-23",
+  "updated_at": "2026-08-23",
+  "history": [
+    {
+      "at": "2026-08-23",
+      "event": "created",
+      "summary": "用户确认 /automation/test 专用测试邮箱用 QQ 邮箱（Graph 不可用），需要 SMTP 通道；当时 ZCode shell 因 finalize 后 ENOENT 故障不可用，补丁以上会话只读方式备好并暂存 ~/Desktop/qq-smtp-patch-p2-98/。"
+    },
+    {
+      "at": "2026-08-23",
+      "event": "implemented",
+      "summary": "重启后找回 agently 授权邮箱=unabletodisplay@agent.qq.com，确认为 Agent Mail（独立 AI 邮箱产品，仅 CLI/OAuth、无 SMTP、日限 50 封），不适合服务端发件；用户确认改用 .env 现成 163 专用邮箱（xieziling97@163.com）。SMTP transport 补丁按 worktree 流程应用，23 用例全过。"
+    }
+  ],
+  "legacy_refs": [
+    "p2-97"
+  ],
+  "legacy_ids": [],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "production-regression-testing"
+}
