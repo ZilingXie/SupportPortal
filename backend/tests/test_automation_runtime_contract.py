@@ -14,14 +14,14 @@ class AutomationRuntimeContractTest(unittest.TestCase):
         env = {
             "AUTOMATION_ENVIRONMENT": environment,
             "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1",
-            "AUTOMATION_EXECUTION_TOKEN": "execution-token",
+            "n8n_request_token": "execution-token",
             "ROUTE_SERVICE_URL": "http://route.test",
             "ROUTE_SERVICE_TOKEN": "token",
             "PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": "123",
         }
         return patch.dict(os.environ, env, clear=False)
 
-    def test_admin_login_exchanges_execution_token_without_bearer(self):
+    def test_admin_login_exchanges_execution_token_without_request_token(self):
         with self._client("staging"):
             with TestClient(create_app()) as client:
                 ok = client.post("/v1/auth/login", json={"email": "admin", "password": "admin"})
@@ -41,7 +41,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
         env = {
             "AUTOMATION_ENVIRONMENT": "staging",
             "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1",
-            "AUTOMATION_EXECUTION_TOKEN": "execution-token",
+            "n8n_request_token": "execution-token",
             "AUTOMATION_ADMIN_USERNAME": "ops",
             "AUTOMATION_ADMIN_PASSWORD": "secret",
         }
@@ -68,7 +68,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 result = client.post(
                     "/v1/cases",
                     json={"request_id": "req-1", "case_id": "AC-1", "question": "hello"},
-                    headers={"Authorization": "Bearer execution-token"},
+                    headers={"X-N8n-Request-Token": "execution-token"},
                 )
                 self.assertEqual(result.status_code, 200)
                 self.assertEqual(result.json()["execution"]["policy"]["zendesk_delivery"], False)
@@ -88,13 +88,13 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 missing_visibility = client.post(
                     "/v1/cases",
                     json={"request_id": "req-2", "case_id": "AC-2", "zendesk_ticket_id": "123", "question": "hello"},
-                    headers={"Authorization": "Bearer execution-token"},
+                    headers={"X-N8n-Request-Token": "execution-token"},
                 )
                 self.assertEqual(missing_visibility.status_code, 422)
                 rerun = client.post(
                     "/v1/reruns",
                     json={"request_id": "req-rerun", "case_id": "AC-2", "rerun_of_execution_id": "exec-1"},
-                    headers={"Authorization": "Bearer execution-token"},
+                    headers={"X-N8n-Request-Token": "execution-token"},
                 )
                 self.assertEqual(rerun.status_code, 404)
 
@@ -106,7 +106,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 wrong = client.post(
                     "/v1/cases",
                     json={"request_id": "req-401", "case_id": "AC-1", "question": "hello"},
-                    headers={"Authorization": "Bearer wrong"},
+                    headers={"X-N8n-Request-Token": "wrong"},
                 )
                 self.assertEqual(wrong.status_code, 401)
                 empty_body = client.post("/v1/cases", json={})
@@ -133,7 +133,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 response = client.post(
                     "/v1/cases",
                     json={"request_id": "req-hr", "case_id": "AC-HR", "zendesk_ticket_id": "123", "question": "hello"},
-                    headers={"Authorization": "Bearer execution-token"},
+                    headers={"X-N8n-Request-Token": "execution-token"},
                 )
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["status"], "human_review")
@@ -158,7 +158,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
     def test_list_and_detail_executions_require_token_and_persist_request(self):
         with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
             call.return_value = self._staging_route("req-l2", "AC-L2")
-            headers = {"Authorization": "Bearer execution-token"}
+            headers = {"X-N8n-Request-Token": "execution-token"}
             with TestClient(create_app()) as client:
                 self.assertEqual(client.get("/v1/executions").status_code, 401)
                 for index in range(3):
@@ -191,7 +191,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
     def test_rerun_creates_chained_execution_and_original_is_immutable(self):
         with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
             call.return_value = self._staging_route("req-r1", "AC-R1")
-            headers = {"Authorization": "Bearer execution-token"}
+            headers = {"X-N8n-Request-Token": "execution-token"}
             with TestClient(create_app()) as client:
                 first = client.post(
                     "/v1/cases",
@@ -220,7 +220,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
     def test_rerun_rejects_legacy_records_and_case_mismatch(self):
         with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
             call.return_value = self._staging_route("req-legacy", "AC-LEGACY")
-            headers = {"Authorization": "Bearer execution-token"}
+            headers = {"X-N8n-Request-Token": "execution-token"}
             with TestClient(create_app()) as client:
                 first = client.post(
                     "/v1/cases",
@@ -254,7 +254,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
     def test_reset_staging_deletes_all_executions_and_preproduction_404(self):
         with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
             call.return_value = self._staging_route("req-s1", "AC-S1")
-            headers = {"Authorization": "Bearer execution-token"}
+            headers = {"X-N8n-Request-Token": "execution-token"}
             with TestClient(create_app()) as client:
                 for index in range(2):
                     result = client.post(
@@ -270,7 +270,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 self.assertEqual(client.get("/v1/executions", headers=headers).json()["total"], 0)
         with self._client("preproduction"), TestClient(create_app()) as client:
             self.assertEqual(
-                client.post("/v1/reset", headers={"Authorization": "Bearer execution-token"}).status_code, 404
+                client.post("/v1/reset", headers={"X-N8n-Request-Token": "execution-token"}).status_code, 404
             )
 
 

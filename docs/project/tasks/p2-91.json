@@ -1,0 +1,65 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-91",
+  "title": "n8n 入向鉴权统一为 X-N8n-Request-Token / n8n_request_token",
+  "status": "active",
+  "owner": "zac",
+  "summary": "用户决定：SupportPortal 全部 n8n 入向端点统一只接受 X-N8n-Request-Token 头，值只来自单一环境变量 n8n_request_token，其余机制不再接受。实施：backend/main.py 的 Zendesk 评论/状态同步三端点鉴权重写为 require_n8n_request_token（删除 X-Zendesk-Account-Sync-Token 头与 Authorization: Bearer 回退，废弃 ZENDESK_ACCOUNT_SYNC_TOKEN）；两个 automation runtime 的 _require_execution_token 与 /v1/auth/login 改读 n8n_request_token 并校验 X-N8n-Request-Token（废弃三个 AUTOMATION_*_EXECUTION_TOKEN）；三个 automation UI 的请求头改为 X-N8n-Request-Token；compose 映射、deploy_ec2.sh 必填校验、本地 split 启动脚本与 verify 探针同步更新；n8n 契约文档与 T4 切流设计 §6 改写为单一机制方案。出向 Slack handoff 本就使用同头同值，无需改动。",
+  "next_action": "代码与测试完成，待 finalize 合并后与 p2-90 同一 release 构建（release-20260823-005 之后顺延）部署三环境；EC2 .env 删除四个废弃 token 变量；n8n 切换窗口内把 commen_sync/case_status_sync 各 4 处与 /automation/*/v1/cases 投递节点统一挂 X-N8n-Request-Token 凭据（值=现有 n8n_request_token）；验证旧头 401、新头 200/404、verify_split_environments.sh 全绿。",
+  "acceptance_criteria": [
+    "旧 Zendesk 同步三端点（comment-sync-target/PUT comments/PUT status）只接受 X-N8n-Request-Token == env n8n_request_token；X-Zendesk-Account-Sync-Token、Authorization: Bearer 一律 401；未配置 n8n_request_token 时 503。",
+    "三个 automation runtime 的全部执行/查询端点与 /v1/auth/login 换取的 token 均基于 n8n_request_token + X-N8n-Request-Token 头；AUTOMATION_EXECUTION_TOKEN/AUTOMATION_*_EXECUTION_TOKEN 不再被读取。",
+    "三个 automation UI 的登录后 API 调用发送 X-N8n-Request-Token；登录换 token 流程（p2-90）不受影响。",
+    "deploy_ec2.sh 对 n8n_request_token 必填校验；compose 三环境服务注入 n8n_request_token；本地启动脚本只生成/引用 n8n_request_token；verify_split_environments.sh 401 负例探针使用 X-N8n-Request-Token。",
+    "文档同步：deploy_automation_release.md、三份 n8n 契约文档、automation_environments_cutover.md §6、.env.example（删除 ZENDESK_ACCOUNT_SYNC_TOKEN）均为单一机制表述。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Unified auth targeted regression",
+      "command": ".venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_status_sync backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_build_automation_release backend.tests.test_route_service_contract",
+      "details": "2026-08-23 前六套件 76 项：失败 7 项与干净 main 同命令基线完全一致（test_deploy_ec2 的 DSN/顺序耦合 6 项 + test_account_zendesk_status_sync 硬编码日期断言 1 项，均为存量、非本任务引入，已记入 p2-88 history）；新增失败 0。后三套件 35 项全绿。py_compile 三个后端文件、node --check 三份 app.js、bash -n 三个部署/工作流脚本、git diff --check 均通过。"
+    },
+    {
+      "type": "decision",
+      "label": "Unified token mechanism choice",
+      "command": "用户决策（对话确认）",
+      "details": "用户选定：统一使用 X-N8n-Request-Token、别的机制都不接受；automation 环境值来源直接读 n8n_request_token（单变量贯穿，含 compose/deploy/本地脚本契约变更），而非保留三个 AUTOMATION_*_EXECUTION_TOKEN 同值。"
+    }
+  ],
+  "source_refs": [
+    "backend/main.py",
+    "backend/automation_runtime.py",
+    "backend/automation_production_runtime.py",
+    "backend/services/account_slack_n8n.py",
+    "ui/automation-staging/app.js",
+    "ui/automation-preproduction/app.js",
+    "ui/automation-production/app.js",
+    "deployment/docker-compose.single-host.yml",
+    "deployment/deploy_ec2.sh",
+    "deployment/verify_split_environments.sh",
+    "scripts/workflow/start_local_split_environments.sh",
+    "docs/integrations/n8n/automation_environments_cutover.md",
+    "docs/deploy_automation_release.md",
+    ".env.example"
+  ],
+  "created_at": "2026-08-23",
+  "updated_at": "2026-08-23",
+  "history": [
+    {
+      "at": "2026-08-23",
+      "event": "created",
+      "summary": "T4 切流设计（PR#859）原定同值贯穿 5 变量 + Bearer 凭据；用户改选单一机制（X-N8n-Request-Token + n8n_request_token，其余不接受），并确认 automation 端直接读 n8n_request_token，遂立本任务实施服务端与配套变更。"
+    }
+  ],
+  "legacy_refs": [
+    "p2-88",
+    "p2-85",
+    "p2-90"
+  ],
+  "legacy_ids": [],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment"
+}

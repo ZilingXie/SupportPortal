@@ -1953,18 +1953,15 @@ def require_workspace_admin(
     return principal
 
 
-def require_zendesk_account_sync_token(
-    sync_token: str | None = Header(default=None, alias="X-Zendesk-Account-Sync-Token"),
-    authorization: str | None = Header(default=None),
+def require_n8n_request_token(
+    request_token: str | None = Header(default=None, alias="X-N8n-Request-Token"),
 ) -> None:
-    expected = str(os.getenv("ZENDESK_ACCOUNT_SYNC_TOKEN") or "").strip()
-    supplied = str(sync_token or "").strip()
-    if not supplied:
-        supplied = _authorization_bearer_token(authorization)
+    expected = str(os.getenv("n8n_request_token") or "").strip()
+    supplied = str(request_token or "").strip()
     if not expected:
-        raise HTTPException(status_code=503, detail="Zendesk Account sync is not configured")
+        raise HTTPException(status_code=503, detail="n8n request integration is not configured")
     if not supplied or not hmac.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="Zendesk Account sync authentication required")
+        raise HTTPException(status_code=401, detail="n8n request token authentication required")
 
 
 def _bootstrap_workspace_admin() -> None:
@@ -6391,7 +6388,7 @@ def _canonical_zendesk_source_updated_at(value: str | None) -> str | None:
 
 @app.get(
     "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comment-sync-target",
-    dependencies=[Depends(require_zendesk_account_sync_token)],
+    dependencies=[Depends(require_n8n_request_token)],
 )
 async def get_zendesk_account_comment_sync_target(zendesk_ticket_id: str) -> dict[str, Any]:
     normalized_ticket_id = _normalize_zendesk_comment_sync_ticket_id(zendesk_ticket_id)
@@ -6426,7 +6423,7 @@ async def get_zendesk_account_comment_sync_target(zendesk_ticket_id: str) -> dic
 
 @app.put(
     "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comments",
-    dependencies=[Depends(require_zendesk_account_sync_token)],
+    dependencies=[Depends(require_n8n_request_token)],
 )
 async def sync_zendesk_account_comments(
     zendesk_ticket_id: str,
@@ -6495,7 +6492,7 @@ async def sync_zendesk_account_comments(
 
 @app.put(
     "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status",
-    dependencies=[Depends(require_zendesk_account_sync_token)],
+    dependencies=[Depends(require_n8n_request_token)],
 )
 async def sync_zendesk_account_ticket_status(
     zendesk_ticket_id: str,

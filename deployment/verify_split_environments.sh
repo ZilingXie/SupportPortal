@@ -93,8 +93,8 @@ for env_name in staging preproduction production; do
   expect_http "${env_name} empty-body without token returns 401" 401 POST "${base}/v1/cases" '{}'
 done
 for env_name in staging preproduction production; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer wrong-token' -d '{}' "${NGINX_BASE}/automation/${env_name}/v1/cases" || echo 000)"
-  expect_eq "${env_name} Bearer wrong-token returns 401" 401 "${code}"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'X-N8n-Request-Token: wrong-token' -d '{}' "${NGINX_BASE}/automation/${env_name}/v1/cases" || echo 000)"
+  expect_eq "${env_name} X-N8n-Request-Token wrong value returns 401" 401 "${code}"
 done
 
 echo "== Container and network invariants"

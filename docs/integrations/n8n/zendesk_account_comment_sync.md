@@ -5,7 +5,7 @@ This export is a redacted n8n companion workflow for `/account`. It does not cre
 ## Configure before importing
 
 - Set the n8n environment variable `SUPPORTPORTAL_BASE_URL` to the SupportPortal origin.
-- Set the n8n environment variable `ZENDESK_ACCOUNT_SYNC_TOKEN` to the same secret as SupportPortal's `ZENDESK_ACCOUNT_SYNC_TOKEN`. The endpoint also accepts `Authorization: Bearer <token>` when the `X-Zendesk-Account-Sync-Token` header is absent, so a single n8n Header Auth credential (`Authorization: Bearer <token>`) can serve this workflow and the `/automation/*/v1/cases` intake; see `automation_environments_cutover.md` §6 for the unified-token convention.
+- Set the n8n environment variable `n8n_request_token` to the same secret as SupportPortal's `n8n_request_token`, and send it as the `X-N8n-Request-Token` header. This is the single unified token for every n8n-to-SupportPortal call (the old `X-Zendesk-Account-Sync-Token` header and `Authorization: Bearer` fallback are no longer accepted); see `automation_environments_cutover.md` §6.
 - Configure the Zendesk API credential on the `Get_Case_Comment` node. The export contains no Zendesk token, cookie, or Authorization value.
 - Register the webhook URL in Zendesk for ticket updates that include comment changes. The workflow is safe to replay because SupportPortal performs the Account membership check, snapshot completeness check, stale check, and idempotent comment upsert.
 
@@ -15,7 +15,7 @@ This export is a redacted n8n companion workflow for `/account`. It does not cre
 2. Ask SupportPortal whether that ticket is an Account Case. Non-Account tickets stop at the IF node and are not queried further.
 3. Fetch the complete Zendesk comments snapshot with n8n HTTP pagination and `include=users`. The request must return every comment, including private/internal comments, plus the user records needed to resolve all historical comment authors.
 4. Normalize each comment to ID, public/private flag, author name, role, `is_agent`, body, channel, and timestamp. The current webhook author may supplement only the matching current comment; it must never be copied onto historical comments. The snapshot is sent only when `snapshot_complete=true`.
-5. PUT the snapshot to the SupportPortal integration endpoint with `X-Zendesk-Account-Sync-Token`.
+5. PUT the snapshot to the SupportPortal integration endpoint with `X-N8n-Request-Token`.
 
 ## Author enrichment contract
 
@@ -130,7 +130,7 @@ Configure the final HTTP Request node as follows:
 ```text
 Method: PUT
 URL: ={{ $env.SUPPORTPORTAL_BASE_URL + '/api/integrations/zendesk/account-cases/' + $('Extract_Webhook_Context').first().json.zendesk_ticket_id + '/comments' }}
-Header: X-Zendesk-Account-Sync-Token ={{ $env.ZENDESK_ACCOUNT_SYNC_TOKEN }}
+Header: X-N8n-Request-Token ={{ $env.n8n_request_token }}
 Body type: JSON
 JSON body: ={{ $json }}
 ```

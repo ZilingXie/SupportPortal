@@ -8,6 +8,7 @@ models; production executions always require an explicit comment visibility.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -44,9 +45,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _require_execution_token(authorization: str | None = Header(default=None)) -> None:
-    expected = str(os.getenv("AUTOMATION_EXECUTION_TOKEN") or "").strip()
-    if not expected or str(authorization or "") != f"Bearer {expected}":
+def _require_execution_token(
+    request_token: str | None = Header(default=None, alias="X-N8n-Request-Token"),
+) -> None:
+    expected = str(os.getenv("n8n_request_token") or "").strip()
+    if not expected or not hmac.compare_digest(str(request_token or ""), expected):
         raise HTTPException(status_code=401, detail="invalid automation execution token")
 
 
@@ -87,7 +90,7 @@ def create_app() -> FastAPI:
     async def admin_login(request: AutomationLoginRequest) -> dict[str, Any]:
         if not verify_admin_login(request.email, request.password):
             raise HTTPException(status_code=401, detail="invalid admin credentials")
-        token = str(os.getenv("AUTOMATION_EXECUTION_TOKEN") or "").strip()
+        token = str(os.getenv("n8n_request_token") or "").strip()
         if not token:
             raise HTTPException(status_code=503, detail="automation execution token is not configured")
         return {"environment": environment.value, "execution_token": token}

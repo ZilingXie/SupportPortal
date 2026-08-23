@@ -99,9 +99,7 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("-wip", script)
         # Idempotent networks and auto-generated execution tokens.
         self.assertIn("create_network_if_missing", script)
-        self.assertIn("ensure_token AUTOMATION_STAGING_EXECUTION_TOKEN", script)
-        self.assertIn("ensure_token AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN", script)
-        self.assertIn("ensure_token AUTOMATION_PRODUCTION_EXECUTION_TOKEN", script)
+        self.assertIn("ensure_token n8n_request_token", script)
         # One compose project per environment, mirroring the EC2 shape.
         self.assertIn("supportportal-automation-${environment}", script)
         self.assertIn("--profile automation", script)

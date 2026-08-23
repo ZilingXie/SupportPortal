@@ -244,7 +244,7 @@ class AccountZendeskCommentSyncTests(unittest.TestCase):
         serialized = str(audit)
         self.assertNotIn("Sensitive Customer", serialized)
         self.assertNotIn("Sensitive comment body", serialized)
-        self.assertNotIn("ZENDESK_ACCOUNT_SYNC_TOKEN", serialized)
+        self.assertNotIn("n8n_request_token", serialized)
         self.assertEqual(audit["payload"].keys(), {"status", "client_ticket_id", "source_updated_at", "comment_count", "new_comment_count"})
 
 
@@ -287,7 +287,7 @@ class AccountZendeskCommentIntegrationApiTests(unittest.TestCase):
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
         self.client = TestClient(main.app)
-        self.token_patcher = patch.dict(os.environ, {"ZENDESK_ACCOUNT_SYNC_TOKEN": "test-sync-token"}, clear=False)
+        self.token_patcher = patch.dict(os.environ, {"n8n_request_token": "test-sync-token"}, clear=False)
         self.token_patcher.start()
 
     def tearDown(self) -> None:
@@ -298,13 +298,13 @@ class AccountZendeskCommentIntegrationApiTests(unittest.TestCase):
     def test_membership_and_sync_require_token_and_accept_complete_snapshot(self) -> None:
         target = "/api/integrations/zendesk/account-cases/12620/comment-sync-target"
         self.assertEqual(self.client.get(target).status_code, 401)
-        membership = self.client.get(target, headers={"X-Zendesk-Account-Sync-Token": "test-sync-token"})
+        membership = self.client.get(target, headers={"X-N8n-Request-Token": "test-sync-token"})
         self.assertEqual(membership.status_code, 200, membership.text)
         self.assertTrue(membership.json()["is_account_case"])
 
         response = self.client.put(
             "/api/integrations/zendesk/account-cases/12620/comments",
-            headers={"X-Zendesk-Account-Sync-Token": "test-sync-token"},
+            headers={"X-N8n-Request-Token": "test-sync-token"},
             json=snapshot_payload(
                 {"id": "100", "public": True, "body": "Public", "created_at": "2026-08-16T01:10:00Z"}
             ),
@@ -318,7 +318,7 @@ class AccountZendeskCommentIntegrationApiTests(unittest.TestCase):
         self.repository.save_ticket({"ticket_id": "12621", "messages": []})
         response = self.client.get(
             "/api/integrations/zendesk/account-cases/12621/comment-sync-target",
-            headers={"X-Zendesk-Account-Sync-Token": "test-sync-token"},
+            headers={"X-N8n-Request-Token": "test-sync-token"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["is_account_case"])
@@ -396,7 +396,7 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         self.client = TestClient(main.app)
         self.token_patcher = patch.dict(
             os.environ,
-            {"ZENDESK_ACCOUNT_SYNC_TOKEN": "test-sync-token"},
+            {"n8n_request_token": "test-sync-token"},
             clear=False,
         )
         self.token_patcher.start()
@@ -407,7 +407,7 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         )
         self.ownership_patcher.start()
         self.sync_url = "/api/integrations/zendesk/account-cases/12838/comments"
-        self.headers = {"X-Zendesk-Account-Sync-Token": "test-sync-token"}
+        self.headers = {"X-N8n-Request-Token": "test-sync-token"}
 
     def tearDown(self) -> None:
         self.ownership_patcher.stop()

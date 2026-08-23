@@ -23,11 +23,11 @@
 
 | n8n 工作流 | 节点 | 现在 | 切流后 |
 |---|---|---|---|
-| `new_case_2_supporportal_prod` | `HTTP Request`（最终投递） | `POST /production/account`，表单 `title/question/customer_email/source/customer_name`，无鉴权 | `POST /automation/production/v1/cases`，JSON body + `Authorization: Bearer`（见 §3） |
-| `new_case_2_supporportal_staging` | `HTTP Request` | `POST /account`，表单，无鉴权 | `POST /automation/staging/v1/cases`，JSON body + Bearer；**不得**传 `comment_visibility` |
-| （可选新增）`new_case_automation_preproduction` | 克隆自 prod 工作流 | — | `POST /automation/preproduction/v1/cases`，JSON body + Bearer，`comment_visibility=internal`，受服务端 allowlist 门控 |
-| `commen_sync` | 2× membership GET + 2× PUT comments | 旧端点 `…/api/integrations/zendesk/account-cases/{id}/…`（staging + production 两栈） | **不改 URL**。仅按 §6 统一 token（可整体换用 Bearer 凭据，服务端已支持回退） |
-| `case_status_sync` | 2× membership GET + 2× PUT status | 同上 | **不改 URL**。仅按 §6 统一 token |
+| `new_case_2_supporportal_prod` | `HTTP Request`（最终投递） | `POST /production/account`，表单 `title/question/customer_email/source/customer_name`，无鉴权 | `POST /automation/production/v1/cases`，JSON body + `X-N8n-Request-Token`（见 §3） |
+| `new_case_2_supporportal_staging` | `HTTP Request` | `POST /account`，表单，无鉴权 | `POST /automation/staging/v1/cases`，JSON body + `X-N8n-Request-Token`；**不得**传 `comment_visibility` |
+| （可选新增）`new_case_automation_preproduction` | 克隆自 prod 工作流 | — | `POST /automation/preproduction/v1/cases`，JSON body + `X-N8n-Request-Token`，`comment_visibility=internal`，受服务端 allowlist 门控 |
+| `commen_sync` | 2× membership GET + 2× PUT comments | 旧端点 `…/api/integrations/zendesk/account-cases/{id}/…`（staging + production 两栈） | **不改 URL**。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
+| `case_status_sync` | 2× membership GET + 2× PUT status | 同上 | **不改 URL**。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
 | `2_slack - SupportPortal Account Handoff -> Slack` | 入站 Webhook（SupportPortal→n8n） | 凭据 `2_SupportPortal`（`X-N8n-Request-Token`） | 结构不动。仅按 §6 把凭据值换成统一 token |
 
 Zendesk Trigger、取数/富化（Get_Case_Info、Get_Requester_Info、Prepare_Account_Data 等）与 Company ID 门控逻辑全部保留原样，不在本文改动范围。
@@ -41,7 +41,7 @@ Zendesk Trigger、取数/富化（Get_Case_Info、Get_Requester_Info、Prepare_A
 ```text
 Method: POST
 URL:    https://support.stellarix.space/automation/{env}/v1/cases
-Header: Authorization: Bearer <AUTOMATION_{ENV}_EXECUTION_TOKEN>
+Header: X-N8n-Request-Token: <n8n_request_token 的值>
         Content-Type: application/json
 ```
 
@@ -106,7 +106,7 @@ n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod �
 1. 在 n8n 复制 `new_case_2_supporportal_prod` 为 `new_case_automation_prod`：全部逻辑保留，仅改三处——
    - `Check_Company_ID1` 的 `TARGET_COMPANY_IDS` = **迁移名单**（初始建议 1 个低风险公司，如自有测试公司）；
    - 最终 `HTTP Request` 节点按 §3.1–3.2 改 URL/body/鉴权（`comment_visibility: 'internal'`）；
-   - 挂上统一的 Bearer 凭据（§6）。
+   - 挂上统一的 `X-N8n-Request-Token` 凭据（§6）。
 2. 把 `new_case_2_supporportal_prod` 的 `TARGET_COMPANY_IDS` 收缩为**未迁移名单**（从其中删除迁移的公司 ID）。两个名单必须互斥。
 3. 激活克隆工作流。此后：迁移公司的新单 → 新环境（execution 记录 + Zendesk 副作用）；其余公司 → 旧 `/production/account` 照旧。
 4. 扩大灰度 = 继续单向搬公司 ID；全量后停用旧工作流（观察期要求见 §9）。
@@ -124,41 +124,35 @@ n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod �
 - `commen_sync` / `case_status_sync`：无新环境等价端点，保持打旧端点。新环境工单在两个旧栈的 membership check 都 miss（`is_account_case=false` / 404）→ 工作流按既有逻辑跳过，这是预期；旧链路工单照常同步。
 - Slack handoff（`2_slack …`）：由旧 production 栈 worker 驱动；工单切到新环境后不再产生 handoff 事件（新环境没有该功能）。灰度期间旧链路工单不受影响。
 
-## 6. Token 统一（纯配置，零代码）
+## 6. Token 统一（X-N8n-Request-Token 单一机制）
 
-现状 5 个互不相关的 secret：`AUTOMATION_{STAGING,PREPRODUCTION,PRODUCTION}_EXECUTION_TOKEN`（新环境 Bearer）、`ZENDESK_ACCOUNT_SYNC_TOKEN`（旧同步三端点）、`n8n_request_token`（SupportPortal→n8n 出站）。方案：**同一个强随机值贯穿 5 个变量**；n8n 侧一个 Bearer 凭据覆盖全部入向调用——旧同步端点在无 `X-Zendesk-Account-Sync-Token` 头时**回退接受 `Authorization: Bearer`**（`backend/main.py:1956-1967`），新环境本来就只收 Bearer。
+**最终方案（p2-91 实施，替代本文件早期"同值贯穿 5 变量 + Bearer 凭据"的设计）：** 服务端所有 n8n 入向端点**只接受 `X-N8n-Request-Token` 头**，值只来自单一环境变量 `n8n_request_token`（`backend/main.py` 的 `require_n8n_request_token`、两个 automation runtime 的 `_require_execution_token`，均为 `hmac.compare_digest` 比较；未配置 503，缺失/错误 401）。旧的 `X-Zendesk-Account-Sync-Token` 头、`Authorization: Bearer` 回退、`ZENDESK_ACCOUNT_SYNC_TOKEN` 与三个 `AUTOMATION_*_EXECUTION_TOKEN` 变量全部**不再接受/不再使用**。出向（SupportPortal→n8n Slack handoff）本就使用同名头、同值变量，无需改动。
+
+服务端代码已随 p2-91 合并；**生效需要重新构建 release 并部署到 EC2**（见 6.1），n8n 侧节点在同一切换窗口内改头。
 
 ### 6.1 EC2（`zacbot:~/SupportPortal/.env`）
 
-```bash
-openssl rand -hex 32   # 生成一个新值 <TOKEN>，替换下列 5 个变量
-AUTOMATION_STAGING_EXECUTION_TOKEN=<TOKEN>
-AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN=<TOKEN>
-AUTOMATION_PRODUCTION_EXECUTION_TOKEN=<TOKEN>
-ZENDESK_ACCOUNT_SYNC_TOKEN=<TOKEN>
-n8n_request_token=<TOKEN>
-```
-
-重启范围（先做 automation 三个——当前无消费者，随时安全；其余三组在同一维护窗口内完成，切换期间旧同步工作流会有短暂 401 窗口，Zendesk webhook 会重试）：
-
-- 三个 automation 容器：`./deployment/deploy_ec2.sh --release release-20260822-005 --environment {staging,preproduction,production}` 重新 apply（幂等，镜像不变、仅 env 变更触发 recreate）；
-- `api`、`api_production`（`ZENDESK_ACCOUNT_SYNC_TOKEN`）：按主栈 recreate 规范，**必须显式带 `APP_RUNTIME_IMAGE=localhost/supportportal-app:017dd2e8f515` 且 `--no-deps`**（见 `docs/split_environments_report.md` §1.3 教训）；
-- production worker 容器（`n8n_request_token`）：同窗口 recreate。
+- `n8n_request_token` 已配置（这就是唯一 token，无需生成新值；如需轮换，改这一个变量）。
+- 可删除现已无消费者的旧变量：`ZENDESK_ACCOUNT_SYNC_TOKEN`、`AUTOMATION_STAGING_EXECUTION_TOKEN`、`AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN`、`AUTOMATION_PRODUCTION_EXECUTION_TOKEN`（compose 不再引用；deploy 校验改为要求 `n8n_request_token` 必填）。
+- 部署/重启顺序（切换窗口内完成；旧同步工作流在新头改完前会 401，Zendesk webhook 会重试）：
+  1. 构建新 release 并按 staging → preproduction → production 部署（`build_automation_release.sh` + `deploy_ec2.sh --release <id>`，automation 容器随新镜像带上新鉴权代码与 `n8n_request_token` 注入）；
+  2. 主栈 `api`、`api_production`（同步三端点新鉴权）与 production worker：按主栈 recreate 规范，**必须显式带 `APP_RUNTIME_IMAGE=…` 且 `--no-deps`**（见 `docs/split_environments_report.md` §1.3 教训）；
+  3. 立即执行 6.2 的 n8n 侧修改。
 
 ### 6.2 n8n
 
-1. 新建 Header Auth 凭据 `SupportPortal Bearer`：Name=`Authorization`，Value=`Bearer <TOKEN>`。此凭据可用于：三个 `/automation/*/v1/cases` 投递节点 + `commen_sync`/`case_status_sync` 的全部 8 个调用节点（4× membership GET + 4× PUT，替代原 `X-Zendesk-Account-Sync-Token` 内联值）。
-2. 更新凭据 `2_SupportPortal` 的值为 `<TOKEN>`（头仍是 `X-N8n-Request-Token`，方向是 SupportPortal→n8n，保留原头名）。
-3. 逐节点把内联 token 字符串替换为上述凭据，消除散落的明文（`commen_sync` 4 处、`case_status_sync` 4 处）。
+1. 新建一个 Header Auth 凭据（Name=`X-N8n-Request-Token`，Value=`n8n_request_token` 的值），或直接复用现有 `2_SupportPortal` 凭据（同头同名同值）。
+2. 三个 `/automation/*/v1/cases` 投递节点、`commen_sync`/`case_status_sync` 的全部 8 个调用节点（4× membership GET + 4× PUT）统一挂该凭据；删除原 `X-Zendesk-Account-Sync-Token` 内联值（`commen_sync` 4 处、`case_status_sync` 4 处）。
+3. 三个 automation 控制台 UI（`/automation/*`）的 Execution token 输入框改发 `X-N8n-Request-Token` 头（p2-91 已随代码更新，输入的值即 `n8n_request_token`；localStorage 旧键继续可用）。
 
 ### 6.3 验证与回滚
 
-- 统一后重跑 `./deployment/verify_split_environments.sh`（36 项，含三环境鉴权探针）。
-- 抽查一个同步端点：无 token → 401；`Authorization: Bearer <TOKEN>` → 200/404（membership miss 也算鉴权通过）。
+- 部署后重跑 `./deployment/verify_split_environments.sh`（401 负例探针已改为 `X-N8n-Request-Token: wrong-token`）。
+- 抽查一个同步端点：无 token → 401；`X-N8n-Request-Token: <TOKEN>` → 200/404（membership miss 也算鉴权通过）；旧头 `X-Zendesk-Account-Sync-Token: <旧值>` → **401**（验证旧路径确实关闭）。
 - Slack handoff：发一条 synthetic 测试事件（参照 `account_automation_slack_notification.md` 的样例 payload）确认 200 delivered。
-- 回滚：`.env` 恢复旧值 → 按 6.1 同范围 recreate → n8n 凭据恢复旧值。
+- 回滚：git revert p2-91 的合并提交 → 重新构建部署 → n8n 节点换回旧头/旧值（或整体回退 release：`deploy_ec2.sh --environment <env> --rollback`）。
 
-代价说明：单一值意味着该值泄露即全线有效（含 production）；换取的是轮换只需改 5 个变量 + 2 个 n8n 凭据。若未来要按环境隔离，改回各环境独立值即可，无需代码变更。
+代价说明：单值意味着该值泄露即全线有效（含 production）；轮换只需改 `n8n_request_token` 一个变量 + 一个 n8n 凭据 + 重新部署/recreate。
 
 ## 7. 双写防护红线
 

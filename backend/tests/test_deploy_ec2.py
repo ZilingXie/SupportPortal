@@ -878,7 +878,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -917,7 +917,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-b
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-b
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -966,7 +966,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1025,7 +1025,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
         result = self._run_script("--environment", "staging", "--skip-pull")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("AUTOMATION_STAGING_EXECUTION_TOKEN is required", result.stdout + result.stderr)
+        self.assertIn("n8n_request_token is required", result.stdout + result.stderr)
 
     def test_split_deploy_loads_release_manifest_without_manual_image_variables(self) -> None:
         self._write(
@@ -1035,7 +1035,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 """\
                 TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -1140,7 +1140,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1172,7 +1172,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1202,7 +1202,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
             textwrap.dedent(
                 """\
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging
@@ -1259,7 +1259,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_PREPRODUCTION_IMAGE=registry.example/route@sha256:route-preproduction
                 AUTOMATION_PREPRODUCTION_IMAGE=registry.example/automation@sha256:automation-preproduction
                 ROUTE_PREPRODUCTION_SERVICE_TOKEN=route-token
-                AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -1291,7 +1291,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
                 AUTOMATION_PRODUCTION_IMAGE=registry.example/automation@sha256:automation-production
                 ROUTE_PRODUCTION_SERVICE_TOKEN=route-token
-                AUTOMATION_PRODUCTION_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 DEPLOY_HEALTH_TIMEOUT_SECONDS=1
                 DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS=1
                 """
@@ -1330,7 +1330,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 ROUTE_STAGING_IMAGE=registry.example/route@sha256:route-a
                 AUTOMATION_STAGING_IMAGE=registry.example/automation@sha256:automation-a
                 ROUTE_STAGING_SERVICE_TOKEN=route-token
-                AUTOMATION_STAGING_EXECUTION_TOKEN=execution-token
+                n8n_request_token=execution-token
                 AUTOMATION_STAGING_DB_DSN=postgresql://automation:test@db.local/staging
                 AUTOMATION_STAGING_DB_SCHEMA=automation_staging
                 AUTOMATION_STAGING_QUEUE=automation-staging

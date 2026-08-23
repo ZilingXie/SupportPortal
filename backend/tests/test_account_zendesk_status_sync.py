@@ -66,12 +66,12 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
         self.client = TestClient(main.app)
         self.token_patcher = patch.dict(
             os.environ,
-            {"ZENDESK_ACCOUNT_SYNC_TOKEN": "test-sync-token"},
+            {"n8n_request_token": "test-sync-token"},
             clear=False,
         )
         self.token_patcher.start()
         self.status_url = f"/api/integrations/zendesk/account-cases/{self.ticket_id}/status"
-        self.headers = {"X-Zendesk-Account-Sync-Token": "test-sync-token"}
+        self.headers = {"X-N8n-Request-Token": "test-sync-token"}
 
     def tearDown(self) -> None:
         self.token_patcher.stop()

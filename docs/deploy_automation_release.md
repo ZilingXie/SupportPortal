@@ -48,7 +48,7 @@ automation 网络不再以 `--internal` 创建：Route 容器需要出站访问 
 
 Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如可在 EC2 上分别执行 `openssl rand -hex 32` 生成三个 token，再填入 `ROUTE_STAGING_SERVICE_TOKEN`、`ROUTE_PREPRODUCTION_SERVICE_TOKEN` 和 `ROUTE_PRODUCTION_SERVICE_TOKEN`。不要把 token 放进 release manifest 或提交到 Git。
 
-每个环境还需要一个执行 token（生成方式同上）：`AUTOMATION_STAGING_EXECUTION_TOKEN`、`AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN`、`AUTOMATION_PRODUCTION_EXECUTION_TOKEN`。Automation 的 `/v1/cases`、rerun、reset 和 reconcile 端点都要求 `Authorization: Bearer <execution token>`；token 缺失或错误时执行请求返回 401，未在 `.env` 配置 token 的环境所有执行请求都会被拒绝。三个 Automation UI 各自提供 Execution token 输入框，输入值保存在浏览器 localStorage。
+三个环境共用同一个执行 token：`.env` 的 `n8n_request_token`（与主栈 n8n 集成、旧 Zendesk 同步端点同源同值，部署脚本会校验其必填；原先独立的三个 `AUTOMATION_*_EXECUTION_TOKEN` 已废弃删除）。Automation 的 `/v1/cases`、rerun、reset、reconcile、executions 与登录换取的执行端点都要求 `X-N8n-Request-Token: <n8n_request_token>` 头；token 缺失或错误时执行请求返回 401，未在 `.env` 配置时所有执行请求都会被拒绝。三个 Automation UI 各自提供 Execution token 输入框（输入值即该 token），输入值保存在浏览器 localStorage。
 
 ## 3. 验收顺序
 
