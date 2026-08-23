@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "task_id": "p2-102",
+  "task_id": "p2-103",
   "title": "detailed_invoice 纳入 Automation + 内部邮件 PDF 附件转发 Zendesk",
   "status": "active",
   "owner": "zac",

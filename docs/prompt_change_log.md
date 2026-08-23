@@ -17,7 +17,7 @@ For each new entry, record:
 - Area or subsystem: Account route gates; Automation Persona reply contract
 - Prompt or model version: prompts unchanged; `AUTOMATION_PERSONA_PROMPT_VERSION` unchanged; router prompts already list `billing.detailed_invoice` / `detailed_invoice_requested`
 - Summary: `ACTIVE_AUTOMATION_SUBCATEGORIES` now includes `detailed_invoice` (plus the account_billing stage binding and stored-case metadata), so LLM routing outputs of `detailed_invoice_requested` now resolve to an automated route instead of human review. New reply intent `detailed_invoice_completed_and_close` gets a Persona completion policy (state the invoice has been provided — attached to the message when facts say attachments are included — and that the ticket is closing).
-- Reason: p2-102 — user approved activating detailed invoice automation and forwarding the internal-email reply PDF to the Zendesk case; completion replies ride the reply-job publication pipeline and need the close contract.
+- Reason: p2-103 — user approved activating detailed invoice automation and forwarding the internal-email reply PDF to the Zendesk case; completion replies ride the reply-job publication pipeline and need the close contract.
 - Affected files or config:
   - `backend/services/automation_routing.py` (active set)
   - `backend/services/account_route_pipeline.py` (account_billing stage automation binding)
@@ -27,7 +27,7 @@ For each new entry, record:
   - detailed_invoice LLM/classifier decisions flip from human_review to automated (handler billing) across layered and legacy router paths.
   - Internal-email completion replies for detailed_invoice render with the new completion policy and close after publish (Zendesk solve + local close).
 - Verification:
-  - `backend.tests.test_automation_routing`, `backend.tests.test_account_route_pipeline`, `backend.tests.test_account_reply_version_fence`, `backend.tests.test_automation_persona` all green in the p2-102 worktree.
+  - `backend.tests.test_automation_routing`, `backend.tests.test_account_route_pipeline`, `backend.tests.test_account_reply_version_fence`, `backend.tests.test_automation_persona` all green in the p2-103 worktree.
 
 ## 2026-08-17 - Documentation-only container verification boundary
 
