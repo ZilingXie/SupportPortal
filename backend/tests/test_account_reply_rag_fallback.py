@@ -124,6 +124,65 @@ class RagFallbackAnswerTest(unittest.TestCase):
         keep = try_rag_fallback_answer(question="q", request_id="req-k", client=keep_client)
         self.assertEqual(keep.answer, "Thanks for asking.\nThe App ID is on the Projects page.")
 
+    def test_marketing_footer_after_signoff_is_stripped(self) -> None:
+        # The real RAG answer template observed on ticket 12940.
+        client = _FakeRagClient(
+            payload={
+                "decision": "answer",
+                "answer": (
+                    "App ID (`appid`) is the application identifier.\n\n"
+                    "1. Provide a non-empty App ID.\n\n"
+                    "Best regards,\n"
+                    "May Collins\n"
+                    "Agora Support Engineer\n"
+                    "\n"
+                    "We'd love to hear your thoughts on our assistance and products! "
+                    "Feel free to drop us at feedback@agora.io. Your feedback means a lot to us!\n"
+                    "Also, boost your experience with our premium support plan for priority "
+                    "assistance and quicker response times. Just click this link to learn more "
+                    "—  https://www.agora.io/en/support-plans/!\n"
+                    "Join our official Discord Developers Community —  https://discord.gg/uhkxjDpJsN"
+                ),
+            }
+        )
+        outcome = try_rag_fallback_answer(question="what is appid", request_id="req-m", client=client)
+        self.assertEqual(outcome.kind, "answer")
+        self.assertNotIn("May Collins", outcome.answer)
+        self.assertNotIn("discord.gg", outcome.answer)
+        self.assertNotIn("support-plans", outcome.answer)
+        self.assertTrue(outcome.answer.startswith("App ID (`appid`) is the application identifier."))
+        self.assertTrue(outcome.answer.rstrip().endswith("Provide a non-empty App ID."))
+
+    def test_citations_are_appended_as_references(self) -> None:
+        client = _FakeRagClient(
+            payload={
+                "decision": "answer",
+                "answer": "App ID is the application identifier.",
+                "citations": [
+                    {
+                        "heading": "Quickstart > Initialize the engine",
+                        "source_url": "https://docs.agora.io/en/voice-calling/get-started/get-started-sdk?platform=python",
+                    },
+                    {
+                        "heading": "Quickstart > Initialize the engine",
+                        "source_url": "https://docs.agora.io/en/voice-calling/get-started/get-started-sdk?platform=python",
+                    },
+                    {"heading": "", "source_url": "https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk"},
+                ],
+            }
+        )
+        outcome = try_rag_fallback_answer(question="what is appid", request_id="req-c", client=client)
+        self.assertIn("References:", outcome.answer)
+        self.assertEqual(outcome.answer.count("get-started-sdk"), 1)  # dedup by URL
+        self.assertIn(
+            "Quickstart > Initialize the engine — https://docs.agora.io/en/voice-calling/get-started/get-started-sdk",
+            outcome.answer,
+        )
+        self.assertIn(
+            "- https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk",
+            outcome.answer,
+        )
+
     def test_escalate_decision_and_rag_errors_map_to_escalate(self) -> None:
         escalate = try_rag_fallback_answer(
             question="q",
