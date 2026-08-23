@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T03:29:08Z",
-  "source_base_commit": "05591ab910a01dafe326016398912956a26d7213",
-  "registry_digest": "14563b8203a88286c93e0f77f9d4d05a2954cd3632e675e097cd75715e112b50",
+  "generated_at": "2026-08-23T03:45:11Z",
+  "source_base_commit": "0a079b2e357a7f4db28b37bd68254208a3226145",
+  "registry_digest": "e78a9645e70a0fca9b749f23b3e31ec414f608ce7d7c65725079b57be12c0b74",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1747,6 +1747,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Route filter and sidebar rerun contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_execution_store backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment && node --check ui/automation-{staging,preproduction,production}/app.js",
           "details": "33 项测试通过。新增覆盖：GET /v1/executions 的 route_category/route_subcategory 过滤、route_counts 与选中 category 的 route_subcategory_counts 同快照返回；production runtime 同参数透传。三份 app.js node --check 通过、staging/preproduction 主体一致、production bundle 无 rerun 字符串（全量 rerun 代码全部位于剥离块内，中性变量名 bulkActionButtonHtml/bulkStatusHtml）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Release-006 rollout and route-field fix handling",
+          "command": "EC2 build/deploy release-20260823-006（commit=05591ab）+ verify + 探针；修复 PR#868 后构建 release-20260823-007（commit=0a079b2，未部署）",
+          "details": "2026-08-23 部署 release-006：verify 全绿；admin/admin 登录 200、旧 Bearer 头 401、新 X-N8n-Request-Token 200（含并行 #866 鉴权变更上线）、production rerun 404、UI v5。线上探针发现 route_counts 全落 uncategorized（真实 router payload 用 scope_label/execution_action 而非 category/subcategory），PR#868 修复（SQL 与 Python helper 对齐 UI 徽标的 fallback 语义，测试补 scope_label 形态）并构建 release-007 镜像；随后用户指示改动不再部署 EC2、改为本地验证，007 保持未部署。"
         }
       ],
       "source_refs": [
@@ -1757,7 +1763,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 11,
-      "done_count": 7,
+      "done_count": 8,
       "blocked_count": 0
     },
     {
@@ -8401,10 +8407,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-92",
       "title": "三环境控制台补齐旧端点侧栏 Rerun 与路由两级过滤",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "用户观测三环境控制台与 /account、/production 仍有差异：侧栏缺 Rerun 按钮（只有 Reset environment），过滤器是执行状态而非旧 UI 的路由两级过滤。本任务：侧栏新增 Rerun（对全部 execution 逐个 POST /v1/reruns，确认弹窗+进度面板，capabilities 驱动，production 物理排除）；过滤器改为 /account 同款路由两级过滤（route category 主组按钮+计数、subcategory 下拉+计数），后端 list_executions 增加 route_category/route_subcategory 过滤与 route_counts。",
-      "next_action": "代码与测试完成，待 finalize 合并后构建 release-20260823-006 部署三环境并线上验证（含并行 #866 鉴权变更的一并上线）。",
+      "next_action": "已完成。代码/测试/镜像构建齐备；按用户 2026-08-23 指示，后续改动不再部署 EC2、由用户在本地验证（scripts/workflow/start_local_split_environments.sh）。EC2 停留在 release-20260823-006；含路由字段修复的 release-20260823-007 镜像已构建未部署（如需上线执行 deploy_ec2.sh --release release-20260823-007 即可）。",
       "acceptance_criteria": [
         "GET /v1/executions 支持 route_category/route_subcategory 过滤并返回 route_counts（各 category 计数）与选中 category 的 subcategory 计数，均与当前页同快照；status/case 过滤保持兼容。",
         "侧栏按钮组为 New execution + Rerun（capabilities.rerun 时显示）+ Reset environment（仅 staging）+ Sign out；Rerun 打开确认弹窗（冻结目标数量，preproduction 提示会写 internal Zendesk 评论），确认后逐个 rerun 全部 execution 并在侧栏显示进度面板（processed/total、succeeded/failed、失败明细、aria-live）。",
@@ -8418,6 +8424,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Route filter and sidebar rerun contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_execution_store backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment && node --check ui/automation-{staging,preproduction,production}/app.js",
           "details": "33 项测试通过。新增覆盖：GET /v1/executions 的 route_category/route_subcategory 过滤、route_counts 与选中 category 的 route_subcategory_counts 同快照返回；production runtime 同参数透传。三份 app.js node --check 通过、staging/preproduction 主体一致、production bundle 无 rerun 字符串（全量 rerun 代码全部位于剥离块内，中性变量名 bulkActionButtonHtml/bulkStatusHtml）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Release-006 rollout and route-field fix handling",
+          "command": "EC2 build/deploy release-20260823-006（commit=05591ab）+ verify + 探针；修复 PR#868 后构建 release-20260823-007（commit=0a079b2，未部署）",
+          "details": "2026-08-23 部署 release-006：verify 全绿；admin/admin 登录 200、旧 Bearer 头 401、新 X-N8n-Request-Token 200（含并行 #866 鉴权变更上线）、production rerun 404、UI v5。线上探针发现 route_counts 全落 uncategorized（真实 router payload 用 scope_label/execution_action 而非 category/subcategory），PR#868 修复（SQL 与 Python helper 对齐 UI 徽标的 fallback 语义，测试补 scope_label 形态）并构建 release-007 镜像；随后用户指示改动不再部署 EC2、改为本地验证，007 保持未部署。"
         }
       ],
       "source_refs": [
@@ -8433,6 +8445,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-23",
       "updated_at": "2026-08-23",
       "history": [
+        {
+          "at": "2026-08-23",
+          "event": "ec2_deployment_waived_by_user",
+          "summary": "用户指示：以后的改动不需要部署到 EC2，由用户在本地验证。release-007（含路由字段修复）镜像已构建但不部署。"
+        },
         {
           "at": "2026-08-23",
           "event": "route_field_scope_label_fix",
