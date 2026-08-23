@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T16:58:00Z",
-  "source_base_commit": "059d3381f237c7c769fa03ad0f5936c6ebc1fa8c",
-  "registry_digest": "df876f3265dc698e27d78ee47ba847f1b189e837f60cbfe3266abf052e91c712",
+  "generated_at": "2026-08-23T16:58:45Z",
+  "source_base_commit": "ea2f19eabae78a3b8adbd5b6c55524f512245536",
+  "registry_digest": "a132610efcd6ce5c07e6784aebdc5c415764f0044c360d84a57ed6b054a40a10",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1891,6 +1891,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Regression suites",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "41 用例全过（含 p2-102 的读路径 ensure 回归）。"
+        },
+        {
+          "type": "test",
+          "label": "Dual-DB migration executed",
+          "command": "psycopg execute backend/sql/migrations/2026_08_23_automation_test_console.sql via TICKET_DB_MIGRATION_DSN (staging) and same master creds on /supportportal_production",
+          "details": "staging 与 production 两库均输出 migration applied；随后容器内 GET /api/automation-test/scenarios 复验（部署 p2-103 镜像后）。"
+        },
+        {
+          "type": "test",
           "label": "Console API + UI contract + prefix-safety",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
@@ -1918,8 +1930,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 5,
-      "done_count": 5,
+      "task_count": 6,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -5361,6 +5373,55 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-103",
+      "title": "修复：automation test 建表走迁移 DSN + 双库迁移 SQL（runtime 角色无 CREATE 权限）",
+      "status": "done",
+      "owner": "zac",
+      "summary": "p2-102 的读路径懒 ensure 在本地官方栈暴露第二层问题：runtime 角色（supportportal_runtime）对 supportportal schema 无 CREATE 权限，且 CREATE TABLE IF NOT EXISTS 对已存在表也先查权限——GET /scenarios 仍 500（InsufficientPrivilege）。修复三件套：① ensure_schema 先用 runtime DSN to_regclass 探测表存在即跳过 DDL；② 需要建表时 DDL 走迁移 DSN（AUTOMATION_TEST_MIGRATION_DSN/TICKET_DB_MIGRATION_DSN，且仅当其库名与 runtime DSN 一致才用，防 api_production 容器里误建到 staging 库）；③ 新增 backend/sql/migrations/2026_08_23_automation_test_console.sql（两张表+授权）并按仓库惯例手工双库执行（staging+production 均已应用）。",
+      "next_action": "无（表已在双库存在，运行时 DDL 成为 no-op 兜底）。",
+      "acceptance_criteria": [
+        "表已存在时（迁移建好）读路径 ensure 直接跳过 DDL，GET /tickets 与 /scenarios 在无 CREATE 权限的 runtime 角色下返回 200。",
+        "表不存在时 DDL 尝试走迁移 DSN（同库才用）；迁移 SQL 文件可重复执行（IF NOT EXISTS + 授权）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Regression suites",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "41 用例全过（含 p2-102 的读路径 ensure 回归）。"
+        },
+        {
+          "type": "test",
+          "label": "Dual-DB migration executed",
+          "command": "psycopg execute backend/sql/migrations/2026_08_23_automation_test_console.sql via TICKET_DB_MIGRATION_DSN (staging) and same master creds on /supportportal_production",
+          "details": "staging 与 production 两库均输出 migration applied；随后容器内 GET /api/automation-test/scenarios 复验（部署 p2-103 镜像后）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_test_store.py",
+        "backend/sql/migrations/2026_08_23_automation_test_console.sql"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "p2-102 部署后复验仍 500：runtime 角色无 schema CREATE 权限且 IF NOT EXISTS 也查权限；按仓库迁移惯例（migration DSN+手工双库）修复并执行迁移。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-101",
+        "p2-102"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-104",
       "title": "detailed_invoice 纳入 Automation + 内部邮件 PDF 附件转发 Zendesk",
       "status": "active",
       "owner": "zac",
@@ -5423,6 +5484,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "updated",
           "summary": "finalize 刷新 origin/main 时与并行任务 p2-101/p2-102 冲突（剧本逻辑已重构进 backend/services/automation_test_scenarios.py，且 p2-102 任务号已被占用）：任务改号 p2-103，D1 移植进共享引擎，runbook 合并两边改动。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "updated",
+          "summary": "再次改号 p2-103→p2-104：并行会话合并 #898（automation test 建表迁移）又占用了 p2-103；该会话 worktree 已清理，无后续竞争。"
         }
       ],
       "legacy_refs": [
