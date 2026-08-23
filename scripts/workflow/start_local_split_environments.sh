@@ -221,6 +221,10 @@ podman run -d --name supportportal-automation-nginx \
   docker.io/library/nginx:1.27-alpine >/dev/null
 info "Local split nginx serving ${LOCAL_NGINX_BASE}/automation/*/"
 
+# All split containers now reference the freshly built tags, so images from
+# earlier commits are safe to drop before the health verification runs.
+reclaim_local_podman_disk
+
 # --- verification --------------------------------------------------------
 
 failures=0
