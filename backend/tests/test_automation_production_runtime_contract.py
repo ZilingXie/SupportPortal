@@ -199,6 +199,57 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                 self.assertEqual(verify.call_args.kwargs["ticket_id"], "123")
                 self.assertEqual(verify.call_args.kwargs["ledger_item"]["target_status"], "open")
 
+    def test_production_legacy_form_body_still_requires_comment_visibility(self):
+        with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
+            "backend.automation_production_runtime.call_route", new_callable=AsyncMock
+        ):
+            with TestClient(create_app()) as client:
+                response = client.post(
+                    "/v1/cases",
+                    data={
+                        "title": "Legacy intake title",
+                        "question": "q",
+                        "customer_email": "customer@example.com",
+                        "customer_name": "Customer",
+                        "source": "https://agoraio.zendesk.com/agent/tickets/12999",
+                    },
+                    headers={"X-N8n-Request-Token": "execution-token"},
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertIn("comment_visibility", response.text)
+
+    def test_production_legacy_form_body_with_internal_visibility_maps_identity(self):
+        with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
+            "backend.automation_production_runtime.call_route", new_callable=AsyncMock
+        ) as call:
+            from backend.services.automation_contracts import AutomationEnvironment, RouteResult
+
+            call.return_value = RouteResult(
+                request_id="n8n-zd-12999",
+                idempotency_key="production:route:n8n-zd-12999",
+                environment=AutomationEnvironment.PRODUCTION,
+                case_id="AC-12999",
+                route={"execution_action": "human_review_required"},
+                automation={"eligible": False},
+                action_plan={"preparation_status": "human_review"},
+            )
+            with TestClient(create_app()) as client:
+                response = client.post(
+                    "/v1/cases",
+                    data={
+                        "title": "Legacy intake title",
+                        "question": "q",
+                        "source": "https://agoraio.zendesk.com/agent/tickets/12999",
+                        "comment_visibility": "internal",
+                    },
+                    headers={"X-N8n-Request-Token": "execution-token"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                execution = response.json()["execution"]
+                self.assertEqual(execution["request_id"], "n8n-zd-12999")
+                self.assertEqual(execution["case_id"], "AC-12999")
+                self.assertEqual(execution["request"]["zendesk_ticket_id"], "12999")
+
 
 if __name__ == "__main__":
     unittest.main()
