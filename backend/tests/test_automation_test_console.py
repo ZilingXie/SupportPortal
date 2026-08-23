@@ -300,27 +300,34 @@ class AutomationTestTemplateClassificationTests(unittest.TestCase):
 
 
 class AutomationTestSmtpTransportTests(unittest.TestCase):
-    """AUTOMATION_TEST_MAIL_TRANSPORT=smtp (dedicated QQ mailbox)."""
+    """AUTOMATION_TEST_MAIL_TRANSPORT=smtp (reuses BILLING_AUTOMATION_SMTP_*)."""
 
     SMTP_ENV = {
         "AUTOMATION_TEST_MAIL_TRANSPORT": "smtp",
-        "AUTOMATION_TEST_MAIL_SMTP_HOST": "smtp.qq.com",
-        "AUTOMATION_TEST_MAIL_SMTP_PORT": "465",
-        "AUTOMATION_TEST_MAIL_SMTP_USERNAME": "zac.ai.test@qq.com",
-        "AUTOMATION_TEST_MAIL_SMTP_PASSWORD": "qq-smtp-auth-code",
+        "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
+        "BILLING_AUTOMATION_SMTP_PORT": "465",
+        "BILLING_AUTOMATION_SMTP_USERNAME": "xieziling97@163.com",
+        "BILLING_AUTOMATION_SMTP_PASSWORD": "smtp-authorization-code",
     }
 
     def test_smtp_missing_keys_fail_closed(self) -> None:
         with patch.dict(
-            os.environ, {"AUTOMATION_TEST_MAIL_TRANSPORT": "smtp"}, clear=False
+            os.environ,
+            {
+                "AUTOMATION_TEST_MAIL_TRANSPORT": "smtp",
+                "BILLING_AUTOMATION_SMTP_HOST": "",
+                "BILLING_AUTOMATION_SMTP_USERNAME": "",
+                "BILLING_AUTOMATION_SMTP_PASSWORD": "",
+            },
+            clear=False,
         ):
             context = automation_test_mail.load_automation_test_send_context()
             self.assertFalse(context["configured"])
             self.assertEqual(context["transport"], "smtp")
             for key in (
-                "AUTOMATION_TEST_MAIL_SMTP_HOST",
-                "AUTOMATION_TEST_MAIL_SMTP_USERNAME",
-                "AUTOMATION_TEST_MAIL_SMTP_PASSWORD",
+                "BILLING_AUTOMATION_SMTP_HOST",
+                "BILLING_AUTOMATION_SMTP_USERNAME",
+                "BILLING_AUTOMATION_SMTP_PASSWORD",
             ):
                 self.assertIn(key, context["missing_config_keys"])
             with self.assertRaises(automation_test_mail.AutomationTestMailError) as raised:
@@ -339,16 +346,18 @@ class AutomationTestSmtpTransportTests(unittest.TestCase):
                 subject="[zac test] Account suspended",
                 body="Our account is suspended.",
             )
-        self.assertEqual(sender, "zac.ai.test@qq.com")
+        self.assertEqual(sender, "xieziling97@163.com")
         smtp_ssl.assert_called_once_with(
-            "smtp.qq.com",
+            "smtp.163.com",
             465,
             timeout=automation_test_mail.DEFAULT_TEST_SMTP_TIMEOUT_SECONDS,
             context=ANY,
         )
-        instance.login.assert_called_once_with("zac.ai.test@qq.com", "qq-smtp-auth-code")
+        instance.login.assert_called_once_with(
+            "xieziling97@163.com", "smtp-authorization-code"
+        )
         sent = instance.send_message.call_args[0][0]
-        self.assertEqual(sent["From"], "zac.ai.test@qq.com")
+        self.assertEqual(sent["From"], "xieziling97@163.com")
         self.assertEqual(sent["To"], "support@agoraio.zendesk.com")
         self.assertEqual(sent["Subject"], "[zac test] Account suspended")
 
@@ -357,7 +366,7 @@ class AutomationTestSmtpTransportTests(unittest.TestCase):
             context = automation_test_mail.load_automation_test_send_context()
         self.assertTrue(context["configured"])
         self.assertEqual(context["transport"], "smtp")
-        self.assertEqual(context["sender"], "zac.ai.test@qq.com")
+        self.assertEqual(context["sender"], "xieziling97@163.com")
         self.assertEqual(context["recipient"], "support@agoraio.zendesk.com")
 
     def test_smtp_send_failure_wraps_reason(self) -> None:

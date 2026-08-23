@@ -3,9 +3,10 @@
 Two transports, selected by AUTOMATION_TEST_MAIL_TRANSPORT:
 - "graph" (default): Microsoft Graph mailbox via the AUTOMATION_TEST_MAIL_*
   Graph namespace (tenant/client/secret/username/token cache).
-- "smtp": SMTP over SSL — used for the dedicated QQ mailbox
-  (smtp.qq.com:465, login = mailbox address, password = SMTP authorization
-  code from QQ Mail settings).
+- "smtp": SMTP over SSL — reuses the existing BILLING_AUTOMATION_SMTP_*
+  credentials (163 mailbox, smtp.163.com:465, password = SMTP authorization
+  code). Those keys have no other consumer since billing automation moved
+  to Microsoft Graph, so the test console is their single SMTP owner.
 
 The sender mailbox is intentionally separate from the internal handoff
 mailbox (ai-support-agent@agora.io): test tickets must have an end-user
@@ -42,9 +43,9 @@ GRAPH_CONFIG_ENV_NAMES = {
     "username": "AUTOMATION_TEST_MAIL_USERNAME",
 }
 SMTP_REQUIRED_ENV_NAMES = (
-    "AUTOMATION_TEST_MAIL_SMTP_HOST",
-    "AUTOMATION_TEST_MAIL_SMTP_USERNAME",
-    "AUTOMATION_TEST_MAIL_SMTP_PASSWORD",
+    "BILLING_AUTOMATION_SMTP_HOST",
+    "BILLING_AUTOMATION_SMTP_USERNAME",
+    "BILLING_AUTOMATION_SMTP_PASSWORD",
 )
 
 
@@ -87,14 +88,11 @@ def load_automation_test_mail_config() -> dict[str, str]:
 
 def _load_smtp_config() -> dict[str, Any]:
     return {
-        "host": _clean(os.getenv("AUTOMATION_TEST_MAIL_SMTP_HOST")) or DEFAULT_TEST_SMTP_HOST,
-        "port": _safe_int(os.getenv("AUTOMATION_TEST_MAIL_SMTP_PORT"), DEFAULT_TEST_SMTP_PORT),
-        "username": _clean(os.getenv("AUTOMATION_TEST_MAIL_SMTP_USERNAME")),
-        "password": _clean(os.getenv("AUTOMATION_TEST_MAIL_SMTP_PASSWORD")),
-        "timeout": _safe_int(
-            os.getenv("AUTOMATION_TEST_MAIL_SMTP_TIMEOUT_SECONDS"),
-            DEFAULT_TEST_SMTP_TIMEOUT_SECONDS,
-        ),
+        "host": _clean(os.getenv("BILLING_AUTOMATION_SMTP_HOST")) or DEFAULT_TEST_SMTP_HOST,
+        "port": _safe_int(os.getenv("BILLING_AUTOMATION_SMTP_PORT"), DEFAULT_TEST_SMTP_PORT),
+        "username": _clean(os.getenv("BILLING_AUTOMATION_SMTP_USERNAME")),
+        "password": _clean(os.getenv("BILLING_AUTOMATION_SMTP_PASSWORD")),
+        "timeout": DEFAULT_TEST_SMTP_TIMEOUT_SECONDS,
     }
 
 
@@ -103,9 +101,9 @@ def automation_test_mail_missing_keys() -> list[str]:
         smtp_config = _load_smtp_config()
         missing = []
         for env_name, key in (
-            ("AUTOMATION_TEST_MAIL_SMTP_HOST", "host"),
-            ("AUTOMATION_TEST_MAIL_SMTP_USERNAME", "username"),
-            ("AUTOMATION_TEST_MAIL_SMTP_PASSWORD", "password"),
+            ("BILLING_AUTOMATION_SMTP_HOST", "host"),
+            ("BILLING_AUTOMATION_SMTP_USERNAME", "username"),
+            ("BILLING_AUTOMATION_SMTP_PASSWORD", "password"),
         ):
             if not smtp_config[key]:
                 missing.append(env_name)

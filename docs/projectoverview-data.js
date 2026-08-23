@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T14:04:34Z",
-  "source_base_commit": "165f00a2e9b535e496667125dd9167cd93d633bd",
-  "registry_digest": "aec4d33a5a31e1b0c2706ac442b37f4dd4bc2bfdbaf86cb93179b1f655229266",
+  "generated_at": "2026-08-23T14:20:01Z",
+  "source_base_commit": "7890addf76abf08d22e04a2bc5d0cfd1bb067d4e",
+  "registry_digest": "7023e107a13b6cb2e24210142d5ebfce90001711218a63288b88f316eb0e7051",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1846,6 +1846,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "SMTP transport unit tests",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "新增 5 用例：缺 host/username/password fail-closed（configured=false+缺失键清单+AutomationTestMailError）；SMTP_SSL+login+send_message 成功（From/To/Subject 头与超时/端口断言）；context 默认 sender=SMTP_USERNAME；发送失败原因包裹进异常；非法 transport 拒绝。与 p2-97 既有 18 用例（graph 默认路径）合计 23 个全过。"
+        },
+        {
+          "type": "test",
+          "label": "SMTP key reuse regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "SMTP 用例改为断言 BILLING_AUTOMATION_SMTP_*（smtp.163.com:465、xieziling97@163.com、缺键清单含该组键名、宿主环境清空后确定性 fail-closed）；23 用例全过；grep 确认仓库无 AUTOMATION_TEST_MAIL_SMTP 残留引用。"
         }
       ],
       "source_refs": [
@@ -1858,8 +1864,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 2,
-      "done_count": 2,
+      "task_count": 3,
+      "done_count": 3,
       "blocked_count": 0
     },
     {
@@ -8954,6 +8960,52 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_refs": [
         "p2-97"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-99",
+      "title": "测试控制台 SMTP 通道复用 BILLING_AUTOMATION_SMTP_* 凭据",
+      "status": "done",
+      "owner": "zac",
+      "summary": "用户指出 AUTOMATION_TEST_MAIL_SMTP_PASSWORD 与既有 BILLING_AUTOMATION_SMTP_PASSWORD 值相同、不应重复维护：smtp 通道改为直接读取既有 BILLING_AUTOMATION_SMTP_HOST/PORT/USERNAME/PASSWORD（这些键自 billing 自动化迁移 Microsoft Graph 后无其他消费者，测试控制台成为其唯一 SMTP 使用方），删除 p2-98 引入的 AUTOMATION_TEST_MAIL_SMTP_* 键族与超时键；启用时只需设 AUTOMATION_TEST_MAIL_TRANSPORT=smtp，无需新增凭据行。graph 通道与 fail-closed 语义不变。",
+      "next_action": "用户侧跟进：EC2 与本地 .env 只需设 AUTOMATION_TEST_MAIL_TRANSPORT=smtp（163 的 SMTP 四键已在），部署/重启 api_production 后按 runbook 步骤 0 做 enablement 基线探测。",
+      "acceptance_criteria": [
+        "smtp 通道读取 BILLING_AUTOMATION_SMTP_HOST/PORT/USERNAME/PASSWORD；缺 host/username/password 任一项 fail-closed 且缺失键名按该组键名展示。",
+        "AUTOMATION_TEST_MAIL_SMTP_* 键族不再被代码或文档引用；超时固定为常量默认值。",
+        "graph 通道（默认）与 p2-97/p2-98 其余行为不变，23 个用例全过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "SMTP key reuse regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "SMTP 用例改为断言 BILLING_AUTOMATION_SMTP_*（smtp.163.com:465、xieziling97@163.com、缺键清单含该组键名、宿主环境清空后确定性 fail-closed）；23 用例全过；grep 确认仓库无 AUTOMATION_TEST_MAIL_SMTP 残留引用。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_test_mail.py",
+        "backend/tests/test_automation_test_console.py",
+        ".env.example",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户反馈 SMTP 授权码与 BILLING_AUTOMATION_SMTP_PASSWORD 同值，要求复用既有变量名；将 p2-98 的 AUTOMATION_TEST_MAIL_SMTP_* 键族替换为直接读取 BILLING_AUTOMATION_SMTP_*（该组键无其他消费者），配置面收敛为单键 AUTOMATION_TEST_MAIL_TRANSPORT=smtp。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-97",
+        "p2-98"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",
