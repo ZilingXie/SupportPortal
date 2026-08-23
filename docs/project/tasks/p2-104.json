@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "task_id": "p2-103",
+  "task_id": "p2-104",
   "title": "detailed_invoice 纳入 Automation + 内部邮件 PDF 附件转发 Zendesk",
   "status": "active",
   "owner": "zac",
@@ -63,6 +63,11 @@
       "at": "2026-08-23",
       "event": "updated",
       "summary": "finalize 刷新 origin/main 时与并行任务 p2-101/p2-102 冲突（剧本逻辑已重构进 backend/services/automation_test_scenarios.py，且 p2-102 任务号已被占用）：任务改号 p2-103，D1 移植进共享引擎，runbook 合并两边改动。"
+    },
+    {
+      "at": "2026-08-23",
+      "event": "updated",
+      "summary": "再次改号 p2-103→p2-104：并行会话合并 #898（automation test 建表迁移）又占用了 p2-103；该会话 worktree 已清理，无后续竞争。"
     }
   ],
   "legacy_refs": [
