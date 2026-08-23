@@ -30,7 +30,10 @@
 
 ## 2. 前置检查（每次回归前）
 
-1. **测试邮箱凭据**（首次）：在 EC2 与本地 `.env` 配置 `AUTOMATION_TEST_MAIL_TENANT_ID/CLIENT_ID/CLIENT_SECRET/USERNAME`，并把该邮箱的有效 refresh token 放到 `AUTOMATION_TEST_MAIL_TOKEN_CACHE`（默认 `.msgraph/automation-test-token.json`）。未配置时页面顶部会显示缺失键名，创建按钮禁用（fail-closed，不会发信）。
+1. **测试邮箱凭据**（首次）：由 `AUTOMATION_TEST_MAIL_TRANSPORT` 选择通道（EC2 与本地 `.env` 保持一致）：
+   - `smtp`（当前采用，163 专用邮箱 `xieziling97@163.com`）：填 `AUTOMATION_TEST_MAIL_SMTP_HOST=smtp.163.com`、`AUTOMATION_TEST_MAIL_SMTP_PORT=465`、`AUTOMATION_TEST_MAIL_SMTP_USERNAME=xieziling97@163.com`、`AUTOMATION_TEST_MAIL_SMTP_PASSWORD=<163 授权码>`。QQ 邮箱同理换 `smtp.qq.com` + QQ 授权码。
+   - `graph`（Microsoft 365 邮箱，备选）：配置 `AUTOMATION_TEST_MAIL_TENANT_ID/CLIENT_ID/CLIENT_SECRET/USERNAME`，refresh token 放 `AUTOMATION_TEST_MAIL_TOKEN_CACHE`（默认 `.msgraph/automation-test-token.json`）。
+   未配置时页面顶部会显示缺失键名，创建按钮禁用（fail-closed，不会发信）。
 2. **production 副作用开关**：EC2 `.env` 中 `PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1`、`PRODUCTION_TARGET_TICKET_STATUS` 与 `ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID` 保持既有配置。
 3. **不要手动改测试工单的 assignee**：ownership 机制在人工接管后会停止自动回复（约 90 秒后 AI 接管）。
 4. 页面能列出三类模板，顶部横幅显示发件人/收件人/`[zac test]` 主题标签。

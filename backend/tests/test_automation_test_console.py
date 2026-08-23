@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +12,7 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services import automation_test_mail
 from backend.services.automation_test_mail import AutomationTestMailError
 from backend.services.automation_test_store import AutomationTestTicketStore
 from backend.services.automation_test_templates import ENABLEMENT_TEMPLATE_APP_ID
@@ -296,6 +297,87 @@ class AutomationTestTemplateClassificationTests(unittest.TestCase):
         self.assertEqual(once, "[zac test] Account suspended")
         twice = apply_subject_tag(once, "[zac test] ")
         self.assertEqual(twice, once)
+
+
+class AutomationTestSmtpTransportTests(unittest.TestCase):
+    """AUTOMATION_TEST_MAIL_TRANSPORT=smtp (dedicated QQ mailbox)."""
+
+    SMTP_ENV = {
+        "AUTOMATION_TEST_MAIL_TRANSPORT": "smtp",
+        "AUTOMATION_TEST_MAIL_SMTP_HOST": "smtp.qq.com",
+        "AUTOMATION_TEST_MAIL_SMTP_PORT": "465",
+        "AUTOMATION_TEST_MAIL_SMTP_USERNAME": "zac.ai.test@qq.com",
+        "AUTOMATION_TEST_MAIL_SMTP_PASSWORD": "qq-smtp-auth-code",
+    }
+
+    def test_smtp_missing_keys_fail_closed(self) -> None:
+        with patch.dict(
+            os.environ, {"AUTOMATION_TEST_MAIL_TRANSPORT": "smtp"}, clear=False
+        ):
+            context = automation_test_mail.load_automation_test_send_context()
+            self.assertFalse(context["configured"])
+            self.assertEqual(context["transport"], "smtp")
+            for key in (
+                "AUTOMATION_TEST_MAIL_SMTP_HOST",
+                "AUTOMATION_TEST_MAIL_SMTP_USERNAME",
+                "AUTOMATION_TEST_MAIL_SMTP_PASSWORD",
+            ):
+                self.assertIn(key, context["missing_config_keys"])
+            with self.assertRaises(automation_test_mail.AutomationTestMailError) as raised:
+                automation_test_mail.send_test_ticket_email(
+                    to_address="support@agoraio.zendesk.com", subject="s", body="b"
+                )
+            self.assertIn("not configured", str(raised.exception))
+
+    def test_smtp_send_success_uses_ssl_login_and_sender_header(self) -> None:
+        with patch.dict(os.environ, self.SMTP_ENV, clear=False), patch.object(
+            automation_test_mail.smtplib, "SMTP_SSL"
+        ) as smtp_ssl:
+            instance = smtp_ssl.return_value.__enter__.return_value
+            sender = automation_test_mail.send_test_ticket_email(
+                to_address="support@agoraio.zendesk.com",
+                subject="[zac test] Account suspended",
+                body="Our account is suspended.",
+            )
+        self.assertEqual(sender, "zac.ai.test@qq.com")
+        smtp_ssl.assert_called_once_with(
+            "smtp.qq.com",
+            465,
+            timeout=automation_test_mail.DEFAULT_TEST_SMTP_TIMEOUT_SECONDS,
+            context=ANY,
+        )
+        instance.login.assert_called_once_with("zac.ai.test@qq.com", "qq-smtp-auth-code")
+        sent = instance.send_message.call_args[0][0]
+        self.assertEqual(sent["From"], "zac.ai.test@qq.com")
+        self.assertEqual(sent["To"], "support@agoraio.zendesk.com")
+        self.assertEqual(sent["Subject"], "[zac test] Account suspended")
+
+    def test_smtp_context_defaults_sender_to_smtp_username(self) -> None:
+        with patch.dict(os.environ, self.SMTP_ENV, clear=False):
+            context = automation_test_mail.load_automation_test_send_context()
+        self.assertTrue(context["configured"])
+        self.assertEqual(context["transport"], "smtp")
+        self.assertEqual(context["sender"], "zac.ai.test@qq.com")
+        self.assertEqual(context["recipient"], "support@agoraio.zendesk.com")
+
+    def test_smtp_send_failure_wraps_reason(self) -> None:
+        with patch.dict(os.environ, self.SMTP_ENV, clear=False), patch.object(
+            automation_test_mail.smtplib,
+            "SMTP_SSL",
+            side_effect=OSError("connection refused"),
+        ):
+            with self.assertRaises(automation_test_mail.AutomationTestMailError) as raised:
+                automation_test_mail.send_test_ticket_email(
+                    to_address="support@agoraio.zendesk.com", subject="s", body="b"
+                )
+        self.assertIn("connection refused", str(raised.exception))
+
+    def test_unsupported_transport_is_rejected(self) -> None:
+        with patch.dict(
+            os.environ, {"AUTOMATION_TEST_MAIL_TRANSPORT": "sendmail"}, clear=False
+        ):
+            with self.assertRaises(automation_test_mail.AutomationTestMailError):
+                automation_test_mail.load_automation_test_send_context()
 
 
 if __name__ == "__main__":
