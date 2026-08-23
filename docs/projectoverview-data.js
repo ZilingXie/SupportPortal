@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T07:16:42Z",
-  "source_base_commit": "24fca47cbb0b466237555229abe52f0ef3bf746d",
-  "registry_digest": "c2b905d90d90a9475e3b1566bb6a5b0064ecef46597d451ee772628ffdfd154e",
+  "generated_at": "2026-08-23T08:17:34Z",
+  "source_base_commit": "478b45da2d228c70a4a79b0db91cca643f3eee4b",
+  "registry_digest": "49c338de08ae78a238512403167b747a170abd5905dc21cb9f7cff245bcee471",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1789,6 +1789,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Tolerant parsing instead of env-only fix",
           "command": "线上证据三角定位：production 502 zendesk_basic_auth_invalid（代码侧 base64 解码失败）+ verify 探针 33/33 绿（探针按裸值编码）→ .env 实为裸值、两消费者格式期望相反。",
           "details": "选择代码兼容而非只改 .env：线上裸值已是既成部署状态，且探针与代码期望相反会在任一单向修复后留下误报/隐患；':' 判据在两种格式间无歧义（base64 字母表不含 ':'），兼容分支是封闭的两态判定而非开放回退。"
+        },
+        {
+          "type": "test",
+          "label": "Allowlist opt-out regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_contracts backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract",
+          "details": "新增 2 用例：* 放行任意工单且 visibility 强制 internal 不变；空 allowlist 保持拒绝全部。与既有 contracts/runtime/production 套件全部通过。"
         }
       ],
       "source_refs": [
@@ -1798,7 +1804,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 13,
+      "task_count": 14,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -8684,6 +8690,52 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p2-88",
         "p2-91",
+        "p2-94"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-96",
+      "title": "preproduction allowlist 支持 * 显式放行全部",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户运营模式改为在 n8n 工作流侧过滤进入 preproduction 的工单，要求服务端不再强制工单白名单。validate_ticket_policy 的 preproduction 分支增加显式 opt-out：PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST=* 时放行任意工单（visibility 强制 internal 等其余策略不变）；逗号分隔名单语义不变；空/未配置保持 fail-closed 拒绝全部（不翻转安全默认）。deploy_automation_release.md 与 cutover 文档同步三态表述。",
+      "next_action": "代码与测试完成，待 finalize 合并后部署（deploy_surfaces_ec2.sh）；随后 EC2 .env 设 PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST=* 并 recreate preproduction，用户在 n8n 侧重测（12899 在部署前已可通过现有名单门，容器内实测 PASS）。",
+      "acceptance_criteria": [
+        "PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST=* 时任意 zendesk_ticket_id 通过 preproduction 门控，comment_visibility 仍强制 internal（external 422）。",
+        "逗号分隔工单号名单语义不变；空/未配置仍拒绝全部（fail-closed 默认不翻转）。",
+        "staging/production 策略不受影响。",
+        "文档三态表述（名单 / * / 空）落在 deploy_automation_release.md 与 cutover 文档。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Allowlist opt-out regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_contracts backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract",
+          "details": "新增 2 用例：* 放行任意工单且 visibility 强制 internal 不变；空 allowlist 保持拒绝全部。与既有 contracts/runtime/production 套件全部通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_contracts.py",
+        "docs/deploy_automation_release.md",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户反馈 n8n 侧已过滤工单、要求服务端取消白名单强制；实现 * 显式 opt-out 而非翻转空值默认，保持误配置 fail-closed。此前 12899 已加入名单并 recreate（容器内实测 gate PASS），用户报错为修复前的旧请求。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88",
         "p2-94"
       ],
       "legacy_ids": [],
