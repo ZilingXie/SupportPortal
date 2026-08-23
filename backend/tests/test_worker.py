@@ -683,6 +683,7 @@ class WorkerResilienceTests(unittest.TestCase):
             ticket_id="PRD-RECOVER",
             message_id="1372",
             job_id="reply-recover",
+            reply_intent=None,
         )
 
     def test_delivery_is_not_put_twice_after_first_completion(self) -> None:
@@ -3698,7 +3699,7 @@ class WorkerResilienceTests(unittest.TestCase):
             worker, "render_automation_reply"
         ) as render, patch.object(
             worker, "_deliver_production_account_reply_to_zendesk"
-        ):
+        ) as deliver:
             worker._publish_account_reply_job(job)
 
         # The RAG answer must be published verbatim: no persona render, no
@@ -3710,6 +3711,38 @@ class WorkerResilienceTests(unittest.TestCase):
             publish_call.kwargs["content"],
             "You can find the App ID on the Projects page in Agora Console.",
         )
+        deliver.assert_called_once()
+        self.assertEqual(
+            deliver.call_args.kwargs.get("reply_intent"),
+            "rag_fallback_answer",
+        )
+
+    def test_rag_fallback_delivery_bypasses_unregistered_route_gate(self) -> None:
+        # After an unexpected reply the case is re-routed (e.g. rag_product_support)
+        # and no longer carries a registered automation route; the RAG answer
+        # must still be delivered to Zendesk.
+        account_case = {
+            "account_case_id": "AC-UNREGISTERED",
+            "processing_profile": "production",
+            "route_family": "rag_product_support",
+            "execution_action": "rag",
+            "zendesk_ticket_id": "12999",
+        }
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = account_case
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": False,
+            "status": "missing",
+        }
+        with patch.object(worker, "ticket_repository", repository):
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="TK-UNREGISTERED",
+                message_id="msg-1",
+                job_id="job-1",
+                reply_intent="rag_fallback_answer",
+            )
+        # The unregistered-automation gate must NOT have returned early.
+        repository.claim_account_zendesk_comment_delivery.assert_called_once()
 
     def test_legacy_delayed_reply_persona_unavailable_moves_to_human_review(self) -> None:
         job = {

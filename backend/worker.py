@@ -1042,6 +1042,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         ticket_id=ticket_id,
         message_id=message_id,
         job_id=job_id,
+        reply_intent=str(payload.get("reply_intent") or "").strip() or None,
     )
 
 
@@ -1050,6 +1051,7 @@ def _deliver_production_account_reply_to_zendesk(
     ticket_id: str,
     message_id: str | None = None,
     job_id: str | None = None,
+    reply_intent: str | None = None,
 ) -> None:
     """Write one published production reply to Zendesk with its ledger visibility."""
     effective_message_id = str(message_id or job_id or "").strip()
@@ -1059,9 +1061,16 @@ def _deliver_production_account_reply_to_zendesk(
         return
     if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
         return
-    if not is_registered_automation(
-        route_family=str(account_case.get("route_family") or ""),
-        execution_action=str(account_case.get("execution_action") or account_case.get("route") or ""),
+    # RAG fallback answers reply to an unexpected customer message after the
+    # case was re-routed away from its automation handler, so the case no
+    # longer carries a registered route; the answer itself must still be
+    # delivered.
+    if (
+        str(reply_intent or "").strip() != ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        and not is_registered_automation(
+            route_family=str(account_case.get("route_family") or ""),
+            execution_action=str(account_case.get("execution_action") or account_case.get("route") or ""),
+        )
     ):
         LOGGER.info(
             "production_zendesk_delivery_skipped job_id=%s ticket_id=%s account_case_id=%s "
@@ -1459,6 +1468,7 @@ def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
             ticket_id=ticket_id,
             message_id=message_id,
             job_id=str(meta.get("account_reply_job_id") or "").strip() or message_id,
+            reply_intent=str(meta.get("reply_intent") or "").strip() or None,
         )
 
 
