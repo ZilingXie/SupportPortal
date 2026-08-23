@@ -32,6 +32,7 @@ class AutomationTestTicketStore:
         self._lock = threading.RLock()
         self._memory: dict[int, dict[str, Any]] = {}
         self._memory_next_id = 0
+        self._schema_ensured = False
         self._dsn = str(dsn or "").strip()
         self._schema = str(schema or "supportportal").strip()
         if not self._schema.replace("_", "").isalnum():
@@ -45,11 +46,14 @@ class AutomationTestTicketStore:
         return f'"{self._schema}"."automation_test_tickets"'
 
     def ensure_schema(self) -> None:
+        if self._schema_ensured:
+            return
         if self.in_memory:
             if os.getenv("AUTOMATION_TEST_ALLOW_MEMORY") != "1":
                 raise RuntimeError(
                     "automation test ticket store requires AUTOMATION_TEST_DB_DSN or TICKET_DB_DSN"
                 )
+            self._schema_ensured = True
             return
         with psycopg.connect(self._dsn) as connection:
             with connection.cursor() as cursor:
@@ -77,6 +81,7 @@ class AutomationTestTicketStore:
                     )
                     """
                 )
+        self._schema_ensured = True
 
     # -- writes ---------------------------------------------------------
 
@@ -184,6 +189,7 @@ class AutomationTestTicketStore:
             normalized_id = int(ticket_id)
         except (TypeError, ValueError):
             return None
+        self.ensure_schema()
         if self.in_memory:
             with self._lock:
                 value = self._memory.get(normalized_id)
@@ -203,6 +209,7 @@ class AutomationTestTicketStore:
 
     def list_tickets(self, limit: int = 100) -> list[dict[str, Any]]:
         normalized_limit = max(1, min(int(limit or 100), 200))
+        self.ensure_schema()
         if self.in_memory:
             with self._lock:
                 records = sorted(self._memory.values(), key=lambda item: item["id"], reverse=True)
@@ -256,6 +263,7 @@ class AutomationTestScenarioRunStore:
     def __init__(self, *, dsn: str = "", schema: str = "supportportal") -> None:
         self._lock = threading.RLock()
         self._memory: dict[str, dict[str, Any]] = {}
+        self._schema_ensured = False
         self._dsn = str(dsn or "").strip()
         self._schema = str(schema or "supportportal").strip()
         if not self._schema.replace("_", "").isalnum():
@@ -269,11 +277,14 @@ class AutomationTestScenarioRunStore:
         return f'"{self._schema}"."automation_test_scenario_runs"'
 
     def ensure_schema(self) -> None:
+        if self._schema_ensured:
+            return
         if self.in_memory:
             if os.getenv("AUTOMATION_TEST_ALLOW_MEMORY") != "1":
                 raise RuntimeError(
                     "automation test scenario store requires AUTOMATION_TEST_DB_DSN or TICKET_DB_DSN"
                 )
+            self._schema_ensured = True
             return
         with psycopg.connect(self._dsn) as connection:
             with connection.cursor() as cursor:
@@ -299,6 +310,7 @@ class AutomationTestScenarioRunStore:
                     )
                     """
                 )
+        self._schema_ensured = True
 
     def create_run(self, run_id: str, scenario_id: str) -> dict[str, Any]:
         record: dict[str, Any] = {
@@ -412,6 +424,7 @@ class AutomationTestScenarioRunStore:
         normalized = str(run_id or "").strip()
         if not normalized:
             return None
+        self.ensure_schema()
         if self.in_memory:
             with self._lock:
                 value = self._memory.get(normalized)
@@ -429,6 +442,7 @@ class AutomationTestScenarioRunStore:
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         normalized_limit = max(1, min(int(limit or 20), 100))
+        self.ensure_schema()
         if self.in_memory:
             with self._lock:
                 records = sorted(

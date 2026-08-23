@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T16:42:07Z",
-  "source_base_commit": "afc069d5da8858c0781e0cfc934100f4a611df71",
-  "registry_digest": "332ebbe4f1baa9a8c6ae530808b9907e8f1464a3d031e70ceb0601d389b13699",
+  "generated_at": "2026-08-23T16:50:51Z",
+  "source_base_commit": "5cbd5618df7930ebd32f4b808b2ede86621c5cae",
+  "registry_digest": "24e0a7c76434c9b8860e4db7c47ca03d472049b6ecc2239f31eb73e63c3cbc49",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1861,6 +1861,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Lazy-schema regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "新增 2 用例：SpyStore 断言 ticket/run 两 store 的 get/list 读路径都触发 ensure_schema；41 用例全过。"
+        },
+        {
+          "type": "test",
+          "label": "Reproduced then fixed on live container",
+          "command": "podman exec deployment_api_1 python - … GET /api/automation-test/scenarios",
+          "details": "修复前本地官方栈（staging 库无表）登录后 GET scenarios 500（psycopg UndefinedTable: automation_test_scenario_runs）。"
+        },
+        {
+          "type": "test",
           "label": "Console API + UI contract + prefix-safety",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
@@ -1888,8 +1900,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 4,
-      "done_count": 4,
+      "task_count": 5,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -5273,6 +5285,55 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p2-97",
         "p2-100"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-102",
+      "title": "修复：automation test 两 store 读路径懒建表（全新库 GET 不再 500）",
+      "status": "done",
+      "owner": "zac",
+      "summary": "p2-101 合并后活栈验证发现：automation_test_tickets 与 automation_test_scenario_runs 两张表只在写入路径懒建，全新数据库上 GET /api/automation-test/tickets 与 /scenarios 直接 500（UndefinedTable）。修复：ensure_schema 加进程级 _schema_ensured 幂等 flag，get/list 读方法入口先 ensure（每进程仅首连执行 DDL），内存模式语义不变。",
+      "next_action": "无（随 p2-101 一并部署 EC2 后生效）。",
+      "acceptance_criteria": [
+        "全新数据库上 GET /api/automation-test/tickets 与 GET /api/automation-test/scenarios 返回 200 空列表而非 500。",
+        "ensure_schema 每进程只执行一次 DDL（幂等 flag）；内存模式行为不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Lazy-schema regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "新增 2 用例：SpyStore 断言 ticket/run 两 store 的 get/list 读路径都触发 ensure_schema；41 用例全过。"
+        },
+        {
+          "type": "test",
+          "label": "Reproduced then fixed on live container",
+          "command": "podman exec deployment_api_1 python - … GET /api/automation-test/scenarios",
+          "details": "修复前本地官方栈（staging 库无表）登录后 GET scenarios 500（psycopg UndefinedTable: automation_test_scenario_runs）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_test_store.py",
+        "backend/tests/test_automation_test_console.py"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "p2-101 合并后活栈 marker 验证暴露：本地 staging 库无 automation_test_scenario_runs 表，GET /scenarios 500；同病存在于 ticket store 的读路径。统一改读路径懒 ensure + 幂等 flag。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-97",
+        "p2-101"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",
