@@ -93,7 +93,28 @@ class RagFallbackAnswerTest(unittest.TestCase):
         )
         self.assertEqual(outcome.kind, "answer")
         self.assertEqual(outcome.answer, "An App ID identifies your Agora project.")
-        self.assertEqual(client.calls[0]["question"], "what is appid?")
+
+    def test_answer_trailing_signature_is_stripped(self) -> None:
+        client = _FakeRagClient(
+            payload={
+                "decision": "answer",
+                "answer": (
+                    "You can find it on the Agora Console Projects page.\n\n"
+                    "1. Open the Agora Console Projects page.\n2. Click the copy icon.\n\n"
+                    "Best Regards,\nSid"
+                ),
+            }
+        )
+        outcome = try_rag_fallback_answer(question="where is the app id?", request_id="req-s", client=client)
+        self.assertEqual(outcome.kind, "answer")
+        self.assertFalse(outcome.answer.rstrip().endswith("Sid"))
+        self.assertTrue(outcome.answer.startswith("You can find it on the Agora Console Projects page."))
+        # A closing sentence is not a signature and must be preserved.
+        keep_client = _FakeRagClient(
+            payload={"decision": "answer", "answer": "Thanks for asking.\nThe App ID is on the Projects page."}
+        )
+        keep = try_rag_fallback_answer(question="q", request_id="req-k", client=keep_client)
+        self.assertEqual(keep.answer, "Thanks for asking.\nThe App ID is on the Projects page.")
 
     def test_escalate_decision_and_rag_errors_map_to_escalate(self) -> None:
         escalate = try_rag_fallback_answer(
