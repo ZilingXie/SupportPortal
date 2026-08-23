@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T14:20:01Z",
-  "source_base_commit": "7890addf76abf08d22e04a2bc5d0cfd1bb067d4e",
-  "registry_digest": "7023e107a13b6cb2e24210142d5ebfce90001711218a63288b88f316eb0e7051",
+  "generated_at": "2026-08-23T15:23:32Z",
+  "source_base_commit": "8cac4bc17293e1680a1d790b9398e1a5546bc928",
+  "registry_digest": "31c13d7e931fc7ae5d6235e938393574f30642a073bbebc1bc582128e6c47042",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1831,6 +1831,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
+          "label": "Driver smoke (no side effects)",
+          "command": ".venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
+          "details": "--list 输出四剧本；--check 用根 .env 实连 production 库（support_account_cases 可查）、smtp.163.com 登录、imap.163.com INBOX 可选，全程零发信。"
+        },
+        {
+          "type": "test",
+          "label": "Console suite regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "intent 键修复后 23 用例全过。"
+        },
+        {
+          "type": "test",
           "label": "Console API + UI contract + prefix-safety",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
@@ -1864,8 +1876,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 3,
-      "done_count": 3,
+      "task_count": 4,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -5142,6 +5154,58 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-100",
+      "title": "生产工单回归剧本驱动器 + 追踪快照 intent 键修复",
+      "status": "done",
+      "owner": "zac",
+      "summary": "新增 scripts/testing/production_ticket_scenarios.py：四条多回合回归剧本（E1 enablement 顺路 / E2 enablement 缺 AppID+RAG 兜底+补齐闭环 / F1 fraud 追问→交接→assign 不关单 / S1 suspension 确认邮箱→closing+solved）全真链路自动化——客户回合经 163 SMTP 发信并用 IMAP 读 Zendesk 通知邮件线程头续接同一工单（拿不到则 support+{id} 加号寻址兜底），内部批准保留人工（脚本暂停轮询 enablement_internal_resolution_received 事件），断言只看结构化状态（reply_intent/内部邮件状态/suspension 状态机/zendesk 状态）；--check 模式只验连通不发信。附带修复：/automation/test 追踪快照 reply_job 的 intent 读了不存在的 payload.intent 键，改为实际键 payload.reply_intent。",
+      "next_action": "无服务端部署依赖（脚本本地跑，读根 .env）。用户按需运行：--check 验连通后 --scenario E1 起逐个剧本回归；每跑一次产生真实 Zendesk 工单（[zac test] 标记，用后清理）。",
+      "acceptance_criteria": [
+        "四剧本覆盖用户指定的四条流程（含 RAG 兜底断言 rag_fallback_answer、fraud 不自动 solved 断言、suspension 两阶段状态机断言）。",
+        "enablement 内部批准为人工步骤：脚本暂停提示并轮询 enablement_internal_resolution_received 事件后继续。",
+        "--check 只做 DB/SMTP/IMAP 连通验证，不发任何邮件；--scenario 运行前有确认提示（--yes 跳过）。",
+        "追踪快照 linked_case_snapshot.reply_job.intent 使用正确键 payload.reply_intent。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Driver smoke (no side effects)",
+          "command": ".venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
+          "details": "--list 输出四剧本；--check 用根 .env 实连 production 库（support_account_cases 可查）、smtp.163.com 登录、imap.163.com INBOX 可选，全程零发信。"
+        },
+        {
+          "type": "test",
+          "label": "Console suite regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "intent 键修复后 23 用例全过。"
+        }
+      ],
+      "source_refs": [
+        "scripts/testing/production_ticket_scenarios.py",
+        "backend/main.py",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户要求把四条人工回归流程自动化；确认形态=本地脚本、enablement 批准保留人工（163 代发方案被否）。实现剧本驱动器（真链路多回合）并顺手修 p2-97 快照 intent 键 bug。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-97",
+        "p2-99"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing"
     },
     {
       "schema_version": 2,

@@ -97,6 +97,27 @@
 - 回复正文含**单一邮箱**（如 "please use zac.tester@example.com"）或明确肯定（"yes, please use this email"）→ 内部 handoff 邮件 + closing 公开回复（24h 句）+ Zendesk solved + 本地关单 + Slack「Account Suspension」；workflow state=closed。
 - 变体：回复含多个邮箱或含糊表述 → `human_review_required`（这也是可断言的失败分支）。
 
+## 4.5 自动化剧本驱动器
+
+`scripts/testing/production_ticket_scenarios.py` 把 §4 的四条人工流程剧本化（真链路：客户回合经 163 SMTP 发信、用 IMAP 读 Zendesk 通知邮件的线程头续接同一工单；断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
+
+| 剧本 | 覆盖 |
+| --- | --- |
+| `E1` | enablement 顺路：带 AppID 建单 → submission 确认 → **手动批准** → completion + solved |
+| `E2` | enablement 缺 AppID：追问 → 客户问什么是 AppID → **RAG 兜底回答** → 给 AppID → 内部邮件 → **手动批准** → completion + solved |
+| `F1` | fraud：无信息建单 → 追问 → 补四组信息 → 内部邮件 + 24h 回复 + assign 复审人 + **不 solved** |
+| `S1` | suspension：建单 → 问联系邮箱 → 确认 → 内部邮件 + closing + solved + workflow closed |
+
+```bash
+.venv/bin/python scripts/testing/production_ticket_scenarios.py --list    # 列剧本
+.venv/bin/python scripts/testing/production_ticket_scenarios.py --check   # 只验 DB/SMTP/IMAP 连通，不发信
+.venv/bin/python scripts/testing/production_ticket_scenarios.py --scenario E1
+```
+
+- enablement 的内部批准**保留人工**：脚本会暂停并提示回复哪封内部邮件（事件 `enablement_internal_resolution_received` 出现后继续）。
+- 每轮等待默认 20 分钟（回复有 6-10 分钟随机延迟），批准等待默认 45 分钟；`--turn-timeout-min/--approval-timeout-min` 可调。
+- 每次运行创建真实 Zendesk 工单（主题带 `[zac test]`）；结果矩阵每步 PASS/FAIL，任一 FAIL 退出码非 0。
+
 ## 5. 失败排查
 
 1. 追踪表 Pipeline 列即第一现场：route 不对→路由/prompt 回归；internal email failed→查 MSGRAPH/收件人 env；reply failed/manual_attention→查 worker 日志与 persona。

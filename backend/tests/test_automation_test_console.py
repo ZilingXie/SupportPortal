@@ -215,7 +215,7 @@ class AutomationTestConsoleTests(unittest.TestCase):
                 "ticket_id": client_ticket_id,
                 "status": "published",
                 "scheduled_for": created_at,
-                "payload": {"intent": "submission_confirmation"},
+                "payload": {"reply_intent": "submission_confirmation"},
             }
         )
 
