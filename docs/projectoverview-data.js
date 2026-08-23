@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T06:36:17Z",
-  "source_base_commit": "72c3cf1d6a80c06e6ad67ca0824646c392df5ae8",
-  "registry_digest": "d96a9ca6e7a50ecfa20cdbd0d4bface6c7835742f9b8acf9af7a41831d0fbbf6",
+  "generated_at": "2026-08-23T07:16:42Z",
+  "source_base_commit": "24fca47cbb0b466237555229abe52f0ef3bf746d",
+  "registry_digest": "c2b905d90d90a9475e3b1566bb6a5b0064ecef46597d451ee772628ffdfd154e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1777,6 +1777,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Body compatibility decision",
           "command": "用户决策（对话确认）",
           "details": "用户两次追问 body 差异后明确要求\"就按照旧的/account的来\"。实现取舍：复用旧 intake 的 source→ticket 正则与 AC-{id}/幂等推导语义；唯一不妥协项=production comment_visibility 显式强制（p2-88 验收标准，防服务端静默默认客户可见性）。"
+        },
+        {
+          "type": "test",
+          "label": "Dual-format credential regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_zendesk_basic_auth_header backend.tests.test_zendesk_comments backend.tests.test_zendesk_public_comment backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_automation_ownership backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_status_sync",
+          "details": "2026-08-23 新增 test_zendesk_basic_auth_header 7 用例（裸值/base64/Basic 前缀/缺值/三类 invalid）；与既有 zendesk_comments、public_comment、ticket_assignment、ownership、comment_sync、status_sync 套件共 96 项，除已登记的存量失败 test_status_flows_to_summary_and_detail_payloads（硬编码日期断言，p2-88 history 在案）外全部通过。bash -n verify 脚本通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Tolerant parsing instead of env-only fix",
+          "command": "线上证据三角定位：production 502 zendesk_basic_auth_invalid（代码侧 base64 解码失败）+ verify 探针 33/33 绿（探针按裸值编码）→ .env 实为裸值、两消费者格式期望相反。",
+          "details": "选择代码兼容而非只改 .env：线上裸值已是既成部署状态，且探针与代码期望相反会在任一单向修复后留下误报/隐患；':' 判据在两种格式间无歧义（base64 字母表不含 ':'），兼容分支是封闭的两态判定而非开放回退。"
         }
       ],
       "source_refs": [
@@ -1786,7 +1798,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 12,
+      "task_count": 13,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -8619,6 +8631,60 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p2-88",
         "p2-91"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-95",
+      "title": "zendesk_basic_auth 兼容裸 email:token 与 base64 双格式",
+      "status": "active",
+      "owner": "zac",
+      "summary": "2026-08-23 production 三环境首次真实 Zendesk 写入暴露凭据格式错位：运行时代码 zendesk_comments.zendesk_basic_auth_header 期望 base64(\"email:token\")（.env.example 与 account_admin 描述也如此），但 EC2 .env 换 token 后存的是裸 email:token，且 verify_split_environments.sh 的凭据探针按裸值写（探针绿、写路径 zendesk_basic_auth_invalid 502，fail-closed 未写任何工单；主栈 api_production 写路径同潜伏）。修复：header 解析兼容双格式（值含 ':' 按裸值——base64 字母表不含 ':' 故无歧义；否则按 base64 解码），verify 探针镜像同一解析，.env.example 与 account_admin 描述同步为双格式表述。",
+      "next_action": "代码与测试完成，待 finalize 合并后由用户经 scripts/ops/deploy_surfaces_ec2.sh 部署（主栈+三环境都吃到该代码）；EC2 .env 保持现状裸值即可，无需再转 base64。部署后需先 reconcile production 失败 execution exec-bf0c82e115af4c83ab6a49ac47c0fd41（12899，ledger 全 pending 未投递）再重试；preproduction 测试工单还需加入 PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST。",
+      "acceptance_criteria": [
+        "zendesk_basic_auth_header 接受裸 'user:token' 与 base64 两种形式，输出一致；'Basic ' 前缀仍被剥离；缺值 zendesk_basic_auth_missing；非 base64 且无 ':'、base64 解出无 ':'、用户名或密码为空 → zendesk_basic_auth_invalid。",
+        "verify_split_environments.sh 凭据探针对两种格式的 .env 值均能构造正确 Authorization 头（不再强制要求 ':'）。",
+        "staging 禁止 Zendesk 出站边界（zendesk_outbound_forbidden_staging）不变。",
+        "文档/描述（.env.example、account_admin env 说明）改为双格式表述。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Dual-format credential regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_zendesk_basic_auth_header backend.tests.test_zendesk_comments backend.tests.test_zendesk_public_comment backend.tests.test_zendesk_ticket_assignment backend.tests.test_account_automation_ownership backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_status_sync",
+          "details": "2026-08-23 新增 test_zendesk_basic_auth_header 7 用例（裸值/base64/Basic 前缀/缺值/三类 invalid）；与既有 zendesk_comments、public_comment、ticket_assignment、ownership、comment_sync、status_sync 套件共 96 项，除已登记的存量失败 test_status_flows_to_summary_and_detail_payloads（硬编码日期断言，p2-88 history 在案）外全部通过。bash -n verify 脚本通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Tolerant parsing instead of env-only fix",
+          "command": "线上证据三角定位：production 502 zendesk_basic_auth_invalid（代码侧 base64 解码失败）+ verify 探针 33/33 绿（探针按裸值编码）→ .env 实为裸值、两消费者格式期望相反。",
+          "details": "选择代码兼容而非只改 .env：线上裸值已是既成部署状态，且探针与代码期望相反会在任一单向修复后留下误报/隐患；':' 判据在两种格式间无歧义（base64 字母表不含 ':'），兼容分支是封闭的两态判定而非开放回退。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/zendesk_comments.py",
+        "backend/services/account_admin.py",
+        "deployment/verify_split_environments.sh",
+        ".env.example"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "production 首次真实写入触发（12899 take_ownership 第一步即 502 zendesk_basic_auth_invalid，delivery ledger 全 pending 未投递）；定位为 .env 裸值 vs 代码 base64 期望的格式错位，探针与代码期望相反导致此前 36/36 绿掩盖；实施双格式兼容。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88",
+        "p2-91",
+        "p2-94"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",
