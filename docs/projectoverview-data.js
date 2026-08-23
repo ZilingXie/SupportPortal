@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T10:08:52Z",
-  "source_base_commit": "c5ab77e31b19007cc9430ec43f678ea0944dfd47",
-  "registry_digest": "fb13743827fa83dc87cd05a9bda96b37a4d56e64b1877692cbdbc4de1356ef35",
+  "generated_at": "2026-08-23T10:53:32Z",
+  "source_base_commit": "7f2c881bb379a498c65f5292d9316a286c51f4b6",
+  "registry_digest": "6d633c6e90220af1ba9f583b3401fca2164205c98b7a7697becba44f6894050f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8648,6 +8648,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "comment_trigger_gate_for_not_automated",
           "summary": "12933 第二轮触发暴露第三层门：Zendesk 评论触发入口对非 registered automation 路由的 case 直接 ignored_unregistered_automation，RAG answer 后 case 处于 rag 路由/not_automated，客户后续评论无法再进入回复循环；修复为 not_automated 状态的 case 放行评论触发（继续重路由+RAG 兜底，escalate 后由 human_review/closed 状态自然终止）。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "delivery_ledger_eligibility_fix",
+          "summary": "12934 实测暴露第四层门：publish_account_reply 的 production_delivery_eligible 同样以 is_registered_automation 为条件，rag 路由的 case 不建 delivery ledger，投递 claim 返回 delivery_ledger_missing；修复为 rag_fallback_answer intent 的发布同样建 ledger，并加 InMemory 集成用例断言 rerouted case 的 RAG 回复有 ledger 条目。"
         }
       ],
       "legacy_refs": [],

@@ -16,6 +16,7 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
+from backend.services.account_reply_jobs import ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     AUTOMATED_ROUTE_STATUS,
@@ -4105,10 +4106,17 @@ class InMemoryTicketRepository:
                 and processing_profile == "production"
                 and account_case_id
                 and zendesk_ticket_id
-                and is_registered_automation(
-                    route_family=(billing_ticket or {}).get("route_family"),
-                    execution_action=(billing_ticket or {}).get("execution_action")
-                    or (billing_ticket or {}).get("route"),
+                and (
+                    # RAG fallback answers reply after the case was re-routed
+                    # off its automation handler, but the answer is still a
+                    # customer-facing production reply that must be delivered.
+                    str(payload.get("reply_intent") or "").strip()
+                    == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+                    or is_registered_automation(
+                        route_family=(billing_ticket or {}).get("route_family"),
+                        execution_action=(billing_ticket or {}).get("execution_action")
+                        or (billing_ticket or {}).get("route"),
+                    )
                 )
             )
             # A production public closing reply defers the local close until the
