@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T10:53:32Z",
-  "source_base_commit": "7f2c881bb379a498c65f5292d9316a286c51f4b6",
-  "registry_digest": "6d633c6e90220af1ba9f583b3401fca2164205c98b7a7697becba44f6894050f",
+  "generated_at": "2026-08-23T11:38:35Z",
+  "source_base_commit": "02333264ed7bd0fd2cef210d240f1fa5a8bac21b",
+  "registry_digest": "dab39e3b3fbcb3982a74665d7376f8ae12be31e0eabf57bd3a022ac75a69e409",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8653,6 +8653,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "delivery_ledger_eligibility_fix",
           "summary": "12934 实测暴露第四层门：publish_account_reply 的 production_delivery_eligible 同样以 is_registered_automation 为条件，rag 路由的 case 不建 delivery ledger，投递 claim 返回 delivery_ledger_missing；修复为 rag_fallback_answer intent 的发布同样建 ledger，并加 InMemory 集成用例断言 rerouted case 的 RAG 回复有 ledger 条目。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "postgres_ledger_eligibility_fix",
+          "summary": "12935 实测发现 #889 只改了 InMemory 版 publish 的 delivery eligibility，生产 Postgres 版（publish_account_reply 内 SQL 事务段）仍以 is_registered_automation 为条件导致 delivery_ledger_missing；同款 rag_fallback_answer 例外补到 Postgres 版。"
         }
       ],
       "legacy_refs": [],
