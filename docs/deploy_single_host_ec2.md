@@ -349,6 +349,7 @@ chmod +x deployment/deploy_ec2.sh
 4. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
 5. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
 6. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
+7. 全部署面对齐脚本：`scripts/ops/deploy_surfaces_ec2.sh`（见 4.5）
 
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
@@ -552,6 +553,24 @@ journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
    - 先执行 `df -h`、`docker system df` 确认磁盘使用情况。
    - 可以扩容 EBS，或手动再次执行 `docker builder prune -af` / `docker image prune -af` 后重试。
    - 如果确实需要调整阈值，再修改 `DEPLOY_MIN_FREE_DISK_GB`，不要直接关闭预检查。
+
+### 4.5 一键全部署面对齐：`scripts/ops/deploy_surfaces_ec2.sh`
+
+主栈部署（`deploy_ec2.sh --branch main`）**不会**更新 `/automation/*` 三环境的六个独立容器，反之亦然。该脚本先做差距判断，只部署落后的面，适合"有更新要上公网"的场景（也是给 EC2 agent 的标准入口）：
+
+```bash
+cd ~/SupportPortal
+scripts/ops/deploy_surfaces_ec2.sh --dry-run              # 只打印差距与计划
+scripts/ops/deploy_surfaces_ec2.sh --approve-production   # 实际执行（production split 需显式批准）
+```
+
+行为要点：
+
+1. 同步 `origin/main`（要求干净的 `main`，拒绝在其他分支/脏树上运行）；
+2. 主栈差距 = 公网 `/health` 的 `app_build.ref` 是否等于目标 commit；三环境差距 = 运行中容器镜像（`release-*` 查 manifest `commit=`，本地 `local-<sha>` 直接比对）是否等于目标 commit；
+3. 三环境部署自动取当日下一个 release id，构建后校验 manifest `commit=` 与目标一致（stale 构建作废），按 staging → preproduction → production 顺序部署；production 必须带 `--approve-production` 或 `DEPLOY_PRODUCTION_APPROVED=1`，否则停在 preproduction 并在报告中标注 PENDING；
+4. 验证：主栈（health ref、`/production/`、`/openapi.json` 保留 `/account`）+ 三环境（`verify_split_environments.sh` 全绿 + 旧五字段 body 抽测 `/automation/staging/v1/cases` 期望 200）；
+5. 每步日志落在 `/tmp/deploy-surfaces-<时间戳>/`，失败即停并给出对应 rollback 命令。
 
 ---
 
