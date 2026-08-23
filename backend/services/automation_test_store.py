@@ -19,6 +19,28 @@ from typing import Any
 
 import psycopg
 
+
+def _ddl_dsn_for(runtime_dsn: str) -> str:
+    """DDL runs on the migration DSN when it targets the SAME database.
+
+    The runtime role has no CREATE privilege on the ticket schema; the repo
+    convention is schema changes via TICKET_DB_MIGRATION_DSN plus manual
+    dual-DB migration execution. In the api_production container the
+    migration DSN still points at the staging database, so it is only used
+    when its database name matches the runtime DSN's.
+    """
+    def _dbname(dsn: str) -> str:
+        path = dsn.split("://", 1)[-1]
+        return path.rsplit("/", 1)[-1].split("?")[0].strip().lower()
+
+    migration = str(os.getenv("AUTOMATION_TEST_MIGRATION_DSN") or "").strip() or str(
+        os.getenv("TICKET_DB_MIGRATION_DSN") or ""
+    ).strip()
+    if migration and _dbname(migration) == _dbname(runtime_dsn):
+        return migration
+    return runtime_dsn
+
+
 LINK_STATUS_VALUES = ("pending", "linked", "not_found")
 SEND_STATUS_VALUES = ("sent", "failed")
 
@@ -34,6 +56,7 @@ class AutomationTestTicketStore:
         self._memory_next_id = 0
         self._schema_ensured = False
         self._dsn = str(dsn or "").strip()
+        self._ddl_dsn = _ddl_dsn_for(self._dsn)
         self._schema = str(schema or "supportportal").strip()
         if not self._schema.replace("_", "").isalnum():
             raise RuntimeError("automation test ticket DB schema must be alphanumeric")
@@ -45,6 +68,12 @@ class AutomationTestTicketStore:
     def _table(self) -> str:
         return f'"{self._schema}"."automation_test_tickets"'
 
+    def _table_exists(self) -> bool:
+        with psycopg.connect(self._dsn, connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT to_regclass(%s)", (self._table(),))
+                return cursor.fetchone()[0] is not None
+
     def ensure_schema(self) -> None:
         if self._schema_ensured:
             return
@@ -55,7 +84,12 @@ class AutomationTestTicketStore:
                 )
             self._schema_ensured = True
             return
-        with psycopg.connect(self._dsn) as connection:
+        if self._table_exists():
+            # Pre-created by the dual-DB migration; CREATE ... IF NOT EXISTS
+            # still requires schema privileges, so never attempt DDL then.
+            self._schema_ensured = True
+            return
+        with psycopg.connect(self._ddl_dsn) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self._schema}"')
                 cursor.execute(
@@ -265,6 +299,7 @@ class AutomationTestScenarioRunStore:
         self._memory: dict[str, dict[str, Any]] = {}
         self._schema_ensured = False
         self._dsn = str(dsn or "").strip()
+        self._ddl_dsn = _ddl_dsn_for(self._dsn)
         self._schema = str(schema or "supportportal").strip()
         if not self._schema.replace("_", "").isalnum():
             raise RuntimeError("automation test scenario DB schema must be alphanumeric")
@@ -276,6 +311,12 @@ class AutomationTestScenarioRunStore:
     def _table(self) -> str:
         return f'"{self._schema}"."automation_test_scenario_runs"'
 
+    def _table_exists(self) -> bool:
+        with psycopg.connect(self._dsn, connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT to_regclass(%s)", (self._table(),))
+                return cursor.fetchone()[0] is not None
+
     def ensure_schema(self) -> None:
         if self._schema_ensured:
             return
@@ -286,7 +327,12 @@ class AutomationTestScenarioRunStore:
                 )
             self._schema_ensured = True
             return
-        with psycopg.connect(self._dsn) as connection:
+        if self._table_exists():
+            # Pre-created by the dual-DB migration; CREATE ... IF NOT EXISTS
+            # still requires schema privileges, so never attempt DDL then.
+            self._schema_ensured = True
+            return
+        with psycopg.connect(self._ddl_dsn) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self._schema}"')
                 cursor.execute(
