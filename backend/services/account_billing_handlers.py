@@ -43,7 +43,7 @@ def account_billing_metadata(subcategory: Any) -> dict[str, str | None]:
     normalized = str(subcategory or "").strip().lower()
     if normalized not in ACCOUNT_BILLING_SUBCATEGORIES:
         normalized = "other"
-    is_automated = normalized in {"fraud_account", "account_suspension"}
+    is_automated = normalized in {"fraud_account", "detailed_invoice", "account_suspension"}
     return {
         "category": "account_billing",
         "subcategory": normalized,

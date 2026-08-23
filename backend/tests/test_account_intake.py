@@ -2426,11 +2426,11 @@ class AccountIntakeApiTests(unittest.TestCase):
             }
         )
 
-    def test_account_intake_keeps_detailed_invoice_compatibility_route_non_automated(self) -> None:
+    def test_account_intake_routes_detailed_invoice_to_automation(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(
             "backend.main.send_billing_internal_email",
             return_value={"status": "sent", "reason": ""},
-        ):
+        ) as send_email:
             response = self.client.post(
                 "/account",
                 json={
@@ -2446,19 +2446,19 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "not_automated")
-        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["route"], "detailed_invoice")
         self.assertTrue(payload["account_case_id"].startswith("AC-"))
         self.assertEqual(payload["billing_ticket_id"], payload["account_case_id"])
-        self.assertEqual(payload["category"], "account_billing")
-        self.assertEqual(payload["subcategory"], "detailed_invoice")
-        self.assertEqual(payload["route_status"], "not_automated")
-        self.assertIsNone(payload["automation_handler"])
+        self.assertEqual(payload["route_family"], "automated")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["automation_handler"], "billing")
         self.assertTrue(str(payload["ticket_id"] or "").startswith("TK-ACC-"))
         self.assertEqual(payload["missing_fields"], [])
         self.assertEqual(payload["customer_reply"], "")
-        self.assertIsNone(payload["ai_reply_status"])
-        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertEqual(payload["ai_reply_status"], "queued")
+        self.assertEqual(payload["internal_email_send_status"], "sent")
+        send_email.assert_called_once()
 
         ticket = self.repository.get_ticket(payload["ticket_id"])
         self.assertIsNotNone(ticket)
@@ -2477,11 +2477,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         ]
         self.assertTrue(event_payloads)
         self.assertEqual(event_payloads[0]["source"], "manual")
-        self.assertEqual(event_payloads[0]["execution_action"], "human_review_required")
-        self.assertEqual(event_payloads[0]["account_intake_status"], "not_automated")
+        self.assertEqual(event_payloads[0]["execution_action"], "detailed_invoice")
+        self.assertEqual(event_payloads[0]["account_intake_status"], "automation")
         executions = self.repository.list_account_route_executions(payload["ticket_id"])
         self.assertEqual(len(executions), 1)
-        self.assertEqual(executions[0]["final_route"], "human_review_required")
+        self.assertEqual(executions[0]["final_route"], "detailed_invoice")
         self.assertEqual(executions[0]["router_prompt_version"], "account-layered-router-v10")
         self.assertEqual(executions[0]["classification"]["intent_class"], "agora")
         self.assertTrue(executions[0]["prompt_snapshot_available"])
@@ -2489,10 +2489,8 @@ class AccountIntakeApiTests(unittest.TestCase):
             "Detailed invoice request",
             executions[0]["prompt_snapshots"]["intent_classifier"]["user_prompt"],
         )
-        replies = self.repository.list_account_reply_executions(payload["ticket_id"])
-        self.assertEqual(replies, [])
         assignment = self.repository.get_account_persona_assignment(payload["ticket_id"])
-        self.assertIsNone(assignment)
+        self.assertIsNotNone(assignment)
 
     def test_account_intake_routes_enablement_and_sends_internal_request(self) -> None:
         question = (
@@ -4124,11 +4122,14 @@ class AccountIntakeApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "not_automated")
-        self.assertEqual(payload["route"], "human_review_required")
-        self.assertEqual(payload["route_status"], "not_automated")
-        self.assertIsNone(payload.get("ai_reply_status"))
-        self.assertEqual(payload.get("internal_email_send_status"), "not_applicable")
+        # Missing invoice fields keep the case automated but ask the customer
+        # instead of sending the internal email or creating a response token.
+        self.assertEqual(payload["status"], "automation")
+        self.assertEqual(payload["route"], "detailed_invoice")
+        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["internal_email_send_status"], "not_ready")
+        self.assertTrue(payload["missing_fields"])
+        self.assertEqual(payload["ai_reply_status"], "queued")
         save_token_mock.assert_not_called()
         send_email.assert_not_called()
         self.assertIsNone(
@@ -4160,10 +4161,11 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt)
         assert bt is not None
         self.assertEqual(bt["client_ticket_id"], payload["ticket_id"])
-        # Detailed invoice remains a compatibility route but is outside the
-        # active Account Automation membership.
-        self.assertEqual(bt["automation_status"], "not_automated")
-        self.assertEqual(bt["route"], "human_review_required")
+        # A failed internal-email send keeps the automated route but degrades
+        # the case to human review until the email can go out.
+        self.assertEqual(bt["automation_status"], "human_review_required")
+        self.assertEqual(bt["route"], "detailed_invoice")
+        self.assertEqual(bt["route_family"], "automated")
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["external_id"], "ext-123")
         self.assertEqual(bt["created_by"], "tester")
@@ -4171,8 +4173,8 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNotNone(bt["route_reason"])
         self.assertIsNotNone(bt["route_confidence"])
         self.assertIsNone(bt["customer_reply"])
-        self.assertEqual(bt["internal_email_send_status"], "not_applicable")
-        self.assertIsNone(bt["execution_reason_code"])
+        self.assertEqual(bt["internal_email_send_status"], "skipped_config_missing")
+        self.assertIsNotNone(bt["execution_reason_code"])
 
     def test_account_intake_saves_non_automated_billing_ticket(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):

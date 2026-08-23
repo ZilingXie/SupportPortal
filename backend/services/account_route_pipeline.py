@@ -1648,6 +1648,11 @@ def decide_account_route(
         suspension_has_additional_intents = (
             subcategory == "account_suspension" and bool(billing_additional_intents)
         )
+        automation_bound = (
+            subcategory == "fraud_account"
+            or subcategory == "detailed_invoice"
+            or (subcategory == "account_suspension" and not suspension_has_additional_intents)
+        )
         classification.update(
             account_billing_subcategory=subcategory,
             account_billing_additional_intents=list(dict.fromkeys(billing_additional_intents)),
@@ -1656,18 +1661,8 @@ def decide_account_route(
                     [*classification.get("additional_intents", []), *billing_additional_intents]
                 )
             ),
-            route_target=(
-                "automation"
-                if subcategory == "fraud_account"
-                or (subcategory == "account_suspension" and not suspension_has_additional_intents)
-                else "human_review"
-            ),
-            human_review_reason=(
-                None
-                if subcategory == "fraud_account"
-                or (subcategory == "account_suspension" and not suspension_has_additional_intents)
-                else account_billing_reason
-            ),
+            route_target="automation" if automation_bound else "human_review",
+            human_review_reason=None if automation_bound else account_billing_reason,
             route_reason_code=account_billing_reason,
         )
         classification["stage_confidences"]["account_billing_router"] = account_billing_confidence
@@ -1678,7 +1673,7 @@ def decide_account_route(
                 *_sanitize_evidence(account_billing_payload.get("evidence_spans")),
             ]
         )
-        if subcategory in {"fraud_account", "account_suspension"} and not suspension_has_additional_intents:
+        if automation_bound:
             classification["handler_binding_status"] = "active"
             return finish(_result(
                 classification,

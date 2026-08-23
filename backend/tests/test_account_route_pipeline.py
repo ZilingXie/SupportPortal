@@ -31,7 +31,7 @@ def _attempt(payload: dict[str, object]) -> AccountRouteStageAttempt:
 
 
 class AccountRoutePipelineTests(unittest.TestCase):
-    def test_detailed_invoice_is_recognized_but_requires_human_review(self) -> None:
+    def test_detailed_invoice_is_account_billing_automation(self) -> None:
         attempts = [
             _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
             _attempt({
@@ -59,11 +59,11 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.secondary_label, "Account & Billing / Detailed Invoice")
         self.assertEqual(result.classification["agora_route"], "account_billing")
         self.assertEqual(result.classification["account_billing_subcategory"], "detailed_invoice")
-        self.assertEqual(result.decision.route_family, "human_review")
-        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.classification["route_target"], "automation")
+        self.assertEqual(result.decision.route_family, "automated")
+        self.assertEqual(result.decision.execution_action, "detailed_invoice")
         self.assertEqual(result.decision.semantic_intent, "account_billing.detailed_invoice")
-        self.assertEqual(result.decision.automation_eligibility, "not_eligible")
-        self.assertEqual(result.decision.not_automated_reason, "detailed_invoice_requested")
+        self.assertEqual(result.decision.automation_eligibility, "eligible")
         self.assertEqual(
             result.classification["route_reason_code"],
             "detailed_invoice_requested",

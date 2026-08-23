@@ -157,6 +157,16 @@ class S3AssetStorage:
             "checksum": response.get("ChecksumSHA256") or response.get("ChecksumCRC32") or None,
         }
 
+    def fetch_bytes(self, asset: dict[str, Any]) -> bytes:
+        response = self.client.get_object(
+            Bucket=str(asset.get("bucket") or self.bucket),
+            Key=str(asset.get("s3_key") or ""),
+        )
+        body = response.get("Body")
+        if body is None:
+            raise RuntimeError(f"asset object body is empty for {asset.get('s3_key') or asset.get('asset_id')}")
+        return body.read()
+
 
 class MissingAssetStorage:
     def __init__(self, reason: str) -> None:
@@ -173,6 +183,9 @@ class MissingAssetStorage:
 
     def store_bytes(self, asset: dict[str, Any], content: bytes) -> dict[str, Any]:
         _ = content
+        raise RuntimeError(self.reason)
+
+    def fetch_bytes(self, asset: dict[str, Any]) -> bytes:
         raise RuntimeError(self.reason)
 
 

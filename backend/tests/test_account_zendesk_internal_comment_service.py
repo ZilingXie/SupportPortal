@@ -3,8 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from backend import main as backend_main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.account_zendesk_internal_comment import (
+    AccountZendeskInternalCommentError,
     deliver_account_ai_message_as_internal_comment,
     reconcile_account_ai_message_internal_comment,
 )
@@ -334,6 +336,97 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
             )[0]["message_id"],
             published["message_id"],
         )
+
+    def test_delivery_uploads_message_attachments_before_the_public_comment(self) -> None:
+        self._create_delivery()
+        attachment = {
+            "asset_id": "ASSET-PDF0000000000000000000",
+            "original_filename": "invoice-approval.pdf",
+            "content_type": "application/pdf",
+        }
+        self.repository.update_ticket_message_meta(
+            ticket_id="PRD-SERVICE-1",
+            message_id=self.message_id,
+            meta_updates={"attachments": [attachment]},
+        )
+        asset_repository = unittest.mock.Mock()
+        asset_repository.get_asset.return_value = {
+            "asset_id": attachment["asset_id"],
+            "s3_key": "supportportal/assets/invoice-approval.pdf",
+            "bucket": "supportportal-assets",
+            "content_type": "application/pdf",
+        }
+        asset_storage = unittest.mock.Mock()
+        asset_storage.fetch_bytes.return_value = b"%PDF-1.4\nfake invoice\n%%EOF"
+        with patch.object(
+            backend_main, "asset_repository", asset_repository
+        ), patch.object(
+            backend_main, "asset_storage", asset_storage
+        ), patch(
+            "backend.services.account_zendesk_internal_comment.upload_ticket_attachment",
+            return_value="upload-token-1",
+        ) as upload, patch(
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-attached", status_code=200),
+        ) as add_comment:
+            result = deliver_account_ai_message_as_internal_comment(
+                repository=self.repository,
+                account_case_id="AC-SERVICE-1",
+                message_id=self.message_id,
+                actor_id="system:production-account-reply",
+                trigger="production_worker",
+                public_comment=True,
+                solve_ticket=True,
+            )
+
+        self.assertEqual(result.status, "added")
+        upload.assert_called_once_with(
+            filename="invoice-approval.pdf",
+            content_type="application/pdf",
+            data=b"%PDF-1.4\nfake invoice\n%%EOF",
+        )
+        add_comment.assert_called_once_with(
+            ticket_id="12838",
+            body="The persisted Production answer.",
+            public=True,
+            solve=True,
+            uploads=("upload-token-1",),
+        )
+
+    def test_delivery_fails_permanently_when_attachment_asset_is_missing(self) -> None:
+        self._create_delivery()
+        attachment = {
+            "asset_id": "ASSET-MISSING000000000000000",
+            "original_filename": "invoice-approval.pdf",
+            "content_type": "application/pdf",
+        }
+        self.repository.update_ticket_message_meta(
+            ticket_id="PRD-SERVICE-1",
+            message_id=self.message_id,
+            meta_updates={"attachments": [attachment]},
+        )
+        asset_repository = unittest.mock.Mock()
+        asset_repository.get_asset.return_value = None
+        with patch.object(backend_main, "asset_repository", asset_repository), patch(
+            "backend.services.account_zendesk_internal_comment.upload_ticket_attachment"
+        ) as upload, patch(
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment"
+        ) as add_comment:
+            with self.assertRaises(AccountZendeskInternalCommentError) as raised:
+                deliver_account_ai_message_as_internal_comment(
+                    repository=self.repository,
+                    account_case_id="AC-SERVICE-1",
+                    message_id=self.message_id,
+                    actor_id="system:production-account-reply",
+                    trigger="production_worker",
+                    public_comment=True,
+                    solve_ticket=True,
+                )
+
+        self.assertEqual(raised.exception.code, "account_zendesk_comment_attachment_missing")
+        self.assertFalse(raised.exception.outcome_unknown)
+        upload.assert_not_called()
+        add_comment.assert_not_called()
 
 
 if __name__ == "__main__":

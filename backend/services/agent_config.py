@@ -354,7 +354,7 @@ def _route_agent_navigation() -> dict[str, Any]:
                     "subcategory": "detailed_invoice",
                     "route_family": "automated",
                     "automation_handler": "billing",
-                    "status": "registered",
+                    "status": "active",
                     "steps": ["grounded field extraction", "internal handoff", "Persona ownership update"],
                 },
             ),

@@ -39,15 +39,25 @@ class AutomationRoutingTests(unittest.TestCase):
                 "automation_handler": "billing",
             },
         )
-        for subcategory in ("account_verification", "detailed_invoice"):
-            with self.subTest(subcategory=subcategory):
-                metadata = automation_metadata(
-                    route_family="automated",
-                    execution_action=subcategory,
-                )
-                self.assertEqual(metadata["subcategory"], subcategory)
-                self.assertEqual(metadata["route_status"], "not_automated")
-                self.assertIsNone(metadata["automation_handler"])
+        self.assertEqual(
+            automation_metadata(
+                route_family="automated",
+                execution_action="detailed_invoice",
+            ),
+            {
+                "category": "automation",
+                "subcategory": "detailed_invoice",
+                "route_status": "automated",
+                "automation_handler": "billing",
+            },
+        )
+        metadata = automation_metadata(
+            route_family="automated",
+            execution_action="account_verification",
+        )
+        self.assertEqual(metadata["subcategory"], "account_verification")
+        self.assertEqual(metadata["route_status"], "not_automated")
+        self.assertIsNone(metadata["automation_handler"])
 
         self.assertEqual(
             AUTOMATION_HANDLER_REGISTRY["billing"],
@@ -89,14 +99,14 @@ class AutomationRoutingTests(unittest.TestCase):
             },
         )
 
-    def test_legacy_billing_route_keeps_disabled_invoice_non_automated(self) -> None:
+    def test_legacy_billing_route_automates_detailed_invoice(self) -> None:
         metadata = automation_metadata(
             route_family="billing_automation",
             execution_action="detailed_invoice",
         )
 
-        self.assertEqual(metadata["route_status"], "not_automated")
-        self.assertIsNone(metadata["category"])
+        self.assertEqual(metadata["route_status"], "automated")
+        self.assertEqual(metadata["automation_handler"], "billing")
 
     def test_unknown_subcategory_fails_closed(self) -> None:
         self.assertFalse(

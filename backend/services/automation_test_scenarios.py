@@ -65,6 +65,15 @@ FRAUD_FULL_INFO_BODY = (
     "Usage is covered by corporate credit-card top-ups managed by our finance team."
 )
 
+DETAILED_INVOICE_BODY = (
+    "Hello Agora team,\n\n"
+    "Please send me the detailed invoice for the transaction below.\n\n"
+    "Issue date: 6 May 2026\n"
+    "Transaction ID: 1104245232004173824\n"
+    "Amount: USD 705.97\n\n"
+    "Thank you."
+)
+
 
 class AutomationTestScenarioError(RuntimeError):
     """Raised when the scenario engine is unusable (bad/missing config)."""
@@ -516,6 +525,48 @@ class ScenarioEngine:
         )
         self.emit("approval_received", {})
 
+    def wait_manual_billing_invoice_reply(self, ctx: ScenarioContext) -> None:
+        ctx.turn_started_at = now_utc()
+        self.emit(
+            "approval_required",
+            {
+                "zendesk_ticket_id": ctx.zendesk_ticket_id,
+                "zendesk_ticket_url": f"{ZENDESK_TICKET_URL}/{ctx.zendesk_ticket_id}",
+                "suggested_reply": "The detailed invoice is attached.",
+                "internal_email_subject_prefix": "[Billing Request] Detailed invoice request",
+                "attach_pdf": True,
+                "timeout_min": self.approval_timeout_min,
+            },
+        )
+        self.wait_event(
+            ctx,
+            "billing_internal_resolution_submitted",
+            "internal invoice reply received",
+            timeout_min=self.approval_timeout_min,
+        )
+        self.emit("approval_received", {})
+
+    def wait_zendesk_delivery_delivered(self, ctx: ScenarioContext, step: str) -> None:
+        def probe():
+            rows = self.db_query(
+                "SELECT status, zendesk_comment_id FROM support_account_zendesk_comment_deliveries "
+                "WHERE account_case_id = %s AND target_status = 'solved' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.account_case_id,),
+            )
+            if rows and str(rows[0].get("status") or "") == "delivered":
+                return rows[0]
+            return None
+
+        try:
+            row = self.wait_for(
+                "zendesk delivery delivered (comment + PDF uploads)", probe, self.turn_timeout_min * 60
+            )
+            self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
     # -- scenarios ---------------------------------------------------------
 
     def run_e1(self) -> None:
@@ -624,6 +675,29 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
         self.wait_suspension_state(ctx, "closed", "suspension workflow closed")
 
+    def run_d1(self) -> None:
+        ctx = ScenarioContext("D1")
+        self.start_ticket(
+            ctx,
+            "Please send the detailed invoice for transaction 1104245232004173824",
+            DETAILED_INVOICE_BODY,
+        )
+        self.find_case(ctx)
+        row = self.case_row(ctx)
+        self.record(
+            ctx, "routed to detailed_invoice",
+            row.get("execution_action") == "detailed_invoice",
+            f"execution_action={row.get('execution_action')!r}",
+        )
+        self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal invoice email sent")
+        self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+        self.wait_manual_billing_invoice_reply(ctx)
+        self.wait_reply_intent(
+            ctx, {"detailed_invoice_completed_and_close"}, "completion reply (with PDF) published"
+        )
+        self.wait_zendesk_delivery_delivered(ctx, "zendesk public comment + PDF delivered")
+        self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
+
     SCENARIOS: dict[str, dict[str, Any]] = {
         "E1": {
             "label": "Enablement happy path",
@@ -644,6 +718,11 @@ class ScenarioEngine:
             "label": "Account suspension",
             "description": "ask contact email → confirm → handoff + closing reply + solved",
             "run": run_s1,
+        },
+        "D1": {
+            "label": "Detailed invoice + PDF",
+            "description": "full invoice data → internal email → manual reply with PDF → public comment attachment + solved",
+            "run": run_d1,
         },
     }
 

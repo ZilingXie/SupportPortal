@@ -434,7 +434,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "processing_profile": "production",
             "zendesk_ticket_id": "12807",
             "route_family": "automated",
-            "execution_action": "detailed_invoice",
+            "execution_action": "quota",
         }
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "deliver_account_ai_message_as_internal_comment"
@@ -3446,6 +3446,117 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("attached", assistant_message["content"].lower())
         self.assertNotIn("sent to your email", assistant_message["content"].lower())
 
+    def test_detailed_invoice_reply_queues_closing_reply_job_with_pdf_attachments(self) -> None:
+        repository = Mock()
+        publication_order: list[str] = []
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.side_effect = (
+            lambda *_args, **_kwargs: publication_order.append("commit") or True
+        )
+        repository.resolve_account_persona.return_value = None
+        repository.save_account_reply_job.side_effect = lambda job: job
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-DI-DONE",
+            "billing_ticket_id": "AC-TK-DI-DONE",
+            "client_ticket_id": "TK-DI-DONE",
+            "title": "Detailed invoice request",
+            "execution_action": "detailed_invoice",
+            "automation_handler": "billing",
+            "automation_status": "automation",
+            "processing_profile": "production",
+            "internal_email_payload": {"delivery_key": "billing-delivery-1"},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-DI-DONE",
+            "customer_id": "C-001",
+            "subject": "Detailed invoice request",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please send the detailed invoice for transaction 123.",
+                    "created_at": "2026-08-23T00:00:00+00:00",
+                }
+            ],
+        }
+        asset_repository = Mock()
+        asset_repository.get_asset.return_value = None
+        asset_repository.create_asset.side_effect = lambda asset: {
+            **asset,
+            "status": "uploaded",
+            "created_at": "2026-08-23T08:14:38Z",
+            "uploaded_at": "2026-08-23T08:14:38Z",
+            "attached_at": None,
+        }
+        asset_repository.mark_attached.side_effect = (
+            lambda *_args, **_kwargs: publication_order.append("attach") or []
+        )
+        asset_storage = Mock()
+        asset_storage.bucket = "supportportal-assets"
+        asset_storage.store_bytes.return_value = {"etag": "etag-1", "checksum": "checksum-1"}
+        reply = types.SimpleNamespace(
+            message_id="msg-di-pdf",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-DI-DONE",
+            sender="billing@example.com",
+            body_text="The detailed invoice is attached.",
+            attachment_names=("invoice-approval.pdf",),
+            attachments=(
+                types.SimpleNamespace(
+                    name="invoice-approval.pdf",
+                    content_type="application/pdf",
+                    content=b"%PDF-1.4\nfake invoice\n%%EOF",
+                    size_bytes=28,
+                ),
+            ),
+            received_at="2026-08-23T08:14:38Z",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "record_billing_request_reply"
+        ), patch.object(
+            worker, "_render_case_persona_reply"
+        ) as render_inline, patch.object(
+            worker,
+            "asset_repository",
+            asset_repository,
+            create=True,
+        ), patch.object(
+            worker,
+            "asset_storage",
+            asset_storage,
+            create=True,
+        ), patch.object(worker.hashlib, "sha256") as digest:
+            digest.return_value.hexdigest.return_value = "abcdef1234560000000000000000000000000000000000000000000000000000"
+            handled = worker.handle_billing_request_reply(reply)
+
+        # The detailed-invoice completion no longer renders inline: the reply
+        # job pipeline owns the persona render and the Zendesk delivery.
+        render_inline.assert_not_called()
+        self.assertEqual(handled, "completed")
+        asset_storage.store_bytes.assert_called_once()
+        asset_repository.mark_attached.assert_called_once_with(["ASSET-ABCDEF123456000000000000"])
+        self.assertEqual(publication_order, ["commit", "attach"])
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "TK-DI-DONE", updated_at=unittest.mock.ANY
+        )
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        payload = saved_job["payload"]
+        self.assertEqual(payload["reply_intent"], "detailed_invoice_completed_and_close")
+        self.assertTrue(payload["close_after_publish"])
+        self.assertTrue(payload["internal_resolution"])
+        self.assertEqual(payload["automation_delivery_key"], "billing-delivery-1")
+        self.assertEqual(payload["reply_facts"]["reply_intent"], "detailed_invoice_completed_and_close")
+        self.assertTrue(payload["reply_facts"]["attachments_included"])
+        self.assertEqual(
+            payload["attachments"][0]["asset_id"], "ASSET-ABCDEF123456000000000000"
+        )
+        self.assertEqual(payload["attachments"][0]["original_filename"], "invoice-approval.pdf")
+        commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertIsNone(commit["assistant_message"])
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "automation")
+        queued_event_types = [event["event_type"] for event in commit["events"]]
+        self.assertIn("billing_internal_resolution_submitted", queued_event_types)
+        self.assertIn("detailed_invoice_completion_reply_job_queued", queued_event_types)
+
     def test_billing_reply_poller_is_disabled_by_default(self) -> None:
         with patch.dict(
             os.environ,
@@ -4108,14 +4219,14 @@ class WorkerResilienceTests(unittest.TestCase):
             (
                 "billing",
                 worker.handle_billing_request_reply,
-                "Re: [Billing Request] Detailed invoice - Ticket TK-PERSONA-RENDER-BILLING",
+                "Re: [Billing Request] Fraud review - Ticket TK-PERSONA-RENDER-BILLING",
                 {
                     "billing_ticket_id": "AC-TK-PERSONA-RENDER-BILLING",
                     "account_case_id": "AC-TK-PERSONA-RENDER-BILLING",
                     "client_ticket_id": "TK-PERSONA-RENDER-BILLING",
-                    "route": "detailed_invoice",
+                    "route": "fraud_account",
                     "route_family": "automated",
-                    "execution_action": "detailed_invoice",
+                    "execution_action": "fraud_account",
                 },
             ),
             (

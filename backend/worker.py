@@ -36,6 +36,7 @@ from backend.services.account_admin import (
 from backend.services.account_reply_jobs import (
     AccountReplyContractError,
     ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+    ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
@@ -2485,6 +2486,25 @@ def handle_billing_request_reply(reply: Any) -> str:
             raise ValueError("billing reply body is empty")
         timestamp = now_iso()
         billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
+        execution_action = str(
+            billing_ticket.get("execution_action") or billing_ticket.get("route") or ""
+        ).strip()
+        if execution_action == "detailed_invoice":
+            message_attachments, attached_asset_ids = _store_billing_reply_pdf_attachments(
+                reply=reply, ticket_id=client_ticket_id,
+                customer_id=str(canonical_ticket.get("customer_id") or "").strip(),
+            )
+            return _queue_billing_completion_reply_job(
+                reply_key=reply_key,
+                owner_token=owner_token,
+                account_case=billing_ticket,
+                billing_ticket_id=billing_ticket_id,
+                client_ticket_id=client_ticket_id,
+                note=note,
+                message_id=message_id,
+                message_attachments=message_attachments,
+                attached_asset_ids=attached_asset_ids,
+            )
         customer_reply = _render_case_persona_reply(
             ticket_id=client_ticket_id, case=billing_ticket, behavior="billing",
             reply_intent="resolution_update",
@@ -2704,6 +2724,171 @@ def _queue_enablement_completion_reply_job(
                 {"event_type": queued_event["event"], "payload": queued_event}],
         completed_at=timestamp,
     )
+    return "completed" if committed else "in_progress"
+
+
+def _queue_billing_completion_reply_job(
+    *,
+    reply_key: str,
+    owner_token: str,
+    account_case: dict[str, Any],
+    billing_ticket_id: str,
+    client_ticket_id: str,
+    note: str,
+    message_id: str,
+    message_attachments: list[dict[str, Any]],
+    attached_asset_ids: list[str],
+) -> str:
+    """Queue the detailed-invoice completion as a standard Account reply job.
+
+    The completion reply must flow through the normal publication pipeline so
+    production cases deliver it as a public Zendesk comment (with the reply
+    PDF attachments uploaded to the Zendesk ticket) and close (local and
+    solved) only after the delivery readback confirms it.
+    """
+    timestamp = now_iso()
+    source = "billing_reply_email"
+    case_id = (
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    )
+    # The completion is triggered by the internal resolution email, not by a
+    # customer message: it carries its own unique trigger timestamp and an
+    # internal_resolution marker that exempts it from the customer-currency
+    # publication gate. Reusing the customer trigger would collide with the
+    # submission confirmation job for the same customer message.
+    trigger_message_created_at = timestamp
+    try:
+        persona_assignment = ticket_repository.resolve_account_persona(client_ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=str(exc),
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        manual_event = {
+            "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+            "account_case_id": case_id, "automation_reply_message_id": message_id,
+            "reason": str(account_case.get("not_automated_reason") or str(exc)),
+            "created_at": timestamp, "source": source,
+        }
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=None, account_case_updates=account_case,
+            events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+            completed_at=timestamp,
+        )
+        ticket_repository.save_account_case(account_case)
+        return "completed" if committed else "in_progress"
+    reply_facts = build_automation_reply_facts(
+        behavior="detailed_invoice",
+        reply_intent=ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
+        known_information={
+            "title": str(account_case.get("title") or "").strip(),
+        },
+        source_facts=[note],
+        resolution_status="completed",
+        customer_name=str(account_case.get("customer_name") or ""),
+    )
+    reply_facts["attachments_included"] = bool(message_attachments)
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    try:
+        normalized_facts, _intent, _close = normalize_account_reply_contract(
+            reply_facts,
+            reply_intent=ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
+            close_after_publish=True,
+        )
+    except AccountReplyContractError as exc:
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=str(exc),
+            timestamp=timestamp,
+            policy_decision="automation_persona_human_review",
+        )
+        manual_event = {
+            "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+            "account_case_id": case_id, "automation_reply_message_id": message_id,
+            "reason": str(exc),
+            "created_at": timestamp, "source": source,
+        }
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=None, account_case_updates=account_case,
+            events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+            completed_at=timestamp,
+        )
+        ticket_repository.save_account_case(account_case)
+        return "completed" if committed else "in_progress"
+    reply_payload: dict[str, Any] = {
+        "draft_content": "",
+        "reply_facts": normalized_facts,
+        "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
+        "asked_field_keys": [],
+        "visibility": "account_only",
+        "internal_resolution": True,
+        "close_after_publish": True,
+        "reply_intent": ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
+        "automation_delivery_key": str(
+            (account_case.get("internal_email_payload") or {}).get("delivery_key") or ""
+        ),
+    }
+    if message_attachments:
+        reply_payload["attachments"] = list(message_attachments)
+    if persona_assignment:
+        reply_payload.update(
+            {
+                "persona_key": persona_assignment.get("persona_key"),
+                "persona_version": persona_assignment.get("version"),
+                "effective_prompt": dict(persona_assignment.get("content") or {}),
+            }
+        )
+    ticket_repository.cancel_pending_account_reply_jobs(
+        client_ticket_id, updated_at=timestamp
+    )
+    job = ticket_repository.save_account_reply_job(
+        {
+            "job_id": f"account-reply-{uuid4().hex}",
+            "ticket_id": client_ticket_id,
+            "trigger_message_created_at": trigger_message_created_at,
+            "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+            "scheduled_for": (
+                datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+                + timedelta(seconds=delay_seconds)
+            ).isoformat(),
+            "payload": reply_payload,
+            "attempt_count": 0,
+            "claimed_at": None,
+            "published_at": None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+    )
+    resolution_event = build_billing_internal_resolution_event(
+        billing_ticket_id=billing_ticket_id, client_ticket_id=client_ticket_id,
+        result=BILLING_RESPONSE_RESULT_COMPLETED, notify_customer=True, note=note,
+        created_at=timestamp,
+    )
+    resolution_event.update({"source": source, "billing_reply_message_id": message_id})
+    queued_event = {
+        "event": "detailed_invoice_completion_reply_job_queued", "account_case_id": case_id,
+        "ticket_id": client_ticket_id, "reply_job_id": str(job.get("job_id") or ""),
+        "attachments": [str(item.get("asset_id") or "") for item in message_attachments],
+        "created_at": timestamp, "source": source, "billing_reply_message_id": message_id,
+    }
+    committed = ticket_repository.commit_automation_reply_result(
+        reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+        assistant_message=None,
+        account_case_updates={"automation_status": "automation", "updated_at": timestamp},
+        events=[{"event_type": BILLING_RESPONSE_EVENT, "payload": resolution_event},
+                {"event_type": "detailed_invoice_completion_reply_job_queued", "payload": queued_event}],
+        completed_at=timestamp,
+    )
+    if committed and attached_asset_ids:
+        asset_repository.mark_attached(attached_asset_ids)
     return "completed" if committed else "in_progress"
 
 

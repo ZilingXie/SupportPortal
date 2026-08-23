@@ -251,7 +251,7 @@ class AutomationTestScenarioApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(
             {item["id"] for item in payload["scenarios"]},
-            {"E1", "E2", "F1", "S1"},
+            {"E1", "E2", "F1", "S1", "D1"},
         )
         self.assertEqual(payload["runs"], [])
 

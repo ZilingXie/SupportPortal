@@ -14,7 +14,9 @@ AUTOMATION_SUBCATEGORY_ALIASES: dict[str, str] = {}
 
 # Registry keeps every known implementation available for compatibility and
 # future re-enablement; only this set may receive new automation side effects.
-ACTIVE_AUTOMATION_SUBCATEGORIES = frozenset({"fraud_account", "enablement", "account_suspension"})
+ACTIVE_AUTOMATION_SUBCATEGORIES = frozenset(
+    {"fraud_account", "detailed_invoice", "enablement", "account_suspension"}
+)
 
 AUTOMATION_HANDLER_REGISTRY: dict[str, frozenset[str]] = {
     BILLING_AUTOMATION_HANDLER: frozenset(
