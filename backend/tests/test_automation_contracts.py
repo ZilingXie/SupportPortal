@@ -44,6 +44,32 @@ class AutomationContractsTest(unittest.TestCase):
                     CommentVisibility.EXTERNAL,
                 )
 
+    def test_preproduction_star_allowlist_admits_any_ticket(self):
+        with patch.dict(os.environ, {"PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": "*"}, clear=False):
+            self.assertEqual(
+                validate_ticket_policy(
+                    AutomationEnvironment.PREPRODUCTION,
+                    "999999",
+                    CommentVisibility.INTERNAL,
+                ),
+                CommentVisibility.INTERNAL,
+            )
+            with self.assertRaises(ValueError):
+                validate_ticket_policy(
+                    AutomationEnvironment.PREPRODUCTION,
+                    "999999",
+                    CommentVisibility.EXTERNAL,
+                )
+
+    def test_preproduction_empty_allowlist_stays_fail_closed(self):
+        with patch.dict(os.environ, {"PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": ""}, clear=False):
+            with self.assertRaises(ValueError):
+                validate_ticket_policy(
+                    AutomationEnvironment.PREPRODUCTION,
+                    "123",
+                    CommentVisibility.INTERNAL,
+                )
+
     def test_production_visibility_is_explicit(self):
         self.assertEqual(
             validate_ticket_policy(

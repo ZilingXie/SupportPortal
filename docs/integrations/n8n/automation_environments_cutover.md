@@ -82,7 +82,7 @@ Header: X-N8n-Request-Token: <n8n_request_token 的值>
 | | staging | preproduction | production |
 |---|---|---|---|
 | Zendesk 写入 | 否（容器无凭据，`writes_zendesk=False`） | 是，强制 `internal`（请求 external → 422） | 是，**必须显式** `comment_visibility`（缺失 → 422） |
-| `zendesk_ticket_id` | 可选 | 必填 + 在 `PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST`（当前 `12872,12895`）内，否则 422 | 必填 |
+| `zendesk_ticket_id` | 可选 | 必填 + 在 `PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST` 内（`*` 放行全部；空拒绝全部），否则 422 | 必填 |
 | side effects | 无 | ownership → internal comment → status→`pending`（开关已启用） | 同左，visibility 按请求 |
 
 n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod 同策略，客户不可见）；external 必须按单显式选择，不要做成工作流默认值。
@@ -107,7 +107,7 @@ n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod �
 
 两个 Zendesk Trigger 同时活跃会对每张新单各跑一遍取数富化（只多几次 Zendesk 读，无副作用）；只有名单命中的那条链路会发投递请求。
 
-**preproduction（可选，用于 T3 演练）**：再克隆一份指向 `/automation/preproduction/v1/cases`、`comment_visibility: 'internal'`。服务端 allowlist 是权威门控；若不想每张非名单单产生 422 执行噪音，在克隆里加一个 `ticket.id in (12872,12895)` 的 IF 门。
+**preproduction（可选，用于 T3 演练）**：再克隆一份指向 `/automation/preproduction/v1/cases`、`comment_visibility: 'internal'`。服务端 allowlist 是权威门控（`.env` 的 `PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST`：逗号分隔工单号；`*` = 放行全部，工单过滤交给 n8n 工作流；留空 = 拒绝全部）；不想配名单时设 `*` 并在 n8n 侧加 IF 门。
 
 **staging**：`new_case_2_supporportal_staging` 直接把最终节点改为 `/automation/staging/v1/cases`（测试数据环境，可先行，无 Zendesk 副作用）；若仍需旧 `/account` 的 account-case 测试链路，则同样用克隆方式并存。
 
@@ -151,8 +151,8 @@ n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod �
 ## 7. 双写防护红线
 
 1. 旧 prod 工作流的公司名单与新 prod 克隆的名单**必须互斥**（§4 步骤 2）；否则同一工单会被两条链路各写一次 Zendesk（ownership/comment/status 双份）。
-2. preproduction allowlist 工单（12872/12895）不得同时命中旧 prod 工作流的公司名单：启用 preprod 克隆前，先核对这些工单所属 org 的 `companyid` 是否在旧名单（当前 `1201099,200062458,1392055,1228534`）中；命中则先从旧名单移除或暂停旧工作流。
-3. production 切流实施前置：T3 真实工单写入验收完成 + 用户批准。在此之前只允许 staging（无副作用）与 preproduction（internal + allowlist）接线。
+2. preproduction allowlist（`$ENV{PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST`}：逗号分隔工单号；`*` = 放行全部、由上游 n8n 过滤；空 = 拒绝全部）——若使用工单号名单，名单内工单不得同时命中旧 prod 工作流的公司名单；命中则先从旧名单移除或暂停旧工作流。
+3. production 切流实施前置：T3 真实工单写入验收完成 + 用户批准。在此之前只允许 staging（无副作用）与 preproduction（internal；allowlist 按上述三种形态配置）接线。
 
 ## 8. 切流后验证清单（用户执行时）
 

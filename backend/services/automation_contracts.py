@@ -179,7 +179,10 @@ def validate_ticket_policy(
         raise ValueError(f"{environment.value} requires zendesk_ticket_id")
     if environment == AutomationEnvironment.PREPRODUCTION:
         allowlist = preproduction_ticket_allowlist()
-        if not allowlist or normalized_ticket not in allowlist:
+        # "*" is the explicit operator opt-out for operators that gate which
+        # tickets reach preproduction upstream (for example in the n8n
+        # workflow); an unset or empty allowlist stays fail-closed.
+        if "*" not in allowlist and (not allowlist or normalized_ticket not in allowlist):
             raise ValueError("preproduction ticket is not in the configured allowlist")
     return visibility
 
