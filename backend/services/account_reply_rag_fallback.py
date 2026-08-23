@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -34,6 +35,29 @@ DEFAULT_FALLBACK_TIMEOUT_SECONDS = 60.0
 INTERNAL_NOTE_HEADLINE = "AI agent unable to handle this request, require human review."
 ESCALATION_ACTOR_ID = "system:reply-rag-fallback"
 CUSTOMER_REPLY_NOTE_LIMIT = 200
+
+# RAG answers sometimes end with a support-engineer signoff (e.g. the "Sid"
+# persona); Account automation replies carry no signature, and the publish
+# gate rejects signature-shaped tails, so strip the classic signoff block.
+_SIGNOFF_LINE_RE = re.compile(
+    r"^(best regards|kind regards|regards|sincerely|thanks|thank you|cheers|best)[,!.]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_trailing_signature(answer: str) -> str:
+    lines = str(answer or "").rstrip().split("\n")
+    while len(lines) >= 2:
+        if (
+            _SIGNOFF_LINE_RE.match(lines[-2].strip())
+            and lines[-1].strip()
+            and len(lines[-1].strip()) <= 40
+            and not lines[-1].strip().endswith((".", "!", "?"))
+        ):
+            lines = lines[:-2]
+        else:
+            break
+    return "\n".join(lines).rstrip()
 
 ANSWER = "answer"
 ESCALATE = "escalate"
@@ -108,7 +132,7 @@ def try_rag_fallback_answer(
     except Exception as exc:  # defensive: RAG must never break reply processing
         return RagFallbackOutcome(kind=ESCALATE, reason=f"rag_error_{type(exc).__name__}")
     decision = str(payload.get("decision") or "").strip().lower()
-    answer = str(payload.get("answer") or "").strip()
+    answer = _strip_trailing_signature(str(payload.get("answer") or "").strip())
     if decision == "answer" and answer:
         return RagFallbackOutcome(kind=ANSWER, answer=answer)
     reason = str(payload.get("reason") or "").strip().lower() or "escalated"

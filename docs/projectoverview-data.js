@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T06:14:06Z",
-  "source_base_commit": "f2e16cf4c1dfd16a6f4f2216afddf42fc2a67ab2",
-  "registry_digest": "1e024367e38ee5568f984566c934f83036bcb3c762b7c5066520300d3c707059",
+  "generated_at": "2026-08-23T06:28:12Z",
+  "source_base_commit": "5ea1ff71ce8a4032f6abdf8a0c200d78979b52fa",
+  "registry_digest": "fc1cbaeb49579d85bbd935c88062091464472361ca0b29caa5ea6d196f10cec1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8540,6 +8540,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "creation_layer_root_cause",
           "summary": "最终定位根因：create_account_reply_job 对任何带 intent 的 job 在创建时就写入 reply_facts 并绑定 persona_v8 pipeline 状态机，prepare/publish 层修复均拦不住 v8 状态机的契约校验（unsupported_account_reply_intent）；修复为 rag_fallback_answer intent 创建时不绑 facts/pipeline（status=scheduled 直发路径），并在 intake 用例断言 job 不进入 persona 管线。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "rag_answer_signature_strip",
+          "summary": "创建层修复后实测到达发布门禁，被 assert_no_trailing_automation_signature 拦截（RAG 答案继承支持工程师 'Best Regards, Sid' 尾签，与 Account 自动化无签名风格不符）；fallback service 增加经典 signoff+身份尾块剥离（保留普通收尾句），并有单测锁定。"
         }
       ],
       "legacy_refs": [],
