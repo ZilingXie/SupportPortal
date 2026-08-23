@@ -8,6 +8,16 @@ const API_BASE = "/production";
 const ACCESS_TOKEN_KEY = "supportportal_automation_test_access_token";
 const ACCOUNT_KEY = "supportportal_automation_test_account";
 const TICKETS_REFRESH_MS = 60_000;
+const RUNS_REFRESH_MS = 15_000;
+const RUN_STATUS_LABELS = {
+  queued: "queued",
+  running: "running",
+  waiting_approval: "waiting for approval",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  interrupted: "interrupted",
+};
 const DEFAULT_FETCH_TIMEOUT_MS = 25_000;
 
 const CATEGORY_LABELS = {
@@ -19,6 +29,7 @@ const CATEGORY_LABELS = {
 let accessToken = "";
 let currentAccount = null;
 let refreshTimerId = null;
+let runsTimerId = null;
 
 const state = {
   authChecking: true,
@@ -30,6 +41,9 @@ const state = {
   selectedCategory: "",
   form: { subject: "", body: "" },
   sending: false,
+  scenarios: [],
+  runs: [],
+  runsLoading: false,
 };
 
 function readStorage(key, fallback) {
@@ -118,6 +132,10 @@ function clearAuth() {
     clearInterval(refreshTimerId);
     refreshTimerId = null;
   }
+  if (runsTimerId) {
+    clearInterval(runsTimerId);
+    runsTimerId = null;
+  }
 }
 
 /* -- Auth ----------------------------------------------------------------- */
@@ -176,11 +194,15 @@ async function enterConsole() {
   state.authChecking = false;
   state.authError = "";
   render();
-  await Promise.all([loadTemplates(), loadTickets()]);
+  await Promise.all([loadTemplates(), loadTickets(), loadScenarios()]);
   if (refreshTimerId) clearInterval(refreshTimerId);
   refreshTimerId = setInterval(() => {
     if (accessToken) loadTickets({ silent: true });
   }, TICKETS_REFRESH_MS);
+  if (runsTimerId) clearInterval(runsTimerId);
+  runsTimerId = setInterval(() => {
+    if (accessToken) loadScenarios({ silent: true });
+  }, RUNS_REFRESH_MS);
 }
 
 async function boot() {
@@ -237,6 +259,79 @@ async function loadTickets({ silent = false } = {}) {
     state.ticketsLoading = false;
   }
   if (!silent) render();
+}
+
+async function loadScenarios({ silent = false } = {}) {
+  if (!silent) {
+    state.runsLoading = true;
+    render();
+  }
+  try {
+    const { response, payload } = await apiFetch("/api/automation-test/scenarios");
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Failed to load scenario runs."));
+    }
+    state.scenarios = Array.isArray(payload?.scenarios) ? payload.scenarios : [];
+    state.runs = Array.isArray(payload?.runs) ? payload.runs : [];
+  } catch (error) {
+    if (!silent && !state.authError) {
+      toast(error instanceof Error ? error.message : "Failed to load scenario runs.", "error");
+    }
+  } finally {
+    state.runsLoading = false;
+  }
+  if (!silent) render();
+}
+
+function activeRun() {
+  return state.runs.find((run) => ["queued", "running", "waiting_approval"].includes(run.status)) || null;
+}
+
+async function startScenario(scenarioId) {
+  if (!scenarioId) return;
+  const active = activeRun();
+  if (active) {
+    toast(`Another run is already active (${active.scenario_id}, ${active.status}).`, "error");
+    return;
+  }
+  const scenario = state.scenarios.find((item) => item.id === scenarioId);
+  const confirmed = window.confirm(
+    `Run scenario ${scenarioId} (${scenario ? scenario.label : ""})? This sends real emails and creates a real Zendesk ticket with real automation side effects. Continue?`
+  );
+  if (!confirmed) return;
+  try {
+    const { response, payload } = await apiFetch(
+      `/api/automation-test/scenarios/${encodeURIComponent(scenarioId)}/runs`,
+      { method: "POST" }
+    );
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Failed to start the scenario run."));
+    }
+    toast(`Scenario ${scenarioId} started. Progress appears below; keep this page open.`, "success");
+    await loadScenarios();
+  } catch (error) {
+    if (!state.authError) {
+      toast(error instanceof Error ? error.message : "Failed to start the scenario run.", "error");
+    }
+  }
+}
+
+async function cancelRun(runId) {
+  if (!window.confirm("Cancel this scenario run? Steps already sent cannot be undone.")) return;
+  try {
+    const { response, payload } = await apiFetch(
+      `/api/automation-test/scenarios/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST" }
+    );
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(payload, "Failed to cancel the run."));
+    }
+    await loadScenarios();
+  } catch (error) {
+    if (!state.authError) {
+      toast(error instanceof Error ? error.message : "Failed to cancel the run.", "error");
+    }
+  }
 }
 
 function selectCategory(categoryId) {
@@ -387,6 +482,7 @@ function renderConsole() {
         </div>
       </header>
       <main class="at-main">
+        ${renderApprovalBanner()}
         ${renderMailNotice(mailConfigured)}
         <section>
           <h2 class="at-section-title">1. Pick a regression category</h2>
@@ -397,6 +493,7 @@ function renderConsole() {
         </section>
         ${state.selectedCategory ? renderFormCard(mailConfigured) : ""}
         ${renderTicketsCard()}
+        ${renderScenariosCard()}
       </main>
     </div>
   `;
@@ -478,6 +575,103 @@ function renderTicketsCard() {
       </div>
       ${state.tickets.length ? renderTicketsTable() : `<div class="at-empty">No test tickets yet. Create one above.</div>`}
     </section>
+  `;
+}
+
+function renderApprovalBanner() {
+  const waiting = state.runs.find((run) => run.status === "waiting_approval");
+  if (!waiting) return "";
+  const hint = waiting.approval_hint || {};
+  const url = hint.zendesk_ticket_url
+    ? `<a href="${escapeHtml(hint.zendesk_ticket_url)}" target="_blank" rel="noopener">${escapeHtml(hint.zendesk_ticket_url)}</a>`
+    : "";
+  return `
+    <div class="at-banner is-approval" data-at-approval-banner>
+      <span class="material-symbols-outlined" aria-hidden="true">approval</span>
+      <span>
+        <strong>MANUAL APPROVAL REQUIRED</strong> (scenario ${escapeHtml(waiting.scenario_id)}) —
+        from YOUR mailbox reply to the internal email whose subject starts with
+        <strong>${escapeHtml(hint.internal_email_subject_prefix || "[Enablement Request]")}</strong>
+        with a sentence such as “${escapeHtml(hint.suggested_reply || "")}”.
+        Ticket: ${url}
+      </span>
+    </div>
+  `;
+}
+
+function renderScenariosCard() {
+  const active = activeRun();
+  const scenarioCards = state.scenarios
+    .map(
+      (scenario) => `
+        <div class="at-scenario-card">
+          <strong>${escapeHtml(scenario.id)} · ${escapeHtml(scenario.label)}</strong>
+          <span class="at-category-desc">${escapeHtml(scenario.description || "")}</span>
+          <button class="at-button" type="button" data-at-run-scenario="${escapeHtml(scenario.id)}" ${active ? "disabled" : ""}>
+            ${active ? "A run is active" : "Run scenario"}
+          </button>
+        </div>
+      `
+    )
+    .join("");
+  const runs = state.runs.length
+    ? state.runs.map(renderRunRow).join("")
+    : `<div class="at-empty">No scenario runs yet. Pick a scenario above (E1 recommended for the first run).</div>`;
+  return `
+    <section class="at-table-card">
+      <div class="at-table-head">
+        <div>
+          <h2 class="at-section-title">4. Scenario runs (automated)</h2>
+          <p class="at-section-sub">Each run plays a full multi-turn conversation against production and reports a PASS/FAIL matrix. Enablement runs pause for your internal approval.</p>
+        </div>
+        <button class="at-button is-secondary" type="button" data-at-refresh-runs ${state.runsLoading ? "disabled" : ""}>
+          ${state.runsLoading ? "Loading…" : "Refresh runs"}
+        </button>
+      </div>
+      <div class="at-scenario-grid">${scenarioCards}</div>
+      <div class="at-runs-list">${runs}</div>
+    </section>
+  `;
+}
+
+function runStatusChip(run) {
+  const label = RUN_STATUS_LABELS[run.status] || run.status;
+  const tone =
+    run.status === "completed"
+      ? " is-good"
+      : ["failed", "cancelled", "interrupted"].includes(run.status)
+        ? " is-bad"
+        : run.status === "waiting_approval"
+          ? " is-warn"
+          : "";
+  return `<span class="chip${tone}">${escapeHtml(label)}</span>`;
+}
+
+function renderRunRow(run) {
+  const created = String(run.created_at || "").replace("T", " ").slice(0, 19);
+  const ticket = run.zendesk_ticket_url
+    ? `<a href="${escapeHtml(run.zendesk_ticket_url)}" target="_blank" rel="noopener">#${escapeHtml(run.zendesk_ticket_id || "?")}</a>`
+    : "—";
+  const active = ["queued", "running", "waiting_approval"].includes(run.status);
+  const steps = (run.steps || [])
+    .map(
+      (step) =>
+        `<li>${step.status === "PASS" ? "✓" : "✗"} ${escapeHtml(step.step)}${step.detail ? ` — <span class="at-muted">${escapeHtml(step.detail)}</span>` : ""}</li>`
+    )
+    .join("");
+  return `
+    <div class="at-run-row">
+      <div class="at-chip-row">
+        <strong>${escapeHtml(run.scenario_id)}</strong>
+        ${runStatusChip(run)}
+        <span class="at-muted">${escapeHtml(created)}</span>
+        <span>Zendesk ${ticket}</span>
+        ${active ? `<button class="at-link-button" type="button" data-at-cancel-run="${escapeHtml(run.run_id)}">Cancel</button>` : ""}
+      </div>
+      ${run.current_step ? `<div class="at-muted">current: ${escapeHtml(run.current_step)}</div>` : ""}
+      ${run.error ? `<div class="at-run-error">${escapeHtml(run.error)}</div>` : ""}
+      ${steps ? `<details class="at-run-steps"><summary>steps (${(run.steps || []).length})</summary><ul>${steps}</ul></details>` : ""}
+    </div>
   `;
 }
 
@@ -597,6 +791,15 @@ function bindConsoleEvents() {
   });
   document.querySelectorAll("[data-at-refresh-row]").forEach((node) => {
     node.addEventListener("click", () => refreshTicket(node.getAttribute("data-at-refresh-row")));
+  });
+  document.querySelectorAll("[data-at-run-scenario]").forEach((node) => {
+    node.addEventListener("click", () => startScenario(node.getAttribute("data-at-run-scenario")));
+  });
+  document.querySelectorAll("[data-at-cancel-run]").forEach((node) => {
+    node.addEventListener("click", () => cancelRun(node.getAttribute("data-at-cancel-run")));
+  });
+  document.querySelector("[data-at-refresh-runs]")?.addEventListener("click", () => {
+    loadScenarios();
   });
 }
 
