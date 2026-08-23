@@ -16364,10 +16364,17 @@ class PostgresTicketRepository:
                     and str(delivery_case_row[0] or "").strip()
                     and str(delivery_case_row[1] or "").strip().lower() == "production"
                     and str(delivery_case_row[2] or "").strip()
-                    and is_registered_automation(
-                        route_family=account_case.get("route_family"),
-                        execution_action=account_case.get("execution_action")
-                        or account_case.get("route"),
+                    and (
+                        # RAG fallback answers publish after the case was
+                        # re-routed off its automation handler; they are still
+                        # customer-facing production replies.
+                        str(payload.get("reply_intent") or "").strip()
+                        == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+                        or is_registered_automation(
+                            route_family=account_case.get("route_family"),
+                            execution_action=account_case.get("execution_action")
+                            or account_case.get("route"),
+                        )
                     )
                 ):
                     delivery_columns = (
