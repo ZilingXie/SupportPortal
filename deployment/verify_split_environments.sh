@@ -149,13 +149,17 @@ fi
 zendesk_auth="$(read_env_value zendesk_basic_auth)"
 if [[ -z "${zendesk_auth}" ]]; then
   fail "zendesk_basic_auth is not set in ${ENV_FILE}"
-elif [[ "${zendesk_auth}" != *:* ]]; then
-  fail "zendesk_basic_auth has no ':' separator (expected email:token format)"
 else
+  # The credential is stored either as the literal "email:token" or base64 of
+  # it; mirror backend zendesk_basic_auth_header()'s tolerant parsing.
   zendesk_code="$(docker exec "$(automation_container preproduction)" python -c "
 import base64, os, urllib.request
+value = os.environ['zendesk_basic_auth'].strip()
+if value.lower().startswith('basic '):
+    value = value[6:].strip()
+header_value = value if ':' in value else base64.b64decode(value, validate=True).decode('utf-8')
 request = urllib.request.Request('https://agoraio.zendesk.com/api/v2/tickets/${ZENDESK_PREFLIGHT_TICKET}.json')
-request.add_header('Authorization', 'Basic ' + base64.b64encode(os.environ['zendesk_basic_auth'].encode()).decode())
+request.add_header('Authorization', 'Basic ' + base64.b64encode(header_value.encode()).decode())
 try:
     urllib.request.urlopen(request, timeout=15)
     print(200)

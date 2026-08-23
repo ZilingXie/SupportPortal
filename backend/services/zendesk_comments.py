@@ -49,10 +49,16 @@ def zendesk_basic_auth_header() -> str:
         raw = raw[6:].strip()
     if not raw:
         raise ZendeskCommentError("permanent", error_code="zendesk_basic_auth_missing")
-    try:
-        decoded = base64.b64decode(raw, validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
-        raise ZendeskCommentError("permanent", error_code="zendesk_basic_auth_invalid") from exc
+    # The deployment stores either the literal "username:token" or its base64
+    # form. A literal always contains ":"; the base64 alphabet never does, so
+    # the two forms are unambiguous.
+    if ":" in raw:
+        decoded = raw
+    else:
+        try:
+            decoded = base64.b64decode(raw, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise ZendeskCommentError("permanent", error_code="zendesk_basic_auth_invalid") from exc
     if ":" not in decoded:
         raise ZendeskCommentError("permanent", error_code="zendesk_basic_auth_invalid")
     username, secret = decoded.split(":", 1)
