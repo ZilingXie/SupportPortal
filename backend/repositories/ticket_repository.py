@@ -2368,6 +2368,16 @@ class TicketRepository(Protocol):
     ) -> dict[str, Any] | None:
         ...
 
+    def find_account_cases_by_title_since(
+        self,
+        *,
+        title: str,
+        processing_profile: str,
+        created_since: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        ...
+
     def create_account_zendesk_comment_delivery(
         self,
         *,
@@ -2729,6 +2739,30 @@ class InMemoryTicketRepository:
             ):
                 return copy.deepcopy(account_case)
         return None
+
+    def find_account_cases_by_title_since(
+        self,
+        *,
+        title: str,
+        processing_profile: str,
+        created_since: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        normalized_title = str(title or "").strip()
+        normalized_profile = str(processing_profile or "").strip().lower()
+        normalized_since = str(created_since or "").strip()
+        if not normalized_title or not normalized_since:
+            return []
+        matches = [
+            account_case
+            for account_case in self._billing_tickets.values()
+            if str(account_case.get("title") or "").strip() == normalized_title
+            and str(account_case.get("processing_profile") or "staging").strip().lower()
+            == normalized_profile
+            and str(account_case.get("created_at") or "") >= normalized_since
+        ]
+        matches.sort(key=lambda item: str(item.get("created_at") or ""))
+        return [copy.deepcopy(item) for item in matches[: max(1, int(limit or 10))]]
 
     def create_account_zendesk_comment_delivery(
         self,
@@ -7130,6 +7164,41 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry(
             "get_account_case_by_zendesk_ticket_id", _operation
+        )
+
+    def find_account_cases_by_title_since(
+        self,
+        *,
+        title: str,
+        processing_profile: str,
+        created_since: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        normalized_title = str(title or "").strip()
+        normalized_profile = str(processing_profile or "").strip().lower()
+        normalized_since = str(created_since or "").strip()
+        normalized_limit = max(1, min(int(limit or 10), 50))
+        if not normalized_title or not normalized_since or normalized_profile not in {
+            "staging",
+            "production",
+        }:
+            return []
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} "
+                        "WHERE title = %s AND processing_profile = %s AND created_at >= %s "
+                        "ORDER BY created_at ASC LIMIT %s"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_title, normalized_profile, normalized_since, normalized_limit),
+                )
+                names = [item.name for item in cur.description]
+                return [dict(zip(names, row)) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry(
+            "find_account_cases_by_title_since", _operation
         )
 
     def create_account_zendesk_comment_delivery(

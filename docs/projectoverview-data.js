@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T10:08:38Z",
-  "source_base_commit": "5f677ef86930c88d8e0f88d6fca2e517a02838ec",
-  "registry_digest": "531a4f871cce22de3760c1c3c1f7fa7aa1fe8d511adeede576054a98af4343d4",
+  "generated_at": "2026-08-23T10:08:52Z",
+  "source_base_commit": "c5ab77e31b19007cc9430ec43f678ea0944dfd47",
+  "registry_digest": "fb13743827fa83dc87cd05a9bda96b37a4d56e64b1877692cbdbc4de1356ef35",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1812,6 +1812,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 14,
       "done_count": 8,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "production-regression-testing",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "title": "Production 工单回归测试",
+      "goal": "提供 /automation/test 控制台：复用 workspace 登录，按分类（fraud_account / enablement / account_suspension）一键通过专用测试邮箱向 support@agoraio.zendesk.com 发送可编辑的测试工单邮件，并单独建表追踪测试工单与其在 production 管线的实时状态，用于大改动后的生产回归验证。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Console API + UI contract + prefix-safety",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
+        },
+        {
+          "type": "test",
+          "label": "Static page smoke via TestClient",
+          "command": ".venv/bin/python -c \"from fastapi.testclient import TestClient; import backend.main as main; r=TestClient(main.app).get('/automation/test/')\"",
+          "details": "GET /automation/test/ 200，含 \u003ctitle>Automation Test\u003c/title>，Cache-Control private no-store；app.js 静态资源 200。既有套件对照：test_account_zendesk_status_sync 与 test_production_ui_contract 各 1 个失败在干净 main 上同样失败（日期敏感/部署脚本断言，与本任务无关）。"
+        }
+      ],
+      "source_refs": [
+        "ui/automation-test",
+        "backend/services/automation_test_store.py",
+        "backend/services/automation_test_mail.py",
+        "backend/services/automation_test_templates.py",
+        "deployment/nginx/supportportal.conf",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "legacy_ids": [],
+      "status": "done",
+      "task_count": 1,
+      "done_count": 1,
       "blocked_count": 0
     },
     {
@@ -8774,6 +8810,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-97",
+      "title": "/automation/test 生产工单回归测试控制台与 Runbook",
+      "status": "done",
+      "owner": "zac",
+      "summary": "新增 /automation/test 控制台（由 api_production 服务，复用 workspace 登录）：三个自动化分类各一键创建测试工单邮件（模板可编辑，主题默认带 [zac test] 前缀），通过专用测试邮箱（AUTOMATION_TEST_MAIL_* 独立 Graph 凭据，未配置 fail-closed）发送到 support@agoraio.zendesk.com；新表 supportportal.automation_test_tickets 追踪每次发送并按标题+时间窗自动关联 production case，快照路由/自动化/内部邮件/回复 job/Zendesk 状态；配套回归测试 Runbook（含步骤 0 基线探测与三类预期信号）。",
+      "next_action": "用户侧跟进：① EC2/本地 .env 配置专用测试邮箱凭据（AUTOMATION_TEST_MAIL_* + token cache）并重启 api_production；② 按 runbook 步骤 0 用 enablement 模板做基线探测（验证新 requester 能进 n8n→production 管线）；③ 之后每轮大改动按 runbook 三类回归。",
+      "acceptance_criteria": [
+        "GET /api/automation-test/templates 返回三类模板（主题已应用 [zac test] 前缀）与测试邮箱配置状态；未登录 401。",
+        "POST /api/automation-test/tickets：校验类目（未知类目 422）；发送成功落表 send_status=sent；发送失败/未配置凭据落表 failed+原因并返回 502，不静默重试。",
+        "POST /api/automation-test/tickets/{id}/refresh：按标题+发送时间窗关联 production case，更新 zendesk 工单链接与管线快照；无匹配时 link_status=not_found。",
+        "ui/automation-test 三件套挂载于 /automation/test（nginx 指向 api_production），登录复用 /production/api/workspace/*，创建前可编辑主题与正文。",
+        "带前缀主题不破坏 enablement/suspension 确定性检测（单测覆盖）。",
+        "docs/testing/production_ticket_regression_runbook.md 覆盖前置检查、基线探测、三类操作步骤与预期信号、手动后续回复与清理。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Console API + UI contract + prefix-safety",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
+        },
+        {
+          "type": "test",
+          "label": "Static page smoke via TestClient",
+          "command": ".venv/bin/python -c \"from fastapi.testclient import TestClient; import backend.main as main; r=TestClient(main.app).get('/automation/test/')\"",
+          "details": "GET /automation/test/ 200，含 \u003ctitle>Automation Test\u003c/title>，Cache-Control private no-store；app.js 静态资源 200。既有套件对照：test_account_zendesk_status_sync 与 test_production_ui_contract 各 1 个失败在干净 main 上同样失败（日期敏感/部署脚本断言，与本任务无关）。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/services/automation_test_store.py",
+        "backend/services/automation_test_mail.py",
+        "backend/services/automation_test_templates.py",
+        "backend/repositories/ticket_repository.py",
+        "ui/automation-test/index.html",
+        "ui/automation-test/styles.css",
+        "ui/automation-test/app.js",
+        "deployment/nginx/supportportal.conf",
+        "backend/tests/test_automation_test_console.py",
+        "backend/tests/test_automation_test_ui_contract.py",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户要求以真实邮件工单做生产回归测试（fraud/enablement/account suspension），并提供 /automation/test 页面（复用 /account 登录、独立追踪表、分类一键建单、可编辑内容）。取舍确认：专用测试邮箱、[zac test] 主题前缀、v1 只做创建+追踪。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "implemented",
+          "summary": "api_production 挂载 ui/automation-test（nginx /automation/test location），4 个 workspace-admin API；automation_test_tickets 自包含建表；专用邮箱 AUTOMATION_TEST_MAIL_* fail-closed 发信；按标题+时间窗关联 production case 并快照管线；18 个新测试全过；runbook 落 docs/testing/。真实邮件 e2e 属用户侧跟进（凭据+基线探测）。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing"
     }
   ],
   "meetings": [

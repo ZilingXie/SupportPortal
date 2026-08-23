@@ -30,6 +30,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -124,6 +125,16 @@ from backend.services.internal_email_payload import (
     resolve_account_internal_email_recipient,
 )
 from backend.services.graph_mail import send_graph_mail
+from backend.services import automation_test_mail
+from backend.services.automation_test_store import (
+    AutomationTestTicketStore,
+    build_automation_test_ticket_store,
+)
+from backend.services.automation_test_templates import (
+    AUTOMATION_TEST_CATEGORY_IDS,
+    automation_test_template,
+    automation_test_template_list,
+)
 from backend.services.account_automation_ownership import (
     OWNERSHIP_EVENT_TYPE,
     ensure_production_automation_ownership,
@@ -363,6 +374,7 @@ UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ACCOUNT_DIR = UI_DIR / "account-ui"
 PRODUCTION_DIR = UI_DIR / "production-ui"
+AUTOMATION_TEST_DIR = UI_DIR / "automation-test"
 BILLING_RESPONSE_DIR = UI_DIR / "billing-response-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 WORKSPACE_DIR = UI_DIR / "workspace-ui"
@@ -1790,6 +1802,7 @@ async def disable_account_http_caching(request: Request, call_next: Any) -> Any:
         "/api/account",
         "/production",
         "/production/api",
+        "/automation/test",
     )
     if path in no_store_paths or any(
         path.startswith(f"{prefix}/") for prefix in no_store_paths
@@ -1805,6 +1818,12 @@ if ACCOUNT_DIR.exists():
     app.mount("/account", StaticFiles(directory=ACCOUNT_DIR, html=True), name="account-ui")
 if PRODUCTION_DIR.exists():
     app.mount("/production", StaticFiles(directory=PRODUCTION_DIR, html=True), name="production-ui")
+if AUTOMATION_TEST_DIR.exists():
+    app.mount(
+        "/automation/test",
+        StaticFiles(directory=AUTOMATION_TEST_DIR, html=True),
+        name="automation-test-ui",
+    )
 if BILLING_RESPONSE_DIR.exists():
     app.mount("/response", StaticFiles(directory=BILLING_RESPONSE_DIR, html=True), name="billing-response-ui")
 if ENGINEER_DIR.exists():
@@ -11541,6 +11560,194 @@ def workspace_me(
     account = ticket_repository.get_workspace_account(principal.account_id)
     assert account is not None
     return {"account": _public_workspace_account(account)}
+
+
+automation_test_ticket_store: AutomationTestTicketStore = build_automation_test_ticket_store()
+
+AUTOMATION_TEST_ZENDESK_TICKET_URL = "https://agoraio.zendesk.com/agent/tickets"
+
+
+class AutomationTestTicketCreateRequest(BaseModel):
+    category: str = Field(min_length=1, max_length=64)
+    subject: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1, max_length=40000)
+
+
+def _automation_test_case_snapshot(case: dict[str, Any]) -> dict[str, Any]:
+    client_ticket_id = str(case.get("client_ticket_id") or "").strip()
+    reply_job = (
+        ticket_repository.get_latest_account_reply_job(client_ticket_id)
+        if client_ticket_id
+        else None
+    )
+    reply_job_view = None
+    if isinstance(reply_job, dict):
+        job_payload = reply_job.get("payload") if isinstance(reply_job.get("payload"), dict) else {}
+        reply_job_view = {
+            "status": reply_job.get("status"),
+            "intent": job_payload.get("intent"),
+            "scheduled_for": reply_job.get("scheduled_for"),
+            "published_at": reply_job.get("published_at"),
+            "attempt_count": reply_job.get("attempt_count"),
+        }
+    automation_context = (
+        case.get("automation_context") if isinstance(case.get("automation_context"), dict) else {}
+    )
+    return {
+        "checked_at": now_iso(),
+        "account_case_id": case.get("account_case_id"),
+        "billing_ticket_id": case.get("billing_ticket_id"),
+        "client_ticket_id": case.get("client_ticket_id"),
+        "route_family": case.get("route_family"),
+        "execution_action": case.get("execution_action"),
+        "semantic_intent": case.get("semantic_intent"),
+        "automation_status": case.get("automation_status"),
+        "route_status": case.get("route_status"),
+        "internal_email_send_status": case.get("internal_email_send_status"),
+        "internal_email_send_reason": case.get("internal_email_send_reason"),
+        "zendesk_ticket_status": case.get("zendesk_ticket_status"),
+        "missing_fields": case.get("missing_fields") or [],
+        "collected_fields": case.get("collected_fields") or {},
+        "automation_context": automation_context,
+        "reply_job": reply_job_view,
+    }
+
+
+@app.get("/api/automation-test/templates", dependencies=[Depends(require_workspace_admin)])
+def automation_test_templates() -> dict[str, Any]:
+    send_context = automation_test_mail.load_automation_test_send_context()
+    categories = []
+    for template in automation_test_template_list():
+        item = dict(template)
+        item["subject"] = automation_test_mail.apply_subject_tag(
+            item["subject"], send_context["subject_tag"]
+        )
+        categories.append(item)
+    return {"categories": categories, "mail": send_context}
+
+
+@app.post("/api/automation-test/tickets", dependencies=[Depends(require_workspace_admin)])
+def create_automation_test_ticket(
+    request: AutomationTestTicketCreateRequest,
+    response: Response,
+) -> dict[str, Any]:
+    category = str(request.category or "").strip()
+    if automation_test_template(category) is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown automation test category: {category}",
+        )
+    subject = " ".join(str(request.subject or "").splitlines()).strip()
+    body = str(request.body or "").strip()
+    if not subject or not body:
+        raise HTTPException(status_code=422, detail="subject and body are required")
+    send_context = automation_test_mail.load_automation_test_send_context()
+    base_record = {
+        "category": category,
+        "subject": subject,
+        "body": body,
+        "sender": send_context["sender"] or "unconfigured",
+        "recipient": send_context["recipient"],
+    }
+    sent_at = now_iso()
+    try:
+        automation_test_mail.send_test_ticket_email(
+            to_address=send_context["recipient"], subject=subject, body=body
+        )
+    except automation_test_mail.AutomationTestMailError as exc:
+        ticket = automation_test_ticket_store.insert_ticket(
+            {
+                **base_record,
+                "send_status": "failed",
+                "send_error": str(exc),
+                "email_sent_at": sent_at,
+            }
+        )
+        response.status_code = 502
+        return {"ticket": ticket, "error": str(exc)}
+    ticket = automation_test_ticket_store.insert_ticket(
+        {
+            **base_record,
+            "send_status": "sent",
+            "send_error": None,
+            "email_sent_at": sent_at,
+        }
+    )
+    return {"ticket": ticket}
+
+
+@app.get("/api/automation-test/tickets", dependencies=[Depends(require_workspace_admin)])
+def list_automation_test_tickets(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    return {"tickets": automation_test_ticket_store.list_tickets(limit)}
+
+
+@app.post(
+    "/api/automation-test/tickets/{ticket_id}/refresh",
+    dependencies=[Depends(require_workspace_admin)],
+)
+def refresh_automation_test_ticket(ticket_id: int) -> dict[str, Any]:
+    ticket = automation_test_ticket_store.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="automation test ticket not found")
+    checked_at = now_iso()
+    if str(ticket.get("send_status") or "") != "sent":
+        return {"ticket": ticket}
+    case: dict[str, Any] | None = None
+    linked_case_id = str(ticket.get("linked_account_case_id") or "").strip()
+    if linked_case_id:
+        case = ticket_repository.get_account_case(linked_case_id)
+    else:
+        sent_at = str(ticket.get("email_sent_at") or "").strip()
+        try:
+            since = (
+                datetime.fromisoformat(sent_at.replace("Z", "+00:00")) - timedelta(minutes=5)
+            ).isoformat()
+        except ValueError:
+            since = checked_at
+        already_linked = automation_test_ticket_store.linked_account_case_ids()
+        candidates = ticket_repository.find_account_cases_by_title_since(
+            title=str(ticket.get("subject") or ""),
+            processing_profile="production",
+            created_since=since,
+            limit=10,
+        )
+        case = next(
+            (
+                candidate
+                for candidate in candidates
+                if str(candidate.get("account_case_id") or "").strip() not in already_linked
+            ),
+            None,
+        )
+        if case is None:
+            updated = automation_test_ticket_store.update_ticket(
+                ticket_id, {"link_status": "not_found", "last_checked_at": checked_at}
+            )
+            return {"ticket": updated or ticket}
+    if case is None:
+        updated = automation_test_ticket_store.update_ticket(
+            ticket_id, {"last_checked_at": checked_at}
+        )
+        return {"ticket": updated or ticket}
+    zendesk_ticket_id = str(case.get("zendesk_ticket_id") or "").strip()
+    updated = automation_test_ticket_store.update_ticket(
+        ticket_id,
+        {
+            "link_status": "linked",
+            "zendesk_ticket_id": zendesk_ticket_id or None,
+            "zendesk_ticket_url": (
+                f"{AUTOMATION_TEST_ZENDESK_TICKET_URL}/{zendesk_ticket_id}"
+                if zendesk_ticket_id
+                else None
+            ),
+            "linked_account_case_id": str(case.get("account_case_id") or "").strip(),
+            "linked_case_snapshot": _automation_test_case_snapshot(case),
+            "last_checked_at": checked_at,
+        },
+    )
+    return {"ticket": updated or ticket}
 
 
 @app.get("/api/workspace/cases")
