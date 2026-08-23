@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T10:03:09Z",
-  "source_base_commit": "53906d7ce5b8c30cf0139f1bb577f8022071180e",
-  "registry_digest": "d6d574ef30753e5ff93f85524d6078fdc666c4135057795dbd6eedcb9f39734a",
+  "generated_at": "2026-08-23T10:04:00Z",
+  "source_base_commit": "b92a006245e399f0afd2868ba6fec9f00e1db436",
+  "registry_digest": "854cbfa0b03d9e86dcb5694f2354cb87dfbee37ca394cbb4e5ba43ce00f5112c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8638,6 +8638,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "rag_timeout_root_cause_and_default_raise",
           "summary": "排查 12931 的 rag_error_timeout：api_production→rag_api 连通 0.01s、同问题预热后稳定 11-22s 返回 grounded answer，根因为请求恰落在 rag_api 主栈重启后的冷启动窗口（首查询懒加载 embedding/预热）叠加 60s 兜底超时偏紧；将 DEFAULT_FALLBACK_TIMEOUT_SECONDS 提至 120s 并补超时解析单测。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "production_answer_delivery_gate_fix",
+          "summary": "12933 实测暴露 answer 路径最后一层：客户反问被重路由为 rag 路由后 case 不再是 registered automation，production Zendesk 投递门以 unregistered_automation 拦截 RAG 答案（本地发布成功但客户收不到）；修复为 rag_fallback_answer intent 的投递绕过该门（publish 与 recovery 循环都传 intent），并加投递门单测。"
         }
       ],
       "legacy_refs": [],
