@@ -7235,6 +7235,11 @@ class AccountIntakeApiTests(unittest.TestCase):
             job["payload"]["draft_content"],
             "An App ID identifies your Agora project.",
         )
+        # The RAG answer must stay out of the persona pipeline state machine.
+        self.assertEqual(job["payload"]["reply_intent"], "rag_fallback_answer")
+        self.assertNotIn("reply_facts", job["payload"])
+        self.assertNotIn("reply_pipeline", job["payload"])
+        self.assertEqual(job["status"], "scheduled")
 
     def test_unexpected_reply_escalates_to_human_when_rag_cannot_answer(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(

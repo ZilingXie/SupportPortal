@@ -212,7 +212,10 @@ def create_account_reply_job(
         ),
         "visibility": "account_only",
     }
-    if normalized_facts:
+    if normalized_facts and canonical_intent != ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER:
+        # RAG fallback answers publish their draft verbatim: attaching the
+        # synthetic intent-only facts here would push the job into the persona
+        # pipeline state machine, whose contract checks reject it.
         payload["reply_facts"] = normalized_facts
         payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
     if persona_assignment:
