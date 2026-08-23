@@ -8,6 +8,7 @@ from typing import Any
 from backend.services.enablement_automation import customer_visible_enablement_information
 from backend.services.account_reply_jobs import (
     AccountReplyContractError,
+    ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
@@ -316,6 +317,7 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     if reply_intent in {
         "enablement_completed_and_close",
         "account_suspension_handoff_and_close",
+        ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     }:
         facts["performed_actions"] = []
         facts["resolution_status"] = "completed"
@@ -645,6 +647,12 @@ def render_automation_reply(
         reply_contract_policy = (
             "For completed Enablement, explicitly state that the feature is enabled, activated, provisioned, or "
             "turned on, and explain that the ticket is closing. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE:
+        reply_contract_policy = (
+            "For a completed Detailed Invoice request, explicitly state that the detailed invoice has been "
+            "provided - attached to this very message when the facts say attachments are included - and "
+            "explain that the ticket is closing. "
         )
     validated: dict[str, Any] = {}
 

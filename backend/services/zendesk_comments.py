@@ -12,6 +12,7 @@ from typing import Any
 
 
 ZENDESK_TICKET_API_BASE = "https://agoraio.zendesk.com/api/v2/tickets"
+ZENDESK_UPLOADS_API_BASE = "https://agoraio.zendesk.com/api/v2/uploads"
 ZENDESK_BASIC_AUTH_ENV = "zendesk_basic_auth"
 # This Zendesk workspace marks these checkbox fields as required-on-solve; the
 # API rejects a solving PUT without them (422 RecordInvalid).
@@ -285,12 +286,75 @@ def get_ticket_status(*, ticket_id: str, timeout_seconds: float = 15.0) -> str |
     return _ticket_status_from_payload(payload)
 
 
+def upload_ticket_attachment(
+    *,
+    filename: str,
+    data: bytes,
+    content_type: str = "application/pdf",
+    timeout_seconds: float = 60.0,
+) -> str:
+    """Upload one binary attachment and return its Zendesk upload token.
+
+    An upload that is never attached to a comment is inert on the Zendesk side,
+    so an unreadable response is safely retryable rather than outcome-unknown:
+    re-uploading only orphans the previous file.
+    """
+    normalized_filename = str(filename or "").strip()
+    normalized_content_type = str(content_type or "").strip() or "application/pdf"
+    if not normalized_filename or not isinstance(data, (bytes, bytearray)) or not data:
+        raise ZendeskCommentError("permanent", error_code="zendesk_upload_input_invalid")
+    url = f"{ZENDESK_UPLOADS_API_BASE}?{urllib.parse.urlencode({'filename': normalized_filename})}"
+    request = urllib.request.Request(
+        url,
+        data=bytes(data),
+        method="POST",
+        headers={
+            "Authorization": _basic_auth_header(),
+            "Content-Type": normalized_content_type,
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
+            status_code = int(getattr(response, "status", 201) or 201)
+            if status_code < 200 or status_code >= 300:
+                raise ZendeskCommentError(
+                    _http_status_category(status_code),
+                    status_code=status_code,
+                    error_code="zendesk_upload_http_error",
+                )
+            payload = _decode_json_response(response)
+    except ZendeskCommentError as exc:
+        raise ZendeskCommentError(
+            "retryable" if exc.category == "outcome_unknown" else exc.category,
+            status_code=exc.status_code,
+            error_code=exc.error_code,
+            detail=exc.detail,
+        ) from exc
+    except urllib.error.HTTPError as exc:
+        error = _zendesk_request_error(exc)
+        raise ZendeskCommentError(
+            error.category,
+            status_code=error.status_code,
+            error_code="zendesk_upload_http_error",
+            detail=error.detail,
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ZendeskCommentError("retryable", error_code="zendesk_upload_network_failed") from exc
+    upload = payload.get("upload") if isinstance(payload.get("upload"), dict) else None
+    token = str((upload or {}).get("token") or "").strip()
+    if not token:
+        raise ZendeskCommentError("retryable", error_code="zendesk_upload_token_missing")
+    return token
+
+
 def add_ticket_comment(
     *,
     ticket_id: str,
     body: str,
     public: bool = False,
     solve: bool = False,
+    uploads: tuple[str, ...] | list[str] | None = None,
     timeout_seconds: float = 15.0,
 ) -> ZendeskCommentResult:
     normalized_ticket_id = str(ticket_id or "").strip()
@@ -300,9 +364,13 @@ def add_ticket_comment(
         raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
     timeout = _request_timeout(timeout_seconds)
     url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
-    ticket_payload: dict[str, Any] = {
-        "comment": {"body": normalized_body, "public": expected_public}
-    }
+    comment_payload: dict[str, Any] = {"body": normalized_body, "public": expected_public}
+    normalized_uploads = tuple(
+        token for token in (str(item or "").strip() for item in (uploads or ())) if token
+    )
+    if normalized_uploads:
+        comment_payload["uploads"] = list(normalized_uploads)
+    ticket_payload: dict[str, Any] = {"comment": comment_payload}
     if solve:
         # solved (not closed) keeps the requester able to reopen by replying.
         ticket_payload["status"] = "solved"

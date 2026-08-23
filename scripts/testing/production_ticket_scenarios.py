@@ -73,6 +73,15 @@ FRAUD_FULL_INFO_BODY = (
     "Usage is covered by corporate credit-card top-ups managed by our finance team."
 )
 
+DETAILED_INVOICE_BODY = (
+    "Hello Agora team,\n\n"
+    "Please send me the detailed invoice for the transaction below.\n\n"
+    "Issue date: 6 May 2026\n"
+    "Transaction ID: 1104245232004173824\n"
+    "Amount: USD 705.97\n\n"
+    "Thank you."
+)
+
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -420,6 +429,47 @@ class ScenarioDriver:
             "internal approval received",
         )
 
+    def wait_manual_billing_invoice_reply(self, ctx: ScenarioContext) -> None:
+        print("\n" + "=" * 72)
+        print("MANUAL APPROVAL REQUIRED (detailed invoice + PDF)")
+        print(
+            f"  Zendesk ticket : {ZENDESK_TICKET_URL}/{ctx.zendesk_ticket_id}\n"
+            f"  Reply (from YOUR mailbox) to the internal email whose subject starts\n"
+            f"  with \"[Billing Request] Detailed invoice request\" and ATTACH the\n"
+            f"  invoice PDF to that reply. A body line such as:\n"
+            f"      The detailed invoice is attached.\n"
+            f"  lets the automation treat the request as completed.\n"
+            f"  Waiting up to {self.args.approval_timeout_min} minutes…"
+        )
+        print("=" * 72 + "\n", flush=True)
+        ctx.turn_started_at = now_utc()
+        self.wait_event(
+            ctx,
+            "billing_internal_resolution_submitted",
+            "internal invoice reply received",
+        )
+
+    def wait_zendesk_delivery_delivered(self, ctx: ScenarioContext, step: str) -> None:
+        def probe():
+            rows = self.db_query(
+                "SELECT status, zendesk_comment_id FROM support_account_zendesk_comment_deliveries "
+                "WHERE account_case_id = %s AND target_status = 'solved' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.account_case_id,),
+            )
+            if rows and str(rows[0].get("status") or "") == "delivered":
+                return rows[0]
+            return None
+
+        try:
+            row = self.wait_for(
+                "zendesk delivery delivered (comment + PDF uploads)", probe, self.args.turn_timeout_min * 60
+            )
+            self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
     # -- scenarios ---------------------------------------------------------
 
     def run_e1(self) -> None:
@@ -525,11 +575,34 @@ class ScenarioDriver:
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
         self.wait_suspension_state(ctx, "closed", "suspension workflow closed")
 
+    def run_d1(self) -> None:
+        ctx = ScenarioContext("D1")
+        self.start_ticket(
+            ctx,
+            "Please send the detailed invoice for transaction 1104245232004173824",
+            DETAILED_INVOICE_BODY,
+        )
+        self.find_case(ctx)
+        self.record(
+            ctx, "routed to detailed_invoice",
+            self.case_row(ctx).get("execution_action") == "detailed_invoice",
+            f"execution_action={self.case_row(ctx).get('execution_action')!r}",
+        )
+        self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal invoice email sent")
+        self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+        self.wait_manual_billing_invoice_reply(ctx)
+        self.wait_reply_intent(
+            ctx, {"detailed_invoice_completed_and_close"}, "completion reply (with PDF) published"
+        )
+        self.wait_zendesk_delivery_delivered(ctx, "zendesk public comment + PDF delivered")
+        self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
+
     SCENARIOS = {
         "E1": ("enablement happy path (AppID provided)", run_e1),
         "E2": ("enablement missing AppID + RAG fallback + completion", run_e2),
         "F1": ("fraud review: ask info -> provide -> handoff + assign, no solve", run_f1),
         "S1": ("account suspension: confirm email -> closing + solve", run_s1),
+        "D1": ("detailed invoice: full data -> internal email -> PDF reply -> public comment + solve", run_d1),
     }
 
     # -- reporting -----------------------------------------------------------

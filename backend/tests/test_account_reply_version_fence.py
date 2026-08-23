@@ -126,6 +126,15 @@ class AccountReplyVersionFenceTests(unittest.TestCase):
                 close_after_publish=True,
             )
 
+    def test_detailed_invoice_completion_intent_derives_close(self) -> None:
+        facts, intent, close_after_publish = normalize_account_reply_contract(
+            {"behavior": "detailed_invoice"},
+            reply_intent="detailed_invoice_completed_and_close",
+        )
+        self.assertEqual(intent, "detailed_invoice_completed_and_close")
+        self.assertTrue(close_after_publish)
+        self.assertEqual(facts["reply_intent"], "detailed_invoice_completed_and_close")
+
     def test_job_payload_uses_one_intent_and_derived_close_flag(self) -> None:
         repository = InMemoryTicketRepository()
         job = create_account_reply_job(

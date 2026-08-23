@@ -1,12 +1,13 @@
 # Production 工单回归测试 Runbook（/automation/test）
 
-目的：大改动（模型/提示词/路由/副作用管线/部署）上线或合并后，用**真实 Zendesk 工单**验证 production 自动化闭环未被破坏。覆盖三个 active 自动化分类：
+目的：大改动（模型/提示词/路由/副作用管线/部署）上线或合并后，用**真实 Zendesk 工单**验证 production 自动化闭环未被破坏。覆盖四个 active 自动化分类：
 
 | 分类 | taxonomy | 自动化 handler |
 | --- | --- | --- |
 | fraud_account | account_billing / fraud_account | account_verification（内部四组信息审核） |
 | enablement | backend_operation / enablement | enablement |
 | account_suspension | account_billing / account_suspension | account_suspension（两阶段确认） |
+| detailed_invoice | account_billing / detailed_invoice | billing（内部邮件回复 + PDF 附件转发 Zendesk） |
 
 > 范围说明：当前仅针对 `/production`（旧双栈，n8n → `POST /production/account`）。`/automation/{staging,preproduction,production}` 三环境上线后，再按本 runbook 派生对应变体。
 
@@ -97,9 +98,21 @@
 - 回复正文含**单一邮箱**（如 "please use zac.tester@example.com"）或明确肯定（"yes, please use this email"）→ 内部 handoff 邮件 + closing 公开回复（24h 句）+ Zendesk solved + 本地关单 + Slack「Account Suspension」；workflow state=closed。
 - 变体：回复含多个邮箱或含糊表述 → `human_review_required`（这也是可断言的失败分支）。
 
+### 4.4 detailed_invoice
+
+**模板要点**：主题/正文为明确的 detailed invoice 请求，且带齐三个字段（Issue date / Transaction ID / Amount）；缺字段会先走补信息追问，带争议/退款措辞会 human_review。
+
+| 时刻 | 预期信号 |
+| --- | --- |
+| 即时 | `route: detailed_invoice`（绿）；automation: automation |
+| 1 分钟内 | internal email: sent（`[Billing Request] Detailed invoice request - Ticket {id}`） |
+| 6-10 分钟 | reply: published；submission 确认（内部审核中） |
+
+**深度闭环（手动，回复内部邮件并附 PDF）**：从内部邮件收件邮箱直接回复该邮件，正文写 "The detailed invoice is attached." 并**附上 PDF 附件** → 300 秒内 worker 轮询处理 → PDF 存为 portal 资产 → completion 回复（`detailed_invoice_completed_and_close`）发布为 Zendesk 公开评论且**评论带该 PDF 附件**（Zendesk uploads）→ Zendesk solved + 本地关单。断言：`billing_internal_resolution_submitted` 事件、`support_account_zendesk_comment_deliveries.status=delivered`、消息 meta 带 attachments。不带 PDF 直接回复也走完成闭环（回复文本不提附件）。
+
 ## 4.5 自动化剧本驱动器
 
-`scripts/testing/production_ticket_scenarios.py` 把 §4 的四条人工流程剧本化（真链路：客户回合经 163 SMTP 发信、用 IMAP 读 Zendesk 通知邮件的线程头续接同一工单；断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
+`scripts/testing/production_ticket_scenarios.py` 把 §4 的五条人工流程剧本化（真链路：客户回合经 163 SMTP 发信、用 IMAP 读 Zendesk 通知邮件的线程头续接同一工单；断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
 
 | 剧本 | 覆盖 |
 | --- | --- |
@@ -107,6 +120,7 @@
 | `E2` | enablement 缺 AppID：追问 → 客户问什么是 AppID → **RAG 兜底回答** → 给 AppID → 内部邮件 → **手动批准** → completion + solved |
 | `F1` | fraud：无信息建单 → 追问 → 补四组信息 → 内部邮件 + 24h 回复 + assign 复审人 + **不 solved** |
 | `S1` | suspension：建单 → 问联系邮箱 → 确认 → 内部邮件 + closing + solved + workflow closed |
+| `D1` | detailed invoice：带全三字段建单 → 内部邮件 → submission 确认 → **手动回内部邮件并附 PDF** → completion + Zendesk 公开评论带附件 delivered + solved |
 
 ```bash
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --list    # 列剧本
@@ -114,7 +128,7 @@
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --scenario E1
 ```
 
-- enablement 的内部批准**保留人工**：脚本会暂停并提示回复哪封内部邮件（事件 `enablement_internal_resolution_received` 出现后继续）。
+- enablement 的内部批准**保留人工**：脚本会暂停并提示回复哪封内部邮件（事件 `enablement_internal_resolution_received` 出现后继续）。D1 同理（事件 `billing_internal_resolution_submitted`），且提示操作者**回复时附上 PDF**。
 - 每轮等待默认 20 分钟（回复有 6-10 分钟随机延迟），批准等待默认 45 分钟；`--turn-timeout-min/--approval-timeout-min` 可调。
 - 每次运行创建真实 Zendesk 工单（主题带 `[zac test]`）；结果矩阵每步 PASS/FAIL，任一 FAIL 退出码非 0。
 

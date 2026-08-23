@@ -4070,6 +4070,7 @@ class InMemoryTicketRepository:
                         "rerun_job_id": payload.get("rerun_job_id"),
                         "reply_intent": payload.get("reply_intent"),
                         "source": "account_ai",
+                        "attachments": list(payload.get("attachments") or []),
                     },
                 }
                 message["message_id"] = f"{ticket_id}:{len(ticket.get('messages', []))}"
@@ -16236,6 +16237,7 @@ class PostgresTicketRepository:
                 "rerun_job_id": payload.get("rerun_job_id"),
                 "reply_intent": payload.get("reply_intent"),
                 "source": "account_ai",
+                "attachments": list(payload.get("attachments") or []),
             }
         )
         execution_payload = Json(dict(reply_execution))

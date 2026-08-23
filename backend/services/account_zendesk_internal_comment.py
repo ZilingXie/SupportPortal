@@ -14,6 +14,7 @@ from backend.services.zendesk_comments import (
     ZendeskCommentError,
     add_ticket_comment,
     read_ticket_comment_audit,
+    upload_ticket_attachment,
 )
 
 
@@ -323,6 +324,63 @@ def _existing_result(
     return None
 
 
+def _message_attachment_files(
+    message: dict[str, Any],
+) -> list[tuple[str, str, bytes]]:
+    """Resolve the message's asset attachments to uploadable file tuples.
+
+    Runs before the idempotency claim: a missing asset or unreadable storage is
+    a permanent local failure, and no Zendesk write has happened yet.
+    """
+    from backend import main as backend_main
+
+    # Postgres reads spread message meta onto the message, while in-memory
+    # replies keep meta nested; accept both attachment locations.
+    raw_attachments = message.get("attachments")
+    if not isinstance(raw_attachments, list):
+        nested_meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        raw_attachments = nested_meta.get("attachments")
+    attachments = raw_attachments if isinstance(raw_attachments, list) else []
+    files: list[tuple[str, str, bytes]] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        asset_id = str(attachment.get("asset_id") or "").strip()
+        if not asset_id:
+            continue
+        asset = backend_main.asset_repository.get_asset(asset_id)
+        if asset is None:
+            raise AccountZendeskInternalCommentError(
+                "account_zendesk_comment_attachment_missing",
+                f"Attachment asset {asset_id} was not found",
+                status_code=422,
+            )
+        try:
+            data = backend_main.asset_storage.fetch_bytes(asset)
+        except RuntimeError as exc:
+            raise AccountZendeskInternalCommentError(
+                "account_zendesk_comment_attachment_unreadable",
+                f"Attachment asset {asset_id} could not be read from storage: {exc}",
+                status_code=502,
+            ) from exc
+        if not data:
+            raise AccountZendeskInternalCommentError(
+                "account_zendesk_comment_attachment_unreadable",
+                f"Attachment asset {asset_id} is empty",
+                status_code=502,
+            )
+        filename = (
+            str(attachment.get("original_filename") or attachment.get("file_name") or "").strip()
+            or "attachment.pdf"
+        )
+        content_type = (
+            str(attachment.get("content_type") or asset.get("content_type") or "").strip()
+            or "application/pdf"
+        )
+        files.append((filename, content_type, data))
+    return files
+
+
 def deliver_account_ai_message_as_internal_comment(
     *,
     repository: TicketRepository,
@@ -352,6 +410,7 @@ def deliver_account_ai_message_as_internal_comment(
         message_id=message_id,
     )
     _ = account_case
+    attachment_files = _message_attachment_files(message)
     normalized_case_id = str(account_case_id).strip()
     normalized_message_id = str(message_id).strip()
     normalized_actor_id = str(actor_id or "system").strip() or "system"
@@ -409,11 +468,16 @@ def deliver_account_ai_message_as_internal_comment(
                 return existing
 
     try:
+        upload_tokens = tuple(
+            upload_ticket_attachment(filename=filename, content_type=content_type, data=data)
+            for filename, content_type, data in attachment_files
+        )
         zendesk_result = add_ticket_comment(
             ticket_id=zendesk_ticket_id,
             body=str(message.get("content") or "").strip(),
             public=bool(public_comment),
             solve=bool(solve_ticket),
+            **({"uploads": upload_tokens} if upload_tokens else {}),
         )
     except ZendeskCommentError as exc:
         payload = _result_payload(

@@ -5759,6 +5759,8 @@ async def _create_account_intake_impl(
                         if route == "fraud_account"
                         else "account_suspension_handoff_and_close"
                         if route == "account_suspension"
+                        else "submission_confirmation"
+                        if route == "detailed_invoice"
                         else None
                     ),
                 )

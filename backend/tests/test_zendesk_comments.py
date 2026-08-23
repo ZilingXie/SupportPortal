@@ -11,7 +11,9 @@ from backend.services.zendesk_comments import (
     ZendeskCommentError,
     ZendeskCommentResult,
     add_internal_comment,
+    add_ticket_comment,
     find_private_internal_comment,
+    upload_ticket_attachment,
 )
 
 
@@ -181,6 +183,88 @@ class ZendeskCommentServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.error_code, "zendesk_comment_input_invalid")
         urlopen.assert_not_called()
+
+    def test_upload_ticket_attachment_posts_binary_and_returns_token(self) -> None:
+        with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen",
+            return_value=_FakeResponse({"upload": {"token": "upload-token-1"}}, status=201),
+        ) as urlopen:
+            token = upload_ticket_attachment(
+                filename="invoice-approval.pdf",
+                data=b"%PDF-1.4\nfake invoice\n%%EOF",
+            )
+
+        self.assertEqual(token, "upload-token-1")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://agoraio.zendesk.com/api/v2/uploads?filename=invoice-approval.pdf",
+        )
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.get_header("Authorization"), f"Basic {self.basic_auth}")
+        self.assertEqual(request.get_header("Content-type"), "application/pdf")
+        self.assertEqual(request.data, b"%PDF-1.4\nfake invoice\n%%EOF")
+
+    def test_upload_ticket_attachment_network_failure_is_retryable(self) -> None:
+        with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("private network detail"),
+        ):
+            with self.assertRaises(ZendeskCommentError) as raised:
+                upload_ticket_attachment(filename="invoice.pdf", data=b"%PDF-1.4")
+
+        self.assertEqual(raised.exception.category, "retryable")
+        self.assertEqual(raised.exception.error_code, "zendesk_upload_network_failed")
+        self.assertNotIn("private network detail", str(raised.exception))
+
+    def test_upload_ticket_attachment_is_forbidden_in_staging(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"zendesk_basic_auth": self.basic_auth, "AUTOMATION_ENVIRONMENT": "staging"},
+            clear=False,
+        ):
+            with self.assertRaises(ZendeskCommentError) as raised:
+                upload_ticket_attachment(filename="invoice.pdf", data=b"%PDF-1.4")
+
+        self.assertEqual(raised.exception.category, "permanent")
+        self.assertEqual(raised.exception.error_code, "zendesk_outbound_forbidden_staging")
+
+    def test_add_ticket_comment_includes_upload_tokens(self) -> None:
+        with patch.dict(os.environ, {"zendesk_basic_auth": self.basic_auth}, clear=False), patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen",
+            return_value=_FakeResponse(
+                {
+                    "audit": {
+                        "events": [
+                            {
+                                "body": "validation marker",
+                                "id": 987654,
+                                "public": True,
+                                "type": "Comment",
+                            },
+                        ]
+                    },
+                    "ticket": {"id": 12807, "status": "solved"},
+                }
+            ),
+        ) as urlopen:
+            result = add_ticket_comment(
+                ticket_id="12807",
+                body="validation marker",
+                public=True,
+                solve=True,
+                uploads=("upload-token-1", "upload-token-2"),
+            )
+
+        self.assertEqual(result.comment_id, "987654")
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(
+            payload["ticket"]["comment"]["uploads"],
+            ["upload-token-1", "upload-token-2"],
+        )
+        self.assertEqual(payload["ticket"]["comment"]["body"], "validation marker")
+        self.assertEqual(payload["ticket"]["status"], "solved")
 
 
 if __name__ == "__main__":

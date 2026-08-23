@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T15:24:00Z",
-  "source_base_commit": "2176ad9d43367bb4117ef185ff5942cf00bf0075",
-  "registry_digest": "8f1cc6ddff189359e97a1cc49adec9fecb096eaf0d5473f90e061c287fbb00f8",
+  "generated_at": "2026-08-23T16:52:05Z",
+  "source_base_commit": "afc069d5da8858c0781e0cfc934100f4a611df71",
+  "registry_digest": "1bde94dcaf4e8903588c6a61600f08f87820db366ab34d0d6f0cca4e209df0d0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -553,6 +553,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Changed-area unit suites",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
+          "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "Scenario driver smoke",
+          "command": ".venv/bin/python scripts/testing/production_ticket_scenarios.py --list",
+          "details": "--list 列出含 D1 的五剧本。生产实跑待用户上线后执行。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -616,7 +628,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 12,
+      "task_count": 13,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -5206,6 +5218,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "production-regression-testing"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-102",
+      "title": "detailed_invoice 纳入 Automation + 内部邮件 PDF 附件转发 Zendesk",
+      "status": "active",
+      "owner": "zac",
+      "summary": "把 detailed_invoice 从 registered-only 激活为 active 自动化分类（ACTIVE_AUTOMATION_SUBCATEGORIES + account_billing 分层路由分流 + account_billing_metadata + agent 图状态 + intake 确认 job intent），/account 与 /production 全链路生效：路由→字段抽取（缺三字段追问、歧义 human_review）→[Billing Request] 内部邮件→回复处理。detailed_invoice 的内部邮件回复不再直commit，改走账号回复 job 发布管线（新 intent detailed_invoice_completed_and_close，close_after_publish）：PDF 先存 portal 资产（既有幂等链路），发布的助手消息携带 attachments；生产环境 Zendesk 公开评论投递新增 uploads 能力——投递前把消息附件资产逐个经 POST /api/v2/uploads 上传为 token，随公开评论（+solve）一起写回 Zendesk 工单，客户在 Zendesk 侧收到带 PDF 的回复邮件。staging 结构上无 zendesk_ticket_id 且有 staging 禁写守卫，PDF 转发仅 /production 生效，/account 侧到完成回复+本地关单为止。fraud_account/enablement/account_suspension 行为不变。",
+      "next_action": "合并后按流程重启官方栈并验证 /health 与 build ref；EC2 三环境部署由用户执行（deploy_surfaces_ec2.sh），上线后用户手动跑剧本 D1（回内部邮件需附 PDF）完成生产验收。",
+      "acceptance_criteria": [
+        "detailed_invoice 路由决策为 automated（route_family=automated、handler=billing、eligibility=eligible），account_billing 分层阶段与 automation_router 阶段一致放行。",
+        "intake：三字段齐全→内部邮件 sent + submission_confirmation 回复 job；缺字段→追问且不发内部邮件；字段抽取歧义→human_review。",
+        "内部邮件回复（detailed_invoice case）→ PDF 存资产 + detailed_invoice_completed_and_close 完成 job（close_after_publish、attachments 进 payload 与消息 meta），不再内联渲染直 commit。",
+        "生产投递：消息带附件时先逐个上传 Zendesk（uploads token，staging 禁写守卫同样生效）再发公开评论+solve；上传网络失败为 retryable（孤儿上传无害），资产缺失为永久失败且台账可见 failure_code。",
+        "回归剧本 D1 全链路（建单→内部邮件→人工回邮件附 PDF→completion→投递 delivered→solved）。",
+        "欺诈/enablement/suspension 现有行为与测试不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Changed-area unit suites",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
+          "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "Scenario driver smoke",
+          "command": ".venv/bin/python scripts/testing/production_ticket_scenarios.py --list",
+          "details": "--list 列出含 D1 的五剧本。生产实跑待用户上线后执行。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_routing.py",
+        "backend/services/account_route_pipeline.py",
+        "backend/services/account_billing_handlers.py",
+        "backend/services/account_reply_jobs.py",
+        "backend/services/automation_persona.py",
+        "backend/services/zendesk_comments.py",
+        "backend/services/asset_storage.py",
+        "backend/services/account_zendesk_internal_comment.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/worker.py",
+        "backend/main.py",
+        "scripts/testing/production_ticket_scenarios.py",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户拍板（对应 p2-71 受控扩围决策）：detailed_invoice 加入 automation；内部邮件回复带 PDF 时将 PDF 转发到 Zendesk 工单；/account 与 /production 实现。完成回采纳用户选择=自动 solve 并关本地单；控制台暂不加附件卡片展示。"
+        }
+      ],
+      "legacy_refs": [
+        "p1-43",
+        "p2-71",
+        "p2-100"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
@@ -10227,11 +10304,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client 与 Engineer 共用富文本 composer，支持粗体、斜体、列表、代码块和安全 markdown 渲染。",
         "对话支持上传 txt/log/err 日志附件。",
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
-        "`/account` 的 Automated execution view 展示三类 active Automation：Account & Billing / Fraud Account、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。",
+        "`/account` 的 Automated execution view 展示四类 active Automation：Account & Billing / Fraud Account、Account & Billing / Detailed Invoice、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。",
         "Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。",
         "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
         "Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。",
+        "Detailed Invoice 自动化在 /account 与 /production 全链路生效：抽取账单三字段（缺失追问、歧义转人工）后发内部处理邮件，内部回复带 PDF 时完成回复作为 Zendesk 公开评论附件转发给客户并自动 solve 关单。",
         "Enablement 内部回复的完成识别支持任意语言与拼写容错：英文关键词正则保底，正则未命中时由 LLM 单次仲裁（失败或关闭时回退正则结果），命中即取消待发提交确认并走完成关单链路，判定来源写入审计事件。",
         "Account 入口可通过 HTTP 或手动 UI 创建 Account Case，并记录 Automated 或非自动化路由。",
         "Account 入口可查看 Account Case 历史和详情。",
@@ -10323,6 +10401,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account 入口强制使用当前 v8 分层分类并记录 pipeline 版本，支持以全新 Case 执行语义异步 Rerun 全部历史 Case；每个 Case 会保留客户消息和路由审计，删除旧 Account AI 回复、reply job、reply execution 与 Persona assignment 后再重建内部邮件与 Persona 回复。",
         "Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。",
         "Billing 自动化统一通过公司 Outlook reply 接收内部处理结果，并可将 PDF 附件转发到客户工单。",
+        "Detailed Invoice 自动化在 /account 与 /production 全链路生效：抽取账单三字段（缺失追问、歧义转人工）后发内部处理邮件，内部回复带 PDF 时完成回复作为 Zendesk 公开评论附件转发给客户并自动 solve 关单。",
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。"
