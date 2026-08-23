@@ -35,6 +35,7 @@ from backend.services.account_admin import (
 )
 from backend.services.account_reply_jobs import (
     AccountReplyContractError,
+    ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
     ACCOUNT_REPLY_PERSONA_LEGACY_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
@@ -654,6 +655,18 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
             payload, _, _ = _normalize_account_reply_job_payload(payload)
         except AutomationPersonaError as exc:
             _move_invalid_account_reply_to_human_review(job, ticket, exc)
+            return
+        if (
+            str(payload.get("reply_intent") or "").strip() == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+            and str(payload.get("draft_content") or "").strip()
+        ):
+            # The RAG fallback answer is final content: route it straight to
+            # publication, bypassing the legacy re-generation path and the
+            # automation persona render.
+            job["payload"] = payload
+            job["status"] = "scheduled"
+            job["updated_at"] = now_iso()
+            _update_claimed_account_reply_job(job, expected_status=claimed_status)
             return
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
         if payload.get("reply_pipeline") not in {

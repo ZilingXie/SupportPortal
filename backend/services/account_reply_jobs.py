@@ -35,6 +35,9 @@ ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION = "account_suspension_conta
 ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE = "account_suspension_handoff_and_close"
 ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE = "enablement_completed_and_close"
 ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE = "resolution_update"
+# Unexpected-reply RAG fallback answers carry their own draft content and must
+# skip both the legacy re-generation path and the automation persona render.
+ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER = "rag_fallback_answer"
 
 ACCOUNT_REPLY_CLOSE_INTENTS = frozenset(
     {
@@ -52,6 +55,7 @@ ACCOUNT_REPLY_KNOWN_INTENTS = frozenset(
         ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
         ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
         ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
+        ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
     }
 )
 

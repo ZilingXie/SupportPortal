@@ -203,6 +203,7 @@ from backend.services.account_admin import (
     routing_config_payload,
 )
 from backend.services.account_reply_jobs import (
+    ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
     ACCOUNT_REPLY_PERSONA_PIPELINE,
     ACCOUNT_REPLY_PERSONA_PREPARING,
     ACCOUNT_REPLY_PERSONA_PUBLISHING,
@@ -10516,6 +10517,10 @@ async def _process_account_customer_reply(
                     ticket_id=client_ticket_id,
                     trigger_message_created_at=timestamp,
                     draft_content=fallback.answer,
+                    # The RAG answer is final content: the intent routes the
+                    # job past the legacy re-generation path and the persona
+                    # render so draft_content is published verbatim.
+                    reply_intent=ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
                 )
             except Exception as exc:
                 billing_ticket = await _record_account_reply_job_failure(

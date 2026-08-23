@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T04:59:05Z",
-  "source_base_commit": "d5ee884f526b1b597cdadd90d23a5f9eb7717ed3",
-  "registry_digest": "c66ccf04518c53e1cf732a85f86b17b2e451769933398159a39d72f0fc0057d1",
+  "generated_at": "2026-08-23T05:41:52Z",
+  "source_base_commit": "62e4e7020f3909874ea5306c18b3743afd4d7c88",
+  "registry_digest": "73b012e766c230ea05d8ad89446e6bd1380c00e5826f3af3d1286aa3fd2ae394",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8525,6 +8525,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "created",
           "summary": "按用户需求创建：意外回复先 RAG 后人工（放回 queue + internal note），复用 PR#840 route back 与现有 RAG/内部评论能力；任务号跳过 p2-89~92（已由并行线程占用）。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "live_answer_path_direct_publish_fix",
+          "summary": "本地 /account 实测发现 draft-only RAG 答案 job 在 worker prepare 阶段落入 legacy 重新生成路径（resolve_support_message/persona 覆盖或转人工）；注册 rag_fallback_answer intent 并在 prepare 加直通分支：该 intent 且带 draft_content 的 job 跳过 legacy 与 persona 渲染，draft 原文直发。escalate 路径实测已闭环（真实 RAG 判 insufficient_evidence → human_review_required + audit 落库）。"
         }
       ],
       "legacy_refs": [],
