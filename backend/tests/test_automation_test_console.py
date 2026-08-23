@@ -299,6 +299,49 @@ class AutomationTestTemplateClassificationTests(unittest.TestCase):
         self.assertEqual(twice, once)
 
 
+class AutomationTestStoreLazySchemaTests(unittest.TestCase):
+    """Reads must lazily ensure the table: a fresh database must not 500."""
+
+    def setUp(self) -> None:
+        self.env_patcher = patch.dict(
+            os.environ, {"AUTOMATION_TEST_ALLOW_MEMORY": "1"}, clear=False
+        )
+        self.env_patcher.start()
+
+    def tearDown(self) -> None:
+        self.env_patcher.stop()
+
+    def test_ticket_store_reads_ensure_schema(self) -> None:
+        from backend.services.automation_test_store import AutomationTestTicketStore
+
+        calls: list[str] = []
+
+        class SpyStore(AutomationTestTicketStore):
+            def ensure_schema(self) -> None:
+                calls.append("tickets")
+                super().ensure_schema()
+
+        store = SpyStore()
+        store.list_tickets()
+        store.get_ticket(1)
+        self.assertGreaterEqual(len(calls), 2)
+
+    def test_scenario_run_store_reads_ensure_schema(self) -> None:
+        from backend.services.automation_test_store import AutomationTestScenarioRunStore
+
+        calls: list[str] = []
+
+        class SpyStore(AutomationTestScenarioRunStore):
+            def ensure_schema(self) -> None:
+                calls.append("runs")
+                super().ensure_schema()
+
+        store = SpyStore()
+        store.list_runs()
+        store.get_run("atr-x")
+        self.assertGreaterEqual(len(calls), 2)
+
+
 class AutomationTestSmtpTransportTests(unittest.TestCase):
     """AUTOMATION_TEST_MAIL_TRANSPORT=smtp (reuses BILLING_AUTOMATION_SMTP_*)."""
 
