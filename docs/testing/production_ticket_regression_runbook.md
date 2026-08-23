@@ -110,9 +110,9 @@
 
 **深度闭环（手动，回复内部邮件并附 PDF）**：从内部邮件收件邮箱直接回复该邮件，正文写 "The detailed invoice is attached." 并**附上 PDF 附件** → 300 秒内 worker 轮询处理 → PDF 存为 portal 资产 → completion 回复（`detailed_invoice_completed_and_close`）发布为 Zendesk 公开评论且**评论带该 PDF 附件**（Zendesk uploads）→ Zendesk solved + 本地关单。断言：`billing_internal_resolution_submitted` 事件、`support_account_zendesk_comment_deliveries.status=delivered`、消息 meta 带 attachments。不带 PDF 直接回复也走完成闭环（回复文本不提附件）。
 
-## 4.5 自动化剧本驱动器
+## 4.5 自动化剧本回归（网页发起 + CLI 备用）
 
-`scripts/testing/production_ticket_scenarios.py` 把 §4 的五条人工流程剧本化（真链路：客户回合经 163 SMTP 发信、用 IMAP 读 Zendesk 通知邮件的线程头续接同一工单；断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
+五条剧本（§4 的完整流程化，真链路：客户回合经 163 SMTP 发信、用 IMAP 读 Zendesk 通知邮件的线程头续接同一工单；断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
 
 | 剧本 | 覆盖 |
 | --- | --- |
@@ -122,15 +122,21 @@
 | `S1` | suspension：建单 → 问联系邮箱 → 确认 → 内部邮件 + closing + solved + workflow closed |
 | `D1` | detailed invoice：带全三字段建单 → 内部邮件 → submission 确认 → **手动回内部邮件并附 PDF** → completion + Zendesk 公开评论带附件 delivered + solved |
 
+**网页发起（推荐）**：`/automation/test/` 页面第 4 节「Scenario runs」——点剧本卡上的 Run scenario（同一时刻只允许一个进行中 run），页面实时展示逐步 PASS/FAIL、当前等待点与 Zendesk 工单链接，15 秒自动刷新；run 记录持久化在 `automation_test_scenario_runs` 表（含容器重启后 `interrupted` 标记与失败原因）。运行前服务端自动做 DB/SMTP/IMAP 连通检查，不通过则不建 run（502 显示原因）。
+
+**enablement 内部批准保留人工**：run 进入 `waiting for approval` 时页面顶部出现黄色 MANUAL APPROVAL 横幅——从你的邮箱回复主题以 `[Enablement Request] {feature}` 开头的内部邮件（如 "Media Relay is enabled for this app."），系统轮询到 `enablement_internal_resolution_received` 事件后自动继续。D1 同理（横幅提示回复 `[Billing Request] Detailed invoice request` 邮件并**附上 PDF**，事件 `billing_internal_resolution_submitted`）。等待默认 45 分钟，超时 run 失败。
+
+**CLI 备用**（同一引擎，本地跑）：
+
 ```bash
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --list    # 列剧本
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --check   # 只验 DB/SMTP/IMAP 连通，不发信
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --scenario E1
 ```
 
-- enablement 的内部批准**保留人工**：脚本会暂停并提示回复哪封内部邮件（事件 `enablement_internal_resolution_received` 出现后继续）。D1 同理（事件 `billing_internal_resolution_submitted`），且提示操作者**回复时附上 PDF**。
-- 每轮等待默认 20 分钟（回复有 6-10 分钟随机延迟），批准等待默认 45 分钟；`--turn-timeout-min/--approval-timeout-min` 可调。
-- 每次运行创建真实 Zendesk 工单（主题带 `[zac test]`）；结果矩阵每步 PASS/FAIL，任一 FAIL 退出码非 0。
+- 每轮等待默认 20 分钟（回复有 6-10 分钟随机延迟）；CLI 可用 `--turn-timeout-min/--approval-timeout-min` 调，网页用 env `AUTOMATION_TEST_TURN_TIMEOUT_MIN/AUTOMATION_TEST_APPROVAL_TIMEOUT_MIN`。
+- 取消：网页 Cancel 按钮在等待间隙优雅退出（已发出的邮件不可撤回）。
+- 每次运行创建真实 Zendesk 工单（主题带 `[zac test]`）；任一步 FAIL 即 run failed。
 
 ## 5. 失败排查
 

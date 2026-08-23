@@ -126,8 +126,12 @@ from backend.services.internal_email_payload import (
 )
 from backend.services.graph_mail import send_graph_mail
 from backend.services import automation_test_mail
+from backend.services import automation_test_scenarios
 from backend.services.automation_test_store import (
+    AutomationTestScenarioRunStore,
     AutomationTestTicketStore,
+    SCENARIO_RUN_ACTIVE_STATUSES,
+    build_automation_test_scenario_run_store,
     build_automation_test_ticket_store,
 )
 from backend.services.automation_test_templates import (
@@ -11750,6 +11754,163 @@ def refresh_automation_test_ticket(ticket_id: int) -> dict[str, Any]:
         },
     )
     return {"ticket": updated or ticket}
+
+
+automation_test_scenario_run_store: AutomationTestScenarioRunStore = (
+    build_automation_test_scenario_run_store()
+)
+
+
+def _automation_test_scenario_thread(run_id: str, scenario_id: str) -> None:
+    """Drive one scenario run in a daemon thread; all state lands in the runs table."""
+    store = automation_test_scenario_run_store
+
+    def listener(kind: str, data: dict[str, Any]) -> None:
+        try:
+            if kind == "step":
+                store.append_step(run_id, data)
+            elif kind == "approval_required":
+                store.update_run(
+                    run_id,
+                    {
+                        "status": "waiting_approval",
+                        "approval_hint": data,
+                        "current_step": "waiting for internal approval",
+                    },
+                )
+            elif kind == "approval_received":
+                store.update_run(run_id, {"status": "running"})
+            elif kind == "ticket_linked":
+                zendesk_id = str(data.get("zendesk_ticket_id") or "")
+                store.update_run(
+                    run_id,
+                    {
+                        "subject": data.get("subject"),
+                        "zendesk_ticket_id": zendesk_id or None,
+                        "zendesk_ticket_url": (
+                            f"{AUTOMATION_TEST_ZENDESK_TICKET_URL}/{zendesk_id}"
+                            if zendesk_id
+                            else None
+                        ),
+                        "account_case_id": data.get("account_case_id"),
+                        "client_ticket_id": data.get("client_ticket_id"),
+                    },
+                )
+            else:
+                # info / waiting / ticket_started — heartbeat so stale cleanup
+                # never reaps a live run (touch must not disturb status).
+                store.touch_run(run_id)
+        except Exception:  # noqa: BLE001 - observability must never fail the run
+            pass
+
+    def should_cancel() -> bool:
+        run = store.get_run(run_id)
+        return bool(run and run.get("cancel_requested"))
+
+    store.update_run(run_id, {"status": "running"})
+    engine = automation_test_scenarios.ScenarioEngine.from_env(
+        listener=listener, should_cancel=should_cancel
+    )
+    try:
+        engine.run_scenario(scenario_id)
+        store.update_run(
+            run_id,
+            {
+                "status": "completed" if engine.all_passed() else "failed",
+                "current_step": None,
+            },
+        )
+    except automation_test_scenarios.ScenarioCancelled:
+        store.update_run(
+            run_id, {"status": "cancelled", "error": "cancelled by operator"}
+        )
+    except Exception as exc:  # noqa: BLE001 - one terminal failure contract
+        store.update_run(run_id, {"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
+
+
+@app.get("/api/automation-test/scenarios", dependencies=[Depends(require_workspace_admin)])
+def automation_test_scenario_overview() -> dict[str, Any]:
+    automation_test_scenario_run_store.mark_stale_runs_interrupted()
+    scenarios = [
+        {"id": scenario_id, "label": meta["label"], "description": meta["description"]}
+        for scenario_id, meta in automation_test_scenarios.ScenarioEngine.SCENARIOS.items()
+    ]
+    return {
+        "scenarios": scenarios,
+        "runs": automation_test_scenario_run_store.list_runs(20),
+    }
+
+
+@app.post(
+    "/api/automation-test/scenarios/{scenario_id}/runs",
+    status_code=202,
+    dependencies=[Depends(require_workspace_admin)],
+)
+def start_automation_test_scenario_run(scenario_id: str) -> dict[str, Any]:
+    if scenario_id not in automation_test_scenarios.ScenarioEngine.SCENARIOS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown scenario: {scenario_id}",
+        )
+    automation_test_scenario_run_store.mark_stale_runs_interrupted()
+    active = automation_test_scenario_run_store.find_active_run()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "another scenario run is already active "
+                f"({active['scenario_id']}, status={active['status']}, run={active['run_id']}); "
+                "wait for it to finish or cancel it first"
+            ),
+        )
+    try:
+        automation_test_scenarios.ScenarioEngine.from_env().connectivity_check()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail closed with the reason
+        raise HTTPException(
+            status_code=502,
+            detail=f"scenario channels unavailable, no run started: {exc}",
+        ) from exc
+    run_id = f"atr-{uuid4().hex}"
+    run = automation_test_scenario_run_store.create_run(run_id, scenario_id)
+    threading.Thread(
+        target=_automation_test_scenario_thread,
+        args=(run_id, scenario_id),
+        daemon=True,
+        name=f"automation-test-scenario-{run_id}",
+    ).start()
+    return {"run": run}
+
+
+@app.get(
+    "/api/automation-test/scenarios/runs/{run_id}",
+    dependencies=[Depends(require_workspace_admin)],
+)
+def get_automation_test_scenario_run(run_id: str) -> dict[str, Any]:
+    automation_test_scenario_run_store.mark_stale_runs_interrupted()
+    run = automation_test_scenario_run_store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="scenario run not found")
+    return {"run": run}
+
+
+@app.post(
+    "/api/automation-test/scenarios/runs/{run_id}/cancel",
+    status_code=202,
+    dependencies=[Depends(require_workspace_admin)],
+)
+def cancel_automation_test_scenario_run(run_id: str) -> dict[str, Any]:
+    run = automation_test_scenario_run_store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="scenario run not found")
+    if run.get("status") not in SCENARIO_RUN_ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"run already finished with status={run.get('status')}",
+        )
+    automation_test_scenario_run_store.request_cancel(run_id)
+    return {"run": automation_test_scenario_run_store.get_run(run_id)}
 
 
 @app.get("/api/workspace/cases")
