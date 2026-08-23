@@ -30,7 +30,7 @@ LOGGER = logging.getLogger("supportportal.account_reply_rag_fallback")
 
 FALLBACK_ENABLED_ENV = "ACCOUNT_REPLY_RAG_FALLBACK_ENABLED"
 FALLBACK_TIMEOUT_ENV = "ACCOUNT_REPLY_RAG_FALLBACK_TIMEOUT_SECONDS"
-DEFAULT_FALLBACK_TIMEOUT_SECONDS = 60.0
+DEFAULT_FALLBACK_TIMEOUT_SECONDS = 120.0
 
 INTERNAL_NOTE_HEADLINE = "AI agent unable to handle this request, require human review."
 ESCALATION_ACTOR_ID = "system:reply-rag-fallback"
