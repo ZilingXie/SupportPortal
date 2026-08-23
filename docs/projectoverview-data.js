@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T05:59:21Z",
-  "source_base_commit": "8f1a2f8699c30e6ea97474ce7463fe891ef2d0c0",
-  "registry_digest": "e90369cca32fb1ea0b08c47c1dfb67728fd312f5c4c9ad0e3dbedd602832cb97",
+  "generated_at": "2026-08-23T06:14:06Z",
+  "source_base_commit": "f2e16cf4c1dfd16a6f4f2216afddf42fc2a67ab2",
+  "registry_digest": "1e024367e38ee5568f984566c934f83036bcb3c762b7c5066520300d3c707059",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8535,6 +8535,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "verbatim_publish_hardening",
           "summary": "实测继续暴露直发链路第二层：publish 阶段的 normalize 会为 rag_fallback_answer job 合成 reply_facts 并触发 persona 渲染与回复契约校验导致 manual_attention；修复为 prepare 直通时剥离 facts、publish 跳过 normalize，RAG 答案经 publish_account_reply 原文直发（新增 publish 层单测断言 content 逐字一致）。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "creation_layer_root_cause",
+          "summary": "最终定位根因：create_account_reply_job 对任何带 intent 的 job 在创建时就写入 reply_facts 并绑定 persona_v8 pipeline 状态机，prepare/publish 层修复均拦不住 v8 状态机的契约校验（unsupported_account_reply_intent）；修复为 rag_fallback_answer intent 创建时不绑 facts/pipeline（status=scheduled 直发路径），并在 intake 用例断言 job 不进入 persona 管线。"
         }
       ],
       "legacy_refs": [],
