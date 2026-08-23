@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T15:24:00Z",
-  "source_base_commit": "2176ad9d43367bb4117ef185ff5942cf00bf0075",
-  "registry_digest": "8f1cc6ddff189359e97a1cc49adec9fecb096eaf0d5473f90e061c287fbb00f8",
+  "generated_at": "2026-08-23T16:42:07Z",
+  "source_base_commit": "afc069d5da8858c0781e0cfc934100f4a611df71",
+  "registry_digest": "332ebbe4f1baa9a8c6ae530808b9907e8f1464a3d031e70ceb0601d389b13699",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1849,6 +1849,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Scenario engine + API + UI contract",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "39 用例全过：引擎 wait_for 推进/超时/取消/主题前缀、E1 全剧本脚本化（approval_required/received、ticket_linked、步骤全 PASS）与断言失败中断；API 401/422/409（含并发第二个 run）/cancel 语义/unknown 404/stale→interrupted；UI 契约（scenarios 端点注册、剧本卡/批准横幅/轮询 marker、版本戳）。"
+        },
+        {
+          "type": "test",
+          "label": "CLI wrapper against shared engine",
+          "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> .venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
+          "details": "--list 列四剧本；--check 实连 production 库/smtp.163.com/imap.163.com 全通零发信（引擎连通检查同路径）。node --check app.js 通过。"
+        },
+        {
+          "type": "test",
           "label": "Console API + UI contract + prefix-safety",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
@@ -1876,8 +1888,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 3,
-      "done_count": 3,
+      "task_count": 4,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -5201,6 +5213,66 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p2-97",
         "p2-99"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-101",
+      "title": "剧本回归后端化：/automation/test 网页一键发起与实时跟踪",
+      "status": "done",
+      "owner": "zac",
+      "summary": "把 p2-100 的本地剧本驱动器升级为后端能力：引擎移植 backend/services/automation_test_scenarios.py（四剧本 E1/E2/F1/S1 真链路：163 SMTP 发信 + IMAP 线程头续接含 163 ID 命令 + production 库结构化断言 + 人工批准暂停 + 取消），新表 automation_test_scenario_runs 持久化 run 状态/逐步结果；POST run 派生 daemon 线程驱动（多 uvicorn worker 安全：状态全落库），同一时刻仅允许一个 active run（409），>2h 未更新自动标 interrupted（发信副作用不可重放不自动续跑）；页面第 4 节 Scenario runs：剧本卡一键发起（运行前连通检查 fail-fast）、15s 轮询逐步 PASS/FAIL、waiting_approval 黄色人工批准横幅、取消按钮。CLI 保留为同引擎薄封装防双实现漂移。",
+      "next_action": "合并部署 EC2 主栈面后，用户在 /automation/test/ 页面直接点 Run scenario（建议先 E1）；引擎 IMAP 出网首次实测由运行前连通检查兜底。",
+      "acceptance_criteria": [
+        "GET /api/automation-test/scenarios 返回四剧本定义与近 20 个 run；POST {id}/runs 未登录 401、未知剧本 422、已有 active run 409、连通检查失败 502 不建 run；GET/POST runs/{id}(/cancel) 语义正确。",
+        "run 状态机：queued→running→（waiting_approval⇄running）→completed/failed/cancelled；stale（>2h 未更新）标 interrupted 并保留原因。",
+        "引擎断言失败即中断剧本（record 失败抛 AssertionError），run 状态 failed 且步骤 FAIL 保留。",
+        "UI：剧本卡+Run 按钮（active 时禁用）、逐步结果折叠列表、MANUAL APPROVAL 黄色横幅、取消按钮、active run 期间 15s 轮询。",
+        "CLI --list/--check/--scenario 行为不变（同引擎）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Scenario engine + API + UI contract",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
+          "details": "39 用例全过：引擎 wait_for 推进/超时/取消/主题前缀、E1 全剧本脚本化（approval_required/received、ticket_linked、步骤全 PASS）与断言失败中断；API 401/422/409（含并发第二个 run）/cancel 语义/unknown 404/stale→interrupted；UI 契约（scenarios 端点注册、剧本卡/批准横幅/轮询 marker、版本戳）。"
+        },
+        {
+          "type": "test",
+          "label": "CLI wrapper against shared engine",
+          "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> .venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
+          "details": "--list 列四剧本；--check 实连 production 库/smtp.163.com/imap.163.com 全通零发信（引擎连通检查同路径）。node --check app.js 通过。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_test_scenarios.py",
+        "backend/services/automation_test_store.py",
+        "backend/main.py",
+        "scripts/testing/production_ticket_scenarios.py",
+        "ui/automation-test/index.html",
+        "ui/automation-test/styles.css",
+        "ui/automation-test/app.js",
+        "backend/tests/test_automation_test_scenarios.py",
+        "backend/tests/test_automation_test_ui_contract.py",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户要求把剧本驱动器做进后端、网页直接发起；确认同一时刻单 run、合并后由 agent ssh 部署 EC2。实现引擎移植+runs 表+四 API+线程驱动+UI 第 4 节；CLI 改同引擎薄封装。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-97",
+        "p2-100"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",

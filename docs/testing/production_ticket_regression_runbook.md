@@ -97,9 +97,9 @@
 - 回复正文含**单一邮箱**（如 "please use zac.tester@example.com"）或明确肯定（"yes, please use this email"）→ 内部 handoff 邮件 + closing 公开回复（24h 句）+ Zendesk solved + 本地关单 + Slack「Account Suspension」；workflow state=closed。
 - 变体：回复含多个邮箱或含糊表述 → `human_review_required`（这也是可断言的失败分支）。
 
-## 4.5 自动化剧本驱动器
+## 4.5 自动化剧本回归（网页发起 + CLI 备用）
 
-`scripts/testing/production_ticket_scenarios.py` 把 §4 的四条人工流程剧本化（真链路：客户回合经 163 SMTP 发信、用 IMAP 读 Zendesk 通知邮件的线程头续接同一工单；断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
+四条剧本（§4 的完整流程化，断言只看结构化状态——reply intent / 内部邮件状态 / suspension 状态机 / Zendesk 状态，不比对文案）：
 
 | 剧本 | 覆盖 |
 | --- | --- |
@@ -108,15 +108,21 @@
 | `F1` | fraud：无信息建单 → 追问 → 补四组信息 → 内部邮件 + 24h 回复 + assign 复审人 + **不 solved** |
 | `S1` | suspension：建单 → 问联系邮箱 → 确认 → 内部邮件 + closing + solved + workflow closed |
 
+**网页发起（推荐）**：`/automation/test/` 页面第 4 节「Scenario runs」——点剧本卡上的 Run scenario（同一时刻只允许一个进行中 run），页面实时展示逐步 PASS/FAIL、当前等待点与 Zendesk 工单链接，15 秒自动刷新；run 记录持久化在 `automation_test_scenario_runs` 表（含容器重启后 `interrupted` 标记与失败原因）。运行前服务端自动做 DB/SMTP/IMAP 连通检查，不通过则不建 run（502 显示原因）。
+
+**enablement 内部批准保留人工**：run 进入 `waiting for approval` 时页面顶部出现黄色 MANUAL APPROVAL 横幅——从你的邮箱回复主题以 `[Enablement Request] {feature}` 开头的内部邮件（如 "Media Relay is enabled for this app."），系统轮询到 `enablement_internal_resolution_received` 事件后自动继续。等待默认 45 分钟，超时 run 失败。
+
+**CLI 备用**（同一引擎，本地跑）：
+
 ```bash
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --list    # 列剧本
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --check   # 只验 DB/SMTP/IMAP 连通，不发信
 .venv/bin/python scripts/testing/production_ticket_scenarios.py --scenario E1
 ```
 
-- enablement 的内部批准**保留人工**：脚本会暂停并提示回复哪封内部邮件（事件 `enablement_internal_resolution_received` 出现后继续）。
-- 每轮等待默认 20 分钟（回复有 6-10 分钟随机延迟），批准等待默认 45 分钟；`--turn-timeout-min/--approval-timeout-min` 可调。
-- 每次运行创建真实 Zendesk 工单（主题带 `[zac test]`）；结果矩阵每步 PASS/FAIL，任一 FAIL 退出码非 0。
+- 每轮等待默认 20 分钟（回复有 6-10 分钟随机延迟）；CLI 可用 `--turn-timeout-min/--approval-timeout-min` 调，网页用 env `AUTOMATION_TEST_TURN_TIMEOUT_MIN/AUTOMATION_TEST_APPROVAL_TIMEOUT_MIN`。
+- 取消：网页 Cancel 按钮在等待间隙优雅退出（已发出的邮件不可撤回）。
+- 每次运行创建真实 Zendesk 工单（主题带 `[zac test]`）；任一步 FAIL 即 run failed。
 
 ## 5. 失败排查
 
