@@ -365,7 +365,7 @@ sync_candidate_prompt_release_to_production() {
   return 0
 }
 
-verify_prompt_runtime_services() {
+verify_prompt_runtime_services_once() {
   local service container_id actual_release
   for service in api rag_api rag_worker worker_query worker_aux; do
     container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps -q "${service}")"
@@ -384,6 +384,28 @@ verify_prompt_runtime_services() {
     python -c 'import json,sys,urllib.request; p=json.load(urllib.request.urlopen("http://127.0.0.1:8020/health", timeout=5)); sys.exit(0 if p.get("app_build",{}).get("ref")==sys.argv[1] and p.get("prompt_runtime",{}).get("release_id")==sys.argv[2] else 1)' \
     "${APP_BUILD_REF}" "${CANDIDATE_PROMPT_RELEASE_ID}" \
     || return 1
+}
+
+verify_prompt_runtime_services() {
+  local timeout_seconds="$1"
+  local retry_interval_seconds="$2"
+  local start_ts current_ts elapsed
+
+  start_ts="$(date +%s)"
+  while true; do
+    if verify_prompt_runtime_services_once; then
+      return 0
+    fi
+
+    current_ts="$(date +%s)"
+    elapsed=$((current_ts - start_ts))
+    if (( elapsed >= timeout_seconds )); then
+      return 1
+    fi
+
+    log "Waiting for Prompt runtime verification (${elapsed}s/${timeout_seconds}s): services are still starting"
+    sleep "${retry_interval_seconds}"
+  done
 }
 
 prepare_compose_env() {
@@ -1144,7 +1166,7 @@ main() {
   fi
 
   log "Verifying Prompt Release across all Prompt runtime services..."
-  if ! verify_prompt_runtime_services; then
+  if ! verify_prompt_runtime_services "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
     show_compose_diagnostics
     mark_candidate_prompt_release_failed "Prompt runtime service verification failed" || true
     restore_previous_stack "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true

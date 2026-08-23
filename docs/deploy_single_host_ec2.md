@@ -574,6 +574,8 @@ scripts/ops/deploy_surfaces_ec2.sh --daily --approve-production  # 每日流程�
 5. 部署锁由统一引擎持有，子部署全部使用 `--skip-pull`，因此 release 构建、主栈镜像和三环境 manifest 使用同一个目标 commit；
 6. 每步日志落在 `/tmp/deploy-surfaces-<时间戳>/`，失败即停并给出对应 rollback 命令。
 
+主栈重启后，Prompt runtime 校验会在健康检查超时窗口内等待 `api`、`rag_api`、worker 和 Prompt Release 日志全部就绪；超时仍失败时保持非零退出并回滚旧镜像。
+
 ---
 
 ## 5. HTTPS 建议

@@ -325,6 +325,13 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     sys.exit(0)
 
                 if "exec" in args:
+                    failure_limit = int(os.environ.get("FAKE_PROMPT_RUNTIME_VERIFY_FAILURES", "0"))
+                    failure_file = state_dir / "prompt_runtime_verify_attempts.txt"
+                    attempts = int(failure_file.read_text(encoding="utf-8")) if failure_file.exists() else 0
+                    if attempts < failure_limit:
+                        failure_file.write_text(str(attempts + 1), encoding="utf-8")
+                        print("runtime service is still starting", file=sys.stderr)
+                        sys.exit(1)
                     print("health contract ok")
                     sys.exit(0)
 
@@ -526,6 +533,24 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertNotIn("--build", up_call["argv"])
         self.assertEqual(up_call["prompt_release_id"], "release-candidate")
         self.assertEqual(up_call["prompt_release_required"], "true")
+
+    def test_prompt_runtime_verification_retries_transient_startup_failure(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_PROMPT_RUNTIME_VERIFY_FAILURES": "2",
+                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Waiting for Prompt runtime verification", result.stdout)
+        self.assertGreaterEqual(
+            int((self.state_dir / "prompt_runtime_verify_attempts.txt").read_text(encoding="utf-8")),
+            2,
+        )
 
         self.assertEqual(
             [call["url"] for call in self._read_json_lines(self.state_dir / "curl_calls.jsonl")],
