@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T15:23:32Z",
-  "source_base_commit": "8cac4bc17293e1680a1d790b9398e1a5546bc928",
-  "registry_digest": "31c13d7e931fc7ae5d6235e938393574f30642a073bbebc1bc582128e6c47042",
+  "generated_at": "2026-08-23T15:24:00Z",
+  "source_base_commit": "2176ad9d43367bb4117ef185ff5942cf00bf0075",
+  "registry_digest": "8f1cc6ddff189359e97a1cc49adec9fecb096eaf0d5473f90e061c287fbb00f8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -598,6 +598,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production RAG answer delivered as public comment on 12935",
           "command": "EC2 主栈 31745e3 + Zendesk 工单 12935 + n8n 评论快照触发",
           "details": "工单 12935（Enablement answer delivery test）完整闭环 answer 路径：n8n 自动 intake（AC-12935，enablement）→ AI 接管并公开追问 App ID → 客户反问 \"what is the App ID exactly?\" 经评论快照触发（processed）→ 重路由 rag → RAG 兜底 answer → rag_fallback_answer job 直发 → production 延迟后作为公开评论 52809771838100 发布（\"The App ID is the unique random string Agora generates in Agora Console...\"，public=true）→ delivery ledger 状态 delivered/is_public=true/comment id 一致。至此 p2-93 两条路径均在 production live 闭环（escalate=12931/12933，answer=12935）；过程共修复四层 automation 注册门（worker 投递门 PR#886、评论触发门 PR#888、InMemory+Postgres delivery ledger eligibility PR#889/#890）。"
+        },
+        {
+          "type": "test",
+          "label": "Citations append and marketing footer strip",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker",
+          "details": "新增 3 项单测：12940 真实营销尾模板整块剥离（May Collins/Discord/support-plans 全部移除且正文保留）、citations 按 URL 去重并以 heading — url 附加 References、短签名规则回归；11 项 fallback 单测 + intake/worker 套件全绿。"
         }
       ],
       "source_refs": [
@@ -610,7 +616,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 11,
+      "task_count": 12,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -1858,12 +1864,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "SMTP transport unit tests",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "新增 5 用例：缺 host/username/password fail-closed（configured=false+缺失键清单+AutomationTestMailError）；SMTP_SSL+login+send_message 成功（From/To/Subject 头与超时/端口断言）；context 默认 sender=SMTP_USERNAME；发送失败原因包裹进异常；非法 transport 拒绝。与 p2-97 既有 18 用例（graph 默认路径）合计 23 个全过。"
-        },
-        {
-          "type": "test",
-          "label": "SMTP key reuse regression",
-          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
-          "details": "SMTP 用例改为断言 BILLING_AUTOMATION_SMTP_*（smtp.163.com:465、xieziling97@163.com、缺键清单含该组键名、宿主环境清空后确定性 fail-closed）；23 用例全过；grep 确认仓库无 AUTOMATION_TEST_MAIL_SMTP 残留引用。"
         }
       ],
       "source_refs": [
@@ -1876,8 +1876,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 4,
-      "done_count": 4,
+      "task_count": 3,
+      "done_count": 3,
       "blocked_count": 0
     },
     {
@@ -9033,30 +9033,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-99",
-      "title": "测试控制台 SMTP 通道复用 BILLING_AUTOMATION_SMTP_* 凭据",
-      "status": "done",
+      "title": "RAG 兜底答案附带参考文档与营销尾部剥离",
+      "status": "active",
       "owner": "zac",
-      "summary": "用户指出 AUTOMATION_TEST_MAIL_SMTP_PASSWORD 与既有 BILLING_AUTOMATION_SMTP_PASSWORD 值相同、不应重复维护：smtp 通道改为直接读取既有 BILLING_AUTOMATION_SMTP_HOST/PORT/USERNAME/PASSWORD（这些键自 billing 自动化迁移 Microsoft Graph 后无其他消费者，测试控制台成为其唯一 SMTP 使用方），删除 p2-98 引入的 AUTOMATION_TEST_MAIL_SMTP_* 键族与超时键；启用时只需设 AUTOMATION_TEST_MAIL_TRANSPORT=smtp，无需新增凭据行。graph 通道与 fail-closed 语义不变。",
-      "next_action": "用户侧跟进：EC2 与本地 .env 只需设 AUTOMATION_TEST_MAIL_TRANSPORT=smtp（163 的 SMTP 四键已在），部署/重启 api_production 后按 runbook 步骤 0 做 enablement 基线探测。",
+      "summary": "p2-93 上线后实测（工单 12940）暴露两个答案质量问题：RAG 响应中的 citations（含 docs.agora.io 链接与标题）被 fallback 丢弃，客户看不到参考文档；RAG 答案模板的工程师签名后带多行营销尾部（feedback pitch/support plan/Discord 邀请），原短签名剥离规则覆盖不住，营销块被当成答案发到 Zendesk。修复：fallback 提取 citations 去重后以 References 列表附在答案尾部；签名剥离支持多行身份+营销 boilerplate 块（短行或含 agora.io/discord.gg 链接行）。",
+      "next_action": "部署 EC2 主栈后在真实工单上验证：答案带 References 且无营销尾部。",
       "acceptance_criteria": [
-        "smtp 通道读取 BILLING_AUTOMATION_SMTP_HOST/PORT/USERNAME/PASSWORD；缺 host/username/password 任一项 fail-closed 且缺失键名按该组键名展示。",
-        "AUTOMATION_TEST_MAIL_SMTP_* 键族不再被代码或文档引用；超时固定为常量默认值。",
-        "graph 通道（默认）与 p2-97/p2-98 其余行为不变，23 个用例全过。"
+        "RAG answer 的 citations 按 URL 去重后以 heading — url 形式附在答案尾部 References 列表。",
+        "多行签名+营销尾部（May Collins/Agora Support Engineer/feedback/support-plans/Discord）整体剥离，正文与代码块不受影响。",
+        "无 citations 的答案不出现空 References 段。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "test",
-          "label": "SMTP key reuse regression",
-          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
-          "details": "SMTP 用例改为断言 BILLING_AUTOMATION_SMTP_*（smtp.163.com:465、xieziling97@163.com、缺键清单含该组键名、宿主环境清空后确定性 fail-closed）；23 用例全过；grep 确认仓库无 AUTOMATION_TEST_MAIL_SMTP 残留引用。"
+          "label": "Citations append and marketing footer strip",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker",
+          "details": "新增 3 项单测：12940 真实营销尾模板整块剥离（May Collins/Discord/support-plans 全部移除且正文保留）、citations 按 URL 去重并以 heading — url 附加 References、短签名规则回归；11 项 fallback 单测 + intake/worker 套件全绿。"
         }
       ],
       "source_refs": [
-        "backend/services/automation_test_mail.py",
-        "backend/tests/test_automation_test_console.py",
-        ".env.example",
-        "docs/testing/production_ticket_regression_runbook.md"
+        "backend/services/account_reply_rag_fallback.py",
+        "backend/tests/test_account_reply_rag_fallback.py"
       ],
       "created_at": "2026-08-23",
       "updated_at": "2026-08-23",
@@ -9064,17 +9062,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-23",
           "event": "created",
-          "summary": "用户反馈 SMTP 授权码与 BILLING_AUTOMATION_SMTP_PASSWORD 同值，要求复用既有变量名；将 p2-98 的 AUTOMATION_TEST_MAIL_SMTP_* 键族替换为直接读取 BILLING_AUTOMATION_SMTP_*（该组键无其他消费者），配置面收敛为单键 AUTOMATION_TEST_MAIL_TRANSPORT=smtp。"
+          "summary": "由 12940 实测反馈创建：参考文档丢失（RAG 有给 fallback 丢弃）+ 营销尾部未剥离。"
         }
       ],
       "legacy_refs": [
-        "p2-97",
-        "p2-98"
+        "p2-93"
       ],
       "legacy_ids": [],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "production-regression-testing"
+      "function_id": "automation-execution-loop"
     }
   ],
   "meetings": [

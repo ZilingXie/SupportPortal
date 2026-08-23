@@ -43,10 +43,25 @@ _SIGNOFF_LINE_RE = re.compile(
     r"^(best regards|kind regards|regards|sincerely|thanks|thank you|cheers|best)[,!.]?\s*$",
     re.IGNORECASE,
 )
+# The RAG answer template also appends a multi-line marketing footer after the
+# signoff (feedback pitch, support-plan upsell, Discord invite). Every line of
+# that block is short or carries an agora.io/discord link.
+_SIGNOFF_TAIL_LINE_MAX = 60
+_SIGNOFF_TAIL_LINK_RE = re.compile(r"(agora\.io|discord\.gg)", re.IGNORECASE)
+
+
+def _is_signoff_tail_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if len(stripped) <= _SIGNOFF_TAIL_LINE_MAX:
+        return True
+    return bool(_SIGNOFF_TAIL_LINK_RE.search(stripped))
 
 
 def _strip_trailing_signature(answer: str) -> str:
     lines = str(answer or "").rstrip().split("\n")
+    # Classic short form: "Best Regards,\nSid".
     while len(lines) >= 2:
         if (
             _SIGNOFF_LINE_RE.match(lines[-2].strip())
@@ -57,7 +72,40 @@ def _strip_trailing_signature(answer: str) -> str:
             lines = lines[:-2]
         else:
             break
+    # Multi-line form: a signoff line followed only by short identity lines
+    # and marketing boilerplate (feedback/support-plan/Discord block).
+    for index in range(len(lines) - 1, -1, -1):
+        if _SIGNOFF_LINE_RE.match(lines[index].strip()):
+            tail = lines[index + 1 :]
+            if tail and all(_is_signoff_tail_line(item) for item in tail):
+                lines = lines[:index]
+            break
     return "\n".join(lines).rstrip()
+
+
+def _format_citations(payload: dict[str, Any]) -> list[str]:
+    """Render RAG citations as short reference lines for the customer."""
+    references: list[str] = []
+    seen_urls: set[str] = set()
+    citations = payload.get("citations") if isinstance(payload.get("citations"), list) else []
+    for item in citations:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("source_url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        heading = str(item.get("heading") or "").strip()
+        references.append(f"{heading} — {url}" if heading else url)
+    return references
+
+
+def _append_references(answer: str, references: list[str]) -> str:
+    if not references:
+        return answer
+    lines = ["", "References:"]
+    lines.extend(f"- {item}" for item in references)
+    return answer + "\n" + "\n".join(lines)
 
 ANSWER = "answer"
 ESCALATE = "escalate"
@@ -134,7 +182,8 @@ def try_rag_fallback_answer(
     decision = str(payload.get("decision") or "").strip().lower()
     answer = _strip_trailing_signature(str(payload.get("answer") or "").strip())
     if decision == "answer" and answer:
-        return RagFallbackOutcome(kind=ANSWER, answer=answer)
+        references = _format_citations(payload)
+        return RagFallbackOutcome(kind=ANSWER, answer=_append_references(answer, references))
     reason = str(payload.get("reason") or "").strip().lower() or "escalated"
     return RagFallbackOutcome(kind=ESCALATE, reason=reason)
 
