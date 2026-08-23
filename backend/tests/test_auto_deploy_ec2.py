@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "ops" / "auto_deploy_ec2.sh"
+SURFACE_SCRIPT_PATH = REPO_ROOT / "scripts" / "ops" / "deploy_surfaces_ec2.sh"
 SYSTEMD_DIR = REPO_ROOT / "deployment" / "systemd"
 
 
@@ -275,7 +276,7 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("Execution mode: deploy", result.stdout)
         self.assertEqual(
             (self.state_dir / "deploy_calls.log").read_text(encoding="utf-8").splitlines(),
-            ["--branch main --domain support.stellarix.space"],
+            ["--branch main --domain support.stellarix.space --daily --approve-production"],
         )
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
         aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
@@ -305,7 +306,7 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("Execution mode: deploy", result.stdout)
         self.assertEqual(
             (self.state_dir / "deploy_calls.log").read_text(encoding="utf-8").splitlines(),
-            ["--branch main --domain support.stellarix.space"],
+            ["--branch main --domain support.stellarix.space --daily --approve-production"],
         )
         self.assertEqual(
             (self.state_dir / "deploy_lock_already_held.txt").read_text(encoding="utf-8").strip(),
@@ -373,6 +374,7 @@ class AutoDeployAssetTests(unittest.TestCase):
         self.assertIn("WorkingDirectory=/opt/supportportal/SupportPortal", service)
         self.assertIn("EnvironmentFile=/etc/supportportal/auto-deploy.env", service)
         self.assertIn("ExecStart=/opt/supportportal/SupportPortal/scripts/ops/auto_deploy_ec2.sh", service)
+        self.assertIn("surface alignment and report", service)
         self.assertIn("User=ubuntu", service)
 
         self.assertIn("Unit=supportportal-auto-deploy.service", timer)
@@ -390,6 +392,18 @@ class AutoDeployAssetTests(unittest.TestCase):
         self.assertIn("DEPLOY_REPORT_MAX_LOG_CHARS=", env_example)
         self.assertIn("DEPLOY_MIN_FREE_DISK_GB=", env_example)
         self.assertIn("DEPLOY_DISK_CHECK_PATH=", env_example)
+
+    def test_daily_wrapper_delegates_surface_alignment_engine(self) -> None:
+        wrapper = SCRIPT_PATH.read_text(encoding="utf-8")
+        surface_script = SURFACE_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("deploy_surfaces_ec2.sh", wrapper)
+        self.assertIn("--daily", wrapper)
+        self.assertIn("--approve-production", wrapper)
+        self.assertIn("--daily", surface_script)
+        self.assertIn("DEPLOY_LOCK_ALREADY_HELD", surface_script)
+        self.assertIn("--skip-pull", surface_script)
+        self.assertIn("verify_split", surface_script)
 
 
 if __name__ == "__main__":
