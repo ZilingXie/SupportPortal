@@ -11585,7 +11585,7 @@ def _automation_test_case_snapshot(case: dict[str, Any]) -> dict[str, Any]:
         job_payload = reply_job.get("payload") if isinstance(reply_job.get("payload"), dict) else {}
         reply_job_view = {
             "status": reply_job.get("status"),
-            "intent": job_payload.get("intent"),
+            "intent": job_payload.get("reply_intent"),
             "scheduled_for": reply_job.get("scheduled_for"),
             "published_at": reply_job.get("published_at"),
             "attempt_count": reply_job.get("attempt_count"),
