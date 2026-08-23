@@ -236,6 +236,35 @@ require_gh() {
   require_command "gh"
 }
 
+# Local podman hygiene for scripts that rebuild per-commit images: drop
+# localhost/supportportal-* images no container uses anymore (old build tags
+# left behind by rebuilds) and return the freed blocks to the host by trimming
+# the podman machine disk. Images referenced by any container (running or
+# stopped) are kept because podman refuses to remove them; the per-image
+# failure is silenced on purpose so in-use tags are simply skipped.
+reclaim_local_podman_disk() {
+  podman image prune -f >/dev/null 2>&1 || true
+
+  local removed=0 ref
+  while IFS= read -r ref; do
+    [[ -n "$ref" ]] || continue
+    if podman image rm "$ref" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    fi
+  done < <(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+    | grep -E '^localhost/supportportal-' \
+    | grep -v ':<none>$' || true)
+
+  if (( removed > 0 )); then
+    info "Removed ${removed} unused localhost/supportportal-* image tag(s)."
+  fi
+  if podman machine ssh 'sudo fstrim -v /' >/dev/null 2>&1; then
+    info "Podman machine disk trimmed; reclaimed space returned to the host."
+  else
+    warn "Podman machine disk trim skipped (podman machine ssh unavailable)."
+  fi
+}
+
 finalization_lock_dir() {
   printf '%s\n' "$(common_git_dir)/codex-finalize-main.lock"
 }
