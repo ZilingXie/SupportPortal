@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 import backend.main as main
 import backend.worker as worker
 from backend.services import billing_automation as billing_automation_service
+from backend.services.account_reply_rag_fallback import RagFallbackOutcome
 from backend.repositories.ticket_repository import (
     ACCOUNT_RERUN_RESET_AI_ONLY,
     ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
@@ -538,6 +539,12 @@ class AccountIntakeApiTests(unittest.TestCase):
             "backend.main.extract_automation_resolution_facts",
             side_effect=_fake_automation_resolution_facts,
         )
+        # Legacy silent-reply tests below describe the pre-fallback behavior;
+        # RAG-fallback tests opt back in explicitly per test.
+        self._rag_fallback_env_patcher = patch.dict(
+            os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_ENABLED": "false"}
+        )
+        self._rag_fallback_env_patcher.start()
         self._rerun_preflight_patcher = patch(
             "backend.main.run_account_rerun_preflight",
             side_effect=_successful_account_rerun_preflight,
@@ -916,6 +923,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._resolution_extractor_patcher.stop()
+        self._rag_fallback_env_patcher.stop()
         self._rerun_preflight_patcher.stop()
         self._main_persona_patcher.stop()
         self._worker_persona_patcher.stop()
@@ -7189,6 +7197,84 @@ class AccountIntakeApiTests(unittest.TestCase):
                     self.assertEqual(second_job["job_id"], first_job_id)
                     self.assertEqual(response.json()["primary_label"], "Conversation")
                     self.assertEqual(response.json()["secondary_label"], "Follow-up")
+
+    def _create_enablement_case_with_pending_ask(self) -> dict[str, Any]:
+        created = self.client.post(
+            "/account",
+            json={
+                "title": "Feature enablement",
+                "question": "Please enable Media Relay from your end.",
+                "customer_email": "customer@example.com",
+            },
+        ).json()
+        self._publish_latest_account_reply(created["ticket_id"])
+        return created
+
+    def test_unexpected_reply_answers_from_rag_fallback(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_enablement_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ):
+            created = self._create_enablement_case_with_pending_ask()
+            with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_ENABLED": "true"}), patch(
+                "backend.main.try_rag_fallback_answer",
+                return_value=RagFallbackOutcome(
+                    kind="answer", answer="An App ID identifies your Agora project."
+                ),
+            ) as fallback:
+                response = self.client.post(
+                    f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
+                    json={"message": "what is appid?"},
+                )
+        self.assertEqual(response.status_code, 200, response.text)
+        fallback.assert_called_once()
+        self.assertIn("what is appid?", fallback.call_args.kwargs["question"])
+        job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert job is not None
+        self.assertEqual(
+            job["payload"]["draft_content"],
+            "An App ID identifies your Agora project.",
+        )
+
+    def test_unexpected_reply_escalates_to_human_when_rag_cannot_answer(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_enablement_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ):
+            created = self._create_enablement_case_with_pending_ask()
+            with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_ENABLED": "true"}), patch(
+                "backend.main.try_rag_fallback_answer",
+                return_value=RagFallbackOutcome(kind="escalate", reason="insufficient_evidence"),
+            ):
+                response = self.client.post(
+                    f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
+                    json={"message": "what is appid?"},
+                )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["automation_status"], "human_review_required")
+        self.assertIn("reply_rag_fallback_escalation", payload["not_automated_reason"])
+
+    def test_unexpected_reply_rag_fallback_disabled_keeps_legacy_silence(self) -> None:
+        with patch.object(main, "dispatch_event", AsyncMock()), patch(
+            "backend.main.send_enablement_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ):
+            created = self._create_enablement_case_with_pending_ask()
+            first_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+            assert first_job is not None
+            with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_ENABLED": "false"}), patch(
+                "backend.main.try_rag_fallback_answer"
+            ) as fallback:
+                response = self.client.post(
+                    f"/api/account/billing-tickets/{created['billing_ticket_id']}/reply",
+                    json={"message": "Thank you for checking."},
+                )
+        self.assertEqual(response.status_code, 200, response.text)
+        fallback.assert_not_called()
+        second_job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        assert second_job is not None
+        self.assertEqual(second_job["job_id"], first_job["job_id"])
 
     def test_new_customer_message_cancels_pending_reply(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(

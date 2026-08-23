@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T03:45:11Z",
-  "source_base_commit": "0a079b2e357a7f4db28b37bd68254208a3226145",
-  "registry_digest": "e78a9645e70a0fca9b749f23b3e31ec414f608ce7d7c65725079b57be12c0b74",
+  "generated_at": "2026-08-23T04:48:22Z",
+  "source_base_commit": "39384cea854f4e2fc095b8d688460886ba1de144",
+  "registry_digest": "ac5414082026b5319a24c0ce3ece0c1da28c5cc9987e90e33d05d900e75c4a18",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -574,6 +574,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Official stack restart + live markers",
           "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && podman exec deployment_worker_aux_1 python -c \"from backend.services.enablement_completion_classifier import classify_enablement_completion; print(classify_enablement_completion('已开通', feature_label='Media Relay'))\"",
           "details": "2026-08-20 官方栈重启，/health app_build.ref=ebba123280b5 与合并后 main HEAD 一致；worker_aux 运行镜像内 prompt 版本 enablement-completion-classifier-v1、scenario profile（gpt-5.4-mini/low/温度0）解析正确；用真实凭据对中文 note '已开通' 实测分类返回 completed=True source=llm（真实 LLM 端到端判定成功）。"
+        },
+        {
+          "type": "test",
+          "label": "Reply RAG fallback service and intake regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
+          "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
         }
       ],
       "source_refs": [
@@ -586,7 +592,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 10,
+      "task_count": 11,
       "done_count": 7,
       "blocked_count": 0
     },
@@ -8469,6 +8475,51 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-93",
+      "title": "意外客户回复的 RAG 兜底与人工升级",
+      "status": "active",
+      "owner": "zac",
+      "summary": "自动化多轮对话中客户回复意料之外的内容（如反问 what is appid?）时不再静默：先用 RAG 尝试回答（能答则走标准 reply job 管线回复客户），RAG 无法回答（含服务故障）时把 case 交回人工——production 写 internal note 并复用 route_ticket_back_to_queue 放回 Zendesk queue、本地置 human review 并取消 pending reply jobs；staging 仅本地人工标记。行为通过共享 service 落地，/account 与 /production 立即生效，split 三环境在承接客户对话后同源继承。",
+      "next_action": "完成本地官方栈重启与 /account 实测（RAG answer 与 escalate 两条路径）后部署 EC2 主栈 api/api_production；production 真实 route back/internal note 的 live 验证仍受不动真实工单约束，待用户指定工单。",
+      "acceptance_criteria": [
+        "意外回复（重路由为非 automation 路由、或命中同一 handler 但无字段进展且追问已问尽）时先调用 RAG；RAG answer 经 reply job 直发客户（production 走 Zendesk 公开评论与既有延迟），RAG escalate 时执行人工升级链。",
+        "人工升级链：production 写 internal note（AI agent unable to handle this request, require human review. + 原因与客户原文摘要）、route_ticket_back_to_queue 放回 queue、本地 human_review_required + ownership released + 取消 pending reply jobs + workspace audit event；staging 仅本地标记，不出站 Zendesk。",
+        "防抖：case 已 human_review_required 或 ownership 已 released_to_queue 时不重复触发；RAG 任何故障一律升级人工（fail-safe），ACCOUNT_REPLY_RAG_FALLBACK_ENABLED 可关闭回到旧行为。",
+        "quota follow_up_count 二次兜底、suspension 两段确认、字段提取失败转人工等既有路径行为不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Reply RAG fallback service and intake regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
+          "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/services/account_reply_rag_fallback.py",
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/services/zendesk_comments.py",
+        "backend/services/rag_service_client.py"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "按用户需求创建：意外回复先 RAG 后人工（放回 queue + internal note），复用 PR#840 route back 与现有 RAG/内部评论能力；任务号跳过 p2-89~92（已由并行线程占用）。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     }
   ],
   "meetings": [
