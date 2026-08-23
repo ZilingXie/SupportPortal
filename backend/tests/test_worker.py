@@ -3666,6 +3666,51 @@ class WorkerResilienceTests(unittest.TestCase):
         render.assert_not_called()
         repository.publish_account_reply.assert_not_called()
 
+    def test_rag_fallback_draft_job_publishes_verbatim(self) -> None:
+        job = {
+            "job_id": "account-reply-rag-fallback-publish",
+            "ticket_id": "TK-RAG-FALLBACK-PUB",
+            "trigger_message_created_at": "2026-08-23T00:00:00+00:00",
+            "status": "publishing",
+            "payload": {
+                "draft_content": "You can find the App ID on the Projects page in Agora Console.",
+                "reply_intent": "rag_fallback_answer",
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-RAG-FALLBACK-PUB",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "where can I find the App ID?",
+                    "created_at": "2026-08-23T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.publish_account_reply.side_effect = (
+            lambda current_job, content, **kwargs: {"content": content, "message_id": "msg-rag-1"}
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply"
+        ) as render, patch.object(
+            worker, "_deliver_production_account_reply_to_zendesk"
+        ):
+            worker._publish_account_reply_job(job)
+
+        # The RAG answer must be published verbatim: no persona render, no
+        # rewrite, no contract re-validation.
+        render.assert_not_called()
+        repository.publish_account_reply.assert_called_once()
+        publish_call = repository.publish_account_reply.call_args
+        self.assertEqual(
+            publish_call.kwargs["content"],
+            "You can find the App ID on the Projects page in Agora Console.",
+        )
+
     def test_legacy_delayed_reply_persona_unavailable_moves_to_human_review(self) -> None:
         job = {
             "job_id": "account-reply-legacy-persona-unavailable",

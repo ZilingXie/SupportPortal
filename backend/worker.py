@@ -662,7 +662,10 @@ def _prepare_account_reply_job(job: dict[str, Any]) -> None:
         ):
             # The RAG fallback answer is final content: route it straight to
             # publication, bypassing the legacy re-generation path and the
-            # automation persona render.
+            # automation persona render. Normalization above attaches a
+            # synthetic reply_facts entry for any intent; drop it so the
+            # publish stage also skips persona rendering and contract checks.
+            payload.pop("reply_facts", None)
             job["payload"] = payload
             job["status"] = "scheduled"
             job["updated_at"] = now_iso()
@@ -895,10 +898,17 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         _cancel_stale_account_reply_job(current_job, expected_status=claimed_status)
         return
 
-    if existing_message is None and (
-        (isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"))
-        or payload.get("reply_intent")
-        or payload.get("close_after_publish")
+    if (
+        existing_message is None
+        # RAG fallback answers publish their draft verbatim: normalization
+        # would attach synthetic reply_facts and push the job into the
+        # persona render and reply-contract validation below.
+        and str(payload.get("reply_intent") or "").strip() != ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        and (
+            (isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"))
+            or payload.get("reply_intent")
+            or payload.get("close_after_publish")
+        )
     ):
         try:
             payload, _, _ = _normalize_account_reply_job_payload(payload)

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T05:41:52Z",
-  "source_base_commit": "62e4e7020f3909874ea5306c18b3743afd4d7c88",
-  "registry_digest": "73b012e766c230ea05d8ad89446e6bd1380c00e5826f3af3d1286aa3fd2ae394",
+  "generated_at": "2026-08-23T05:59:21Z",
+  "source_base_commit": "8f1a2f8699c30e6ea97474ce7463fe891ef2d0c0",
+  "registry_digest": "e90369cca32fb1ea0b08c47c1dfb67728fd312f5c4c9ad0e3dbedd602832cb97",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8530,6 +8530,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "live_answer_path_direct_publish_fix",
           "summary": "本地 /account 实测发现 draft-only RAG 答案 job 在 worker prepare 阶段落入 legacy 重新生成路径（resolve_support_message/persona 覆盖或转人工）；注册 rag_fallback_answer intent 并在 prepare 加直通分支：该 intent 且带 draft_content 的 job 跳过 legacy 与 persona 渲染，draft 原文直发。escalate 路径实测已闭环（真实 RAG 判 insufficient_evidence → human_review_required + audit 落库）。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "verbatim_publish_hardening",
+          "summary": "实测继续暴露直发链路第二层：publish 阶段的 normalize 会为 rag_fallback_answer job 合成 reply_facts 并触发 persona 渲染与回复契约校验导致 manual_attention；修复为 prepare 直通时剥离 facts、publish 跳过 normalize，RAG 答案经 publish_account_reply 原文直发（新增 publish 层单测断言 content 逐字一致）。"
         }
       ],
       "legacy_refs": [],
