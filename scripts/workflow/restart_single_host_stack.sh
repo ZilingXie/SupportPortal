@@ -387,5 +387,7 @@ fi
 podman-compose "${compose_args[@]}" ps
 
 # The new stack is healthy, so app images from earlier commits are safe to
-# drop; the rollback tag would be removed by the exit trap anyway.
-reclaim_local_podman_disk
+# drop; the rollback tag would be removed by the exit trap anyway. Scope the
+# sweep to the app image namespace only: a concurrent split-environment start
+# may hold freshly built automation images that no container references yet.
+reclaim_local_podman_disk '^localhost/supportportal-app:'
