@@ -236,13 +236,24 @@ require_gh() {
   require_command "gh"
 }
 
-# Local podman hygiene for scripts that rebuild per-commit images: drop
-# localhost/supportportal-* images no container uses anymore (old build tags
-# left behind by rebuilds) and return the freed blocks to the host by trimming
-# the podman machine disk. Images referenced by any container (running or
-# stopped) are kept because podman refuses to remove them; the per-image
-# failure is silenced on purpose so in-use tags are simply skipped.
+# Local podman hygiene for scripts that rebuild per-commit images: drop the
+# caller's own images that no container uses anymore (old build tags left
+# behind by rebuilds) and return the freed blocks to the host by trimming the
+# podman machine disk. Images referenced by any container (running or stopped)
+# are kept because podman refuses to remove them; the per-image failure is
+# silenced on purpose so in-use tags are simply skipped.
+#
+# Usage: reclaim_local_podman_disk <extended-regex for the caller's image refs>
+#
+# The pattern must be scoped to the image namespace the calling script itself
+# rebuilds. Stack scripts run concurrently (single-host app stack vs split
+# automation environments), and an unscoped sweep would delete another
+# script's freshly built images in the window before its containers reference
+# them, wedging that script's compose up on missing images.
 reclaim_local_podman_disk() {
+  local image_pattern="${1:-}"
+  [[ -n "$image_pattern" ]] || die "reclaim_local_podman_disk requires an image ref pattern"
+
   podman image prune -f >/dev/null 2>&1 || true
 
   local removed=0 ref
@@ -252,11 +263,11 @@ reclaim_local_podman_disk() {
       removed=$((removed + 1))
     fi
   done < <(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-    | grep -E '^localhost/supportportal-' \
+    | grep -E "$image_pattern" \
     | grep -v ':<none>$' || true)
 
   if (( removed > 0 )); then
-    info "Removed ${removed} unused localhost/supportportal-* image tag(s)."
+    info "Removed ${removed} unused image tag(s) matching ${image_pattern}."
   fi
   if podman machine ssh 'sudo fstrim -v /' >/dev/null 2>&1; then
     info "Podman machine disk trimmed; reclaimed space returned to the host."
