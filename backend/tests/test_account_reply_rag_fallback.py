@@ -15,6 +15,7 @@ from backend.services.account_reply_rag_fallback import (  # noqa: E402
     RagFallbackOutcome,
     escalate_unexpected_reply_to_human,
     rag_fallback_enabled,
+    rag_fallback_timeout_seconds,
     should_run_reply_rag_fallback,
     try_rag_fallback_answer,
 )
@@ -58,6 +59,13 @@ class RagFallbackGatingTest(unittest.TestCase):
         self.assertTrue(rag_fallback_enabled())
         with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_ENABLED": "false"}):
             self.assertFalse(rag_fallback_enabled())
+
+    def test_timeout_defaults_to_120_and_honors_env(self) -> None:
+        self.assertEqual(rag_fallback_timeout_seconds(), 120.0)
+        with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_TIMEOUT_SECONDS": "90"}):
+            self.assertEqual(rag_fallback_timeout_seconds(), 90.0)
+        with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_TIMEOUT_SECONDS": "not-a-number"}):
+            self.assertEqual(rag_fallback_timeout_seconds(), 120.0)
 
     def test_should_run_skips_human_review_and_released_cases(self) -> None:
         active = {"automation_status": "automation", "automation_context": {}}

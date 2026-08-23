@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T08:50:19Z",
-  "source_base_commit": "6af51a8dc58d5a872ddb91fdf36e9a2cb8c47c6f",
-  "registry_digest": "05a5d365cd6cd176d2b0db492ce4585c8d39cbffbe3b4d381eca691284d1eb04",
+  "generated_at": "2026-08-23T09:03:57Z",
+  "source_base_commit": "0263021be414ac90cebdc81e9ebe95bb74a7e56f",
+  "registry_digest": "2bf3b8a200f2576523e056964ad324305e9713c1059b0745aa2890a5e275c409",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8597,6 +8597,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "production_live_escalation_verified",
           "summary": "工单 12931 上完成 production escalate 全链路验证（internal note+route back+human review+audit）；RAG 超时触发 fail-safe 属设计行为；answer 路径 production 侧待新工单补测。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "rag_timeout_root_cause_and_default_raise",
+          "summary": "排查 12931 的 rag_error_timeout：api_production→rag_api 连通 0.01s、同问题预热后稳定 11-22s 返回 grounded answer，根因为请求恰落在 rag_api 主栈重启后的冷启动窗口（首查询懒加载 embedding/预热）叠加 60s 兜底超时偏紧；将 DEFAULT_FALLBACK_TIMEOUT_SECONDS 提至 120s 并补超时解析单测。"
         }
       ],
       "legacy_refs": [],

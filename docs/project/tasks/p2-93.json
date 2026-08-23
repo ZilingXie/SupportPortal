@@ -77,6 +77,11 @@
       "at": "2026-08-23",
       "event": "production_live_escalation_verified",
       "summary": "工单 12931 上完成 production escalate 全链路验证（internal note+route back+human review+audit）；RAG 超时触发 fail-safe 属设计行为；answer 路径 production 侧待新工单补测。"
+    },
+    {
+      "at": "2026-08-23",
+      "event": "rag_timeout_root_cause_and_default_raise",
+      "summary": "排查 12931 的 rag_error_timeout：api_production→rag_api 连通 0.01s、同问题预热后稳定 11-22s 返回 grounded answer，根因为请求恰落在 rag_api 主栈重启后的冷启动窗口（首查询懒加载 embedding/预热）叠加 60s 兜底超时偏紧；将 DEFAULT_FALLBACK_TIMEOUT_SECONDS 提至 120s 并补超时解析单测。"
     }
   ],
   "legacy_refs": [],
