@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T08:17:34Z",
-  "source_base_commit": "478b45da2d228c70a4a79b0db91cca643f3eee4b",
-  "registry_digest": "49c338de08ae78a238512403167b747a170abd5905dc21cb9f7cff245bcee471",
+  "generated_at": "2026-08-23T08:50:19Z",
+  "source_base_commit": "6af51a8dc58d5a872ddb91fdf36e9a2cb8c47c6f",
+  "registry_digest": "05a5d365cd6cd176d2b0db492ce4585c8d39cbffbe3b4d381eca691284d1eb04",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -586,6 +586,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Local live verification of both fallback paths",
           "command": "本地官方栈（lightweight + remote DB）走 /account 真实链路：enablement 追问 App ID 后发送反问/跑题回复",
           "details": "escalate 路径：'Thank you for checking.' 被重路由为 Conversation/Follow-up，真实 RAG 判 insufficient_evidence，case 置 human_review_required（not_automated_reason=reply_rag_fallback_escalation:insufficient_evidence），workspace audit 事件 account_reply_rag_fallback_escalation 落库（staging 模式跳过 Zendesk 出站）。answer 路径：'where can I find the App ID in the Agora console?' 触发真实 RAG answer，签名（Best Regards, Sid）剥离后经 publish_account_reply 原文直发为 assistant 消息（20 秒内可见），automation 状态 not_automated 保持不变。三次实测暴露并修复了直发链路的 persona v8 状态机问题（PR#872/#874/#876）与签名门禁（PR#877）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production live escalation on ticket 12931 (full chain)",
+          "command": "EC2 主栈 /production（478b45d）+ Zendesk 工单 12931 + n8n 评论 snapshot 通道",
+          "details": "用户指定测试工单 12931（Zac Enablememt Test）：n8n intake 自动建 AC-12931（enablement）→ AI 接管（assignee→AI agent）→ 追问 App ID 公开评论 ✅；客户真实回复 \"what is appid?\" 经评论快照触发 RAG 兜底，RAG 60s 超时按 fail-safe 升级人工：internal note（正文=指定文案+rag_error_timeout+客户原文，comment 52807992328212 public=false）、route_ticket_back_to_queue 成功（assignee 清空、group 恢复原组 27216253642772、status=open）、本地 case human_review_required、workspace audit account_reply_rag_fallback_escalation 完整落库。answer 路径（RAG 答案→production 公开评论）未在本工单触发（超时走向 escalate）；production RAG 链路耗时>60s，建议运维调大 ACCOUNT_REPLY_RAG_FALLBACK_TIMEOUT_SECONDS（如 120）后用新工单补测。另发现重复追问去重在部分路径未生效（模拟评论 -002 重复问 app_id），记为后续排查项。"
         }
       ],
       "source_refs": [
@@ -8539,6 +8545,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Local live verification of both fallback paths",
           "command": "本地官方栈（lightweight + remote DB）走 /account 真实链路：enablement 追问 App ID 后发送反问/跑题回复",
           "details": "escalate 路径：'Thank you for checking.' 被重路由为 Conversation/Follow-up，真实 RAG 判 insufficient_evidence，case 置 human_review_required（not_automated_reason=reply_rag_fallback_escalation:insufficient_evidence），workspace audit 事件 account_reply_rag_fallback_escalation 落库（staging 模式跳过 Zendesk 出站）。answer 路径：'where can I find the App ID in the Agora console?' 触发真实 RAG answer，签名（Best Regards, Sid）剥离后经 publish_account_reply 原文直发为 assistant 消息（20 秒内可见），automation 状态 not_automated 保持不变。三次实测暴露并修复了直发链路的 persona v8 状态机问题（PR#872/#874/#876）与签名门禁（PR#877）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production live escalation on ticket 12931 (full chain)",
+          "command": "EC2 主栈 /production（478b45d）+ Zendesk 工单 12931 + n8n 评论 snapshot 通道",
+          "details": "用户指定测试工单 12931（Zac Enablememt Test）：n8n intake 自动建 AC-12931（enablement）→ AI 接管（assignee→AI agent）→ 追问 App ID 公开评论 ✅；客户真实回复 \"what is appid?\" 经评论快照触发 RAG 兜底，RAG 60s 超时按 fail-safe 升级人工：internal note（正文=指定文案+rag_error_timeout+客户原文，comment 52807992328212 public=false）、route_ticket_back_to_queue 成功（assignee 清空、group 恢复原组 27216253642772、status=open）、本地 case human_review_required、workspace audit account_reply_rag_fallback_escalation 完整落库。answer 路径（RAG 答案→production 公开评论）未在本工单触发（超时走向 escalate）；production RAG 链路耗时>60s，建议运维调大 ACCOUNT_REPLY_RAG_FALLBACK_TIMEOUT_SECONDS（如 120）后用新工单补测。另发现重复追问去重在部分路径未生效（模拟评论 -002 重复问 app_id），记为后续排查项。"
         }
       ],
       "source_refs": [
@@ -8580,6 +8592,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "local_live_verification_complete",
           "summary": "本地 /account 实测两条路径全部闭环（escalate→human_review+audit；answer→RAG 答案剥签名原文直发）。按用户指示不部署 EC2；production 真实 route back/internal note 验证待用户指定工单。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "production_live_escalation_verified",
+          "summary": "工单 12931 上完成 production escalate 全链路验证（internal note+route back+human review+audit）；RAG 超时触发 fail-safe 属设计行为；answer 路径 production 侧待新工单补测。"
         }
       ],
       "legacy_refs": [],
