@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T06:28:12Z",
-  "source_base_commit": "5ea1ff71ce8a4032f6abdf8a0c200d78979b52fa",
-  "registry_digest": "fc1cbaeb49579d85bbd935c88062091464472361ca0b29caa5ea6d196f10cec1",
+  "generated_at": "2026-08-23T06:36:17Z",
+  "source_base_commit": "72c3cf1d6a80c06e6ad67ca0824646c392df5ae8",
+  "registry_digest": "d96a9ca6e7a50ecfa20cdbd0d4bface6c7835742f9b8acf9af7a41831d0fbbf6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -580,6 +580,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Reply RAG fallback service and intake regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
           "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
+        },
+        {
+          "type": "test",
+          "label": "Local live verification of both fallback paths",
+          "command": "本地官方栈（lightweight + remote DB）走 /account 真实链路：enablement 追问 App ID 后发送反问/跑题回复",
+          "details": "escalate 路径：'Thank you for checking.' 被重路由为 Conversation/Follow-up，真实 RAG 判 insufficient_evidence，case 置 human_review_required（not_automated_reason=reply_rag_fallback_escalation:insufficient_evidence），workspace audit 事件 account_reply_rag_fallback_escalation 落库（staging 模式跳过 Zendesk 出站）。answer 路径：'where can I find the App ID in the Agora console?' 触发真实 RAG answer，签名（Best Regards, Sid）剥离后经 publish_account_reply 原文直发为 assistant 消息（20 秒内可见），automation 状态 not_automated 保持不变。三次实测暴露并修复了直发链路的 persona v8 状态机问题（PR#872/#874/#876）与签名门禁（PR#877）。"
         }
       ],
       "source_refs": [
@@ -8509,6 +8515,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Reply RAG fallback service and intake regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
           "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
+        },
+        {
+          "type": "test",
+          "label": "Local live verification of both fallback paths",
+          "command": "本地官方栈（lightweight + remote DB）走 /account 真实链路：enablement 追问 App ID 后发送反问/跑题回复",
+          "details": "escalate 路径：'Thank you for checking.' 被重路由为 Conversation/Follow-up，真实 RAG 判 insufficient_evidence，case 置 human_review_required（not_automated_reason=reply_rag_fallback_escalation:insufficient_evidence），workspace audit 事件 account_reply_rag_fallback_escalation 落库（staging 模式跳过 Zendesk 出站）。answer 路径：'where can I find the App ID in the Agora console?' 触发真实 RAG answer，签名（Best Regards, Sid）剥离后经 publish_account_reply 原文直发为 assistant 消息（20 秒内可见），automation 状态 not_automated 保持不变。三次实测暴露并修复了直发链路的 persona v8 状态机问题（PR#872/#874/#876）与签名门禁（PR#877）。"
         }
       ],
       "source_refs": [
@@ -8545,6 +8557,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "rag_answer_signature_strip",
           "summary": "创建层修复后实测到达发布门禁，被 assert_no_trailing_automation_signature 拦截（RAG 答案继承支持工程师 'Best Regards, Sid' 尾签，与 Account 自动化无签名风格不符）；fallback service 增加经典 signoff+身份尾块剥离（保留普通收尾句），并有单测锁定。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "local_live_verification_complete",
+          "summary": "本地 /account 实测两条路径全部闭环（escalate→human_review+audit；answer→RAG 答案剥签名原文直发）。按用户指示不部署 EC2；production 真实 route back/internal note 验证待用户指定工单。"
         }
       ],
       "legacy_refs": [],
