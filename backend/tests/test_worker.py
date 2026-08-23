@@ -3620,6 +3620,47 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         self.assertTrue(transition_call.kwargs["transitioned_at"])
         repository.save_account_reply_job.assert_not_called()
+
+    def test_rag_fallback_draft_job_skips_regeneration_and_persona(self) -> None:
+        job = {
+            "job_id": "account-reply-rag-fallback",
+            "ticket_id": "TK-RAG-FALLBACK",
+            "trigger_message_created_at": "2026-08-23T00:00:00+00:00",
+            "status": "preparing",
+            "payload": {
+                "draft_content": "An App ID identifies your Agora project.",
+                "reply_intent": "rag_fallback_answer",
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-RAG-FALLBACK",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "what is appid?",
+                    "created_at": "2026-08-23T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "resolve_support_message"
+        ) as resolve, patch.object(worker, "render_automation_reply") as render:
+            worker._prepare_account_reply_job(job)
+
+        # The RAG fallback answer is final content: neither the legacy
+        # re-generation path nor the automation persona may touch it.
+        resolve.assert_not_called()
+        render.assert_not_called()
+        self.assertEqual(job["status"], "scheduled")
+        self.assertEqual(
+            job["payload"]["draft_content"],
+            "An App ID identifies your Agora project.",
+        )
+        self.assertEqual(job["payload"]["reply_intent"], "rag_fallback_answer")
         repository.save_billing_ticket.assert_not_called()
         repository.record_event.assert_not_called()
         render.assert_not_called()

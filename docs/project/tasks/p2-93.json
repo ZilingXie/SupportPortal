@@ -35,6 +35,11 @@
       "at": "2026-08-23",
       "event": "created",
       "summary": "按用户需求创建：意外回复先 RAG 后人工（放回 queue + internal note），复用 PR#840 route back 与现有 RAG/内部评论能力；任务号跳过 p2-89~92（已由并行线程占用）。"
+    },
+    {
+      "at": "2026-08-23",
+      "event": "live_answer_path_direct_publish_fix",
+      "summary": "本地 /account 实测发现 draft-only RAG 答案 job 在 worker prepare 阶段落入 legacy 重新生成路径（resolve_support_message/persona 覆盖或转人工）；注册 rag_fallback_answer intent 并在 prepare 加直通分支：该 intent 且带 draft_content 的 job 跳过 legacy 与 persona 渲染，draft 原文直发。escalate 路径实测已闭环（真实 RAG 判 insufficient_evidence → human_review_required + audit 落库）。"
     }
   ],
   "legacy_refs": [],
