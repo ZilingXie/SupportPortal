@@ -343,18 +343,18 @@ chmod +x deployment/deploy_ec2.sh
 ### 4.4 EC2 每日自动部署 + 失败邮件告警
 
 仓库已提供以下资产：
-1. 自动调度 wrapper：`scripts/ops/auto_deploy_ec2.sh`
+1. 自动调度/日报 wrapper：`scripts/ops/auto_deploy_ec2.sh`
 2. 日报/AI 分析 helper：`scripts/ops/build_auto_deploy_report.py`
 3. 一键 bootstrap 脚本：`scripts/ops/bootstrap_auto_deploy_ec2.sh`
 4. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
 5. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
 6. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
-7. 全部署面对齐脚本：`scripts/ops/deploy_surfaces_ec2.sh`（见 4.5）
+7. 全部署面对齐引擎：`scripts/ops/deploy_surfaces_ec2.sh`（见 4.5）
 
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
 2. 校验本地 `main` 等于或可 fast-forward 到 `origin/main`；分叉时停止并要求人工处理。
-3. 每次触发都生成目标 commit 的 build metadata，再调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署；即使 commit 未变化，也会生成并验证 deployment-bound Prompt Release。
+3. 每次触发都调用 `scripts/ops/deploy_surfaces_ec2.sh --daily --approve-production`：每日模式始终运行主栈以处理 Prompt Release，仅构建部署落后的三环境，并在固定目标 commit 下完成全部阶段；即使 commit 未变化，也会生成并验证 deployment-bound Prompt Release。
 4. 无论成功还是失败，都会尝试调用 Amazon SES 发一封日报。
 5. 日报会附带 `docker compose ps` 摘要、最近 docker 日志摘录，以及可选的 AI 日志分析。
 
@@ -556,12 +556,13 @@ journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
 
 ### 4.5 一键全部署面对齐：`scripts/ops/deploy_surfaces_ec2.sh`
 
-主栈部署（`deploy_ec2.sh --branch main`）**不会**更新 `/automation/*` 三环境的六个独立容器，反之亦然。该脚本先做差距判断，只部署落后的面，适合"有更新要上公网"的场景（也是给 EC2 agent 的标准入口）：
+主栈部署（`deploy_ec2.sh --branch main`）**不会**更新 `/automation/*` 三环境的六个独立容器，反之亦然。该脚本是部署引擎：默认先做差距判断，只部署落后的面，适合人工"有更新要上公网"的场景；systemd 每日流程通过 `--daily` 复用它，并保留 SES 日报 wrapper：
 
 ```bash
 cd ~/SupportPortal
 scripts/ops/deploy_surfaces_ec2.sh --dry-run              # 只打印差距与计划
 scripts/ops/deploy_surfaces_ec2.sh --approve-production   # 实际执行（production split 需显式批准）
+scripts/ops/deploy_surfaces_ec2.sh --daily --approve-production  # 每日流程的实际入口
 ```
 
 行为要点：
@@ -569,8 +570,9 @@ scripts/ops/deploy_surfaces_ec2.sh --approve-production   # 实际执行（produ
 1. 同步 `origin/main`（要求干净的 `main`，拒绝在其他分支/脏树上运行）；
 2. 主栈差距 = 公网 `/health` 的 `app_build.ref` 是否等于目标 commit；三环境差距 = 运行中容器镜像（`release-*` 查 manifest `commit=`，本地 `local-<sha>` 直接比对）是否等于目标 commit；
 3. 三环境部署自动取当日下一个 release id，构建后校验 manifest `commit=` 与目标一致（stale 构建作废），按 staging → preproduction → production 顺序部署；production 必须带 `--approve-production` 或 `DEPLOY_PRODUCTION_APPROVED=1`，否则停在 preproduction 并在报告中标注 PENDING；
-4. 验证：主栈（health ref、`/production/`、`/openapi.json` 保留 `/account`）+ 三环境（`verify_split_environments.sh` 全绿 + 旧五字段 body 抽测 `/automation/staging/v1/cases` 期望 200）；
-5. 每步日志落在 `/tmp/deploy-surfaces-<时间戳>/`，失败即停并给出对应 rollback 命令。
+4. `--daily` 始终运行主栈，以便没有 Git commit 时也能激活 Scheduled Prompt；它还会验证已对齐的三环境。默认人工模式只验证实际部署的面；三环境验证包括 `verify_split_environments.sh` 全绿 + 旧五字段 body 抽测 `/automation/staging/v1/cases` 期望 200；
+5. 部署锁由统一引擎持有，子部署全部使用 `--skip-pull`，因此 release 构建、主栈镜像和三环境 manifest 使用同一个目标 commit；
+6. 每步日志落在 `/tmp/deploy-surfaces-<时间戳>/`，失败即停并给出对应 rollback 命令。
 
 ---
 

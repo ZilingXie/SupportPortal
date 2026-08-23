@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${AUTO_DEPLOY_REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/../.." && pwd)}"
-DEPLOY_SCRIPT="${AUTO_DEPLOY_DEPLOY_SCRIPT:-${PROJECT_ROOT}/deployment/deploy_ec2.sh}"
+DEPLOY_SCRIPT="${AUTO_DEPLOY_DEPLOY_SCRIPT:-${PROJECT_ROOT}/scripts/ops/deploy_surfaces_ec2.sh}"
 REPORT_HELPER="${AUTO_DEPLOY_REPORT_HELPER:-${SCRIPT_DIR}/build_auto_deploy_report.py}"
 COMPOSE_FILE="${AUTO_DEPLOY_COMPOSE_FILE:-${PROJECT_ROOT}/deployment/docker-compose.single-host.yml}"
 ENV_FILE="${AUTO_DEPLOY_ENV_FILE:-${PROJECT_ROOT}/.env}"
@@ -460,12 +460,14 @@ main() {
     DEPLOY_LOCK_FILE="${LOCK_FILE}" \
     "${DEPLOY_SCRIPT}" \
     --branch "${DEPLOY_BRANCH}" \
-    --domain "${DEPLOY_DOMAIN}"
+    --domain "${DEPLOY_DOMAIN}" \
+    --daily \
+    --approve-production
   LOCAL_COMMIT="$(git rev-parse --short HEAD)"
   INTERNAL_HEALTH_STATUS="ok"
-  INTERNAL_HEALTH_DETAIL="Validated by deployment/deploy_ec2.sh"
+  INTERNAL_HEALTH_DETAIL="Validated by deploy_surfaces_ec2.sh"
   EXTERNAL_HEALTH_STATUS="ok"
-  EXTERNAL_HEALTH_DETAIL="Validated by deployment/deploy_ec2.sh"
+  EXTERNAL_HEALTH_DETAIL="Validated by deploy_surfaces_ec2.sh"
   CURRENT_STEP="Completed"
   log "Daily deploy finished successfully."
 }

@@ -13,7 +13,7 @@ set -Eeuo pipefail
 # DEPLOY_PRODUCTION_APPROVED=1), matching deployment/deploy_ec2.sh convention.
 #
 # Usage:
-#   scripts/ops/deploy_surfaces_ec2.sh [--dry-run] [--approve-production]
+#   scripts/ops/deploy_surfaces_ec2.sh [--dry-run] [--daily] [--approve-production]
 #        [--skip-main] [--skip-split] [--health-url <url>] [--domain <domain>]
 #
 # Environment overrides: DOCKER_CMD (default docker), DEPLOY_DOMAIN,
@@ -28,9 +28,12 @@ DOMAIN="${DEPLOY_DOMAIN:-support.stellarix.space}"
 HEALTH_URL="${DEPLOY_SURFACES_HEALTH_URL:-https://${DOMAIN}/health}"
 DOCKER_CMD="${DOCKER_CMD:-docker}"
 DRY_RUN=0
+DAILY_MODE=0
 APPROVE_PRODUCTION=0
 SKIP_MAIN=0
 SKIP_SPLIT=0
+LOCK_FILE="${DEPLOY_SURFACES_LOCK_FILE:-${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}}"
+DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
 LOG_DIR="/tmp/deploy-surfaces-$(date +%Y%m%d-%H%M%S)"
 
 usage() {
@@ -41,6 +44,7 @@ usage() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --daily) DAILY_MODE=1 ;;
     --approve-production) APPROVE_PRODUCTION=1 ;;
     --skip-main) SKIP_MAIN=1 ;;
     --skip-split) SKIP_SPLIT=1 ;;
@@ -57,18 +61,31 @@ fail() { printf '[deploy-surfaces] ERROR: %s\n' "$*" >&2; exit 1; }
 
 mkdir -p "${LOG_DIR}"
 
+acquire_deploy_lock() {
+  if [[ "${DEPLOY_LOCK_ALREADY_HELD}" == 1 ]]; then
+    log "Using deploy lock held by the daily report wrapper: ${LOCK_FILE}"
+  else
+    mkdir -p "$(dirname -- "${LOCK_FILE}")"
+    exec 9>"${LOCK_FILE}"
+    flock -n 9 || fail "another deployment is running (lock: ${LOCK_FILE})"
+    log "Acquired deploy lock: ${LOCK_FILE}"
+  fi
+  export DEPLOY_LOCK_ALREADY_HELD=1
+  export DEPLOY_LOCK_FILE="${LOCK_FILE}"
+}
+
 # --- step 0: sync repository -------------------------------------------------
 
+acquire_deploy_lock
 [[ "$(git rev-parse --abbrev-ref HEAD)" == "${BRANCH}" ]] || fail "must run on branch ${BRANCH} (use the EC2 ~/SupportPortal checkout, not a worktree)"
 git fetch origin "${BRANCH}"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || fail "tracked working tree is not clean; refusing to deploy"
 git merge --ff-only "origin/${BRANCH}" >/dev/null
 SHA12="$(git rev-parse --short=12 HEAD)"
+export APP_BUILD_REF="${SHA12}"
+export APP_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export APP_RUNTIME_IMAGE="localhost/supportportal-app:${SHA12}"
 log "target commit: ${SHA12}"
-
-if pgrep -f 'deployment/deploy_ec2.sh|ops/auto_deploy_ec2.sh|build_automation_release.sh' >/dev/null 2>&1; then
-  fail "another deploy/build process is running (deploy_ec2/auto_deploy/build_automation_release)"
-fi
 
 # --- gap detection -----------------------------------------------------------
 
@@ -76,6 +93,8 @@ main_ref="$(curl -sS --max-time 20 "${HEALTH_URL}" | python3 -c 'import json,sys
 [[ -n "${main_ref}" ]] || fail "cannot read app_build.ref from ${HEALTH_URL}"
 if [[ "${SKIP_MAIN}" == 1 ]]; then
   need_main=0; main_reason="skipped by --skip-main"
+elif [[ "${DAILY_MODE}" == 1 ]]; then
+  need_main=1; main_reason="daily mode always runs main deployment to process Prompt Release changes"
 elif [[ "${main_ref}" == "${SHA12}"* ]]; then
   need_main=0; main_reason="live app_build.ref=${main_ref} already at target"
 else
@@ -134,6 +153,11 @@ done
 log "main stack : $([[ ${need_main} == 1 ]] && echo NEEDS-DEPLOY || echo aligned) (${main_reason})"
 log "split stack: $([[ ${need_split} == 1 ]] && echo NEEDS-DEPLOY || echo aligned) (${split_reasons})"
 
+verify_split=0
+if [[ "${SKIP_SPLIT}" == 0 ]] && ([[ "${DAILY_MODE}" == 1 ]] || [[ "${need_split}" == 1 ]]); then
+  verify_split=1
+fi
+
 if [[ "${DRY_RUN}" == 1 ]]; then
   log "dry-run: plan above; no changes made"
   exit 0
@@ -150,7 +174,7 @@ deploy_step() {
 # --- main stack deploy --------------------------------------------------------
 
 if [[ "${need_main}" == 1 ]]; then
-  deploy_step main-stack ./deployment/deploy_ec2.sh --branch "${BRANCH}"
+  deploy_step main-stack ./deployment/deploy_ec2.sh --branch "${BRANCH}" --skip-pull
 fi
 
 # --- split release build + deploy ---------------------------------------------
@@ -164,10 +188,10 @@ if [[ "${need_split}" == 1 ]]; then
   deploy_step build-split ./deployment/build_automation_release.sh --release-id "${NEW_ID}"
   manifest_commit="$(grep '^commit=' ".deployments/releases/${NEW_ID}.env" | head -1 | cut -d= -f2)"
   [[ "${manifest_commit}" == "${SHA12}" ]] || fail "manifest commit=${manifest_commit} != ${SHA12}: stale build, aborting before any split deploy"
-  deploy_step split-staging ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment staging --release "${NEW_ID}"
-  deploy_step split-preproduction ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment preproduction --release "${NEW_ID}"
+  deploy_step split-staging ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment staging --release "${NEW_ID}" --skip-pull
+  deploy_step split-preproduction ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment preproduction --release "${NEW_ID}" --skip-pull
   if [[ "${APPROVE_PRODUCTION}" == 1 || "${DEPLOY_PRODUCTION_APPROVED:-0}" == 1 ]]; then
-    deploy_step split-production env DEPLOY_PRODUCTION_APPROVED=1 ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment production --release "${NEW_ID}"
+    deploy_step split-production env DEPLOY_PRODUCTION_APPROVED=1 ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment production --release "${NEW_ID}" --skip-pull
   else
     production_pending=1
     log "production split deploy NOT executed: rerun with --approve-production (or DEPLOY_PRODUCTION_APPROVED=1); staging/preproduction are live on ${NEW_ID}"
@@ -187,7 +211,7 @@ if [[ "${need_main}" == 1 ]]; then
   verify_summary+=("main: health ref=${live_ref}; /production/ 200; /account preserved")
 fi
 
-if [[ "${need_split}" == 1 ]]; then
+if [[ "${verify_split}" == 1 ]]; then
   if ./deployment/verify_split_environments.sh >"${LOG_DIR}/verify-split.log" 2>&1; then
     verify_summary+=("split: verify_split_environments all green")
   else

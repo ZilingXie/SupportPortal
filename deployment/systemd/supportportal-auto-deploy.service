@@ -1,5 +1,5 @@
 [Unit]
-Description=SupportPortal daily auto deploy
+Description=SupportPortal daily surface alignment and report
 Wants=network-online.target
 After=network-online.target
 
