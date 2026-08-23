@@ -21,6 +21,37 @@ class AutomationRuntimeContractTest(unittest.TestCase):
         }
         return patch.dict(os.environ, env, clear=False)
 
+    def test_admin_login_exchanges_execution_token_without_bearer(self):
+        with self._client("staging"):
+            with TestClient(create_app()) as client:
+                ok = client.post("/v1/auth/login", json={"email": "admin", "password": "admin"})
+                self.assertEqual(ok.status_code, 200)
+                payload = ok.json()
+                self.assertEqual(payload["environment"], "staging")
+                self.assertEqual(payload["execution_token"], "execution-token")
+                wrong_password = client.post("/v1/auth/login", json={"email": "admin", "password": "wrong"})
+                self.assertEqual(wrong_password.status_code, 401)
+                wrong_user = client.post("/v1/auth/login", json={"email": "root", "password": "admin"})
+                self.assertEqual(wrong_user.status_code, 401)
+                missing = client.post("/v1/auth/login", json={})
+                self.assertEqual(missing.status_code, 422)
+                self.assertEqual(client.get("/v1/executions").status_code, 401)
+
+    def test_admin_login_credentials_come_from_environment(self):
+        env = {
+            "AUTOMATION_ENVIRONMENT": "staging",
+            "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1",
+            "AUTOMATION_EXECUTION_TOKEN": "execution-token",
+            "AUTOMATION_ADMIN_USERNAME": "ops",
+            "AUTOMATION_ADMIN_PASSWORD": "secret",
+        }
+        with patch.dict(os.environ, env, clear=False), TestClient(create_app()) as client:
+            default = client.post("/v1/auth/login", json={"email": "admin", "password": "admin"})
+            self.assertEqual(default.status_code, 401)
+            override = client.post("/v1/auth/login", json={"email": "ops", "password": "secret"})
+            self.assertEqual(override.status_code, 200)
+            self.assertEqual(override.json()["execution_token"], "execution-token")
+
     def test_staging_exposes_rerun_and_no_zendesk_visibility(self):
         with self._client("staging"), patch("backend.automation_runtime.call_route", new_callable=AsyncMock) as call:
             call.return_value = RouteResult(

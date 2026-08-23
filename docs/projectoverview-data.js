@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-22T21:24:13Z",
-  "source_base_commit": "d3e1941c790602edcceb58a0b3c65be5d5873532",
-  "registry_digest": "530a7553e650e3081bc24aac0b285f432d360d9a6d71bb28b9a4d503708457a0",
+  "generated_at": "2026-08-23T02:28:52Z",
+  "source_base_commit": "a7d2a1be8a5b6dee515cc6d905a07ff0598c4358",
+  "registry_digest": "763c129622dd5233c9e1baac3261158957acca528b254449fe0f0f2ab3c5ae3b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1717,6 +1717,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live browser acceptance of the three consoles",
           "command": "浏览器实测 http://ec2-52-71-106-188.compute-1.amazonaws.com:8080/automation/{staging,preproduction,production}/",
           "details": "staging：token 门 -> 工作台（6 条历史、状态过滤计数 All6/Prepared5/Failed1、Case 搜索、分页）-> 详情（meta 网格、Rerun of 链路回溯、请求区、问答时间线、折叠 raw JSON）-> rerun 确认弹窗（冻结 Case ID）-> 状态过滤 -> reset 确认弹窗与执行（toast 6 executions deleted、列表清空）；API 实测 POST /v1/cases 落库含 request 字段、POST /v1/reruns 产生链式新 execution、GET 列表/详情 401/200。preproduction：ticket 必填、锁定 internal、无 reset、能力行 rerun enabled/reset disabled/visibility internal、4 条历史。production：visibility 下拉 internal/external、无 rerun/reset、空态、production rerun 404、bundle 无 rerun 字符串。未做任何真实 Zendesk 写入（T3 按用户指示暂缓，12895 未动）。"
+        },
+        {
+          "type": "test",
+          "label": "Admin login contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
+          "details": "32 项测试通过。新增覆盖：POST /v1/auth/login 无需 Bearer、admin/admin 成功返回本环境 execution token、错误用户名/密码 401、缺字段 422、执行查询端点仍 401；AUTOMATION_ADMIN_USERNAME/PASSWORD 覆盖默认凭据后 admin/admin 拒绝、覆盖凭据通过；production runtime 同契约；production UI bundle 仍无 rerun 字符串。三份 app.js node --check 通过、staging/preproduction 主体一致。"
         }
       ],
       "source_refs": [
@@ -1726,7 +1732,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -8230,6 +8236,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_refs": [
         "p2-88"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-90",
+      "title": "三环境控制台登录对齐 /workspace/admin（admin/admin）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户要求三个 /automation/* 控制台的登录从 Execution access 令牌门改为与 /workspace/admin 一致的账号密码登录（admin/admin）。每个 runtime 新增 POST /v1/auth/login：校验 AUTOMATION_ADMIN_USERNAME/AUTOMATION_ADMIN_PASSWORD（默认 admin/admin），成功返回本环境 execution token，UI 存入原 localStorage 键继续以 Bearer 调用全部 API；n8n 与执行 API 的 Bearer 契约不变。",
+      "next_action": "代码与测试完成，待 finalize 合并后构建 release-20260823-005 部署三环境并浏览器验证 admin/admin 登录。",
+      "acceptance_criteria": [
+        "POST /v1/auth/login 在 staging/preproduction/production 三个 runtime 均可用：admin/admin 成功返回 execution_token，错误凭据 401；凭据可用 AUTOMATION_ADMIN_USERNAME/AUTOMATION_ADMIN_PASSWORD 覆盖。",
+        "三个 UI 登录页与 /workspace/admin 同构（Email+Password、Welcome Back、Sign In），不再出现 Execution access 令牌输入；登录成功自动进入工作台，401 显示错误并停留。",
+        "执行/查询 API 的 Bearer execution token 鉴权契约不变（n8n 不受影响）；登录端点本身不要求 Bearer。",
+        "production bundle 仍不含 rerun 字符串（镜像物理排除契约保持）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Admin login contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
+          "details": "32 项测试通过。新增覆盖：POST /v1/auth/login 无需 Bearer、admin/admin 成功返回本环境 execution token、错误用户名/密码 401、缺字段 422、执行查询端点仍 401；AUTOMATION_ADMIN_USERNAME/PASSWORD 覆盖默认凭据后 admin/admin 拒绝、覆盖凭据通过；production runtime 同契约；production UI bundle 仍无 rerun 字符串。三份 app.js node --check 通过、staging/preproduction 主体一致。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_contracts.py",
+        "backend/automation_runtime.py",
+        "backend/automation_production_runtime.py",
+        "ui/automation-staging",
+        "ui/automation-preproduction",
+        "ui/automation-production",
+        "ui/workspace-ui/admin",
+        "design.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户反馈三环境登录页不应是 Execution access 令牌门，要求改为与 /workspace/admin 一致的 admin/admin 账号密码登录。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-89"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",

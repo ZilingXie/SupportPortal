@@ -122,7 +122,7 @@ async function apiRequest(path, options = {}) {
   if (response.status === 401) {
     localStorage.removeItem(ENV.tokenKey);
     state.authorized = false;
-    state.tokenError = "Execution token was rejected. Enter a valid token.";
+    state.tokenError = "Session expired. Sign in again.";
   }
   if (!response.ok) throw new ApiError(response.status, payload);
   return payload;
@@ -157,30 +157,45 @@ async function loadCapabilities() {
   }
 }
 
-async function connectToken(event) {
+async function submitLogin(event) {
   event?.preventDefault();
   const form = event?.target instanceof HTMLFormElement ? event.target : null;
-  const token = form ? String(new FormData(form).get("execution_token") || "").trim() : "";
-  if (!token) {
-    state.tokenError = "Enter the execution bearer token.";
+  const data = form ? new FormData(form) : new FormData();
+  const email = String(data.get("email") || "").trim();
+  const password = String(data.get("password") || "");
+  if (!email || !password) {
+    state.tokenError = "Enter your email and password.";
     render();
     return;
   }
-  localStorage.setItem(ENV.tokenKey, token);
   state.tokenChecking = true;
   state.tokenError = "";
   render();
   try {
-    await apiRequest(`/v1/executions?page=1&page_size=1`);
+    const response = await fetch(`${ENV.apiBase}/v1/auth/login`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      state.tokenError = response.status === 401
+        ? "Invalid email or password."
+        : describeApiError({ status: response.status, payload }, "Could not reach the automation runtime");
+      return;
+    }
+    const token = String(payload?.execution_token || "");
+    if (!token) {
+      state.tokenError = "Login response did not include an execution token.";
+      return;
+    }
+    localStorage.setItem(ENV.tokenKey, token);
     state.authorized = true;
     state.tokenError = "";
     await loadExecutions();
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
-      state.authorized = false;
-    } else {
-      state.tokenError = describeApiError(error, "Could not reach the automation runtime");
-    }
+    state.tokenError = error instanceof Error ? error.message : "Could not reach the automation runtime";
   } finally {
     state.tokenChecking = false;
     render();
@@ -656,33 +671,40 @@ function renderCapabilityLine() {
   return parts.join(" · ");
 }
 
-function renderTokenGate() {
+function renderLogin() {
   return `
     <section class="account-login-page">
       <header class="account-login-header">
         <div class="account-login-brand" aria-label="${escapeHtml(ENV.brandTitle)}">
-          <span class="account-login-brand-icon material-symbols-outlined" aria-hidden="true">smart_toy</span>
+          <span class="account-login-brand-icon material-symbols-outlined" aria-hidden="true">ac_unit</span>
           <strong>${escapeHtml(ENV.brandTitle)}</strong>
         </div>
       </header>
       <main class="account-login-main">
         <div class="account-login-content">
           <header class="account-login-heading">
-            <h1>Execution access</h1>
+            <h1>Welcome Back</h1>
             <p>${escapeHtml(ENV.loginTagline)}</p>
           </header>
-          <section class="account-login-card" aria-label="Execution token">
-            <form class="account-login-form" data-form="token">
+          <section class="account-login-card" aria-label="Automation admin sign in">
+            <form class="account-login-form" data-form="login">
               <label class="account-login-field">
-                <span>Execution token</span>
+                <span>Email</span>
                 <span class="account-login-input-wrap">
-                  <span class="material-symbols-outlined" aria-hidden="true">key</span>
-                  <input name="execution_token" type="password" autocomplete="off" placeholder="Automation execution bearer token" required />
+                  <span class="material-symbols-outlined" aria-hidden="true">person</span>
+                  <input name="email" autocomplete="username" placeholder="admin" required maxlength="320" />
                 </span>
               </label>
-              <p class="account-login-error" data-token-error role="alert">${escapeHtml(state.tokenError)}</p>
+              <label class="account-login-field">
+                <span>Password</span>
+                <span class="account-login-input-wrap">
+                  <span class="material-symbols-outlined" aria-hidden="true">lock</span>
+                  <input name="password" type="password" autocomplete="current-password" placeholder="Password" required maxlength="512" />
+                </span>
+              </label>
+              <p class="account-login-error" data-login-error role="alert">${escapeHtml(state.tokenError)}</p>
               <button class="account-login-submit" type="submit" ${state.tokenChecking ? "disabled" : ""}>
-                <span>${state.tokenChecking ? "Connecting..." : "Open console"}</span>
+                <span>${state.tokenChecking ? "Signing in..." : "Sign In"}</span>
                 <span class="material-symbols-outlined" aria-hidden="true">login</span>
               </button>
             </form>
@@ -999,7 +1021,7 @@ function renderResetConfirmation() {
 
 function render() {
   if (!state.authorized) {
-    appRoot.innerHTML = renderTokenGate();
+    appRoot.innerHTML = renderLogin();
     return;
   }
   const showReset = Boolean(state.capabilities?.reset);
@@ -1030,13 +1052,13 @@ function render() {
           ` : ""}
           <button class="ghost-button account-signout-button" type="button" data-action="disconnect-token">
             <span class="material-symbols-outlined" aria-hidden="true">logout</span>
-            Disconnect
+            Sign out
           </button>
         </div>
         <div class="account-session">
-          <span class="material-symbols-outlined" aria-hidden="true">key</span>
-          <span><strong>Execution token</strong><small>${escapeHtml(renderCapabilityLine())}</small></span>
-          <button class="icon-button" type="button" data-action="disconnect-token" aria-label="Disconnect token"><span class="material-symbols-outlined">logout</span></button>
+          <span class="material-symbols-outlined" aria-hidden="true">verified_user</span>
+          <span><strong>admin</strong><small>${escapeHtml(renderCapabilityLine())}</small></span>
+          <button class="icon-button" type="button" data-action="disconnect-token" aria-label="Sign out"><span class="material-symbols-outlined">logout</span></button>
         </div>
         ${state.historyError ? `<div class="error-banner" role="alert"><span class="material-symbols-outlined">error</span>${escapeHtml(state.historyError)}</div>` : ""}
         <div class="history-stack" id="history-list">
@@ -1131,8 +1153,8 @@ appRoot.addEventListener("submit", (event) => {
   const form = event.target instanceof HTMLFormElement ? event.target : null;
   if (!form) return;
   const kind = String(form.dataset.form || "");
-  if (kind === "token") {
-    void connectToken(event);
+  if (kind === "login") {
+    void submitLogin(event);
   } else if (kind === "create") {
     void submitExecution(event);
   } else if (kind === "case-search") {
