@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "function_id": "production-regression-testing",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "title": "Production 工单回归测试",
+  "goal": "提供 /automation/test 控制台：复用 workspace 登录，按分类（fraud_account / enablement / account_suspension）一键通过专用测试邮箱向 support@agoraio.zendesk.com 发送可编辑的测试工单邮件，并单独建表追踪测试工单与其在 production 管线的实时状态，用于大改动后的生产回归验证。",
+  "acceptance_criteria": [],
+  "evidence": [],
+  "source_refs": [
+    "ui/automation-test",
+    "backend/services/automation_test_store.py",
+    "backend/services/automation_test_mail.py",
+    "backend/services/automation_test_templates.py",
+    "deployment/nginx/supportportal.conf",
+    "docs/testing/production_ticket_regression_runbook.md"
+  ],
+  "legacy_ids": []
+}
