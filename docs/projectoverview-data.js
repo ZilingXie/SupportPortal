@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T03:12:04Z",
-  "source_base_commit": "1fe65abd11f438170249db58fa4833c8ef6b1c4a",
-  "registry_digest": "786747b2c03f77c313bd6178098d2cc3a51b28197b40ec1516f5da7b00cb079c",
+  "generated_at": "2026-08-23T03:29:08Z",
+  "source_base_commit": "05591ab910a01dafe326016398912956a26d7213",
+  "registry_digest": "14563b8203a88286c93e0f77f9d4d05a2954cd3632e675e097cd75715e112b50",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8433,6 +8433,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-23",
       "updated_at": "2026-08-23",
       "history": [
+        {
+          "at": "2026-08-23",
+          "event": "route_field_scope_label_fix",
+          "summary": "release-20260823-006 线上探针发现 route_counts 全落 uncategorized：真实 router payload 无 category/subcategory 键，实际字段为 scope_label/execution_action（UI 徽标靠 fallback 才显示）。store 的 SQL 表达式与 Python helper 对齐 UI 取值语义（category→scope_label、subcategory→execution_action 逐级 fallback），测试补 scope_label 形态记录，随 release-20260823-007 部署。"
+        },
         {
           "at": "2026-08-23",
           "event": "created",

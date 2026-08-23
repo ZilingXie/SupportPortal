@@ -17,22 +17,37 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-ROUTE_CATEGORY_SQL = "COALESCE(NULLIF(payload->'route_result'->'route'->>'category',''),'uncategorized')"
-ROUTE_SUBCATEGORY_SQL = "payload->'route_result'->'route'->>'subcategory'"
+# The router payload has no dedicated category/subcategory keys: the console
+# derives them like the UI badges do — primary from category/scope_label,
+# secondary from subcategory/execution_action.
+ROUTE_CATEGORY_SQL = (
+    "COALESCE("
+    "NULLIF(payload->'route_result'->'route'->>'category',''),"
+    "NULLIF(payload->'route_result'->'route'->>'scope_label',''),"
+    "'uncategorized')"
+)
+ROUTE_SUBCATEGORY_SQL = (
+    "COALESCE("
+    "NULLIF(payload->'route_result'->'route'->>'subcategory',''),"
+    "NULLIF(payload->'route_result'->'route'->>'execution_action',''),"
+    "'')"
+)
 
 
-def _route_field_of(record: dict[str, Any], field: str, default: str) -> str:
+def _route_of(record: dict[str, Any]) -> dict[str, Any]:
     route_result = record.get("route_result") if isinstance(record.get("route_result"), dict) else {}
     route = route_result.get("route") if isinstance(route_result.get("route"), dict) else {}
-    return str(route.get(field) or "").strip() or default
+    return route if isinstance(route, dict) else {}
 
 
 def _route_category_of(record: dict[str, Any]) -> str:
-    return _route_field_of(record, "category", "uncategorized")
+    route = _route_of(record)
+    return str(route.get("category") or route.get("scope_label") or "").strip() or "uncategorized"
 
 
 def _route_subcategory_of(record: dict[str, Any]) -> str:
-    return _route_field_of(record, "subcategory", "")
+    route = _route_of(record)
+    return str(route.get("subcategory") or route.get("execution_action") or "").strip()
 
 
 class AutomationExecutionStore:
