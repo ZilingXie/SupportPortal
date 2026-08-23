@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-93",
   "title": "意外客户回复的 RAG 兜底与人工升级",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "自动化多轮对话中客户回复意料之外的内容（如反问 what is appid?）时不再静默：先用 RAG 尝试回答（能答则走标准 reply job 管线回复客户），RAG 无法回答（含服务故障）时把 case 交回人工——production 写 internal note 并复用 route_ticket_back_to_queue 放回 Zendesk queue、本地置 human review 并取消 pending reply jobs；staging 仅本地人工标记。行为通过共享 service 落地，/account 与 /production 立即生效，split 三环境在承接客户对话后同源继承。",
-  "next_action": "完成本地官方栈重启与 /account 实测（RAG answer 与 escalate 两条路径）后部署 EC2 主栈 api/api_production；production 真实 route back/internal note 的 live 验证仍受不动真实工单约束，待用户指定工单。",
+  "next_action": "已完成。RAG 兜底双路径（answer 直发公开评论、escalate 放回队列+internal note）均经 production 真实工单闭环；遗留观察项：重复追问去重失效排查、n8n 评论转发未自动触发（本轮用 API 快照通道）。",
   "acceptance_criteria": [
     "意外回复（重路由为非 automation 路由、或命中同一 handler 但无字段进展且追问已问尽）时先调用 RAG；RAG answer 经 reply job 直发客户（production 走 Zendesk 公开评论与既有延迟），RAG escalate 时执行人工升级链。",
     "人工升级链：production 写 internal note（AI agent unable to handle this request, require human review. + 原因与客户原文摘要）、route_ticket_back_to_queue 放回 queue、本地 human_review_required + ownership released + 取消 pending reply jobs + workspace audit event；staging 仅本地标记，不出站 Zendesk。",
@@ -31,6 +31,12 @@
       "label": "Production live escalation on ticket 12931 (full chain)",
       "command": "EC2 主栈 /production（478b45d）+ Zendesk 工单 12931 + n8n 评论 snapshot 通道",
       "details": "用户指定测试工单 12931（Zac Enablememt Test）：n8n intake 自动建 AC-12931（enablement）→ AI 接管（assignee→AI agent）→ 追问 App ID 公开评论 ✅；客户真实回复 \"what is appid?\" 经评论快照触发 RAG 兜底，RAG 60s 超时按 fail-safe 升级人工：internal note（正文=指定文案+rag_error_timeout+客户原文，comment 52807992328212 public=false）、route_ticket_back_to_queue 成功（assignee 清空、group 恢复原组 27216253642772、status=open）、本地 case human_review_required、workspace audit account_reply_rag_fallback_escalation 完整落库。answer 路径（RAG 答案→production 公开评论）未在本工单触发（超时走向 escalate）；production RAG 链路耗时>60s，建议运维调大 ACCOUNT_REPLY_RAG_FALLBACK_TIMEOUT_SECONDS（如 120）后用新工单补测。另发现重复追问去重在部分路径未生效（模拟评论 -002 重复问 app_id），记为后续排查项。"
+    },
+    {
+      "type": "deployment",
+      "label": "Production RAG answer delivered as public comment on 12935",
+      "command": "EC2 主栈 31745e3 + Zendesk 工单 12935 + n8n 评论快照触发",
+      "details": "工单 12935（Enablement answer delivery test）完整闭环 answer 路径：n8n 自动 intake（AC-12935，enablement）→ AI 接管并公开追问 App ID → 客户反问 \"what is the App ID exactly?\" 经评论快照触发（processed）→ 重路由 rag → RAG 兜底 answer → rag_fallback_answer job 直发 → production 延迟后作为公开评论 52809771838100 发布（\"The App ID is the unique random string Agora generates in Agora Console...\"，public=true）→ delivery ledger 状态 delivered/is_public=true/comment id 一致。至此 p2-93 两条路径均在 production live 闭环（escalate=12931/12933，answer=12935）；过程共修复四层 automation 注册门（worker 投递门 PR#886、评论触发门 PR#888、InMemory+Postgres delivery ledger eligibility PR#889/#890）。"
     }
   ],
   "source_refs": [
@@ -102,6 +108,11 @@
       "at": "2026-08-23",
       "event": "postgres_ledger_eligibility_fix",
       "summary": "12935 实测发现 #889 只改了 InMemory 版 publish 的 delivery eligibility，生产 Postgres 版（publish_account_reply 内 SQL 事务段）仍以 is_registered_automation 为条件导致 delivery_ledger_missing；同款 rag_fallback_answer 例外补到 Postgres 版。"
+    },
+    {
+      "at": "2026-08-23",
+      "event": "production_answer_path_verified",
+      "summary": "12935 上 answer 路径 production 全链路闭环（RAG 答案→公开评论 52809771838100→ledger delivered）；p2-93 双路径 production 验证完成，任务收尾。"
     }
   ],
   "legacy_refs": [],
