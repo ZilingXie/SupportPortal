@@ -56,6 +56,21 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                 self.assertEqual(client.post("/v1/not-a-route", json={}).status_code, 404)
                 self.assertEqual(client.put("/anything").status_code, 404)
 
+    def test_production_admin_login_exchanges_execution_token(self):
+        with patch.dict(
+            os.environ,
+            {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "AUTOMATION_EXECUTION_TOKEN": "execution-token"},
+            clear=False,
+        ):
+            with TestClient(create_app()) as client:
+                ok = client.post("/v1/auth/login", json={"email": "admin", "password": "admin"})
+                self.assertEqual(ok.status_code, 200)
+                self.assertEqual(ok.json()["environment"], "production")
+                self.assertEqual(ok.json()["execution_token"], "execution-token")
+                wrong = client.post("/v1/auth/login", json={"email": "admin", "password": "wrong"})
+                self.assertEqual(wrong.status_code, 401)
+                self.assertEqual(client.get("/v1/executions").status_code, 401)
+
     def test_production_lists_and_reads_executions_with_token(self):
         from backend.services.automation_contracts import AutomationEnvironment, RouteResult
 

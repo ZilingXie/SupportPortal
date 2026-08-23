@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 from dataclasses import dataclass
 from enum import StrEnum
@@ -74,6 +75,27 @@ class ExecutionReconcileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     operations: list[dict[str, Any]] = Field(min_length=1)
+
+
+class AutomationLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=512)
+
+
+def verify_admin_login(email: str, password: str) -> bool:
+    """Constant-time check of console admin credentials (default admin/admin).
+
+    Mirrors the /workspace/admin bootstrap-admin experience: the value typed in
+    the Email field is matched against ``AUTOMATION_ADMIN_USERNAME`` (default
+    ``admin``) and the password against ``AUTOMATION_ADMIN_PASSWORD``.
+    """
+    expected_user = str(os.getenv("AUTOMATION_ADMIN_USERNAME") or "admin").strip() or "admin"
+    expected_password = str(os.getenv("AUTOMATION_ADMIN_PASSWORD") or "admin")
+    user_ok = hmac.compare_digest(str(email or "").strip().encode("utf-8"), expected_user.encode("utf-8"))
+    password_ok = hmac.compare_digest(str(password or "").encode("utf-8"), expected_password.encode("utf-8"))
+    return user_ok and password_ok
 
 
 @dataclass(frozen=True)

@@ -404,7 +404,7 @@
 
 ### 6.10 Automation Environment Consoles (`/automation/staging`、`/automation/preproduction`、`/automation/production`)
 1. 三个控制台复用第 3–5 章 token 与组件规则及 `ui/account-ui`/`ui/production-ui` 的既有样式表：staging 取 `/account` 模板（品牌与文案风格、无 Zendesk ticket 字段的执行表单），preproduction 与 production 取 `/production` 模板（表单必填 Zendesk ticket ID；production 另需显式 comment visibility 下拉，preproduction 固定 internal 并在界面明示）。
-2. 三个控制台没有用户体系，使用与登录页同构的 Execution token 门：无 token 时不加载任何数据；任一请求返回 401 时清除本地 token、回到 token 门并显示错误。token 按环境独立存 localStorage，不跨环境共享。
+2. 三个控制台的登录与 `/workspace/admin` 同构：Email + Password 表单（Welcome Back / Sign In），凭据默认 `admin/admin`，可由 runtime 的 `AUTOMATION_ADMIN_USERNAME`/`AUTOMATION_ADMIN_PASSWORD` 覆盖；登录成功后服务端返回本环境 execution token，UI 按环境独立存 localStorage 并继续以 Bearer 调用全部 API。无 token 时不加载任何数据；任一请求返回 401 时清除本地 token、回到登录页并显示错误；错误凭据只提示 Invalid email or password，不得区分用户名或密码哪个错误。
 3. 侧边栏为执行历史工作台：状态过滤 chips（All、pending、prepared、completed、human_review、failed、outcome_unknown）显示服务端 `status_counts`；Case ID 搜索使用紧凑单行输入；列表项展示 case_id、状态徽标与本地化时间；分页只渲染服务端当前页。filter 计数、当前页与 total 必须来自同一响应快照。
 4. 详情视图按 `/account` detail 的信息层级组织：meta 网格（Execution ID、Request ID、Case ID、Ticket #、Source、Status、Comment visibility、Rerun of、Created）→ 请求区（subject/customer/question）→ 路由结果区（route 分类、automation eligibility、preparation status、action plan 摘要）→ delivery ledger 表 → 折叠 raw JSON。raw JSON 仅作调试用途，默认折叠。
 5. 问答时间线固定两条消息：`CUSTOMER REQUEST`（原始 question）与 `AI REPLY`（route_result.action_plan.reply_body）。AI REPLY 附带投递状态：无 Zendesk 交付的环境显示 `Not delivered (policy)`；有交付时显示 ledger 中 comment 操作的状态（pending/completed/outcome_unknown）。

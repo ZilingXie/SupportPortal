@@ -20,12 +20,14 @@ from fastapi.staticfiles import StaticFiles
 from backend.services.automation_contracts import (
     AutomationEnvironment,
     AutomationExecutionRequest,
+    AutomationLoginRequest,
     CommentVisibility,
     ExecutionReconcileRequest,
     environment_from_env,
     policy_for,
     validate_ticket_policy,
     runtime_resource_identity,
+    verify_admin_login,
 )
 from backend.services.automation_execution_store import AutomationExecutionStore
 from backend.services.automation_delivery_ledger import merge_delivery_ledger, pending_delivery_ledger
@@ -80,6 +82,15 @@ def create_app() -> FastAPI:
     @app.get("/v1/capabilities")
     async def capabilities() -> dict[str, Any]:
         return {"environment": environment.value, "rerun": False, "reset": False, "comment_visibility": ["internal", "external"], "resources": resource_identity}
+
+    @app.post("/v1/auth/login")
+    async def admin_login(request: AutomationLoginRequest) -> dict[str, Any]:
+        if not verify_admin_login(request.email, request.password):
+            raise HTTPException(status_code=401, detail="invalid admin credentials")
+        token = str(os.getenv("AUTOMATION_EXECUTION_TOKEN") or "").strip()
+        if not token:
+            raise HTTPException(status_code=503, detail="automation execution token is not configured")
+        return {"environment": environment.value, "execution_token": token}
 
     @app.post("/v1/cases", dependencies=[Depends(_require_execution_token)])
     async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
