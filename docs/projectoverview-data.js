@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T10:04:00Z",
-  "source_base_commit": "b92a006245e399f0afd2868ba6fec9f00e1db436",
-  "registry_digest": "854cbfa0b03d9e86dcb5694f2354cb87dfbee37ca394cbb4e5ba43ce00f5112c",
+  "generated_at": "2026-08-23T10:08:52Z",
+  "source_base_commit": "c5ab77e31b19007cc9430ec43f678ea0944dfd47",
+  "registry_digest": "fb13743827fa83dc87cd05a9bda96b37a4d56e64b1877692cbdbc4de1356ef35",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8643,6 +8643,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "production_answer_delivery_gate_fix",
           "summary": "12933 实测暴露 answer 路径最后一层：客户反问被重路由为 rag 路由后 case 不再是 registered automation，production Zendesk 投递门以 unregistered_automation 拦截 RAG 答案（本地发布成功但客户收不到）；修复为 rag_fallback_answer intent 的投递绕过该门（publish 与 recovery 循环都传 intent），并加投递门单测。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "comment_trigger_gate_for_not_automated",
+          "summary": "12933 第二轮触发暴露第三层门：Zendesk 评论触发入口对非 registered automation 路由的 case 直接 ignored_unregistered_automation，RAG answer 后 case 处于 rag 路由/not_automated，客户后续评论无法再进入回复循环；修复为 not_automated 状态的 case 放行评论触发（继续重路由+RAG 兜底，escalate 后由 human_review/closed 状态自然终止）。"
         }
       ],
       "legacy_refs": [],
