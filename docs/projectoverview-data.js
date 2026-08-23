@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T02:28:52Z",
-  "source_base_commit": "a7d2a1be8a5b6dee515cc6d905a07ff0598c4358",
-  "registry_digest": "763c129622dd5233c9e1baac3261158957acca528b254449fe0f0f2ab3c5ae3b",
+  "generated_at": "2026-08-23T02:56:29Z",
+  "source_base_commit": "83077462b09abb9dc7a66c0cb16f048d937feffc",
+  "registry_digest": "df218f8d37ac48dc099598e33f21335701dbe81211156a4da7f83016b7b04adb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1723,6 +1723,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Admin login contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
           "details": "32 项测试通过。新增覆盖：POST /v1/auth/login 无需 Bearer、admin/admin 成功返回本环境 execution token、错误用户名/密码 401、缺字段 422、执行查询端点仍 401；AUTOMATION_ADMIN_USERNAME/PASSWORD 覆盖默认凭据后 admin/admin 拒绝、覆盖凭据通过；production runtime 同契约；production UI bundle 仍无 rerun 字符串。三份 app.js node --check 通过、staging/preproduction 主体一致。"
+        },
+        {
+          "type": "deployment",
+          "label": "Release-20260823-005 rollout and live login verification",
+          "command": "EC2 build（manifest commit=8307746）+ deploy staging -> preproduction -> production + verify_split_environments.sh + curl /v1/auth/login + 浏览器实测",
+          "details": "2026-08-23 部署 release-20260823-005（构建前 git fetch 核对 commit）：verify 探针全绿；三环境 POST /v1/auth/login 实测 admin/admin=200、错误密码=401；浏览器实测登录页与 /workspace/admin 同构（Welcome Back/Email/Password/Sign In/ac_unit 品牌），hostname 会话自动进入工作台且侧栏显示 admin 会话卡与 Sign out。本会话 IAB 浏览器事件通道后期故障（已知可用页面的 chip 点击亦失效，fill/快照正常），Sign In 的真实鼠标点击未能在本会话完成——该代码路径与 release-003 实测可用的委托 submit 修复路径一致，端点与渲染均已线上验证。"
         }
       ],
       "source_refs": [
@@ -1733,7 +1739,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 9,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -8246,10 +8252,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-90",
       "title": "三环境控制台登录对齐 /workspace/admin（admin/admin）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "用户要求三个 /automation/* 控制台的登录从 Execution access 令牌门改为与 /workspace/admin 一致的账号密码登录（admin/admin）。每个 runtime 新增 POST /v1/auth/login：校验 AUTOMATION_ADMIN_USERNAME/AUTOMATION_ADMIN_PASSWORD（默认 admin/admin），成功返回本环境 execution token，UI 存入原 localStorage 键继续以 Bearer 调用全部 API；n8n 与执行 API 的 Bearer 契约不变。",
-      "next_action": "代码与测试完成，待 finalize 合并后构建 release-20260823-005 部署三环境并浏览器验证 admin/admin 登录。",
+      "next_action": "已完成。三环境 release-20260823-005 上线 admin/admin 登录；凭据可用 AUTOMATION_ADMIN_USERNAME/PASSWORD 覆盖。",
       "acceptance_criteria": [
         "POST /v1/auth/login 在 staging/preproduction/production 三个 runtime 均可用：admin/admin 成功返回 execution_token，错误凭据 401；凭据可用 AUTOMATION_ADMIN_USERNAME/AUTOMATION_ADMIN_PASSWORD 覆盖。",
         "三个 UI 登录页与 /workspace/admin 同构（Email+Password、Welcome Back、Sign In），不再出现 Execution access 令牌输入；登录成功自动进入工作台，401 显示错误并停留。",
@@ -8263,6 +8269,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Admin login contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
           "details": "32 项测试通过。新增覆盖：POST /v1/auth/login 无需 Bearer、admin/admin 成功返回本环境 execution token、错误用户名/密码 401、缺字段 422、执行查询端点仍 401；AUTOMATION_ADMIN_USERNAME/PASSWORD 覆盖默认凭据后 admin/admin 拒绝、覆盖凭据通过；production runtime 同契约；production UI bundle 仍无 rerun 字符串。三份 app.js node --check 通过、staging/preproduction 主体一致。"
+        },
+        {
+          "type": "deployment",
+          "label": "Release-20260823-005 rollout and live login verification",
+          "command": "EC2 build（manifest commit=8307746）+ deploy staging -> preproduction -> production + verify_split_environments.sh + curl /v1/auth/login + 浏览器实测",
+          "details": "2026-08-23 部署 release-20260823-005（构建前 git fetch 核对 commit）：verify 探针全绿；三环境 POST /v1/auth/login 实测 admin/admin=200、错误密码=401；浏览器实测登录页与 /workspace/admin 同构（Welcome Back/Email/Password/Sign In/ac_unit 品牌），hostname 会话自动进入工作台且侧栏显示 admin 会话卡与 Sign out。本会话 IAB 浏览器事件通道后期故障（已知可用页面的 chip 点击亦失效，fill/快照正常），Sign In 的真实鼠标点击未能在本会话完成——该代码路径与 release-003 实测可用的委托 submit 修复路径一致，端点与渲染均已线上验证。"
         }
       ],
       "source_refs": [
