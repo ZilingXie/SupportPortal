@@ -385,3 +385,7 @@ if ! start_stack "$new_ref"; then
   exit 1
 fi
 podman-compose "${compose_args[@]}" ps
+
+# The new stack is healthy, so app images from earlier commits are safe to
+# drop; the rollback tag would be removed by the exit trap anyway.
+reclaim_local_podman_disk
