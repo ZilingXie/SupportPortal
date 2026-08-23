@@ -130,6 +130,11 @@ from backend.services.account_automation_ownership import (
     mark_production_ownership_released,
     ownership_gate_eligible,
 )
+from backend.services.account_reply_rag_fallback import (
+    escalate_unexpected_reply_to_human,
+    should_run_reply_rag_fallback,
+    try_rag_fallback_answer,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     AUTOMATED_ROUTE_STATUS,
@@ -9745,6 +9750,27 @@ async def _reply_to_billing_ticket_impl(
     )
 
 
+def _reply_rag_fallback_ticket_context(canonical_ticket: dict[str, Any]) -> list[dict[str, str]]:
+    context: list[dict[str, str]] = []
+    for message in (canonical_ticket.get("messages") or [])[-6:]:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip()
+        content = str(message.get("content") or "").strip()
+        if role and content:
+            context.append({"role": role, "content": content})
+    return context
+
+
+def _reply_rag_fallback_zendesk_ticket_id(billing_ticket: dict[str, Any], client_ticket_id: str) -> str:
+    zendesk_ticket_id = str(billing_ticket.get("zendesk_ticket_id") or "").strip()
+    if not zendesk_ticket_id:
+        zendesk_ticket_id = _zendesk_ticket_id_from_source(billing_ticket.get("source"))
+    if not zendesk_ticket_id and client_ticket_id.isdigit():
+        zendesk_ticket_id = client_ticket_id
+    return zendesk_ticket_id
+
+
 async def _process_account_customer_reply(
     *,
     billing_ticket_id: str,
@@ -10472,6 +10498,49 @@ async def _process_account_customer_reply(
                 billing_ticket["internal_email_payload"]["customer_confirmation_queued"] = True
                 billing_ticket["updated_at"] = now_iso()
                 await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+    elif should_run_reply_rag_fallback(billing_ticket):
+        # Unexpected customer reply (off-topic question, or no field progress
+        # after every follow-up was already asked): ask RAG first; if RAG
+        # cannot answer either, hand the case back to humans.
+        fallback = await async_to_thread(
+            try_rag_fallback_answer,
+            question=customer_message,
+            request_id=f"reply-rag-fallback:{client_ticket_id}:{timestamp}",
+            ticket_id=client_ticket_id or None,
+            ticket_context=_reply_rag_fallback_ticket_context(canonical_ticket),
+        )
+        if fallback.kind == "answer":
+            try:
+                reply_job = await async_to_thread(
+                    _create_account_reply_job,
+                    ticket_id=client_ticket_id,
+                    trigger_message_created_at=timestamp,
+                    draft_content=fallback.answer,
+                )
+            except Exception as exc:
+                billing_ticket = await _record_account_reply_job_failure(
+                    account_case=billing_ticket,
+                    ticket_id=client_ticket_id,
+                    handler=str(billing_ticket.get("automation_handler") or "automation"),
+                    detail=exc,
+                )
+                reply_job = None
+        else:
+            escalation = await async_to_thread(
+                escalate_unexpected_reply_to_human,
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                zendesk_ticket_id=_reply_rag_fallback_zendesk_ticket_id(billing_ticket, client_ticket_id),
+                customer_reply_text=customer_message,
+                reason=fallback.reason,
+                repository=ticket_repository,
+                timestamp=timestamp,
+            )
+            LOGGER.info(
+                "reply RAG fallback escalated case %s to human review: %s",
+                client_ticket_id,
+                escalation,
+            )
 
     # Return refreshed detail view.
     view_model = _build_account_ticket_view_model(billing_ticket)
