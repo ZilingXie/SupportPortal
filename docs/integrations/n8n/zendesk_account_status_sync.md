@@ -10,7 +10,7 @@ when Zendesk reports `solved`/`closed`.
 
 - Set the n8n environment variable `SUPPORTPORTAL_BASE_URL` to the SupportPortal staging origin (reused from the comment sync workflow).
 - Set the n8n environment variable `SUPPORTPORTAL_PRODUCTION_BASE_URL` to the production origin (for example `https://<host>/production`).
-- Set the n8n environment variable `ZENDESK_ACCOUNT_SYNC_TOKEN` to the same secret as SupportPortal's `ZENDESK_ACCOUNT_SYNC_TOKEN` (one token is shared by both stacks). The endpoint also accepts `Authorization: Bearer <token>` as a fallback, so this workflow can reuse the single Bearer credential described in `automation_environments_cutover.md` §6.
+- Set the n8n environment variable `n8n_request_token` to the same secret as SupportPortal's `n8n_request_token` (one token is shared by both stacks), sent as the `X-N8n-Request-Token` header — the unified token for every n8n-to-SupportPortal call; the old `X-Zendesk-Account-Sync-Token` header and Bearer fallback are no longer accepted (`automation_environments_cutover.md` §6).
 - Register the webhook URL in Zendesk for ticket updated events. The workflow is safe to replay because SupportPortal is idempotent per status value and ignores stale `updated_at` events.
 
 ## Flow
@@ -21,7 +21,7 @@ when Zendesk reports `solved`/`closed`.
    ask SupportPortal whether that ticket is an Account Case via the existing
    membership endpoint
    `GET {origin}/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comment-sync-target`
-   with the `X-Zendesk-Account-Sync-Token` header. Non-Account tickets return
+   with the `X-N8n-Request-Token` header. Non-Account tickets return
    `is_account_case=false` and are skipped. Each stack only queries its own
    database, so at most one origin claims the ticket. The response also exposes
    `status_endpoint` for the next step.
@@ -30,7 +30,7 @@ when Zendesk reports `solved`/`closed`.
 ```text
 Method: PUT
 URL: ={{ origin + '/api/integrations/zendesk/account-cases/' + zendesk_ticket_id + '/status' }}
-Header: X-Zendesk-Account-Sync-Token ={{ $env.ZENDESK_ACCOUNT_SYNC_TOKEN }}
+Header: X-N8n-Request-Token ={{ $env.n8n_request_token }}
 Body type: JSON
 ```
 

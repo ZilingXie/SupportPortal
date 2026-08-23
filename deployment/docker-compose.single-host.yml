@@ -121,7 +121,7 @@ services:
       AUTOMATION_QUEUE_NAME: ${AUTOMATION_STAGING_QUEUE:-automation.staging}
       AUTOMATION_EVENT_CHANNEL: ${AUTOMATION_STAGING_EVENT_CHANNEL:-automation.events.staging}
       AUTOMATION_RESOURCE_ID: staging
-      AUTOMATION_EXECUTION_TOKEN: ${AUTOMATION_STAGING_EXECUTION_TOKEN:-}
+      n8n_request_token: ${n8n_request_token:-}
       ROUTE_SERVICE_URL: http://route_staging:8100
       ROUTE_SERVICE_TOKEN: ${ROUTE_STAGING_SERVICE_TOKEN:-}
       APP_BUILD_REF: ${AUTOMATION_STAGING_BUILD_REF:-unknown}
@@ -161,7 +161,7 @@ services:
       AUTOMATION_QUEUE_NAME: ${AUTOMATION_PREPRODUCTION_QUEUE:-automation.preproduction}
       AUTOMATION_EVENT_CHANNEL: ${AUTOMATION_PREPRODUCTION_EVENT_CHANNEL:-automation.events.preproduction}
       AUTOMATION_RESOURCE_ID: preproduction
-      AUTOMATION_EXECUTION_TOKEN: ${AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN:-}
+      n8n_request_token: ${n8n_request_token:-}
       zendesk_basic_auth: ${zendesk_basic_auth:-}
       ZENDESK_AI_ASSIGNEE_EMAIL: ${ZENDESK_AI_ASSIGNEE_EMAIL:-}
       ROUTE_SERVICE_URL: http://route_preproduction:8100
@@ -202,7 +202,7 @@ services:
       AUTOMATION_QUEUE_NAME: ${AUTOMATION_PRODUCTION_QUEUE:-automation.production}
       AUTOMATION_EVENT_CHANNEL: ${AUTOMATION_PRODUCTION_EVENT_CHANNEL:-automation.events.production}
       AUTOMATION_RESOURCE_ID: production
-      AUTOMATION_EXECUTION_TOKEN: ${AUTOMATION_PRODUCTION_EXECUTION_TOKEN:-}
+      n8n_request_token: ${n8n_request_token:-}
       zendesk_basic_auth: ${zendesk_basic_auth:-}
       ZENDESK_AI_ASSIGNEE_EMAIL: ${ZENDESK_AI_ASSIGNEE_EMAIL:-}
       ROUTE_SERVICE_URL: http://route_production:8100

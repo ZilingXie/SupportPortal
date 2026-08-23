@@ -642,7 +642,7 @@ split_environment_config() {
       SPLIT_EVENT_DEFAULT="automation.events.staging"
       SPLIT_RESOURCE_ID="staging"
       SPLIT_TOKEN_KEY="ROUTE_STAGING_SERVICE_TOKEN"
-      SPLIT_EXECUTION_TOKEN_KEY="AUTOMATION_STAGING_EXECUTION_TOKEN"
+      SPLIT_EXECUTION_TOKEN_KEY="n8n_request_token"
       SPLIT_SERVICES=(route_staging automation_staging)
       ;;
     preproduction)
@@ -663,7 +663,7 @@ split_environment_config() {
       SPLIT_EVENT_DEFAULT="automation.events.preproduction"
       SPLIT_RESOURCE_ID="preproduction"
       SPLIT_TOKEN_KEY="ROUTE_PREPRODUCTION_SERVICE_TOKEN"
-      SPLIT_EXECUTION_TOKEN_KEY="AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN"
+      SPLIT_EXECUTION_TOKEN_KEY="n8n_request_token"
       SPLIT_SERVICES=(route_preproduction automation_preproduction)
       ;;
     production)
@@ -684,7 +684,7 @@ split_environment_config() {
       SPLIT_EVENT_DEFAULT="automation.events.production"
       SPLIT_RESOURCE_ID="production"
       SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
-      SPLIT_EXECUTION_TOKEN_KEY="AUTOMATION_PRODUCTION_EXECUTION_TOKEN"
+      SPLIT_EXECUTION_TOKEN_KEY="n8n_request_token"
       SPLIT_SERVICES=(route_production automation_production)
       ;;
     route-staging)

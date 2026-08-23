@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T02:28:52Z",
-  "source_base_commit": "a7d2a1be8a5b6dee515cc6d905a07ff0598c4358",
-  "registry_digest": "763c129622dd5233c9e1baac3261158957acca528b254449fe0f0f2ab3c5ae3b",
+  "generated_at": "2026-08-23T02:57:57Z",
+  "source_base_commit": "83077462b09abb9dc7a66c0cb16f048d937feffc",
+  "registry_digest": "cc0b54f2bf264fd8f4eac8e2bfafa0ec6f5ef66f5f19dbbb4fd140d1b1e1eb48",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1723,6 +1723,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Admin login contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
           "details": "32 项测试通过。新增覆盖：POST /v1/auth/login 无需 Bearer、admin/admin 成功返回本环境 execution token、错误用户名/密码 401、缺字段 422、执行查询端点仍 401；AUTOMATION_ADMIN_USERNAME/PASSWORD 覆盖默认凭据后 admin/admin 拒绝、覆盖凭据通过；production runtime 同契约；production UI bundle 仍无 rerun 字符串。三份 app.js node --check 通过、staging/preproduction 主体一致。"
+        },
+        {
+          "type": "test",
+          "label": "Unified auth targeted regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_status_sync backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_build_automation_release backend.tests.test_route_service_contract",
+          "details": "2026-08-23 前六套件 76 项：失败 7 项与干净 main 同命令基线完全一致（test_deploy_ec2 的 DSN/顺序耦合 6 项 + test_account_zendesk_status_sync 硬编码日期断言 1 项，均为存量、非本任务引入，已记入 p2-88 history）；新增失败 0。后三套件 35 项全绿。py_compile 三个后端文件、node --check 三份 app.js、bash -n 三个部署/工作流脚本、git diff --check 均通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Unified token mechanism choice",
+          "command": "用户决策（对话确认）",
+          "details": "用户选定：统一使用 X-N8n-Request-Token、别的机制都不接受；automation 环境值来源直接读 n8n_request_token（单变量贯穿，含 compose/deploy/本地脚本契约变更），而非保留三个 AUTOMATION_*_EXECUTION_TOKEN 同值。"
         }
       ],
       "source_refs": [
@@ -1732,7 +1744,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 9,
+      "task_count": 10,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -7959,7 +7971,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "Zendesk 凭据已由运维修复（verify_split_environments.sh 36/36 全绿）。真实写入验收（preproduction allowlist 工单 internal 全链路、production internal/external 与 Zendesk readback）按用户指示暂缓、不使用真实工单测试，待用户明确批准测试工单或由用户在 UI 自行执行；三环境保持 release-20260822-005。T4 旧端点切流设计已产出（docs/integrations/n8n/automation_environments_cutover.md：Company ID 灰度分流 + 统一 token 纯配置方案）；n8n/EC2 实施仍待 T3 完成与用户单独批准。",
+      "next_action": "Zendesk 凭据已由运维修复（verify_split_environments.sh 36/36 全绿）。真实写入验收（preproduction allowlist 工单 internal 全链路、production internal/external 与 Zendesk readback）按用户指示暂缓、不使用真实工单测试，待用户明确批准测试工单或由用户在 UI 自行执行；三环境保持 release-20260822-005。T4 切流设计已产出（docs/integrations/n8n/automation_environments_cutover.md：Company ID 灰度分流）；其 token 统一方案已按用户决策升级为单一 X-N8n-Request-Token/n8n_request_token 机制并在 p2-91 实施服务端代码，EC2 部署与 n8n 切换窗口随 p2-91/p2-90 的下一次 release 进行；n8n 投递切流实施仍待 T3 完成与用户单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -8148,6 +8160,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "n8n_cutover_design",
           "summary": "T4 方案先行：产出 n8n 切流设计文档（/automation/*/v1/cases 端点契约与字段映射、Company ID 灰度分流、token 统一 runbook），并同步更新三个 n8n 集成契约文档的 token 段落；未改任何运行时代码与线上配置，实施待 T3 与用户批准。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "unified_auth_split_to_p2_91",
+          "summary": "用户决策将 token 统一升级为单一 X-N8n-Request-Token/n8n_request_token 机制（其余头与变量不再接受），服务端及配套实施分流到 p2-91；本任务保留 T3/T4 范围。"
+        },
+        {
+          "at": "2026-08-23",
+          "event": "preexisting_test_debt_found",
+          "summary": "p2-91 验证期间发现干净 main（8307746）存量测试失败 7 项且与顺序耦合：test_deploy_ec2 的 6 项（DSN 回退期望 example.invalid/test 与 TICKET_DB_DSN 不符、requires_execution_token/successful_deploy 批量跑时才失败）+ test_account_zendesk_status_sync 1 项（zendesk_status_synced_at 硬编码 startswith '2026-08-21'）。均非 p2-91 引入（同命令基线对比一致），按协调规则不顺手修，留待专项清理。"
         }
       ],
       "legacy_refs": [
@@ -8286,6 +8308,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_refs": [
         "p2-89"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-91",
+      "title": "n8n 入向鉴权统一为 X-N8n-Request-Token / n8n_request_token",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户决定：SupportPortal 全部 n8n 入向端点统一只接受 X-N8n-Request-Token 头，值只来自单一环境变量 n8n_request_token，其余机制不再接受。实施：backend/main.py 的 Zendesk 评论/状态同步三端点鉴权重写为 require_n8n_request_token（删除 X-Zendesk-Account-Sync-Token 头与 Authorization: Bearer 回退，废弃 ZENDESK_ACCOUNT_SYNC_TOKEN）；两个 automation runtime 的 _require_execution_token 与 /v1/auth/login 改读 n8n_request_token 并校验 X-N8n-Request-Token（废弃三个 AUTOMATION_*_EXECUTION_TOKEN）；三个 automation UI 的请求头改为 X-N8n-Request-Token；compose 映射、deploy_ec2.sh 必填校验、本地 split 启动脚本与 verify 探针同步更新；n8n 契约文档与 T4 切流设计 §6 改写为单一机制方案。出向 Slack handoff 本就使用同头同值，无需改动。",
+      "next_action": "代码与测试完成，待 finalize 合并后与 p2-90 同一 release 构建（release-20260823-005 之后顺延）部署三环境；EC2 .env 删除四个废弃 token 变量；n8n 切换窗口内把 commen_sync/case_status_sync 各 4 处与 /automation/*/v1/cases 投递节点统一挂 X-N8n-Request-Token 凭据（值=现有 n8n_request_token）；验证旧头 401、新头 200/404、verify_split_environments.sh 全绿。",
+      "acceptance_criteria": [
+        "旧 Zendesk 同步三端点（comment-sync-target/PUT comments/PUT status）只接受 X-N8n-Request-Token == env n8n_request_token；X-Zendesk-Account-Sync-Token、Authorization: Bearer 一律 401；未配置 n8n_request_token 时 503。",
+        "三个 automation runtime 的全部执行/查询端点与 /v1/auth/login 换取的 token 均基于 n8n_request_token + X-N8n-Request-Token 头；AUTOMATION_EXECUTION_TOKEN/AUTOMATION_*_EXECUTION_TOKEN 不再被读取。",
+        "三个 automation UI 的登录后 API 调用发送 X-N8n-Request-Token；登录换 token 流程（p2-90）不受影响。",
+        "deploy_ec2.sh 对 n8n_request_token 必填校验；compose 三环境服务注入 n8n_request_token；本地启动脚本只生成/引用 n8n_request_token；verify_split_environments.sh 401 负例探针使用 X-N8n-Request-Token。",
+        "文档同步：deploy_automation_release.md、三份 n8n 契约文档、automation_environments_cutover.md §6、.env.example（删除 ZENDESK_ACCOUNT_SYNC_TOKEN）均为单一机制表述。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Unified auth targeted regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_zendesk_status_sync backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_build_automation_release backend.tests.test_route_service_contract",
+          "details": "2026-08-23 前六套件 76 项：失败 7 项与干净 main 同命令基线完全一致（test_deploy_ec2 的 DSN/顺序耦合 6 项 + test_account_zendesk_status_sync 硬编码日期断言 1 项，均为存量、非本任务引入，已记入 p2-88 history）；新增失败 0。后三套件 35 项全绿。py_compile 三个后端文件、node --check 三份 app.js、bash -n 三个部署/工作流脚本、git diff --check 均通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Unified token mechanism choice",
+          "command": "用户决策（对话确认）",
+          "details": "用户选定：统一使用 X-N8n-Request-Token、别的机制都不接受；automation 环境值来源直接读 n8n_request_token（单变量贯穿，含 compose/deploy/本地脚本契约变更），而非保留三个 AUTOMATION_*_EXECUTION_TOKEN 同值。"
+        }
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/automation_runtime.py",
+        "backend/automation_production_runtime.py",
+        "backend/services/account_slack_n8n.py",
+        "ui/automation-staging/app.js",
+        "ui/automation-preproduction/app.js",
+        "ui/automation-production/app.js",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/deploy_ec2.sh",
+        "deployment/verify_split_environments.sh",
+        "scripts/workflow/start_local_split_environments.sh",
+        "docs/integrations/n8n/automation_environments_cutover.md",
+        "docs/deploy_automation_release.md",
+        ".env.example"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "T4 切流设计（PR#859）原定同值贯穿 5 变量 + Bearer 凭据；用户改选单一机制（X-N8n-Request-Token + n8n_request_token，其余不接受），并确认 automation 端直接读 n8n_request_token，遂立本任务实施服务端与配套变更。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88",
+        "p2-85",
+        "p2-90"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",

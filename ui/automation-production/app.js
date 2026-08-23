@@ -103,7 +103,7 @@ class ApiError extends Error {
 async function apiRequest(path, options = {}) {
   const token = localStorage.getItem(ENV.tokenKey) || "";
   const headers = { ...(options.headers || {}) };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) headers["X-N8n-Request-Token"] = token;
   if (options.body) headers["Content-Type"] = "application/json";
   const response = await fetch(`${ENV.apiBase}${path}`, { ...options, cache: "no-store", headers });
   let payload = null;

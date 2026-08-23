@@ -7,7 +7,7 @@
 #     from the CURRENT working tree (task worktrees are supported; uncommitted
 #     changes get a "-wip" image tag suffix),
 #   - idempotently creates the four automation networks and the three
-#     AUTOMATION_*_EXECUTION_TOKEN values in the root .env (auto-generated),
+#     n8n_request_token value in the root .env (auto-generated),
 #   - starts one compose project per environment (matching the EC2 shape),
 #   - runs a dedicated local nginx (port 18080) for the /automation/* paths --
 #     the official nginx config hardcodes Docker's embedded DNS resolver
@@ -73,9 +73,7 @@ ensure_token() {
     info "Generated ${key} in ${ROOT_ENV_FILE}"
   fi
 }
-ensure_token AUTOMATION_STAGING_EXECUTION_TOKEN
-ensure_token AUTOMATION_PREPRODUCTION_EXECUTION_TOKEN
-ensure_token AUTOMATION_PRODUCTION_EXECUTION_TOKEN
+ensure_token n8n_request_token
 
 # --- networks -----------------------------------------------------------
 
@@ -258,4 +256,4 @@ fi
 info "Local split environments are running (images: ${IMAGE_TAG})."
 info "UI and API base: ${LOCAL_NGINX_BASE}/automation/{staging,preproduction,production}/"
 info "Note: local Zendesk side effects are disabled by default (fail-closed);"
-info "execution tokens live in ${ROOT_ENV_FILE} (AUTOMATION_*_EXECUTION_TOKEN)."
+info "the unified execution token lives in ${ROOT_ENV_FILE} (n8n_request_token)."
