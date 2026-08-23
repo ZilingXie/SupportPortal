@@ -6627,10 +6627,17 @@ async def _process_zendesk_comment_trigger(
 
     if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
         return await _complete(_ignored("ignored_non_production_case"))
-    if not is_registered_automation(
-        route_family=account_case.get("route_family"),
-        execution_action=account_case.get("execution_action")
-        or account_case.get("route"),
+    if (
+        not is_registered_automation(
+            route_family=account_case.get("route_family"),
+            execution_action=account_case.get("execution_action")
+            or account_case.get("route"),
+        )
+        # A case that an unexpected reply re-routed away from its handler
+        # (e.g. onto the rag route) must keep receiving customer comments:
+        # each one re-routes and may be answered by the RAG fallback until
+        # an escalation moves the case to human review.
+        and str(automation_status or "").strip().lower() != "not_automated"
     ):
         return await _complete(_ignored("ignored_unregistered_automation"))
     if automation_status in _ZENDESK_COMMENT_TRIGGER_IGNORED_CASE_STATUSES:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -465,6 +465,37 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
             if message.get("external_id") == "52661001"
         ]
         self.assertEqual(len(ingested_after), 1)
+
+    def test_not_automated_case_still_consumes_customer_comments(self) -> None:
+        # After an unexpected reply re-routes the case (e.g. onto the rag
+        # route), later customer comments must keep entering the reply loop so
+        # the RAG fallback can keep serving them until an escalation.
+        self.repository.save_account_case(
+            {
+                "account_case_id": self.case_id,
+                "billing_ticket_id": self.case_id,
+                "client_ticket_id": self.ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable Media Relay.",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12838",
+                "route_family": "rag_product_support",
+                "execution_action": "rag",
+                "automation_status": "not_automated",
+                "collected_fields": {},
+                "missing_fields": [],
+                "created_at": "2026-08-19T08:00:30Z",
+            }
+        )
+        with patch.object(main, "_process_account_customer_reply", new_callable=AsyncMock) as process:
+            process.return_value = {"status": "ok", "automation_status": "not_automated"}
+            response = self._sync(
+                [self._initial_comment(), self._customer_comment()],
+                trigger_comment_id="52661001",
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["trigger_status"], "processed")
+        process.assert_awaited_once()
 
     def test_agent_comment_is_ignored_without_trigger(self) -> None:
         comment = self._customer_comment(
