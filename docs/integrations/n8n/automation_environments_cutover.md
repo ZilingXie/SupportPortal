@@ -23,9 +23,9 @@
 
 | n8n 工作流 | 节点 | 现在 | 切流后 |
 |---|---|---|---|
-| `new_case_2_supporportal_prod` | `HTTP Request`（最终投递） | `POST /production/account`，表单 `title/question/customer_email/source/customer_name`，无鉴权 | `POST /automation/production/v1/cases`，JSON body + `X-N8n-Request-Token`（见 §3） |
-| `new_case_2_supporportal_staging` | `HTTP Request` | `POST /account`，表单，无鉴权 | `POST /automation/staging/v1/cases`，JSON body + `X-N8n-Request-Token`；**不得**传 `comment_visibility` |
-| （可选新增）`new_case_automation_preproduction` | 克隆自 prod 工作流 | — | `POST /automation/preproduction/v1/cases`，JSON body + `X-N8n-Request-Token`，`comment_visibility=internal`，受服务端 allowlist 门控 |
+| `new_case_2_supporportal_prod` | `HTTP Request`（最终投递） | `POST /production/account`，表单 `title/question/customer_email/source/customer_name`，无鉴权 | `POST /automation/production/v1/cases`，**body 原样不用改**（旧五字段表单直接可发，见 §3.2），加 `X-N8n-Request-Token` 头 + 表单里加一个 `comment_visibility=internal` 字段（production 仍强制显式可见性） |
+| `new_case_2_supporportal_staging` | `HTTP Request` | `POST /account`，表单，无鉴权 | `POST /automation/staging/v1/cases`，**body 原样不用改**，加 `X-N8n-Request-Token` 头；**不得**传 `comment_visibility` |
+| （可选新增）`new_case_automation_preproduction` | 克隆自 prod 工作流 | — | `POST /automation/preproduction/v1/cases`，body 原样 + 头，受服务端 allowlist 门控 |
 | `commen_sync` | 2× membership GET + 2× PUT comments | 旧端点 `…/api/integrations/zendesk/account-cases/{id}/…`（staging + production 两栈） | **不改 URL**。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
 | `case_status_sync` | 2× membership GET + 2× PUT status | 同上 | **不改 URL**。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
 | `2_slack - SupportPortal Account Handoff -> Slack` | 入站 Webhook（SupportPortal→n8n） | 凭据 `2_SupportPortal`（`X-N8n-Request-Token`） | 结构不动。仅按 §6 把凭据值换成统一 token |
@@ -47,41 +47,35 @@ Header: X-N8n-Request-Token: <n8n_request_token 的值>
 
 鉴权先于请求体校验：缺失/错误 token 一律 401 `invalid automation execution token`，即使 body 也非法。
 
-### 3.2 请求体（最终 HTTP Request 节点的 JSON 模板）
+### 3.2 请求体（p2-94 兼容层：旧五字段 body 原样可发）
 
-以 prod 克隆工作流为例（`$json` 来自 `Prepare_Account_Data` 输出，字段 `ticket/customer_name/customer_email`）：
+**n8n 侧不需要改 body。** `/v1/cases` 同时接受旧 `/account` 的五字段投递（表单编码或同字段名 JSON）：`title`、`question`、`customer_email`、`source`、`customer_name`。服务端兼容层（`backend/services/automation_intake_compat.py`）自动完成旧 intake 内部同款的推导：
 
-```text
-Body type: JSON（Specify Body: Using JSON）
-JSON body:
-={{
-  JSON.stringify({
-    request_id: 'n8n-zd-' + $json.ticket.id,
-    case_id: 'AC-' + $json.ticket.id,
-    subject: $json.ticket.subject,
-    question: $json.ticket.description,
-    customer_email: $json.customer_email,
-    customer_name: $json.customer_name,
-    zendesk_ticket_id: String($json.ticket.id),
-    comment_visibility: 'internal'
-  })
-}}
-Node options → timeout: 290000（nginx 侧为 300s）
+- `title` → 映射为 `subject`；
+- `source`（Zendesk 工单 URL）→ 解析出 `zendesk_ticket_id`（复用旧 intake 的 host+路径正则语义：`…zendesk.com/agent/tickets/{id}` 与 `/api/v2/tickets/{id}.json`）；
+- `request_id` 缺省 → `n8n-zd-{ticket_id}`（确定性幂等键：同一工单重复触发返回 200 `idempotent_replay`，不会二次执行）；无法从 source 解析时生成一次性 id（与旧 intake 无 source 时跳过去重的行为一致）；
+- `case_id` 缺省 → `AC-{ticket_id}`（与旧 intake 的 account case 编号约定一致）。
+
+表单字段只是**增量可选**：直接传新契约字段（`request_id`/`case_id`/`zendesk_ticket_id`/`comment_visibility`）时优先采用调用方值。除 `title`/`source` 两个被消费的旧字段外，其余未知字段仍然 422（`extra="forbid"` 的防呆保留——字段名拼错会立刻暴露而不是被静默忽略）。
+
+**唯一保留的强制项：production 的 `comment_visibility` 仍必须显式提供**（旧五字段表单没有它；production 工作流投递时在 body 里加一个 `comment_visibility=internal` 字段即可）。这是客户可见性的安全门（p2-88 验收标准"production 每次显式选择 internal/external"），不做服务端默认值。staging 传了它反而 422；preproduction 只接受 internal。
+
+原生 JSON 契约（显式传全字段）同样继续受支持，适合 UI 或脚本调用：
+
+```json
+{
+  "request_id": "n8n-zd-12999",
+  "case_id": "AC-12999",
+  "subject": "…",
+  "question": "…",
+  "customer_email": "…",
+  "customer_name": "…",
+  "zendesk_ticket_id": "12999",
+  "comment_visibility": "internal"
+}
 ```
 
-字段对照与约束：
-
-| 字段 | 必填性/约束 | 旧表单映射 | 说明 |
-|---|---|---|---|
-| `request_id` | 必填，1–160 字符 | —（新增） | 幂等键。约定 `n8n-zd-{ticket.id}`：Zendesk Trigger 对同一工单重复触发时得到 200 `idempotent_replay:true` 而不是第二次执行。若上次执行终态非 completed/prepared/human_review，重放返回 409 `execution_requires_reconcile`——此时走 `/v1/executions/{id}/reconcile` 或 UI 对账，不要简单换 ID 重发 |
-| `case_id` | 必填，1–160 字符 | —（新增） | 调用方自定义。沿用 `AC-{ticket.id}` 便于跨系统检索（新环境不校验唯一性/外键） |
-| `question` | 必填，1–12000 字符 | `question`（=ticket.description） | 正文。旧表单的 `source`（ticket.url）**没有对应字段，不得传**——schema `extra="forbid"`，多传任何字段直接 422 |
-| `subject` | 可选，≤300 | `title`（=ticket.subject） | |
-| `customer_email` | 可选，≤320 | `customer_email` | |
-| `customer_name` | 可选，≤160 | `customer_name` | |
-| `zendesk_ticket_id` | preproduction/production 必填，staging 可选，≤128 | —（新增，=ticket.id） | 建议三个环境都传，便于执行记录与 Zendesk 对账 |
-| `comment_visibility` | `internal`/`external`，见 3.3 | —（新增） | production 必填；preproduction 只接受 internal；staging 传了即 422 |
-| `ticket_context` | 可选 | — | 暂不使用 |
+原生契约字段约束（兼容层映射后的最终校验）：`request_id`/`case_id` 1–160 字符；`question` 必填 1–12000；`subject` ≤300；`customer_email` ≤320；`customer_name` ≤160；`zendesk_ticket_id` ≤128；`ticket_context` 暂不使用。幂等重放语义：同 `request_id` 且终态 completed/prepared/human_review → 200 `idempotent_replay:true`；其他终态 → 409 `execution_requires_reconcile`（走 reconcile 端点或 UI 对账，不要换 ID 重发）。节点超时建议 290000（nginx 侧 300s）。
 
 ### 3.3 三环境差异矩阵（`automation_contracts.py:89-162`）
 
@@ -103,9 +97,9 @@ n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod �
 
 原则：**不动现有工作流逻辑，用克隆工作流 + 互斥公司名单切流**；同一工单同一时刻只允许一条链路（见 §7）。
 
-1. 在 n8n 复制 `new_case_2_supporportal_prod` 为 `new_case_automation_prod`：全部逻辑保留，仅改三处——
+1. 在 n8n 复制 `new_case_2_supporportal_prod` 为 `new_case_automation_prod`：全部逻辑保留，body 五字段原样不动，仅改三处——
    - `Check_Company_ID1` 的 `TARGET_COMPANY_IDS` = **迁移名单**（初始建议 1 个低风险公司，如自有测试公司）；
-   - 最终 `HTTP Request` 节点按 §3.1–3.2 改 URL/body/鉴权（`comment_visibility: 'internal'`）；
+   - 最终 `HTTP Request` 节点改 URL（§3.1），并在表单里加一个 `comment_visibility` = `internal` 字段（production 强制，§3.2）；
    - 挂上统一的 `X-N8n-Request-Token` 凭据（§6）。
 2. 把 `new_case_2_supporportal_prod` 的 `TARGET_COMPANY_IDS` 收缩为**未迁移名单**（从其中删除迁移的公司 ID）。两个名单必须互斥。
 3. 激活克隆工作流。此后：迁移公司的新单 → 新环境（execution 记录 + Zendesk 副作用）；其余公司 → 旧 `/production/account` 照旧。

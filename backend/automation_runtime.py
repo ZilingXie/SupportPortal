@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -34,6 +34,7 @@ from backend.services.automation_contracts import (
     runtime_resource_identity,
     verify_admin_login,
 )
+from backend.services.automation_intake_compat import parse_automation_execution_request
 from backend.services.automation_rerun_contracts import RerunRequest, rerun_capabilities
 from backend.services.automation_execution_store import AutomationExecutionStore
 from backend.services.automation_delivery_ledger import merge_delivery_ledger, pending_delivery_ledger
@@ -244,7 +245,8 @@ def create_app() -> FastAPI:
         return {"environment": environment.value, "execution_token": token}
 
     @app.post("/v1/cases", dependencies=[Depends(_require_execution_token)])
-    async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
+    async def execute_case(http_request: Request) -> dict[str, Any]:
+        request = await parse_automation_execution_request(http_request)
         return await _run_execution(request)
 
     @app.get("/v1/executions", dependencies=[Depends(_require_execution_token)])

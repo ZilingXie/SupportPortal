@@ -15,12 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 
 from backend.services.automation_contracts import (
     AutomationEnvironment,
-    AutomationExecutionRequest,
     AutomationLoginRequest,
     CommentVisibility,
     ExecutionReconcileRequest,
@@ -30,6 +29,7 @@ from backend.services.automation_contracts import (
     runtime_resource_identity,
     verify_admin_login,
 )
+from backend.services.automation_intake_compat import parse_automation_execution_request
 from backend.services.automation_execution_store import AutomationExecutionStore
 from backend.services.automation_delivery_ledger import merge_delivery_ledger, pending_delivery_ledger
 from backend.services.automation_delivery_reconciliation import (
@@ -96,7 +96,8 @@ def create_app() -> FastAPI:
         return {"environment": environment.value, "execution_token": token}
 
     @app.post("/v1/cases", dependencies=[Depends(_require_execution_token)])
-    async def execute_case(request: AutomationExecutionRequest) -> dict[str, Any]:
+    async def execute_case(http_request: Request) -> dict[str, Any]:
+        request = await parse_automation_execution_request(http_request)
         request_record = request.model_dump(mode="json")
         try:
             visibility = validate_ticket_policy(environment, request.zendesk_ticket_id, request.comment_visibility)

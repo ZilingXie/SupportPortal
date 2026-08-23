@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T04:48:22Z",
-  "source_base_commit": "39384cea854f4e2fc095b8d688460886ba1de144",
-  "registry_digest": "ac5414082026b5319a24c0ce3ece0c1da28c5cc9987e90e33d05d900e75c4a18",
+  "generated_at": "2026-08-23T04:59:05Z",
+  "source_base_commit": "d5ee884f526b1b597cdadd90d23a5f9eb7717ed3",
+  "registry_digest": "c66ccf04518c53e1cf732a85f86b17b2e451769933398159a39d72f0fc0057d1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1759,6 +1759,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Release-006 rollout and route-field fix handling",
           "command": "EC2 build/deploy release-20260823-006（commit=05591ab）+ verify + 探针；修复 PR#868 后构建 release-20260823-007（commit=0a079b2，未部署）",
           "details": "2026-08-23 部署 release-006：verify 全绿；admin/admin 登录 200、旧 Bearer 头 401、新 X-N8n-Request-Token 200（含并行 #866 鉴权变更上线）、production rerun 404、UI v5。线上探针发现 route_counts 全落 uncategorized（真实 router payload 用 scope_label/execution_action 而非 category/subcategory），PR#868 修复（SQL 与 Python helper 对齐 UI 徽标的 fallback 语义，测试补 scope_label 形态）并构建 release-007 镜像；随后用户指示改动不再部署 EC2、改为本地验证，007 保持未部署。"
+        },
+        {
+          "type": "test",
+          "label": "Legacy intake compat regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
+          "details": "2026-08-23 新增 6 用例：staging 表单五字段投递推导（request_id=n8n-zd-12999/case_id=AC-12999/zendesk_ticket_id 来自 source/subject 来自 title）、同表单重放 idempotent_replay=true、JSON 旧字段名映射 + 未知字段 422、无 request_id/source 生成标识、production 表单缺 comment_visibility 422、production 表单带 internal 通过并完成映射。含存量共 36 项全部通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Body compatibility decision",
+          "command": "用户决策（对话确认）",
+          "details": "用户两次追问 body 差异后明确要求\"就按照旧的/account的来\"。实现取舍：复用旧 intake 的 source→ticket 正则与 AC-{id}/幂等推导语义；唯一不妥协项=production comment_visibility 显式强制（p2-88 验收标准，防服务端静默默认客户可见性）。"
         }
       ],
       "source_refs": [
@@ -1768,7 +1780,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 11,
+      "task_count": 12,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -8520,6 +8532,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-94",
+      "title": "/v1/cases 兼容旧 /account 五字段 intake body",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户决定：n8n 工作流切到三环境时 body 保持旧 /account 五字段投递（title/question/customer_email/source/customer_name，表单编码）不做任何修改。新增 backend/services/automation_intake_compat.py：/v1/cases 同步接受表单与同字段名 JSON，服务端完成旧 intake 同款推导（title→subject、source Zendesk URL→zendesk_ticket_id、request_id 缺省推导 n8n-zd-{ticket}（确定性幂等）、case_id 缺省推导 AC-{ticket}、无 source 时生成一次性 id 与旧 intake 行为一致）；两个 runtime 的 /v1/cases 改经统一解析器。extra=forbid 防呆保留（除被消费的 title/source 外未知字段仍 422）；production comment_visibility 仍强制显式（安全门不做服务端默认）；原生 JSON 契约不变。",
+      "next_action": "代码与测试完成，待 finalize 合并后构建 release 部署 EC2 三环境（主栈不涉及该端点）；用户在 n8n 只改 URL 与鉴权头（body 原样）重发 staging 验证。",
+      "acceptance_criteria": [
+        "POST /automation/{env}/v1/cases 接受旧五字段表单 body：title→subject 映射、source 解析 zendesk_ticket_id、request_id/case_id 缺省按 n8n-zd-{ticket}/AC-{ticket} 推导，同 body 重发返回 200 idempotent_replay。",
+        "同字段名 JSON body 走同一映射；显式提供的新契约字段优先于推导值。",
+        "除 title/source 外未知字段仍 422（防呆保留）；JSON body 非法/非对象 422。",
+        "production 仍强制显式 comment_visibility（旧 body 缺失即 422）；staging 传 comment_visibility 仍 422；preproduction allowlist/visibility 策略不变。",
+        "cutover 设计文档 §2/§3.2/§4 更新为 body 零改动表述。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Legacy intake compat regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_runtime_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_split_environment_deployment",
+          "details": "2026-08-23 新增 6 用例：staging 表单五字段投递推导（request_id=n8n-zd-12999/case_id=AC-12999/zendesk_ticket_id 来自 source/subject 来自 title）、同表单重放 idempotent_replay=true、JSON 旧字段名映射 + 未知字段 422、无 request_id/source 生成标识、production 表单缺 comment_visibility 422、production 表单带 internal 通过并完成映射。含存量共 36 项全部通过。"
+        },
+        {
+          "type": "decision",
+          "label": "Body compatibility decision",
+          "command": "用户决策（对话确认）",
+          "details": "用户两次追问 body 差异后明确要求\"就按照旧的/account的来\"。实现取舍：复用旧 intake 的 source→ticket 正则与 AC-{id}/幂等推导语义；唯一不妥协项=production comment_visibility 显式强制（p2-88 验收标准，防服务端静默默认客户可见性）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_intake_compat.py",
+        "backend/automation_runtime.py",
+        "backend/automation_production_runtime.py",
+        "backend/main.py",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-23",
+      "updated_at": "2026-08-23",
+      "history": [
+        {
+          "at": "2026-08-23",
+          "event": "created",
+          "summary": "用户在 n8n 切流实测（staging 首次 401/路径问题后）提出 body 沿用旧 /account 五字段不修改；实施服务端兼容层，幂等与身份推导复用旧 intake 语义，production visibility 门保留。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88",
+        "p2-91"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     }
   ],
   "meetings": [

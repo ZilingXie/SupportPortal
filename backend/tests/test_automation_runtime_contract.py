@@ -333,5 +333,88 @@ class AutomationRuntimeContractTest(unittest.TestCase):
             )
 
 
+class LegacyAccountIntakeCompatTests(unittest.TestCase):
+    headers = {"X-N8n-Request-Token": "execution-token"}
+
+    def _post_form(self, client, **overrides):
+        fields = {
+            "title": "Legacy intake title",
+            "question": "I want to enable media relay",
+            "customer_email": "customer@example.com",
+            "customer_name": "Customer",
+            "source": "https://agoraio.zendesk.com/agent/tickets/12999",
+        }
+        fields.update(overrides)
+        return client.post("/v1/cases", data=fields, headers=self.headers)
+
+    def test_staging_accepts_legacy_form_body_and_derives_identity(self):
+        with AutomationRuntimeContractTest()._client("staging"), patch(
+            "backend.automation_runtime.call_route", new_callable=AsyncMock
+        ) as call:
+            call.return_value = AutomationRuntimeContractTest()._staging_route("n8n-zd-12999", "AC-12999")
+            with TestClient(create_app()) as client:
+                result = self._post_form(client)
+                self.assertEqual(result.status_code, 200, result.text)
+                execution = result.json()["execution"]
+                self.assertEqual(execution["request_id"], "n8n-zd-12999")
+                self.assertEqual(execution["case_id"], "AC-12999")
+                self.assertEqual(execution["request"]["zendesk_ticket_id"], "12999")
+                self.assertEqual(execution["request"]["subject"], "Legacy intake title")
+                self.assertEqual(execution["request"]["question"], "I want to enable media relay")
+
+    def test_legacy_form_body_replay_is_idempotent(self):
+        with AutomationRuntimeContractTest()._client("staging"), patch(
+            "backend.automation_runtime.call_route", new_callable=AsyncMock
+        ) as call:
+            call.return_value = AutomationRuntimeContractTest()._staging_route("n8n-zd-12999", "AC-12999")
+            with TestClient(create_app()) as client:
+                first = self._post_form(client)
+                self.assertEqual(first.status_code, 200, first.text)
+                second = self._post_form(client)
+                self.assertEqual(second.status_code, 200, second.text)
+                self.assertTrue(second.json().get("idempotent_replay"))
+
+    def test_legacy_json_body_maps_title_and_source(self):
+        with AutomationRuntimeContractTest()._client("staging"), patch(
+            "backend.automation_runtime.call_route", new_callable=AsyncMock
+        ) as call:
+            call.return_value = AutomationRuntimeContractTest()._staging_route("n8n-zd-13000", "AC-13000")
+            with TestClient(create_app()) as client:
+                result = client.post(
+                    "/v1/cases",
+                    json={
+                        "title": "JSON legacy shape",
+                        "question": "q",
+                        "source": "https://agoraio.zendesk.com/api/v2/tickets/13000.json",
+                    },
+                    headers=self.headers,
+                )
+                self.assertEqual(result.status_code, 200, result.text)
+                execution = result.json()["execution"]
+                self.assertEqual(execution["request_id"], "n8n-zd-13000")
+                self.assertEqual(execution["case_id"], "AC-13000")
+                self.assertEqual(execution["request"]["subject"], "JSON legacy shape")
+                self.assertEqual(execution["request"]["zendesk_ticket_id"], "13000")
+                rejected = client.post(
+                    "/v1/cases",
+                    json={"question": "q", "source": "https://agoraio.zendesk.com/agent/tickets/13000", "foo": "bar"},
+                    headers=self.headers,
+                )
+                self.assertEqual(rejected.status_code, 422)
+
+    def test_body_without_request_id_or_source_generates_identity(self):
+        with AutomationRuntimeContractTest()._client("staging"), patch(
+            "backend.automation_runtime.call_route", new_callable=AsyncMock
+        ) as call:
+            call.return_value = AutomationRuntimeContractTest()._staging_route("generated", "AC-GENERATED")
+            with TestClient(create_app()) as client:
+                result = client.post("/v1/cases", json={"question": "q"}, headers=self.headers)
+                self.assertEqual(result.status_code, 200, result.text)
+                execution = result.json()["execution"]
+                self.assertTrue(execution["request_id"].startswith("n8n-"))
+                self.assertTrue(execution["case_id"].startswith("AC-"))
+                call.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
