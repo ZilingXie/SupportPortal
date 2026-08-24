@@ -162,14 +162,20 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         for module in (
             "/app/backend/services/automation_rerun_contracts.py",
             "/app/backend/worker.py",
-            "/app/backend/services/account_reply_jobs.py",
-            "/app/backend/services/account_automation_delivery.py",
-            "/app/backend/services/internal_email_payload.py",
-            "/app/backend/services/account_ai_execution.py",
-            "/app/backend/services/automation_persona.py",
             "/app/backend/services/rag_reset.py",
         ):
             self.assertIn(module, production_block)
+        # Parity pipeline dependencies stay in the production bundle (p2-109):
+        # the runtime imports them for the old-stack intake semantics.
+        for module in (
+            "/app/backend/services/account_reply_jobs.py",
+            "/app/backend/services/account_automation_delivery.py",
+            "/app/backend/services/internal_email_payload.py",
+            "/app/backend/services/account_failure_alerts.py",
+            "/app/backend/services/account_ai_execution.py",
+            "/app/backend/services/automation_persona.py",
+        ):
+            self.assertNotIn(module, production_block)
         contracts = (ROOT / "backend/services/automation_contracts.py").read_text().lower()
         self.assertNotIn("allow_rerun", contracts)
         self.assertNotIn("allow_reset", contracts)

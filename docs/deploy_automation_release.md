@@ -77,7 +77,7 @@ DEPLOY_PRODUCTION_APPROVED=1 \
 
 - Staging：确认 `/v1/capabilities` 允许 rerun/reset，且 `zendesk=false`；带执行 token 提交一个 case，确认链路执行成功且无任何 Zendesk 出站。
 - Preproduction：在 `.env` 配置 `PREPRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PREPRODUCTION_TARGET_TICKET_STATUS`（如 `pending`）并 recreate 容器后，只使用 allowlisted ticket（`PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST`：逗号分隔工单号；`*` 放行全部、过滤交给上游；空拒绝全部），确认 ownership/status 和 internal comment，`public=false`。
-- Production：确认 rerun/reset 不存在；在 `.env` 配置 `PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PRODUCTION_TARGET_TICKET_STATUS` 并 recreate 容器后，使用受控 ticket 分别验证 `comment_visibility=internal` 和 `comment_visibility=external`，并核对 Zendesk readback 与 delivery ledger。
+- Production：确认 rerun/reset 不存在；p2-109 起 intake 走旧栈语义（分类 → 内部邮件/追问 reply job → 延迟 public 回复，无即时 comment 副作用，`comment_visibility` 不再必填）。先跑 `bootstrap_automation_production_schema.sh` 确保 `supportportal_production` 全套表已建、`automation_production_worker` 运行，再使用受控 ticket 验证 reply job 的 Zendesk public 回复与内部邮件送达。
 - 三个开关（`*_ZENDESK_SIDE_EFFECTS_ENABLED`）默认为 0、`AUTOMATION_TARGET_TICKET_STATUS` 默认为空；未显式开启时真实执行会以 `zendesk_side_effects_not_enabled` 或 `automation_target_ticket_status_missing` fail closed，不会写 Zendesk。
 
 ## 5. 回滚

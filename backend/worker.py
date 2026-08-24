@@ -84,6 +84,7 @@ from backend.services.automation_routing import is_registered_automation
 from backend.services.account_automation_ownership import ensure_production_automation_ownership
 from backend.services.account_human_review_escalation import (
     escalate_account_case_to_human_review,
+    reconcile_account_human_review_queue_mismatches,
 )
 from backend.services.zendesk_comments import (
     ZendeskCommentError,
@@ -366,6 +367,16 @@ def _record_account_worker_failure(
         updated["automation_context"] = execution_context
         ticket_repository.save_account_case(updated)
         ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=now)
+        escalate_account_case_to_human_review(
+            account_case=updated,
+            ticket_id=ticket_id,
+            handler=str(updated.get("automation_handler") or updated.get("execution_action") or "automation"),
+            failure_stage=stage,
+            failure_code=code,
+            reason=detail or "Account reply worker failed and requires human review.",
+            repository=ticket_repository,
+            timestamp=now,
+        )
     if not str(payload.get("rerun_job_id") or "").strip():
         notify_account_failure(
             repository=ticket_repository,
@@ -890,8 +901,20 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
                 ),
             )
             return
-        payload["error"] = "AI could not prepare a reliable account-only reply."
-        job["status"] = "manual_attention"
+        failure = AutomationPersonaError(
+            "account_reply_preparation_failed",
+            "AI could not prepare a reliable account-only reply.",
+        )
+        transitioned = _move_automation_reply_to_human_review(
+            job,
+            ticket,
+            str(resolution.route_reason or failure),
+            policy_decision="account_processing_failure_human_review",
+            failure_stage="reply_prepare",
+            failure_code=failure.code,
+        )
+        if transitioned:
+            _record_account_worker_failure(job=job, ticket=ticket, failure=failure)
     else:
         try:
             persona = _resolve_account_persona_for_claimed_reply(
@@ -1045,13 +1068,13 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 AutomationPersonaError("automation_persona_empty_response"),
             )
         else:
-            payload["error"] = "AI reply draft is unavailable."
-            current_job["status"] = "manual_attention"
-            current_job["payload"] = payload
-            current_job["updated_at"] = now_iso()
-            _update_claimed_account_reply_job(
+            _move_automation_reply_to_human_review(
                 current_job,
-                expected_status=claimed_status,
+                ticket,
+                "AI reply draft is unavailable.",
+                policy_decision="account_processing_failure_human_review",
+                failure_stage="reply_publish",
+                failure_code="account_reply_publication_empty_draft",
             )
         return
 
@@ -2264,6 +2287,16 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
     LOGGER.info("Account reply poller started with interval_seconds=%s.", interval_seconds)
     while not SHUTTING_DOWN:
         try:
+            processing_profile = str(
+                os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging"
+            ).strip().lower()
+            if processing_profile == "production":
+                reconcile_account_human_review_queue_mismatches(
+                    repository=ticket_repository,
+                    processing_profile=processing_profile,
+                    limit=25,
+                    timestamp=now_iso(),
+                )
             _process_claimed_account_reply_jobs(
                 from_status=ACCOUNT_REPLY_PERSONA_V8_QUEUED,
                 to_status=ACCOUNT_REPLY_PERSONA_V8_PREPARING,

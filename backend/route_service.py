@@ -76,6 +76,17 @@ def create_app() -> FastAPI:
             "confidence": decision.confidence,
             "router_source": decision.router_source,
             "classification": classification,
+            # Semantic decision fields consumed by the production parity intake
+            # when it persists the account case (p2-109 Phase B).
+            "route": decision.route,
+            "matched_signals": list(decision.matched_signals or []),
+            "semantic_intent": decision.semantic_intent,
+            "automation_eligibility": decision.automation_eligibility,
+            "policy_decision": decision.policy_decision,
+            "not_automated_reason": decision.not_automated_reason,
+            "risk_flags": list(decision.risk_flags or []),
+            "evidence_spans": list(decision.evidence_spans or []),
+            "stage_attempts": list(getattr(result, "stage_attempts", None) or []),
         }
         automation_payload = {
             "eligible": bool(classification.get("handler_binding_status") in {"active", "completed"}),

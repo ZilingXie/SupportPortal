@@ -41,6 +41,27 @@ from backend.services.automation_side_effects import SideEffectError, execute_si
 from backend.services.route_client import RouteServiceError, call_route
 
 
+_TICKET_REPOSITORY: Any = None
+
+
+def _ticket_repository() -> Any:
+    """Lazy account-case repository bound to the split production schema."""
+    global _TICKET_REPOSITORY
+    if _TICKET_REPOSITORY is None:
+        from backend.repositories.ticket_repository import PostgresTicketRepository
+
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        if not dsn:
+            raise RuntimeError("TICKET_DB_DSN is required for the parity pipeline")
+        _TICKET_REPOSITORY = PostgresTicketRepository(
+            dsn=dsn,
+            schema=(os.getenv("TICKET_DB_SCHEMA") or "supportportal_production").strip()
+            or "supportportal_production",
+            application_name="supportportal-automation-production",
+        )
+    return _TICKET_REPOSITORY
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -128,22 +149,31 @@ def create_app() -> FastAPI:
         except RouteServiceError as exc:
             failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": "failed", "failure_code": exc.code, "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "created_at": _now()})
             raise HTTPException(status_code=502, detail={"code": exc.code, "execution": failed}) from exc
-        preparation_status = str(route_result.action_plan.get("preparation_status") or "").strip()
-        route_eligible = bool(route_result.automation.get("eligible")) and preparation_status == "prepared"
-        if not route_eligible:
-            status = "human_review" if preparation_status == "human_review" else "failed"
-            failure_code = None if status == "human_review" else "route_preparation_failed"
-            record = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": status, "failure_code": failure_code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "side_effects": [], "created_at": _now()})
-            if status == "failed":
-                raise HTTPException(status_code=502, detail={"code": failure_code, "execution": record})
-            return {"status": status, "environment": environment.value, "execution": record}
-        delivery_ledger = pending_delivery_ledger(
-            environment=environment.value,
-            request_id=request.request_id,
-            ticket_id=str(request.zendesk_ticket_id or "").strip(),
-            visibility=visibility,
-            target_status=str(os.getenv("AUTOMATION_TARGET_TICKET_STATUS") or "").strip().lower(),
-        )
+        # Old-stack /production semantics (p2-109 Phase B): classification from
+        # the bound Route service, then the account-intake pipeline (field
+        # extraction, internal email handoff, reply jobs, ownership gate,
+        # human-queue escalation, Engineer Case) runs against the split
+        # production schema. No immediate Zendesk comment/status side effects.
+        from backend.services.automation_account_intake import run_production_account_intake
+
+        route_payload = dict(route_result.route or {})
+        route_decision = {
+            "scope_label": route_payload.get("scope_label"),
+            "route_family": route_payload.get("route_family"),
+            "execution_action": route_payload.get("execution_action") or route_payload.get("route"),
+            "reason": route_payload.get("reason"),
+            "confidence": route_payload.get("confidence"),
+            "matched_signals": route_payload.get("matched_signals") or [],
+            "semantic_intent": route_payload.get("semantic_intent"),
+            "automation_eligibility": route_payload.get("automation_eligibility"),
+            "policy_decision": route_payload.get("policy_decision"),
+            "not_automated_reason": route_payload.get("not_automated_reason"),
+            "risk_flags": route_payload.get("risk_flags") or [],
+            "evidence_spans": route_payload.get("evidence_spans") or [],
+            "router_source": route_payload.get("router_source"),
+            "stage_attempts": route_payload.get("stage_attempts"),
+        }
+        repository = _ticket_repository()
         store.save({
             "request_id": request.request_id,
             "case_id": request.case_id,
@@ -152,38 +182,61 @@ def create_app() -> FastAPI:
             "route_result": route_result.model_dump(mode="json"),
             "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None},
             "side_effects": [],
-            "delivery_ledger": delivery_ledger,
             "created_at": _now(),
         })
         try:
-            side_effects = await asyncio.to_thread(
-                execute_side_effects,
-                environment=environment,
+            outcome = await run_production_account_intake(
+                repository=repository,
+                subject=request.subject,
+                question=request.question,
+                ticket_id=str(request.zendesk_ticket_id or request.case_id or "").strip(),
+                zendesk_ticket_id=request.zendesk_ticket_id,
+                customer_email=request.customer_email,
+                customer_name=request.customer_name,
+                source=None,
+                route_decision=route_decision,
+                route_classification=dict(route_payload.get("classification") or {}),
+                route_prompt_snapshots=dict(route_result.prompt_snapshots or {}),
+                zendesk_side_effects_enabled=str(os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or "").strip() == "1",
                 case_id=request.case_id,
-                ticket_id=str(request.zendesk_ticket_id or "").strip(),
-                route=route_result.route,
-                reply_body=str(route_result.action_plan.get("reply_body") or ""),
-                visibility=visibility,
-                delivery_ledger=delivery_ledger,
             )
-        except RouteServiceError as exc:
-            raise HTTPException(status_code=502, detail=exc.code) from exc
-        except SideEffectError as exc:
-            failure_status = "outcome_unknown" if exc.outcome_unknown else "failed"
-            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": failure_status, "failure_code": exc.code, "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "side_effects": exc.completed_operations, "delivery_ledger": merge_delivery_ledger(delivery_ledger, exc.completed_operations, outcome_unknown=exc.outcome_unknown), "created_at": _now()})
-            raise HTTPException(status_code=502, detail={"code": exc.code, "execution": failed}) from exc
+        except Exception as exc:
+            failed = store.save({"request_id": request.request_id, "case_id": request.case_id, "status": "failed", "failure_code": "automation_pipeline_error", "route_result": route_result.model_dump(mode="json"), "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None}, "request": request_record, "side_effects": [], "created_at": _now()})
+            raise HTTPException(status_code=502, detail={"code": "automation_pipeline_error", "detail": str(exc), "execution": failed}) from exc
+        response_status = str(outcome.get("response_status") or "")
+        status = "human_review" if response_status == "human_review_required" else "completed"
         record = store.save({
             "request_id": request.request_id,
             "case_id": request.case_id,
             "request": request_record,
-            "status": "completed",
+            "status": status,
+            "failure_code": outcome.get("execution_reason_code"),
             "route_result": route_result.model_dump(mode="json"),
-            "policy": {"environment": environment.value, "comment_visibility": visibility.value if visibility else None, "ownership": policy.performs_ownership, "status": policy.performs_status, "zendesk_delivery": True},
-            "side_effects": side_effects,
-            "delivery_ledger": merge_delivery_ledger(delivery_ledger, side_effects),
+            "policy": {
+                "environment": environment.value,
+                "comment_visibility": visibility.value if visibility else None,
+                "ownership": policy.performs_ownership,
+                "zendesk_delivery": True,
+                "pipeline": "account_intake_parity",
+            },
+            "side_effects": [],
+            "intake_outcome": {
+                key: outcome.get(key)
+                for key in (
+                    "response_status",
+                    "route",
+                    "automation_handler",
+                    "execution_reason_code",
+                    "engineer_case_id",
+                    "internal_email_send_status",
+                    "internal_email_send_reason",
+                    "route_status",
+                )
+            },
+            "reply_job": outcome.get("reply_job"),
             "created_at": _now(),
         })
-        return {"status": "completed", "environment": environment.value, "execution": record}
+        return {"status": status, "environment": environment.value, "execution": record}
 
     @app.get("/v1/executions", dependencies=[Depends(_require_execution_token)])
     async def list_executions(
