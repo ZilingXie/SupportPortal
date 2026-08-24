@@ -36,12 +36,29 @@
       "position": [-170, 0]
     },
     {
-      "parameters": {"operation": "executeQuery", "query": "WITH binding AS (SELECT engineer_case_id FROM public.n8n_supportportal_engineer_slack_threads WHERE slack_team_id=$2 AND slack_channel_id=$3 AND slack_thread_ts=$4 AND active=TRUE), inserted AS (INSERT INTO public.n8n_supportportal_engineer_slack_inbound_events(inbound_id,inbound_kind,engineer_case_id,slack_user_id) SELECT $1,'interaction',engineer_case_id,$5 FROM binding ON CONFLICT(inbound_id) DO NOTHING RETURNING engineer_case_id) SELECT COALESCE((SELECT engineer_case_id FROM inserted),'') engineer_case_id,EXISTS(SELECT 1 FROM inserted) forward;", "options": {"queryReplacement": "={{ [$('Verify And Filter Interaction').first().json.interaction_id,$('Verify And Filter Interaction').first().json.team_id,$('Verify And Filter Interaction').first().json.channel_id,$('Verify And Filter Interaction').first().json.thread_ts,$('Verify And Filter Interaction').first().json.slack_user_id] }}"}},
+      "parameters": {"url": "REPLACE_WITH_SUPPORTPORTAL_BASE_URL/api/integrations/slack/engineer-cases/thread-bindings/resolve", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendQuery": true, "queryParameters": {"parameters": [{"name": "team_id", "value": "={{ $('Verify And Filter Interaction').first().json.team_id }}"}, {"name": "channel_id", "value": "={{ $('Verify And Filter Interaction').first().json.channel_id }}"}, {"name": "thread_ts", "value": "={{ $('Verify And Filter Interaction').first().json.thread_ts }}"}]}, "options": {}},
+      "id": "e4000000-0000-4000-8000-000000000009",
+      "name": "Resolve Active Binding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [70, -40],
+      "credentials": {"httpHeaderAuth": {"id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID", "name": "SupportPortal n8n Header Auth"}}
+    },
+    {
+      "parameters": {"conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ $json.status }}", "rightValue": "bound", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}, "options": {}},
+      "id": "e4000000-0000-4000-8000-000000000010",
+      "name": "Bound Case Thread",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [310, -40]
+    },
+    {
+      "parameters": {"operation": "executeQuery", "query": "WITH inserted AS (INSERT INTO public.n8n_supportportal_engineer_slack_inbound_events(inbound_id,inbound_kind,engineer_case_id,slack_user_id) VALUES ($1,'interaction',$2,$3) ON CONFLICT(inbound_id) DO NOTHING RETURNING engineer_case_id) SELECT COALESCE((SELECT engineer_case_id FROM inserted),'') engineer_case_id,EXISTS(SELECT 1 FROM inserted) forward;", "options": {"queryReplacement": "={{ [$('Verify And Filter Interaction').first().json.interaction_id,$('Resolve Active Binding').first().json.engineer_case_id,$('Verify And Filter Interaction').first().json.slack_user_id] }}"}},
       "id": "e4000000-0000-4000-8000-000000000005",
       "name": "Claim Bound Interaction",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [70, -40],
+      "position": [550, -40],
       "credentials": {"postgres": {"id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID", "name": "SupportPortal n8n PostgreSQL"}}
     },
     {
@@ -50,7 +67,7 @@
       "name": "Forward Once",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [310, -40]
+      "position": [790, -40]
     },
     {
       "parameters": {"respondWith": "json", "responseBody": "={{ {ok:true} }}", "options": {}},
@@ -58,7 +75,7 @@
       "name": "ACK Claimed Interaction",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [310, -150]
+      "position": [790, -150]
     },
     {
       "parameters": {"method": "POST", "url": "REPLACE_WITH_SUPPORTPORTAL_BASE_URL/api/integrations/slack/engineer-cases/actions", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify({interaction_id:$('Verify And Filter Interaction').first().json.interaction_id,engineer_case_id:$json.engineer_case_id,slack_user_id:$('Verify And Filter Interaction').first().json.slack_user_id,action:$('Verify And Filter Interaction').first().json.action,investigation_id:$('Verify And Filter Interaction').first().json.investigation_id,draft_version:$('Verify And Filter Interaction').first().json.draft_version,guardrail_id:$('Verify And Filter Interaction').first().json.guardrail_id,guardrail_version:$('Verify And Filter Interaction').first().json.guardrail_version}) }}", "options": {}},
@@ -66,14 +83,16 @@
       "name": "Send Action To SupportPortal",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [560, -100],
+      "position": [1040, -100],
       "credentials": {"httpHeaderAuth": {"id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID", "name": "SupportPortal n8n Header Auth"}}
     }
   ],
   "connections": {
     "Slack Interaction Webhook": {"main": [[{"node": "Verify And Filter Interaction", "type": "main", "index": 0}]]},
     "Verify And Filter Interaction": {"main": [[{"node": "Eligible Interaction", "type": "main", "index": 0}]]},
-    "Eligible Interaction": {"main": [[{"node": "Claim Bound Interaction", "type": "main", "index": 0}], [{"node": "ACK Rejected Interaction", "type": "main", "index": 0}]]},
+    "Eligible Interaction": {"main": [[{"node": "Resolve Active Binding", "type": "main", "index": 0}], [{"node": "ACK Rejected Interaction", "type": "main", "index": 0}]]},
+    "Resolve Active Binding": {"main": [[{"node": "Bound Case Thread", "type": "main", "index": 0}]]},
+    "Bound Case Thread": {"main": [[{"node": "Claim Bound Interaction", "type": "main", "index": 0}], [{"node": "ACK Rejected Interaction", "type": "main", "index": 0}]]},
     "Claim Bound Interaction": {"main": [[{"node": "ACK Claimed Interaction", "type": "main", "index": 0}]]},
     "ACK Claimed Interaction": {"main": [[{"node": "Forward Once", "type": "main", "index": 0}]]},
     "Forward Once": {"main": [[{"node": "Send Action To SupportPortal", "type": "main", "index": 0}], []]}

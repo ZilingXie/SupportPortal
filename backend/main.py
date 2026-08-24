@@ -79,10 +79,10 @@ from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_slack_n8n import account_slack_n8n_configured
-from backend.services.engineer_slack_n8n import (
+from backend.services.engineer_slack import (
     build_engineer_case_opened_event,
     build_engineer_case_thread_event,
-    engineer_slack_n8n_configured,
+    engineer_slack_configured,
 )
 from backend.services.account_billing_handlers import (
     account_billing_handler,
@@ -4231,9 +4231,9 @@ def _health_config_warnings() -> list[str]:
     if (
         str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower()
         == "production"
-        and not engineer_slack_n8n_configured()
+        and not engineer_slack_configured()
     ):
-        warnings.add("engineer_slack_n8n_config_incomplete")
+        warnings.add("engineer_slack_config_incomplete")
     return sorted(warnings)
 
 
@@ -13844,6 +13844,40 @@ async def post_investigation_message(
 
 _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE = "slack_engineer_case_message"
 _SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE = "slack_engineer_case_action"
+
+
+@app.get(
+    "/api/integrations/slack/engineer-cases/thread-bindings/resolve",
+    dependencies=[Depends(require_n8n_request_token)],
+)
+async def resolve_slack_engineer_case_thread_binding(
+    team_id: str = Query(min_length=1, max_length=128),
+    channel_id: str = Query(min_length=1, max_length=128),
+    thread_ts: str = Query(min_length=1, max_length=128),
+) -> dict[str, Any]:
+    configured_team_id = str(os.getenv("ENGINEER_SLACK_TEAM_ID") or "").strip()
+    configured_channel_id = str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip()
+    if not configured_team_id or not configured_channel_id:
+        raise HTTPException(status_code=503, detail="Engineer Slack destination is not configured")
+    if not (
+        hmac.compare_digest(team_id.strip(), configured_team_id)
+        and hmac.compare_digest(channel_id.strip(), configured_channel_id)
+    ):
+        return {"status": "ignored_unbound"}
+    binding = await async_to_thread(
+        ticket_repository.resolve_engineer_slack_thread_binding,
+        slack_channel_id=configured_channel_id,
+        slack_thread_ts=thread_ts.strip(),
+    )
+    if not isinstance(binding, dict):
+        return {"status": "ignored_unbound"}
+    return {
+        "status": "bound",
+        "engineer_case_id": str(binding.get("engineer_case_id") or "").strip(),
+        "team_id": configured_team_id,
+        "channel_id": configured_channel_id,
+        "thread_ts": str(binding.get("slack_thread_ts") or "").strip(),
+    }
 
 
 @app.post(

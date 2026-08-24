@@ -4,10 +4,10 @@
   "title": "通过 Slack 向工程师送达 Round Robin 派单",
   "status": "active",
   "owner": "unassigned",
-  "summary": "通过 n8n 固定 Slack Channel/thread 将 Production Non automated Engineer Case、工程师指导、AI 草稿、两阶段批准和 Zendesk 发布结果形成闭环。",
-  "next_action": "导入并激活 n8n 四个 Engineer Slack workflow，配置唯一 Team/Channel/Credential 后完成真实 thread、两阶段批准和 Zendesk public readback 验收。",
+  "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel 并持久化 thread binding；n8n 只负责固定 Team/Channel/thread 的入站校验、幂等和 AI 转发。",
+  "next_action": "部署 direct Slack 配置并激活两个 n8n inbound workflow，随后用新的 Production Non automated Case 完成真实 thread、两阶段批准和 Zendesk public readback 验收。",
   "acceptance_criteria": [
-    "Production Non automated Case 只在 n8n 配置的固定 Slack Channel 创建一个 thread。",
+    "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
     "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
     "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。"
   ],
@@ -15,17 +15,17 @@
   "evidence": [
     {
       "type": "test",
-      "summary": "Engineer Slack service, API, worker, n8n workflow contracts and Zendesk delivery tests passed; affected regression passed with ENGINEER_MULTI_AGENT_ENABLED=true.",
-      "ref": "backend/tests/test_engineer_slack_n8n.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_worker.py"
+      "summary": "Latest-main regression passed with direct Slack sender, event-backed binding, fail-closed worker, resolver API, inbound-only n8n workflows, intake, Workspace, Zendesk delivery, repository and deployment coverage: 583 tests and 37 subtests.",
+      "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_investigation_flow.py, backend/tests/test_account_intake.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
     },
     {
       "type": "document",
-      "summary": "Added redacted n8n POST/STATUS/app-mention/interaction exports, binding SQL and runbook; fixed Team/Channel ownership remains n8n-only.",
+      "summary": "Retained only redacted app-mention/interaction n8n exports and inbound ledger SQL; SupportPortal owns direct outbound and durable thread bindings.",
       "ref": "docs/integrations/n8n/"
     },
     {
       "type": "decision",
-      "summary": "Live acceptance is pending approved Slack Team ID, Channel ID, bot credential and production Zendesk test ticket; no secrets are stored in SupportPortal.",
+      "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are known; live acceptance remains pending deployment, n8n inbound activation and a new Production Zendesk test ticket. No secret is tracked.",
       "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
     }
   ],
@@ -33,7 +33,7 @@
     "docs/roadmap.html#lanes"
   ],
   "created_at": "2026-08-16",
-  "updated_at": "2026-08-17",
+  "updated_at": "2026-08-24",
   "history": [
     {
       "at": "2026-08-16",
@@ -54,6 +54,11 @@
       "at": "2026-08-24",
       "event": "started",
       "summary": "按批准方案开始实施 Production Non automated Engineer Case 的固定 Slack Channel/thread 双向协作与审批发布闭环。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "architecture_updated",
+      "summary": "按用户确认调整为 SupportPortal 直接发送 Slack、n8n 仅控制入站消息与交互。"
     }
   ],
   "legacy_refs": [

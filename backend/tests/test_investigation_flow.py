@@ -4501,6 +4501,88 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(extra.status_code, 422, extra.text)
         self.assertEqual(bad_token.status_code, 401, bad_token.text)
 
+    def test_slack_thread_binding_resolver_requires_fixed_destination_and_active_case(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-SLACK-BINDING",
+            status="investigating",
+            active_investigation={
+                "id": "TK-SLACK-BINDING-1-round-1",
+                "state": "active",
+                "trigger_reason": "not_automated",
+                "trigger_source": "account_not_automated",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-08-24T00:00:00+00:00",
+                "updated_at": "2026-08-24T00:00:00+00:00",
+                "messages": [],
+            },
+        )
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-BINDING-1",
+            case_sequence=1,
+            title="Binding test",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        root_event = main.build_engineer_case_opened_event(
+            account_case={
+                "account_case_id": "AC-SLACK-BINDING",
+                "zendesk_ticket_id": "12968",
+                "title": "Binding test",
+                "question": "Resolve this thread.",
+            },
+            engineer_case=engineer_case,
+        )
+        self.repository.save_engineer_case(engineer_case, slack_events=[root_event])
+        self.repository.complete_engineer_slack_event(
+            event_id=root_event["event_id"],
+            status="delivered",
+            failure_code=None,
+            completed_at="2026-08-24T00:01:00+00:00",
+            slack_channel_id="C-BOUND",
+            slack_message_ts="100.200",
+            slack_thread_ts="100.200",
+        )
+        endpoint = "/api/integrations/slack/engineer-cases/thread-bindings/resolve"
+        env = {
+            "n8n_request_token": "slack-token",
+            "ENGINEER_SLACK_TEAM_ID": "T-BOUND",
+            "ENGINEER_SLACK_CHANNEL_ID": "C-BOUND",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            missing_token = self.client.get(
+                endpoint,
+                params={"team_id": "T-BOUND", "channel_id": "C-BOUND", "thread_ts": "100.200"},
+            )
+            wrong_channel = self.client.get(
+                endpoint,
+                headers={"X-N8n-Request-Token": "slack-token"},
+                params={"team_id": "T-BOUND", "channel_id": "C-WRONG", "thread_ts": "100.200"},
+            )
+            bound = self.client.get(
+                endpoint,
+                headers={"X-N8n-Request-Token": "slack-token"},
+                params={"team_id": "T-BOUND", "channel_id": "C-BOUND", "thread_ts": "100.200"},
+            )
+
+            engineer_case["investigation_state"] = "closed"
+            engineer_case["closed_at"] = "2026-08-24T00:02:00+00:00"
+            self.repository.save_engineer_case(engineer_case)
+            closed = self.client.get(
+                endpoint,
+                headers={"X-N8n-Request-Token": "slack-token"},
+                params={"team_id": "T-BOUND", "channel_id": "C-BOUND", "thread_ts": "100.200"},
+            )
+
+        self.assertEqual(missing_token.status_code, 401, missing_token.text)
+        self.assertEqual(wrong_channel.json(), {"status": "ignored_unbound"})
+        self.assertEqual(bound.status_code, 200, bound.text)
+        self.assertEqual(bound.json()["engineer_case_id"], "TK-SLACK-BINDING-1")
+        self.assertEqual(closed.json(), {"status": "ignored_unbound"})
+
     def test_slack_message_invalidates_old_buttons_when_draft_text_is_unchanged(self) -> None:
         ticket = self._seed_ticket(ticket_id="TK-SLACK-SAME-DRAFT", status="investigating")
         engineer_case = build_new_engineer_case(
