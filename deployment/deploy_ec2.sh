@@ -707,7 +707,7 @@ split_environment_config() {
       SPLIT_RESOURCE_ID="production"
       SPLIT_TOKEN_KEY="ROUTE_PRODUCTION_SERVICE_TOKEN"
       SPLIT_EXECUTION_TOKEN_KEY="n8n_request_token"
-      SPLIT_SERVICES=(route_production automation_production)
+      SPLIT_SERVICES=(route_production automation_production automation_production_worker)
       ;;
     route-staging)
       SPLIT_ROUTE_SERVICE="route_staging"
@@ -846,6 +846,15 @@ deploy_split_environment() {
   if [[ "${environment}" == "production" || "${environment}" == "route-production" ]]; then
     [[ "${DEPLOY_PRODUCTION_APPROVED:-0}" == "1" ]] || fail "Production split deployment requires DEPLOY_PRODUCTION_APPROVED=1"
   fi
+  if [[ "${environment}" == "production" ]]; then
+    app_runtime_image="$(resolve_env_value APP_RUNTIME_IMAGE)"
+    [[ -n "${app_runtime_image}" ]] || fail "APP_RUNTIME_IMAGE is required for automation_production_worker"
+    AUTOMATION_PRODUCTION_DB_DSN="${db_value}" \
+    AUTOMATION_PRODUCTION_DB_SCHEMA="${db_schema}" \
+    TICKET_DB_MIGRATION_DSN="$(resolve_env_value TICKET_DB_MIGRATION_DSN)" \
+    PGVECTOR_DSN="$(resolve_env_value PGVECTOR_DSN)" \
+    bash "${SCRIPT_DIR}/bootstrap_automation_production_schema.sh"
+  fi
   ensure_automation_networks
   ensure_nginx_automation_edge_network
   log "Deploying split environment ${environment} as project ${SPLIT_PROJECT_NAME} with route=${route_image} automation=${automation_image:-n/a}"
@@ -873,6 +882,19 @@ wait_for_split_service() {
   local retry_interval_seconds="$3"
   local start_ts current_ts elapsed
   start_ts="$(date +%s)"
+  if [[ "${service}" == *_worker ]]; then
+    # Workers expose no HTTP health endpoint; a running container means the
+    # process passed RUNTIME_SCHEMA_MODE=check and entered its poller loops.
+    while true; do
+      if [[ -n "$(docker compose "${SPLIT_COMPOSE_ARGS[@]}" ps --status running --quiet "${service}" 2>/dev/null)" ]]; then
+        return 0
+      fi
+      current_ts="$(date +%s)"
+      elapsed=$((current_ts - start_ts))
+      (( elapsed >= timeout_seconds )) && return 1
+      sleep "${retry_interval_seconds}"
+    done
+  fi
   while true; do
     if docker compose "${SPLIT_COMPOSE_ARGS[@]}" exec -T "${service}" python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)' >/dev/null 2>&1 || \
        docker compose "${SPLIT_COMPOSE_ARGS[@]}" exec -T "${service}" python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8100/health", timeout=3)' >/dev/null 2>&1; then

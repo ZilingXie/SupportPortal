@@ -271,6 +271,9 @@ fi
 validate_release_id "$RELEASE"
 load_release_manifest
 load_production_resource_identity
+app_runtime_image="$(resolve_env_value APP_RUNTIME_IMAGE)"
+[[ -n "$app_runtime_image" ]] || fail 'APP_RUNTIME_IMAGE is required for the automation production worker'
+docker image inspect "$app_runtime_image" >/dev/null 2>&1 || fail "APP_RUNTIME_IMAGE not present locally: $app_runtime_image"
 ensure_nginx_runtime_mount
 if [[ "$SKIP_HEALTH" == 0 ]]; then
   nginx_host_port="$(resolve_env_value NGINX_HOST_PORT)"
@@ -372,9 +375,19 @@ if [[ "$SKIP_HEALTH" == 0 ]]; then
 fi
 printf 'target=%s\nproject=%s\noverride=%s\nroute=%s\nautomation=%s\nprevious_target=%s\nprevious_project=%s\nprevious_override=%s\nprevious_route=%s\nprevious_automation=%s\nrelease=%s\nprevious_release=%s\ntime=%s\n' \
   "$automation" "$project" "$override" "$route" "$automation" "$old_target" "$old_project" "$old_override" "$old_route" "$old_automation" "$RELEASE" "$old_release" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
+# The parity worker follows the main app image train, not the automation
+# release manifest: recreate it in the split project against the validated
+# APP_RUNTIME_IMAGE. Reply-job claims keep the brief overlap safe.
+log "Recreating split production worker against ${app_runtime_image}"
+APP_RUNTIME_IMAGE="$app_runtime_image" docker compose \
+  --project-name supportportal-automation-production \
+  --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" \
+  --profile automation \
+  up -d --no-build --no-deps automation_production_worker
 if [[ -n "$old_project" && "$old_project" != "$project" ]]; then
   log "Draining old project $old_project for ${DRAIN_SECONDS}s"
   sleep "$DRAIN_SECONDS"
   stop_candidate "$old_project" "${old_override:-${COMPOSE_FILE}}" "$old_route" "$old_automation"
 fi
-log "Candidate $RELEASE is active; /production was not restarted."
+log "Candidate $RELEASE is active; /production was not restarted. Split worker recreated against ${app_runtime_image}."

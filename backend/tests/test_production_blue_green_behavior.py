@@ -26,6 +26,7 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
         (self.project / ".env").write_text(
             "TICKET_DB_DSN=postgresql://ticket\n"
             "PRODUCTION_TICKET_DB_DSN=postgresql://production\n"
+            "APP_RUNTIME_IMAGE=localhost/supportportal-app:test\n"
             "NGINX_HOST_PORT=18080\n"
         )
         (self.project / "deployment" / "nginx" / "runtime" / "automation_production_active.conf").write_text(
