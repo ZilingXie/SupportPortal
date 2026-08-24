@@ -88,7 +88,9 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
             "candidate was left running for immediate inspection",
             "--rollback",
             "no request was replayed",
-            "APP_RUNTIME_IMAGE is required for the automation production worker",
+            "resolve_app_runtime_image",
+            "Resolved APP_RUNTIME_IMAGE from the official api container",
+            "does not match release commit",
             "up -d --no-build --no-deps automation_production_worker",
         ):
             self.assertIn(marker, script)

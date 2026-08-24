@@ -16,6 +16,7 @@ RELEASE="${BLUE_GREEN_RELEASE:-$(date -u +%Y%m%d%H%M%S)}"
 ACTION=deploy
 DRAIN_SECONDS="${BLUE_GREEN_DRAIN_SECONDS:-360}"
 SKIP_HEALTH=0
+RESOLVED_APP_RUNTIME_IMAGE=""
 
 log() { printf '[blue-green] %s\n' "$*"; }
 fail() { printf '[blue-green] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -133,6 +134,23 @@ load_production_resource_identity() {
   export AUTOMATION_PRODUCTION_DB_TABLE="${table:-automation_executions_production}"
   export AUTOMATION_PRODUCTION_QUEUE="${queue:-automation.production}"
   export AUTOMATION_PRODUCTION_EVENT_CHANNEL="${channel:-automation.events.production}"
+}
+
+resolve_app_runtime_image() {
+  local image container build_ref
+  image="$(resolve_env_value APP_RUNTIME_IMAGE)"
+  if [[ -z "$image" ]]; then
+    container="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q api | sed -n '1p')"
+    [[ -n "$container" ]] || fail 'APP_RUNTIME_IMAGE is unset and the official api container is not running'
+    image="$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true)"
+    [[ -n "$image" ]] || fail 'Unable to resolve APP_RUNTIME_IMAGE from the official api container'
+    build_ref="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" 2>/dev/null \
+      | awk -F= '$1 == "APP_BUILD_REF" {sub("^[^=]*=", "", $0); print; exit}')"
+    [[ "$build_ref" == "$ROUTE_PRODUCTION_BUILD_REF" ]] || fail "official api build ref ${build_ref:-missing} does not match release commit $ROUTE_PRODUCTION_BUILD_REF"
+    log "Resolved APP_RUNTIME_IMAGE from the official api container: $image"
+  fi
+  docker image inspect "$image" >/dev/null 2>&1 || fail "APP_RUNTIME_IMAGE not present locally: $image"
+  RESOLVED_APP_RUNTIME_IMAGE="$image"
 }
 
 compose() {
@@ -271,9 +289,8 @@ fi
 validate_release_id "$RELEASE"
 load_release_manifest
 load_production_resource_identity
-app_runtime_image="$(resolve_env_value APP_RUNTIME_IMAGE)"
-[[ -n "$app_runtime_image" ]] || fail 'APP_RUNTIME_IMAGE is required for the automation production worker'
-docker image inspect "$app_runtime_image" >/dev/null 2>&1 || fail "APP_RUNTIME_IMAGE not present locally: $app_runtime_image"
+resolve_app_runtime_image
+app_runtime_image="$RESOLVED_APP_RUNTIME_IMAGE"
 ensure_nginx_runtime_mount
 if [[ "$SKIP_HEALTH" == 0 ]]; then
   nginx_host_port="$(resolve_env_value NGINX_HOST_PORT)"
