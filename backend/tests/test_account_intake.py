@@ -820,7 +820,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "human_review_required")
-        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["route_status"], "not_automated")
         self.assertEqual(payload["failure_stage"], "reply_job")
         self.assertEqual(payload["failure_code"], "account_reply_job_creation_failed")
         self.assertEqual(payload["execution_reason_code"], "account_reply_job_creation_failed")
@@ -864,7 +864,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["automation_status"], "human_review_required")
-        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["route_status"], "not_automated")
         self.assertEqual(payload["failure_stage"], "reply_job")
         self.assertEqual(payload["failure_code"], "account_reply_job_creation_failed")
         self.assertIsNone(payload["ai_reply_status"])
@@ -872,7 +872,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         stored = self.repository.get_account_case(created["account_case_id"])
         assert stored is not None
         self.assertEqual(stored["route"], "enablement")
-        self.assertEqual(stored["route_status"], "automated")
+        self.assertEqual(stored["route_status"], "not_automated")
         self.assertEqual(stored["automation_status"], "human_review_required")
 
     def test_account_case_view_preserves_account_billing_automation_category(self) -> None:
@@ -3172,7 +3172,7 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["route_status"], "automated")
+        self.assertEqual(payload["route_status"], "not_automated")
         self.assertEqual(payload["route_family"], "automated")
         self.assertEqual(payload["category"], "backend_operation")
         self.assertEqual(payload["subcategory"], "enablement")
@@ -4399,7 +4399,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["account_case_id"], payload["account_case_id"])
         self.assertEqual(bt["category"], "backend_operation")
         self.assertEqual(bt["subcategory"], "enablement")
-        self.assertEqual(bt["route_status"], "automated")
+        self.assertEqual(bt["route_status"], "not_automated")
         self.assertEqual(bt["automation_handler"], "enablement")
         self.assertEqual(bt["execution_action"], "enablement")
         self.assertEqual(bt["route"], "enablement")
@@ -6427,7 +6427,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         reply_payload = reply_response.json()
         self.assertEqual(reply_payload["status"], "human_review_required")
         self.assertEqual(reply_payload["automation_status"], "human_review_required")
-        self.assertEqual(reply_payload["route_status"], "automated")
+        self.assertEqual(reply_payload["route_status"], "not_automated")
         self.assertEqual(reply_payload["missing_fields"], [])
         self.assertEqual(reply_payload["customer_reply"], None)
         self.assertIsNone(reply_payload["ai_reply_status"])

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:44:14Z",
-  "source_base_commit": "f8a2139663bcb9317513a98e85e189260ad6a464",
-  "registry_digest": "accc2441d987cfa620cc50dcc6d63ddb78959b0325194cf9d8830792f449c1b6",
+  "generated_at": "2026-08-24T10:47:48Z",
+  "source_base_commit": "daaccdca05098ba0fe4adcbc2f911d1120d0038f",
+  "registry_digest": "25f77deca7b6e82d5b2ea03d4f66eae872c0927931005c07c73b8030e0426635",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -625,6 +625,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Shared Account escalation handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
+          "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
+        },
+        {
+          "type": "test",
           "label": "Reply RAG fallback service and intake regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
           "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
@@ -960,6 +966,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 744,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
           "label": "PR #744"
+        },
+        {
+          "type": "test",
+          "label": "Account Human Review queue handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
+          "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
         },
         {
           "type": "pr",
@@ -3179,10 +3191,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "summary": "增加 AI 故障告警和人工接管机制。",
       "next_action": "",
       "acceptance_criteria": [
-        "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。"
+        "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。",
+        "fraud_account、enablement、detailed_invoice 和 account_suspension 的 Production fallback 通过共享 escalation service 写 Zendesk private internal note、释放 AI ownership 并 route back 到原始 queue；note/route 独立记录失败和 outcome_unknown，staging/preproduction 无 Zendesk side effect。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Account Human Review queue handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
+          "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
+        },
         {
           "type": "pr",
           "number": 744,
@@ -3194,7 +3213,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-17",
+      "updated_at": "2026-08-24",
       "history": [
         {
           "at": "2026-08-16",
@@ -3210,6 +3229,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-15 迁移为 p1-15；迁移到 phase-1 / account-automation / human-review。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "account_human_review_queue_handoff",
+          "summary": "四类 active Account automation fallback 统一进入 Human Review：Production 写 private internal note、route back 原始 Zendesk queue、释放 AI ownership、取消 pending reply jobs 并保留 alert/audit；staging/preproduction 仅本地状态。"
         }
       ],
       "legacy_refs": [
@@ -9263,6 +9287,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈和 EC2 api_production 容器验证。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Shared Account escalation handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
+          "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
+        },
         {
           "type": "test",
           "label": "Reply RAG fallback service and intake regression",
