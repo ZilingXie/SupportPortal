@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T07:07:01Z",
-  "source_base_commit": "9e258b613e95398c88178e054e32405a1e7bce5c",
-  "registry_digest": "3b9a73e11526079da0b53a76cfe2126764c527313fee365ca9cecf750a983566",
+  "generated_at": "2026-08-24T08:24:45Z",
+  "source_base_commit": "2f34f8aa2d6b965529467116012e65b1b468e785",
+  "registry_digest": "55ee19589e25fdecb851d8321f7fe4de84638e9c9d2b1c239180c8a154a51269",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2111,6 +2111,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "goal": "完成认证、数据库、排班、指标、Slack 和逐步派单。",
       "acceptance_criteria": [],
       "evidence": [
+        {
+          "type": "test",
+          "summary": "Engineer Slack service, API, worker, n8n workflow contracts and Zendesk delivery tests passed; affected regression passed with ENGINEER_MULTI_AGENT_ENABLED=true.",
+          "ref": "backend/tests/test_engineer_slack_n8n.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_worker.py"
+        },
+        {
+          "type": "document",
+          "summary": "Added redacted n8n POST/STATUS/app-mention/interaction exports, binding SQL and runbook; fixed Team/Channel ownership remains n8n-only.",
+          "ref": "docs/integrations/n8n/"
+        },
+        {
+          "type": "decision",
+          "summary": "Live acceptance is pending approved Slack Team ID, Channel ID, bot credential and production Zendesk test ticket; no secrets are stored in SupportPortal.",
+          "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+        },
+        {
+          "type": "test",
+          "summary": "Production not_automated intake creates one active Engineer shell, one round-robin dispatch and one root outbox event; staging and excluded routes remain unchanged.",
+          "ref": "backend/tests/test_account_intake.py"
+        },
+        {
+          "type": "test",
+          "summary": "Intake, Engineer flow, repository, comment-sync, worker and runtime contract regressions passed; multi-agent cases require ENGINEER_MULTI_AGENT_ENABLED=true.",
+          "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
+        },
+        {
+          "type": "decision",
+          "summary": "External production Zendesk test ticket and n8n Slack configuration are not available in this workspace, so live delivery/readback remains pending.",
+          "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+        },
         {
           "type": "test",
           "label": "Account handoff Slack outbox, n8n and Zendesk independence suite",
@@ -7224,15 +7254,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-68",
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
-      "status": "planned",
+      "status": "active",
       "owner": "unassigned",
-      "summary": "Phase 2：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
-      "next_action": "Phase 2：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
+      "summary": "通过 n8n 固定 Slack Channel/thread 将 Production Non automated Engineer Case、工程师指导、AI 草稿、两阶段批准和 Zendesk 发布结果形成闭环。",
+      "next_action": "导入并激活 n8n 四个 Engineer Slack workflow，配置唯一 Team/Channel/Credential 后完成真实 thread、两阶段批准和 Zendesk public readback 验收。",
       "acceptance_criteria": [
-        "完成 Slack 维度的交付和验证。"
+        "Production Non automated Case 只在 n8n 配置的固定 Slack Channel 创建一个 thread。",
+        "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
+        "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "summary": "Engineer Slack service, API, worker, n8n workflow contracts and Zendesk delivery tests passed; affected regression passed with ENGINEER_MULTI_AGENT_ENABLED=true.",
+          "ref": "backend/tests/test_engineer_slack_n8n.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_worker.py"
+        },
+        {
+          "type": "document",
+          "summary": "Added redacted n8n POST/STATUS/app-mention/interaction exports, binding SQL and runbook; fixed Team/Channel ownership remains n8n-only.",
+          "ref": "docs/integrations/n8n/"
+        },
+        {
+          "type": "decision",
+          "summary": "Live acceptance is pending approved Slack Team ID, Channel ID, bot credential and production Zendesk test ticket; no secrets are stored in SupportPortal.",
+          "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+        }
+      ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
@@ -7253,6 +7301,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p3-22 迁移为 p2-68；迁移到 phase-2 / engineer-workspace / engineer-case-delivery。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "started",
+          "summary": "按批准方案开始实施 Production Non automated Engineer Case 的固定 Slack Channel/thread 双向协作与审批发布闭环。"
         }
       ],
       "legacy_refs": [
@@ -7274,15 +7327,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-69",
       "title": "从 10% Engineer Case 试运行逐步切换到全量派单",
-      "status": "planned",
+      "status": "active",
       "owner": "unassigned",
-      "summary": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
-      "next_action": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
+      "summary": "将新的 Production not_automated Account Case 全量创建为 Engineer Case 并进行 Round Robin 派单；human_review_required 与手动 route-back 保持原流程。",
+      "next_action": "完成 Production 测试工单的 intake readback，确认 Engineer Case、assignment 和 root Slack event 在重放下各只产生一次；随后与 p2-68 一起进行 live thread 验收。",
       "acceptance_criteria": [
-        "完成 Rollout 维度的交付和验证。"
+        "每个新的 Production not_automated Account Case 创建且仅创建一个 active Engineer Case。",
+        "重复 intake 不重复创建、派单或 Slack root event。",
+        "staging、human_review_required 和手动 route-back 不创建本流程的 Slack event。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "summary": "Production not_automated intake creates one active Engineer shell, one round-robin dispatch and one root outbox event; staging and excluded routes remain unchanged.",
+          "ref": "backend/tests/test_account_intake.py"
+        },
+        {
+          "type": "test",
+          "summary": "Intake, Engineer flow, repository, comment-sync, worker and runtime contract regressions passed; multi-agent cases require ENGINEER_MULTI_AGENT_ENABLED=true.",
+          "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
+        },
+        {
+          "type": "decision",
+          "summary": "External production Zendesk test ticket and n8n Slack configuration are not available in this workspace, so live delivery/readback remains pending.",
+          "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+        }
+      ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
@@ -7303,6 +7374,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p3-23 迁移为 p2-69；迁移到 phase-2 / engineer-workspace / engineer-case-delivery；状态从 active 调整为 planned（未开始）。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "started",
+          "summary": "按批准范围从已移除的 10% 占位切换到 Production not_automated 全量 Engineer Case 创建，明确排除 human_review_required。"
         }
       ],
       "legacy_refs": [
@@ -10718,6 +10794,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
+        "Production Non automated Case 会创建一个 active Engineer Case，由 n8n 固定 Slack Channel/thread 承载工程师 `@bot` 指导、AI 草稿、两阶段批准和 Zendesk public comment；发布一轮后 Engineer Case、派单和 thread 继续保持活跃，Zendesk 新客户评论会回到同一 thread 并触发 Engineer AI。",
         "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。"
       ],
       "planned": [

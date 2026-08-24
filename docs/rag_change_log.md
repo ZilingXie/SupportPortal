@@ -11,6 +11,24 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-08-24 - Route Production Non automated Zendesk comments into Engineer AI
+
+- Summary:
+  - Added the Production `not_automated` Engineer Case path for new Zendesk public comments: after the existing snapshot validation and idempotency claim, the customer comment is persisted to the active Engineer investigation and sent to the same n8n Slack thread with the new AI draft.
+  - Account RAG/reply-job processing remains unchanged for cases without an active Non automated Engineer Case.
+- Reason:
+  - The Slack collaboration loop needs later customer comments to remain in the same Engineer investigation instead of starting an Account automation/RAG reply path.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_account_zendesk_comment_sync.py`
+  - `backend/tests/test_investigation_flow.py`
+- Data impact:
+  - Adds Engineer investigation messages, conversation/draft version changes, and Slack outbox events for eligible customer comments.
+  - Does not change RAG documents, chunks, embeddings, vector/BM25 indexes, or prompt text.
+- Verification:
+  - `backend/tests/test_account_zendesk_comment_sync.py` targeted Engineer comment cases passed.
+  - Full affected regression passed with the repository's required `ENGINEER_MULTI_AGENT_ENABLED=true` setting for the two existing multi-agent tests.
+
 ## 2026-07-21 - Consolidate single-host runtime configuration and restart fallback
 
 - Summary:

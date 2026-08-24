@@ -1,0 +1,86 @@
+{
+  "name": "Slack App Mention -> SupportPortal Engineer",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "slack/supportportal/engineer/app-mention", "responseMode": "responseNode", "options": {"rawBody": true}},
+      "id": "e3000000-0000-4000-8000-000000000001",
+      "name": "Slack Events Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-900, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto=require('crypto');\nconst headers=$json.headers||{}; const raw=String($json.rawBody||''); const ts=String(headers['x-slack-request-timestamp']||''); const sig=String(headers['x-slack-signature']||'');\nconst secret=String($env.SUPPORTPORTAL_SLACK_SIGNING_SECRET||''); const age=Math.abs(Math.floor(Date.now()/1000)-Number(ts||0));\nconst expected='v0='+crypto.createHmac('sha256',secret).update(`v0:${ts}:${raw}`).digest('hex');\nif(!secret||age>300||sig.length!==expected.length||!crypto.timingSafeEqual(Buffer.from(sig),Buffer.from(expected))) throw new Error('invalid_slack_signature');\nconst body=typeof $json.body==='object'?$json.body:JSON.parse(raw); if(body.type==='url_verification') return [{json:{ack:{challenge:body.challenge},eligible:false}}];\nconst e=body.event||{}; const text=String(e.text||''); const cleaned=text.replace(/<@REPLACE_WITH_SLACK_BOT_USER_ID>/g,'').trim();\nconst eligible=String(body.team_id||'')==='REPLACE_WITH_SLACK_TEAM_ID' && String(e.channel||'')==='REPLACE_WITH_SLACK_CHANNEL_ID' && String(e.type||'')==='app_mention' && !!String(e.thread_ts||'') && !e.bot_id && !e.subtype && !e.edited && !e.deleted_ts && !!cleaned;\nreturn [{json:{ack:{ok:true},eligible,event_id:String(body.event_id||''),team_id:String(body.team_id||''),channel_id:String(e.channel||''),thread_ts:String(e.thread_ts||''),slack_user_id:String(e.user||''),text:cleaned,occurred_at:String(e.event_ts||'')}}];"
+      },
+      "id": "e3000000-0000-4000-8000-000000000002",
+      "name": "Verify And Filter Mention",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-660, 0]
+    },
+    {
+      "parameters": {"respondWith": "json", "responseBody": "={{ $json.ack }}", "options": {}},
+      "id": "e3000000-0000-4000-8000-000000000003",
+      "name": "ACK Rejected Mention",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [-430, -120]
+    },
+    {
+      "parameters": {"conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ $json.eligible }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}], "combinator": "and"}, "options": {}},
+      "id": "e3000000-0000-4000-8000-000000000004",
+      "name": "Eligible Mention",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {"operation": "executeQuery", "query": "WITH binding AS (SELECT engineer_case_id FROM public.n8n_supportportal_engineer_slack_threads WHERE slack_team_id=$2 AND slack_channel_id=$3 AND slack_thread_ts=$4 AND active=TRUE), inserted AS (INSERT INTO public.n8n_supportportal_engineer_slack_inbound_events(inbound_id,inbound_kind,engineer_case_id,slack_user_id) SELECT $1,'app_mention',engineer_case_id,$5 FROM binding ON CONFLICT(inbound_id) DO NOTHING RETURNING engineer_case_id) SELECT COALESCE((SELECT engineer_case_id FROM inserted),'') engineer_case_id,EXISTS(SELECT 1 FROM inserted) forward;", "options": {"queryReplacement": "={{ [$('Verify And Filter Mention').first().json.event_id,$('Verify And Filter Mention').first().json.team_id,$('Verify And Filter Mention').first().json.channel_id,$('Verify And Filter Mention').first().json.thread_ts,$('Verify And Filter Mention').first().json.slack_user_id] }}"}},
+      "id": "e3000000-0000-4000-8000-000000000005",
+      "name": "Claim Bound Mention",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [40, -40],
+      "credentials": {"postgres": {"id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID", "name": "SupportPortal n8n PostgreSQL"}}
+    },
+    {
+      "parameters": {"conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ $json.forward }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}], "combinator": "and"}, "options": {}},
+      "id": "e3000000-0000-4000-8000-000000000006",
+      "name": "Forward Once",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [280, -40]
+    },
+    {
+      "parameters": {"respondWith": "json", "responseBody": "={{ {ok:true} }}", "options": {}},
+      "id": "e3000000-0000-4000-8000-000000000008",
+      "name": "ACK Claimed Mention",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [280, -150]
+    },
+    {
+      "parameters": {"method": "POST", "url": "REPLACE_WITH_SUPPORTPORTAL_BASE_URL/api/integrations/slack/engineer-cases/messages", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify({schema_version:1,event_id:$('Verify And Filter Mention').first().json.event_id,engineer_case_id:$json.engineer_case_id,slack_user_id:$('Verify And Filter Mention').first().json.slack_user_id,text:$('Verify And Filter Mention').first().json.text,occurred_at:$('Verify And Filter Mention').first().json.occurred_at}) }}", "options": {}},
+      "id": "e3000000-0000-4000-8000-000000000007",
+      "name": "Send Message To SupportPortal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [530, -100],
+      "credentials": {"httpHeaderAuth": {"id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID", "name": "SupportPortal n8n Header Auth"}}
+    }
+  ],
+  "connections": {
+    "Slack Events Webhook": {"main": [[{"node": "Verify And Filter Mention", "type": "main", "index": 0}]]},
+    "Verify And Filter Mention": {"main": [[{"node": "Eligible Mention", "type": "main", "index": 0}]]},
+    "Eligible Mention": {"main": [[{"node": "Claim Bound Mention", "type": "main", "index": 0}], [{"node": "ACK Rejected Mention", "type": "main", "index": 0}]]},
+    "Claim Bound Mention": {"main": [[{"node": "ACK Claimed Mention", "type": "main", "index": 0}]]},
+    "ACK Claimed Mention": {"main": [[{"node": "Forward Once", "type": "main", "index": 0}]]},
+    "Forward Once": {"main": [[{"node": "Send Message To SupportPortal", "type": "main", "index": 0}], []]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "e3000000-0000-4000-8000-000000000099",
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": []
+}

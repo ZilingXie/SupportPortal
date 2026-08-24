@@ -4205,7 +4205,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["source"], "manual")
         self.assertEqual(bt["customer_reply"], None)
 
-    def test_not_automated_account_tickets_do_not_create_engineer_cases(self) -> None:
+    def test_staging_not_automated_account_tickets_do_not_create_engineer_cases(self) -> None:
         responses = []
         with patch.dict(
             os.environ,
@@ -4229,6 +4229,41 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertTrue(all(item["engineer_case_id"] is None for item in responses))
         self.assertTrue(all(item["rollout_position"] is None for item in responses))
         self.assertTrue(all(item["rollout_selected"] is False for item in responses))
+
+    def test_production_not_automated_intake_creates_one_case_dispatch_and_root_event(self) -> None:
+        assignment = Mock()
+        assignment.dispatch_case.return_value = {"engineer_case_id": "12874-1"}
+        request = {
+            "ticket_id": "TK-ENGINEER-SLACK-001",
+            "external_id": "12874",
+            "title": "General support question",
+            "question": "Can an engineer help me understand this product behavior?",
+            "source": "api",
+        }
+        with patch.dict(
+            os.environ,
+            {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"},
+            clear=False,
+        ), patch.object(main, "_engineer_assignment_service", return_value=assignment), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ):
+            first = self.client.post("/account", json=request)
+            second = self.client.post("/account", json=request)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertTrue(second.json()["idempotent_replay"])
+        self.assertEqual(first.json()["engineer_case_id"], second.json()["engineer_case_id"])
+        engineer_case_id = first.json()["engineer_case_id"]
+        self.assertEqual(engineer_case_id, "12874-1")
+        self.assertTrue(first.json()["rollout_selected"])
+        cases = self.repository.list_ticket_engineer_cases("12874")
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0]["active_investigation"]["id"], "12874-1-round-1")
+        assignment.dispatch_case.assert_called_once_with("12874-1", reason="round_robin")
+        events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["event_type"], "engineer_case_opened")
 
     def test_account_external_id_replay_does_not_recount_or_duplicate_case(self) -> None:
         request = {

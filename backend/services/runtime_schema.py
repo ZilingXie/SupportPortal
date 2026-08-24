@@ -40,6 +40,7 @@ def required_tables() -> dict[str, set[str]]:
             "support_ticket_schema_meta", "support_tickets",
             "support_ticket_events", "support_assets",
             "support_account_slack_deliveries",
+            "support_engineer_slack_events",
             "support_prompt_definitions", "support_prompt_versions",
             "support_prompt_releases", "support_prompt_release_items",
         },

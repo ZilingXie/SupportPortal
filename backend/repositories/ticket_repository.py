@@ -67,6 +67,27 @@ _ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS = (
     "failure_code",
     "confirmed_at",
     "target_status",
+    "source",
+    "engineer_case_id",
+    "investigation_id",
+    "draft_version",
+    "comments_revision",
+    "immutable_content",
+    "created_at",
+    "updated_at",
+)
+
+_LEGACY_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS = (
+    "account_case_id",
+    "message_id",
+    "zendesk_ticket_id",
+    "idempotency_key",
+    "is_public",
+    "status",
+    "zendesk_comment_id",
+    "failure_code",
+    "confirmed_at",
+    "target_status",
     "created_at",
     "updated_at",
 )
@@ -77,6 +98,16 @@ def _account_zendesk_comment_delivery_from_row(
 ) -> dict[str, Any] | None:
     if row is None:
         return None
+    if len(row) == len(_LEGACY_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS):
+        return {
+            **dict(zip(_LEGACY_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS, row)),
+            "source": "account",
+            "engineer_case_id": None,
+            "investigation_id": None,
+            "draft_version": None,
+            "comments_revision": None,
+            "immutable_content": None,
+        }
     return dict(zip(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS, row))
 
 
@@ -100,6 +131,48 @@ def _account_slack_delivery_from_row(
     if row is None:
         return None
     return dict(zip(_ACCOUNT_SLACK_DELIVERY_FIELDS, row))
+
+
+_ENGINEER_SLACK_EVENT_FIELDS = (
+    "event_id",
+    "engineer_case_id",
+    "event_type",
+    "payload",
+    "status",
+    "failure_code",
+    "confirmed_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _engineer_slack_event_from_row(
+    row: tuple[Any, ...] | None,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_ENGINEER_SLACK_EVENT_FIELDS, row))
+
+
+def _new_engineer_slack_event_record(
+    event: dict[str, Any], *, created_at: str
+) -> dict[str, Any]:
+    event_id = str(event.get("event_id") or "").strip()
+    engineer_case_id = str(event.get("engineer_case_id") or "").strip()
+    event_type = str(event.get("event_type") or "").strip()
+    if not all((event_id, engineer_case_id, event_type)):
+        raise ValueError("Engineer Slack event requires event_id, engineer_case_id, and event_type")
+    return {
+        "event_id": event_id,
+        "engineer_case_id": engineer_case_id,
+        "event_type": event_type,
+        "payload": copy.deepcopy(event),
+        "status": "queued",
+        "failure_code": None,
+        "confirmed_at": None,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
 
 
 _BILLING_RESPONSE_ACCOUNT_CASE_UPDATE_FIELDS = frozenset(
@@ -1902,7 +1975,34 @@ class TicketRepository(Protocol):
         self,
         engineer_case: dict[str, Any],
         new_messages: list[dict[str, Any]] | None = None,
+        slack_events: list[dict[str, Any]] | None = None,
+        zendesk_delivery: dict[str, Any] | None = None,
     ) -> None:
+        ...
+
+    def list_engineer_slack_events(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def claim_engineer_slack_event(
+        self, *, event_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def complete_engineer_slack_event(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def requeue_engineer_slack_event(
+        self, *, event_id: str, requeued_at: str
+    ) -> dict[str, Any] | None:
         ...
 
     def claim_engineer_case(
@@ -2419,6 +2519,12 @@ class TicketRepository(Protocol):
         created_at: str,
         is_public: bool = False,
         target_status: str | None = None,
+        source: str = "account",
+        engineer_case_id: str | None = None,
+        investigation_id: str | None = None,
+        draft_version: int | None = None,
+        comments_revision: str | None = None,
+        immutable_content: str | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -2820,11 +2926,30 @@ class InMemoryTicketRepository:
         created_at: str,
         is_public: bool = False,
         target_status: str | None = None,
+        source: str = "account",
+        engineer_case_id: str | None = None,
+        investigation_id: str | None = None,
+        draft_version: int | None = None,
+        comments_revision: str | None = None,
+        immutable_content: str | None = None,
     ) -> dict[str, Any]:
         key = (str(account_case_id).strip(), str(message_id).strip())
         normalized_target_status = str(target_status or "").strip().lower() or None
         if normalized_target_status not in (None, "solved"):
             raise ValueError("invalid Zendesk comment delivery target status")
+        normalized_source = str(source or "account").strip().lower()
+        if normalized_source not in {"account", "engineer"}:
+            raise ValueError("invalid Zendesk comment delivery source")
+        if normalized_source == "engineer" and not all(
+            (
+                str(engineer_case_id or "").strip(),
+                str(investigation_id or "").strip(),
+                int(draft_version or 0) > 0,
+                str(comments_revision or "").strip(),
+                str(immutable_content or "").strip(),
+            )
+        ):
+            raise ValueError("Engineer Zendesk delivery metadata is required")
         with self._assignment_lock:
             existing = self._account_zendesk_comment_deliveries.get(key)
             if existing is not None:
@@ -2835,6 +2960,12 @@ class InMemoryTicketRepository:
                 "idempotency_key": str(idempotency_key).strip(), "is_public": bool(is_public),
                 "status": "queued", "zendesk_comment_id": None, "failure_code": None,
                 "confirmed_at": None, "target_status": normalized_target_status,
+                "source": normalized_source,
+                "engineer_case_id": str(engineer_case_id or "").strip() or None,
+                "investigation_id": str(investigation_id or "").strip() or None,
+                "draft_version": int(draft_version) if draft_version is not None else None,
+                "comments_revision": str(comments_revision or "").strip() or None,
+                "immutable_content": str(immutable_content or "").strip() or None,
                 "created_at": created_at, "updated_at": created_at,
             }
             self._account_zendesk_comment_deliveries[key] = delivery
@@ -3523,6 +3654,7 @@ class InMemoryTicketRepository:
         self._account_reply_jobs: dict[str, dict[str, Any]] = {}
         self._account_zendesk_comment_deliveries: dict[tuple[str, str], dict[str, Any]] = {}
         self._account_slack_deliveries: dict[str, dict[str, Any]] = {}
+        self._engineer_slack_events: dict[str, dict[str, Any]] = {}
         self._account_case_comments: dict[str, dict[str, dict[str, Any]]] = {}
         self._account_case_comment_sync: dict[str, dict[str, Any]] = {}
         self._account_personas: dict[str, dict[str, Any]] = {}
@@ -5324,6 +5456,22 @@ class InMemoryTicketRepository:
         self,
         engineer_case: dict[str, Any],
         new_messages: list[dict[str, Any]] | None = None,
+        slack_events: list[dict[str, Any]] | None = None,
+        zendesk_delivery: dict[str, Any] | None = None,
+    ) -> None:
+        with self._assignment_lock:
+            self._save_engineer_case_unlocked(engineer_case, new_messages=new_messages)
+            created_at = str(engineer_case.get("updated_at") or _utc_now())
+            for event in slack_events or []:
+                record = _new_engineer_slack_event_record(event, created_at=created_at)
+                self._engineer_slack_events.setdefault(record["event_id"], record)
+            if isinstance(zendesk_delivery, dict):
+                self.create_account_zendesk_comment_delivery(**zendesk_delivery)
+
+    def _save_engineer_case_unlocked(
+        self,
+        engineer_case: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
     ) -> None:
         existing = self._engineer_cases.get(str(engineer_case.get("engineer_case_id") or "").strip())
         if isinstance(existing, dict):
@@ -5365,6 +5513,67 @@ class InMemoryTicketRepository:
                     ticket["active_engineer_case_id"] = None
             else:
                 ticket["active_engineer_case_id"] = str(saved.get("engineer_case_id") or "").strip() or None
+
+    def list_engineer_slack_events(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        allowed = {str(status).strip().lower() for status in statuses if str(status).strip()}
+        with self._assignment_lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._engineer_slack_events.values()
+                if str(row.get("status") or "").strip().lower() in allowed
+            ]
+        rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("event_id") or "")))
+        return rows[: max(1, min(int(limit), 500))]
+
+    def claim_engineer_slack_event(
+        self, *, event_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            event = self._engineer_slack_events.get(str(event_id).strip())
+            if event is None:
+                return None
+            claimed = str(event.get("status") or "").strip().lower() == "queued"
+            if claimed:
+                event.update(status="pending", updated_at=claimed_at)
+            return {**copy.deepcopy(event), "claimed": claimed}
+
+    def complete_engineer_slack_event(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"pending", "delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Engineer Slack event status")
+        with self._assignment_lock:
+            event = self._engineer_slack_events.get(str(event_id).strip())
+            if event is None:
+                return None
+            if str(event.get("status") or "").strip().lower() == "delivered":
+                return copy.deepcopy(event)
+            event.update(
+                status=normalized_status,
+                failure_code=str(failure_code or "").strip() or None,
+                confirmed_at=completed_at if normalized_status == "delivered" else None,
+                updated_at=completed_at,
+            )
+            return copy.deepcopy(event)
+
+    def requeue_engineer_slack_event(
+        self, *, event_id: str, requeued_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            event = self._engineer_slack_events.get(str(event_id).strip())
+            if event is None:
+                return None
+            if str(event.get("status") or "").strip().lower() in {"pending", "outcome_unknown"}:
+                event.update(status="queued", failure_code=None, updated_at=requeued_at)
+            return copy.deepcopy(event)
 
     def claim_engineer_case(
         self,
@@ -7311,6 +7520,12 @@ class PostgresTicketRepository:
         created_at: str,
         is_public: bool = False,
         target_status: str | None = None,
+        source: str = "account",
+        engineer_case_id: str | None = None,
+        investigation_id: str | None = None,
+        draft_version: int | None = None,
+        comments_revision: str | None = None,
+        immutable_content: str | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_message_id = str(message_id or "").strip()
@@ -7318,8 +7533,26 @@ class PostgresTicketRepository:
         normalized_key = str(idempotency_key or "").strip()
         normalized_is_public = bool(is_public)
         normalized_target_status = str(target_status or "").strip().lower() or None
+        normalized_source = str(source or "account").strip().lower()
         if normalized_target_status not in (None, "solved"):
             raise ValueError("invalid Zendesk comment delivery target status")
+        if normalized_source not in {"account", "engineer"}:
+            raise ValueError("invalid Zendesk comment delivery source")
+        normalized_engineer_case_id = str(engineer_case_id or "").strip() or None
+        normalized_investigation_id = str(investigation_id or "").strip() or None
+        normalized_draft_version = int(draft_version) if draft_version is not None else None
+        normalized_comments_revision = str(comments_revision or "").strip() or None
+        normalized_content = str(immutable_content or "").strip() or None
+        if normalized_source == "engineer" and not all(
+            (
+                normalized_engineer_case_id,
+                normalized_investigation_id,
+                normalized_draft_version and normalized_draft_version > 0,
+                normalized_comments_revision,
+                normalized_content,
+            )
+        ):
+            raise ValueError("Engineer Zendesk delivery metadata is required")
         if not all((normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key)):
             raise ValueError("account case, message, Zendesk ticket, and idempotency key are required")
 
@@ -7327,19 +7560,19 @@ class PostgresTicketRepository:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, target_status, created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s) "
+                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, target_status, source, engineer_case_id, investigation_id, draft_version, comments_revision, immutable_content, created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (account_case_id, message_id) DO NOTHING "
-                        "RETURNING account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
+                        "RETURNING " + ", ".join(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS)
                     ).format(self._table("support_account_zendesk_comment_deliveries")),
-                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, normalized_is_public, normalized_target_status, created_at, created_at),
+                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, normalized_is_public, normalized_target_status, normalized_source, normalized_engineer_case_id, normalized_investigation_id, normalized_draft_version, normalized_comments_revision, normalized_content, created_at, created_at),
                 )
                 row = cur.fetchone()
                 created = row is not None
                 if row is None:
                     cur.execute(
                         sql.SQL(
-                            "SELECT account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at "
+                            "SELECT " + ", ".join(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS) + " "
                             "FROM {} WHERE account_case_id = %s AND message_id = %s"
                         ).format(self._table("support_account_zendesk_comment_deliveries")),
                         (normalized_case_id, normalized_message_id),
@@ -7372,10 +7605,7 @@ class PostgresTicketRepository:
         normalized_claimed_at = str(claimed_at or "").strip() or _utc_now()
         if not normalized_case_id or not normalized_message_id:
             raise ValueError("account case and message are required")
-        columns = (
-            "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
-            "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
-        )
+        columns = ", ".join(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS)
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
@@ -7432,10 +7662,7 @@ class PostgresTicketRepository:
         if not normalized_statuses:
             return []
         safe_limit = max(1, min(int(limit), 500))
-        columns = (
-            "account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, "
-            "status, zendesk_comment_id, failure_code, confirmed_at, target_status, created_at, updated_at"
-        )
+        columns = ", ".join(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS)
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
@@ -7684,6 +7911,140 @@ class PostgresTicketRepository:
                 return _account_slack_delivery_from_row(row)
 
         return self._run_with_connection_retry("requeue_account_slack_delivery", _operation)
+
+    def list_engineer_slack_events(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        normalized_statuses = tuple(
+            dict.fromkeys(
+                str(status or "").strip().lower()
+                for status in statuses
+                if str(status or "").strip()
+            )
+        )
+        if not normalized_statuses:
+            return []
+        columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + columns + " FROM {} WHERE status = ANY(%s::TEXT[]) "
+                        "ORDER BY created_at, event_id LIMIT %s"
+                    ).format(self._table("support_engineer_slack_events")),
+                    (list(normalized_statuses), max(1, min(int(limit), 500))),
+                )
+                return [
+                    record
+                    for row in cur.fetchall()
+                    for record in [_engineer_slack_event_from_row(row)]
+                    if record is not None
+                ]
+
+        return self._run_with_connection_retry("list_engineer_slack_events", _operation)
+
+    def claim_engineer_slack_event(
+        self, *, event_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        normalized_event_id = str(event_id or "").strip()
+        columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='pending', updated_at=%s "
+                        "WHERE event_id=%s AND status='queued' RETURNING " + columns
+                    ).format(self._table("support_engineer_slack_events")),
+                    (claimed_at, normalized_event_id),
+                )
+                row = cur.fetchone()
+                claimed = row is not None
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
+                            self._table("support_engineer_slack_events")
+                        ),
+                        (normalized_event_id,),
+                    )
+                    row = cur.fetchone()
+                record = _engineer_slack_event_from_row(row)
+                if record is not None:
+                    record["claimed"] = claimed
+                return record
+
+        return self._run_with_connection_retry("claim_engineer_slack_event", _operation)
+
+    def complete_engineer_slack_event(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"pending", "delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Engineer Slack event status")
+        columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s, failure_code=%s, "
+                        "confirmed_at=CASE WHEN %s='delivered' THEN %s::timestamptz ELSE NULL END, "
+                        "updated_at=%s WHERE event_id=%s AND status<>'delivered' RETURNING " + columns
+                    ).format(self._table("support_engineer_slack_events")),
+                    (
+                        normalized_status,
+                        str(failure_code or "").strip() or None,
+                        normalized_status,
+                        completed_at,
+                        completed_at,
+                        str(event_id or "").strip(),
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
+                            self._table("support_engineer_slack_events")
+                        ),
+                        (str(event_id or "").strip(),),
+                    )
+                    row = cur.fetchone()
+                return _engineer_slack_event_from_row(row)
+
+        return self._run_with_connection_retry("complete_engineer_slack_event", _operation)
+
+    def requeue_engineer_slack_event(
+        self, *, event_id: str, requeued_at: str
+    ) -> dict[str, Any] | None:
+        columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='queued', failure_code=NULL, updated_at=%s "
+                        "WHERE event_id=%s AND status IN ('pending','outcome_unknown') RETURNING " + columns
+                    ).format(self._table("support_engineer_slack_events")),
+                    (requeued_at, str(event_id or "").strip()),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
+                            self._table("support_engineer_slack_events")
+                        ),
+                        (str(event_id or "").strip(),),
+                    )
+                    row = cur.fetchone()
+                return _engineer_slack_event_from_row(row)
+
+        return self._run_with_connection_retry("requeue_engineer_slack_event", _operation)
 
     def get_account_case_details(
         self, identifiers: list[str]
@@ -9496,6 +9857,36 @@ class PostgresTicketRepository:
                     sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
+                            event_id TEXT PRIMARY KEY,
+                            engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                            event_type TEXT NOT NULL,
+                            payload JSONB NOT NULL,
+                            status TEXT NOT NULL CHECK (
+                                status IN ('queued','pending','delivered','outcome_unknown','failed')
+                            ),
+                            failure_code TEXT,
+                            confirmed_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(
+                        self._table("support_engineer_slack_events"),
+                        self._table("support_engineer_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (status, created_at, event_id)"
+                    ).format(
+                        sql.Identifier("idx_support_engineer_slack_events_delivery"),
+                        self._table("support_engineer_slack_events"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
                             account_id TEXT PRIMARY KEY,
                             email TEXT,
                             display_name TEXT NOT NULL,
@@ -10593,6 +10984,48 @@ class PostgresTicketRepository:
                     sql.SQL(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS target_status TEXT"
                     ).format(zendesk_delivery_table)
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'account'"
+                    ).format(zendesk_delivery_table)
+                )
+                for column_name, column_type in (
+                    ("engineer_case_id", "TEXT"),
+                    ("investigation_id", "TEXT"),
+                    ("draft_version", "INTEGER"),
+                    ("comments_revision", "TEXT"),
+                    ("immutable_content", "TEXT"),
+                ):
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                            zendesk_delivery_table,
+                            sql.Identifier(column_name),
+                            sql.SQL(column_type),
+                        )
+                    )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} DROP CONSTRAINT IF EXISTS "
+                        "support_account_zendesk_comment_deliveries_source_check"
+                    ).format(zendesk_delivery_table)
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT "
+                        "support_account_zendesk_comment_deliveries_source_check "
+                        "CHECK (source IN ('account', 'engineer'))"
+                    ).format(zendesk_delivery_table)
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} "
+                        "(engineer_case_id, investigation_id, draft_version) "
+                        "WHERE source = 'engineer'"
+                    ).format(
+                        sql.Identifier("idx_support_engineer_zendesk_delivery"),
+                        zendesk_delivery_table,
+                    )
                 )
                 cur.execute(
                     "SELECT 1 FROM pg_constraint WHERE conname = 'support_account_zendesk_comment_deliveries_target_status_check'"
@@ -11990,6 +12423,8 @@ class PostgresTicketRepository:
         self,
         engineer_case: dict[str, Any],
         new_messages: list[dict[str, Any]] | None = None,
+        slack_events: list[dict[str, Any]] | None = None,
+        zendesk_delivery: dict[str, Any] | None = None,
     ) -> None:
         saved = copy.deepcopy(engineer_case)
         engineer_case_id = str(saved.get("engineer_case_id") or "").strip()
@@ -12025,6 +12460,23 @@ class PostgresTicketRepository:
         opened_at = saved.get("opened_at") or _utc_now()
         updated_at = saved.get("updated_at") or opened_at
         closed_at = saved.get("closed_at")
+        normalized_delivery = copy.deepcopy(zendesk_delivery) if isinstance(zendesk_delivery, dict) else None
+        if normalized_delivery is not None:
+            required_delivery_fields = (
+                "account_case_id",
+                "message_id",
+                "zendesk_ticket_id",
+                "idempotency_key",
+                "investigation_id",
+                "comments_revision",
+                "immutable_content",
+            )
+            if any(not str(normalized_delivery.get(field) or "").strip() for field in required_delivery_fields):
+                raise ValueError("Engineer Zendesk delivery metadata is required")
+            if str(normalized_delivery.get("engineer_case_id") or "").strip() != engineer_case_id:
+                raise ValueError("Engineer Zendesk delivery case does not match")
+            if int(normalized_delivery.get("draft_version") or 0) <= 0:
+                raise ValueError("Engineer Zendesk delivery draft version is required")
 
         def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
@@ -12132,6 +12584,61 @@ class PostgresTicketRepository:
                                 content,
                                 message.get("created_at") or updated_at,
                                 Json(message.get("meta")) if isinstance(message.get("meta"), dict) else None,
+                            ),
+                        )
+                    for event in slack_events or []:
+                        record = _new_engineer_slack_event_record(
+                            event,
+                            created_at=str(updated_at),
+                        )
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    event_id, engineer_case_id, event_type, payload,
+                                    status, created_at, updated_at
+                                )
+                                VALUES (%s, %s, %s, %s, 'queued', %s, %s)
+                                ON CONFLICT (event_id) DO NOTHING
+                                """
+                            ).format(self._table("support_engineer_slack_events")),
+                            (
+                                record["event_id"],
+                                record["engineer_case_id"],
+                                record["event_type"],
+                                Json(record["payload"]),
+                                record["created_at"],
+                                record["updated_at"],
+                            ),
+                        )
+                    if normalized_delivery is not None:
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    account_case_id, message_id, zendesk_ticket_id,
+                                    idempotency_key, is_public, status, target_status,
+                                    source, engineer_case_id, investigation_id,
+                                    draft_version, comments_revision, immutable_content,
+                                    created_at, updated_at
+                                )
+                                VALUES (%s, %s, %s, %s, TRUE, 'queued', NULL,
+                                        'engineer', %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (account_case_id, message_id) DO NOTHING
+                                """
+                            ).format(self._table("support_account_zendesk_comment_deliveries")),
+                            (
+                                str(normalized_delivery["account_case_id"]).strip(),
+                                str(normalized_delivery["message_id"]).strip(),
+                                str(normalized_delivery["zendesk_ticket_id"]).strip(),
+                                str(normalized_delivery["idempotency_key"]).strip(),
+                                engineer_case_id,
+                                str(normalized_delivery["investigation_id"]).strip(),
+                                int(normalized_delivery["draft_version"]),
+                                str(normalized_delivery["comments_revision"]).strip(),
+                                str(normalized_delivery["immutable_content"]).strip(),
+                                str(normalized_delivery.get("created_at") or updated_at),
+                                str(normalized_delivery.get("created_at") or updated_at),
                             ),
                         )
 

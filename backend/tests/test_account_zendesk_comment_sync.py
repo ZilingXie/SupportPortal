@@ -16,6 +16,7 @@ from backend.services.account_zendesk_comments import (
     author_is_agent,
     normalize_snapshot,
 )
+from backend.services.engineer_cases import build_new_engineer_case
 
 
 SOURCE_UPDATED_AT = "2026-08-16T02:00:00Z"
@@ -442,7 +443,27 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         return self.client.put(self.sync_url, headers=self.headers, json=payload)
 
     def test_customer_public_comment_triggers_reply_flow_once(self) -> None:
-        response = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
+        async def consume_reply(**kwargs):
+            ticket = self.repository.get_ticket(self.ticket_id)
+            assert ticket is not None
+            ticket["messages"].append(
+                {
+                    "role": "customer",
+                    "content": kwargs["message"],
+                    "external_id": kwargs["message_source_id"],
+                    "created_at": "2026-08-19T09:00:00Z",
+                }
+            )
+            self.repository.save_ticket(ticket)
+            return {"status": "processed"}
+
+        with patch.object(
+            main,
+            "_process_account_customer_reply",
+            new_callable=AsyncMock,
+            side_effect=consume_reply,
+        ) as process:
+            response = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual(body["trigger_status"], "processed")
@@ -455,7 +476,13 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         ]
         self.assertEqual(len(ingested), 1)
 
-        replay = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
+        with patch.object(
+            main,
+            "_process_account_customer_reply",
+            new_callable=AsyncMock,
+            side_effect=consume_reply,
+        ) as replay_process:
+            replay = self._sync([self._initial_comment(), self._customer_comment()], trigger_comment_id="52661001")
         self.assertEqual(replay.status_code, 200, replay.text)
         self.assertEqual(replay.json()["trigger_status"], "processed")
         messages_after = self.repository.get_ticket(self.ticket_id)["messages"]
@@ -465,6 +492,8 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
             if message.get("external_id") == "52661001"
         ]
         self.assertEqual(len(ingested_after), 1)
+        process.assert_awaited_once()
+        replay_process.assert_not_awaited()
 
     def test_not_automated_case_still_consumes_customer_comments(self) -> None:
         # After an unexpected reply re-routes the case (e.g. onto the rag
@@ -496,6 +525,103 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["trigger_status"], "processed")
         process.assert_awaited_once()
+
+    def test_active_non_automated_engineer_case_receives_customer_comment_and_ai_draft(self) -> None:
+        account_case = self.repository.get_account_case(self.case_id)
+        assert account_case is not None
+        account_case.update(
+            route_family="rag_product_support",
+            execution_action="rag",
+            automation_status="not_automated",
+            route_status="not_automated",
+        )
+        self.repository.save_account_case(account_case)
+        ticket = self.repository.get_ticket(self.ticket_id)
+        assert ticket is not None
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="12838-1",
+            case_sequence=1,
+            title="Enablement request",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-19T08:00:30Z",
+        )
+        engineer_case.update(
+            thread_id="12838-1-round-1",
+            engineer_agent_state={
+                "conversation_version": 0,
+                "draft_version": 0,
+                "round_number": 1,
+                "round_state": "active",
+            },
+        )
+        self.repository.save_engineer_case(engineer_case)
+        ai_turn = {
+            "state": "awaiting_confirmation",
+            "message": "The customer supplied the missing app id.",
+            "draft_customer_reply": "We received the app id and are checking enablement.",
+            "engineer_agent_state": {
+                "phase": "awaiting_confirmation",
+                "ready_to_reply": True,
+                "reply_readiness": {"ready_for_customer_reply": True},
+            },
+        }
+        with patch.object(main, "_process_account_customer_reply", new_callable=AsyncMock) as account_reply, patch.object(
+            main, "generate_investigation_ai_turn", return_value=ai_turn
+        ), patch.object(main, "dispatch_event", new_callable=AsyncMock):
+            response = self._sync(
+                [self._initial_comment(), self._customer_comment()],
+                trigger_comment_id="52661001",
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["trigger_status"], "processed_engineer_case")
+        account_reply.assert_not_awaited()
+        stored_case = self.repository.get_engineer_case("12838-1")
+        assert stored_case is not None
+        customer_message = stored_case["active_investigation"]["messages"][-2]
+        self.assertEqual(customer_message["role"], "customer")
+        self.assertEqual(customer_message["meta"]["zendesk_comment_id"], "52661001")
+        self.assertIn("received the app id", stored_case["active_investigation"]["draft_customer_reply"])
+        slack_events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(
+            {event["event_type"] for event in slack_events},
+            {"zendesk_customer_comment", "engineer_ai_response"},
+        )
+
+    def test_zendesk_solved_status_closes_active_engineer_case_and_thread(self) -> None:
+        ticket = self.repository.get_ticket(self.ticket_id)
+        assert ticket is not None
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="12838-close-1",
+            case_sequence=1,
+            title="Enablement request",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-19T08:00:30Z",
+        )
+        engineer_case["thread_id"] = "12838-close-1-round-1"
+        self.repository.save_engineer_case(engineer_case)
+
+        response = self.client.put(
+            "/api/integrations/zendesk/account-cases/12838/status",
+            headers=self.headers,
+            json={"zendesk_status": "solved", "updated_at": "2026-08-19T10:00:00Z"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["engineer_case_closed"])
+        stored_case = self.repository.get_engineer_case("12838-close-1")
+        assert stored_case is not None
+        self.assertEqual(stored_case["status"], "resolved")
+        self.assertEqual(stored_case["assignment_status"], "resolved")
+        self.assertIsNone(stored_case["active_investigation"])
+        slack_events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(slack_events[-1]["event_type"], "engineer_case_closed")
 
     def test_agent_comment_is_ignored_without_trigger(self) -> None:
         comment = self._customer_comment(

@@ -2,15 +2,33 @@
   "schema_version": 2,
   "task_id": "p2-68",
   "title": "通过 Slack 向工程师送达 Round Robin 派单",
-  "status": "planned",
+  "status": "active",
   "owner": "unassigned",
-  "summary": "Phase 2：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
-  "next_action": "Phase 2：验证 Slack bot 权限与消息承载模型，将 Round Robin 派单结果和 Zendesk ticket 关联信息送达工程师。",
+  "summary": "通过 n8n 固定 Slack Channel/thread 将 Production Non automated Engineer Case、工程师指导、AI 草稿、两阶段批准和 Zendesk 发布结果形成闭环。",
+  "next_action": "导入并激活 n8n 四个 Engineer Slack workflow，配置唯一 Team/Channel/Credential 后完成真实 thread、两阶段批准和 Zendesk public readback 验收。",
   "acceptance_criteria": [
-    "完成 Slack 维度的交付和验证。"
+    "Production Non automated Case 只在 n8n 配置的固定 Slack Channel 创建一个 thread。",
+    "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
+    "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。"
   ],
   "blockers": [],
-  "evidence": [],
+  "evidence": [
+    {
+      "type": "test",
+      "summary": "Engineer Slack service, API, worker, n8n workflow contracts and Zendesk delivery tests passed; affected regression passed with ENGINEER_MULTI_AGENT_ENABLED=true.",
+      "ref": "backend/tests/test_engineer_slack_n8n.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_worker.py"
+    },
+    {
+      "type": "document",
+      "summary": "Added redacted n8n POST/STATUS/app-mention/interaction exports, binding SQL and runbook; fixed Team/Channel ownership remains n8n-only.",
+      "ref": "docs/integrations/n8n/"
+    },
+    {
+      "type": "decision",
+      "summary": "Live acceptance is pending approved Slack Team ID, Channel ID, bot credential and production Zendesk test ticket; no secrets are stored in SupportPortal.",
+      "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+    }
+  ],
   "source_refs": [
     "docs/roadmap.html#lanes"
   ],
@@ -31,6 +49,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p3-22 迁移为 p2-68；迁移到 phase-2 / engineer-workspace / engineer-case-delivery。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "started",
+      "summary": "按批准方案开始实施 Production Non automated Engineer Case 的固定 Slack Channel/thread 双向协作与审批发布闭环。"
     }
   ],
   "legacy_refs": [
