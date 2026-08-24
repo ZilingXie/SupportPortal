@@ -43,6 +43,7 @@ from backend.services.account_zendesk_comments import (
     build_conversation_revision,
 )
 from backend.services.account_slack_n8n import build_account_slack_event
+from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -716,6 +717,35 @@ _ACCOUNT_CASE_LIST_FIELDS = (
 
 def _account_case_list_record(item: dict[str, Any]) -> dict[str, Any]:
     return {field: copy.deepcopy(item.get(field)) for field in _ACCOUNT_CASE_LIST_FIELDS}
+
+
+def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    ledger: list[dict[str, Any]] = []
+    stage_totals: dict[str, dict[str, int]] = {}
+    for row in rows:
+        prompt_tokens = _safe_non_negative_int(row.get("prompt_tokens"), 0)
+        completion_tokens = _safe_non_negative_int(row.get("completion_tokens"), 0)
+        ledger.append(
+            build_usage_ledger_entry(
+                provider=str(row.get("provider") or ""),
+                model=str(row.get("model") or ""),
+                stage=str(row.get("stage") or ""),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        )
+        stage_bucket = stage_totals.setdefault(
+            str(row.get("stage") or ""),
+            {"input_tokens": 0, "output_tokens": 0, "calls": 0},
+        )
+        stage_bucket["input_tokens"] += prompt_tokens
+        stage_bucket["output_tokens"] += completion_tokens
+        stage_bucket["calls"] += 1
+    summary = aggregate_usage_ledger(ledger)
+    summary.pop("entries", None)
+    summary["call_count"] = len(ledger)
+    summary["stage_totals"] = stage_totals
+    return summary
 
 
 def _canonical_account_revision_timestamp(value: Any) -> str:
@@ -2534,6 +2564,21 @@ class TicketRepository(Protocol):
     ) -> int:
         ...
 
+    def record_account_case_llm_usage_entries(
+        self,
+        *,
+        billing_ticket_id: str,
+        client_ticket_id: str | None = None,
+        entries: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+    ) -> int:
+        ...
+
+    def account_case_llm_usage_summaries(
+        self,
+        billing_ticket_ids: list[str] | tuple[str, ...],
+    ) -> dict[str, dict[str, Any]]:
+        ...
+
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -2981,6 +3026,51 @@ class InMemoryTicketRepository:
             record for record in records
             if str(record.get("processing_profile") or "staging").strip().lower() == profile
         ]
+
+    def record_account_case_llm_usage_entries(
+        self,
+        *,
+        billing_ticket_id: str,
+        client_ticket_id: str | None = None,
+        entries: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+    ) -> int:
+        normalized_billing_id = str(billing_ticket_id or "").strip()
+        if not normalized_billing_id or not entries:
+            return 0
+        created_at = _utc_now()
+        with self._assignment_lock:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                self._account_case_llm_usage.append(
+                    {
+                        "billing_ticket_id": normalized_billing_id,
+                        "client_ticket_id": str(client_ticket_id or "").strip() or None,
+                        "stage": str(entry.get("stage") or ""),
+                        "provider": str(entry.get("provider") or ""),
+                        "model": str(entry.get("model") or ""),
+                        "prompt_tokens": _safe_non_negative_int(entry.get("prompt_tokens"), 0),
+                        "completion_tokens": _safe_non_negative_int(entry.get("completion_tokens"), 0),
+                        "created_at": created_at,
+                    }
+                )
+        return len(self._account_case_llm_usage)
+
+    def account_case_llm_usage_summaries(
+        self,
+        billing_ticket_ids: list[str] | tuple[str, ...],
+    ) -> dict[str, dict[str, Any]]:
+        requested = {str(item or "").strip() for item in billing_ticket_ids if str(item or "").strip()}
+        grouped: dict[str, list[dict[str, Any]]] = {billing_id: [] for billing_id in requested}
+        with self._assignment_lock:
+            for row in self._account_case_llm_usage:
+                billing_id = str(row.get("billing_ticket_id") or "").strip()
+                if billing_id in grouped:
+                    grouped[billing_id].append(row)
+        return {
+            billing_id: _aggregate_account_case_llm_usage_rows(rows)
+            for billing_id, rows in grouped.items()
+        }
 
     def list_account_case_page(
         self,
@@ -3441,6 +3531,7 @@ class InMemoryTicketRepository:
         self._prompt_definitions: dict[str, dict[str, Any]] = {}
         self._prompt_versions: dict[str, list[dict[str, Any]]] = {}
         self._prompt_releases: dict[str, dict[str, Any]] = {}
+        self._account_case_llm_usage: list[dict[str, Any]] = []
         self._seed_account_persona_presets()
 
     def _seed_account_persona_presets(self) -> None:
@@ -8142,6 +8233,104 @@ class PostgresTicketRepository:
             processing_profile=processing_profile,
         )
 
+    def record_account_case_llm_usage_entries(
+        self,
+        *,
+        billing_ticket_id: str,
+        client_ticket_id: str | None = None,
+        entries: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+    ) -> int:
+        normalized_billing_id = str(billing_ticket_id or "").strip()
+        normalized_entries = [dict(item) for item in (entries or []) if isinstance(item, dict)]
+        if not normalized_billing_id or not normalized_entries:
+            return 0
+        normalized_client_id = str(client_ticket_id or "").strip() or None
+
+        def _operation(conn: psycopg.Connection[Any]) -> int:
+            inserted = 0
+            with conn.cursor() as cur:
+                for entry in normalized_entries:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                billing_ticket_id, client_ticket_id, stage, provider, model,
+                                prompt_tokens, completion_tokens, created_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                            """
+                        ).format(self._table("support_account_case_llm_usage")),
+                        (
+                            normalized_billing_id,
+                            normalized_client_id,
+                            str(entry.get("stage") or ""),
+                            str(entry.get("provider") or ""),
+                            str(entry.get("model") or ""),
+                            _safe_non_negative_int(entry.get("prompt_tokens"), 0),
+                            _safe_non_negative_int(entry.get("completion_tokens"), 0),
+                            str(entry.get("created_at") or "").strip() or None,
+                        ),
+                    )
+                    inserted += int(cur.rowcount or 0)
+            return inserted
+
+        return self._run_with_connection_retry(
+            "record_account_case_llm_usage_entries",
+            _operation,
+        )
+
+    def account_case_llm_usage_summaries(
+        self,
+        billing_ticket_ids: list[str] | tuple[str, ...],
+    ) -> dict[str, dict[str, Any]]:
+        requested_ids = [str(item or "").strip() for item in billing_ticket_ids]
+        requested_ids = [item for item in requested_ids if item]
+        if not requested_ids:
+            return {}
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, dict[str, Any]]:
+            grouped: dict[str, list[dict[str, Any]]] = {billing_id: [] for billing_id in requested_ids}
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT billing_ticket_id, client_ticket_id, stage, provider, model,
+                               prompt_tokens, completion_tokens, created_at
+                        FROM {}
+                        WHERE billing_ticket_id = ANY(%s)
+                        ORDER BY created_at ASC, id ASC
+                        """
+                    ).format(self._table("support_account_case_llm_usage")),
+                    (requested_ids,),
+                )
+                for row in cur.fetchall():
+                    record = dict(
+                        zip(
+                            (
+                                "billing_ticket_id",
+                                "client_ticket_id",
+                                "stage",
+                                "provider",
+                                "model",
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "created_at",
+                            ),
+                            row,
+                        )
+                    )
+                    billing_id = str(record.get("billing_ticket_id") or "").strip()
+                    if billing_id in grouped:
+                        grouped[billing_id].append(record)
+            return {
+                billing_id: _aggregate_account_case_llm_usage_rows(rows)
+                for billing_id, rows in grouped.items()
+            }
+
+        return self._run_with_connection_retry(
+            "account_case_llm_usage_summaries",
+            _operation,
+        )
+
     def list_account_case_page(
         self,
         limit: int = 30,
@@ -9473,6 +9662,29 @@ class PostgresTicketRepository:
                 )
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_route_executions"), self._table("support_tickets")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (execution_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_account_reply_executions"), self._table("support_tickets")))
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id BIGSERIAL PRIMARY KEY,
+                            billing_ticket_id TEXT NOT NULL,
+                            client_ticket_id TEXT,
+                            stage TEXT NOT NULL,
+                            provider TEXT NOT NULL DEFAULT '',
+                            model TEXT NOT NULL DEFAULT '',
+                            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                            completion_tokens INTEGER NOT NULL DEFAULT 0,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(self._table("support_account_case_llm_usage"))
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (billing_ticket_id)").format(
+                        sql.Identifier("idx_support_account_case_llm_usage_billing"),
+                        self._table("support_account_case_llm_usage"),
+                    )
+                )
                 cur.execute(
                     sql.SQL(
                         """

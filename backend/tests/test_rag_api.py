@@ -227,6 +227,98 @@ class RagApiTests(unittest.TestCase):
             "error_message": error_message,
         }
 
+    def test_internal_ticket_family_token_usage_batch_returns_compact_summaries(self) -> None:
+        class _TokenSummaryRepository:
+            def __init__(self) -> None:
+                self.requested: list[tuple[str, str | None]] = []
+
+            def initialize(self) -> None:
+                return None
+
+            def is_enabled(self) -> bool:
+                return True
+
+            def storage_mode(self) -> str:
+                return "postgres"
+
+            def rag_ticket_family_token_summary(
+                self,
+                *,
+                ticket_id: str,
+                client_ticket_id: str | None = None,
+            ) -> dict[str, Any]:
+                self.requested.append((ticket_id, client_ticket_id))
+                if ticket_id == "TK-FAIL":
+                    raise ValueError("summary failed")
+                return {
+                    "canonical_ticket_id": ticket_id,
+                    "related_ticket_ids": ["TK-1-rerun"],
+                    "total_input_tokens": 10,
+                    "total_output_tokens": 4,
+                    "total_prompt_tokens": 10,
+                    "total_completion_tokens": 4,
+                    "total_cached_input_tokens": 0,
+                    "total_reasoning_tokens": 0,
+                    "total_tool_tokens": 0,
+                    "total_embedding_tokens": 2,
+                    "token_by_model": [
+                        {
+                            "provider": "openai",
+                            "model": "gpt-rag",
+                            "input_tokens": 10,
+                            "output_tokens": 4,
+                            "embedding_tokens": 2,
+                        }
+                    ],
+                    "entries": [
+                        {
+                            "provider": "openai",
+                            "model": "gpt-rag",
+                            "stage": "rag_answer",
+                            "input_tokens": 10,
+                            "output_tokens": 4,
+                        },
+                        {
+                            "provider": "openai",
+                            "model": "text-embed",
+                            "stage": "embedding",
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                        },
+                    ],
+                }
+
+        repository = _TokenSummaryRepository()
+        client = self._client(repository)
+        response = client.post(
+            "/internal/rag/ticket-families/token-usage/batch",
+            headers={"Authorization": "Bearer test-token"},
+            json={
+                "families": [
+                    {"ticket_id": "TK-1", "client_ticket_id": "TK-1"},
+                    {"ticket_id": "TK-FAIL"},
+                ]
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(repository.requested[0], ("TK-1", "TK-1"))
+        self.assertEqual(set(payload["summaries"]), {"TK-1"})
+        self.assertEqual(payload["errors"], ["TK-FAIL"])
+        summary = payload["summaries"]["TK-1"]
+        self.assertNotIn("entries", summary)
+        self.assertNotIn("related_ticket_ids", summary)
+        self.assertEqual(summary["total_input_tokens"], 10)
+        self.assertEqual(summary["total_embedding_tokens"], 2)
+        self.assertEqual(
+            summary["stage_totals"]["rag_answer"],
+            {"input_tokens": 10, "output_tokens": 4, "calls": 1},
+        )
+        self.assertEqual(
+            summary["stage_totals"]["embedding"],
+            {"input_tokens": 0, "output_tokens": 0, "calls": 1},
+        )
+
     def test_internal_query_answer_includes_query_class_and_light_path_in_quality_signals(self) -> None:
         repository = _TrackingKnowledgeRepository()
         client = self._client(repository)
