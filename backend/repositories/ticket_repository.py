@@ -804,6 +804,8 @@ def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[s
     for row in rows:
         prompt_tokens = _safe_non_negative_int(row.get("prompt_tokens"), 0)
         completion_tokens = _safe_non_negative_int(row.get("completion_tokens"), 0)
+        cached_input_tokens = _safe_non_negative_int(row.get("cached_input_tokens"), 0)
+        reasoning_tokens = _safe_non_negative_int(row.get("reasoning_tokens"), 0)
         ledger.append(
             build_usage_ledger_entry(
                 provider=str(row.get("provider") or ""),
@@ -811,6 +813,8 @@ def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[s
                 stage=str(row.get("stage") or ""),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_input_tokens=cached_input_tokens,
+                reasoning_tokens=reasoning_tokens,
             )
         )
         stage_bucket = stage_totals.setdefault(
@@ -3196,6 +3200,8 @@ class InMemoryTicketRepository:
                         "model": str(entry.get("model") or ""),
                         "prompt_tokens": _safe_non_negative_int(entry.get("prompt_tokens"), 0),
                         "completion_tokens": _safe_non_negative_int(entry.get("completion_tokens"), 0),
+                        "cached_input_tokens": _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
+                        "reasoning_tokens": _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
                         "created_at": created_at,
                     }
                 )
@@ -8784,8 +8790,9 @@ class PostgresTicketRepository:
                             """
                             INSERT INTO {} (
                                 billing_ticket_id, client_ticket_id, stage, provider, model,
-                                prompt_tokens, completion_tokens, created_at
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                                prompt_tokens, completion_tokens, cached_input_tokens,
+                                reasoning_tokens, created_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
                             """
                         ).format(self._table("support_account_case_llm_usage")),
                         (
@@ -8796,6 +8803,8 @@ class PostgresTicketRepository:
                             str(entry.get("model") or ""),
                             _safe_non_negative_int(entry.get("prompt_tokens"), 0),
                             _safe_non_negative_int(entry.get("completion_tokens"), 0),
+                            _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
+                            _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
                             str(entry.get("created_at") or "").strip() or None,
                         ),
                     )
@@ -8823,7 +8832,8 @@ class PostgresTicketRepository:
                     sql.SQL(
                         """
                         SELECT billing_ticket_id, client_ticket_id, stage, provider, model,
-                               prompt_tokens, completion_tokens, created_at
+                               prompt_tokens, completion_tokens, cached_input_tokens,
+                               reasoning_tokens, created_at
                         FROM {}
                         WHERE billing_ticket_id = ANY(%s)
                         ORDER BY created_at ASC, id ASC
@@ -8842,6 +8852,8 @@ class PostgresTicketRepository:
                                 "model",
                                 "prompt_tokens",
                                 "completion_tokens",
+                                "cached_input_tokens",
+                                "reasoning_tokens",
                                 "created_at",
                             ),
                             row,
@@ -10258,6 +10270,8 @@ class PostgresTicketRepository:
                             model TEXT NOT NULL DEFAULT '',
                             prompt_tokens INTEGER NOT NULL DEFAULT 0,
                             completion_tokens INTEGER NOT NULL DEFAULT 0,
+                            cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                            reasoning_tokens INTEGER NOT NULL DEFAULT 0,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                         """
@@ -10268,6 +10282,16 @@ class PostgresTicketRepository:
                         sql.Identifier("idx_support_account_case_llm_usage_billing"),
                         self._table("support_account_case_llm_usage"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS cached_input_tokens INTEGER NOT NULL DEFAULT 0"
+                    ).format(self._table("support_account_case_llm_usage"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0"
+                    ).format(self._table("support_account_case_llm_usage"))
                 )
                 cur.execute(
                     sql.SQL(

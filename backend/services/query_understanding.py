@@ -705,6 +705,8 @@ def _invoke_query_expansion_llm(
         completion_tokens=result.completion_tokens,
         input_tokens=result.prompt_tokens,
         output_tokens=result.completion_tokens,
+        cached_input_tokens=result.cached_input_tokens,
+        reasoning_tokens=result.reasoning_tokens,
     )
     return _parse_llm_json_payload(result.text), usage_entry
 

@@ -550,6 +550,54 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(page_total["total_input_tokens"], 900 + 160)
         self.assertEqual(page_total["total_output_tokens"], 300 + 60)
         self.assertEqual(page_total["total_embedding_tokens"], 50)
+        cost = usage["cost_usd"]
+        self.assertFalse(cost["available"])
+        self.assertIsNone(cost["total_usd"])
+        cost_map = {(row["provider"], row["model"]): row["usd"] for row in cost["by_model"]}
+        self.assertIsNone(cost_map[("openai", "gpt-test")])
+        self.assertIsNone(cost_map[("openai", "gpt-rag")])
+        self.assertFalse(page_total["cost_usd_available"])
+
+    def test_account_admin_token_cost_usd_when_models_priced(self) -> None:
+        self._seed_token_usage_case()
+        rag_summary = {
+            "canonical_ticket_id": "TK-TOKEN",
+            "total_input_tokens": 900,
+            "total_output_tokens": 300,
+            "total_embedding_tokens": 0,
+            "token_by_model": [
+                {"provider": "openai", "model": "gpt-rag", "input_tokens": 900, "output_tokens": 300, "embedding_tokens": 0},
+            ],
+            "stage_totals": {},
+        }
+        pricing_patch = {
+            "openai:gpt-rag": {"input": 1.0, "output": 2.0, "cached_input": 0.1},
+            "openai:gpt-test": {"input": 0.5, "output": 1.0, "cached_input": None},
+        }
+        with patch.object(
+            main.rag_service_client,
+            "get_ticket_family_token_summaries",
+            return_value={"summaries": {"TK-TOKEN": rag_summary}, "errors": []},
+        ), patch.dict(
+            "backend.services.llm_pricing.LLM_PRICING_USD_PER_1M",
+            pricing_patch,
+        ):
+            response = self.client.get(
+                "/api/workspace/admin/account-automation",
+                headers=self._admin_headers(),
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        case = next(
+            item for item in payload["cases"] if item["billing_ticket_id"] == "BT-TK-TOKEN"
+        )
+        cost = case["token_usage"]["cost_usd"]
+        self.assertTrue(cost["available"])
+        # RAG: 900*1 + 300*2 = 1500; automation: 160*0.5 + 60*1 = 140 → 1640/1M.
+        self.assertAlmostEqual(cost["total_usd"], 1640 / 1_000_000)
+        page_total = payload["token_usage_page_total"]
+        self.assertTrue(page_total["cost_usd_available"])
+        self.assertAlmostEqual(page_total["cost_usd_total"], 1640 / 1_000_000)
 
     def test_account_admin_token_usage_marks_unavailable_when_rag_fails(self) -> None:
         self._seed_token_usage_case()
@@ -576,6 +624,9 @@ class WorkspaceApiTests(unittest.TestCase):
         # Automation-side numbers stay visible for diagnosis.
         self.assertEqual(usage["sources"]["automation"]["call_count"], 2)
         self.assertEqual(payload["token_usage_page_total"]["total_input_tokens"], 0)
+        self.assertFalse(usage["cost_usd"]["available"])
+        self.assertIsNone(usage["cost_usd"]["total_usd"])
+        self.assertFalse(payload["token_usage_page_total"]["cost_usd_available"])
 
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)

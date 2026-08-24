@@ -150,6 +150,9 @@ from backend.services.account_automation_ownership import (
     mark_production_ownership_released,
     ownership_gate_eligible,
 )
+from backend.services.account_human_review_escalation import (
+    escalate_account_case_to_human_review,
+)
 from backend.services.account_reply_rag_fallback import (
     escalate_unexpected_reply_to_human,
     should_run_reply_rag_fallback,
@@ -332,6 +335,7 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_pricing import estimate_token_usage_cost_usd
 from backend.services.llm_usage_capture import (
     CaseUsageCapture,
     begin_case_usage_capture,
@@ -932,8 +936,17 @@ def _apply_production_ownership_gate(
     account_case["not_automated_reason"] = (
         f"zendesk_ownership_gate:{result.failure_code or 'unknown'}"
     )
-    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
     ticket_repository.save_account_case(account_case)
+    escalate_account_case_to_human_review(
+        account_case=account_case,
+        ticket_id=ticket_id,
+        handler=str(account_case.get("automation_handler") or account_case.get("execution_action") or "automation"),
+        failure_stage="ownership_gate",
+        failure_code=str(result.failure_code or "zendesk_ownership_gate_failed"),
+        reason=str(result.failure_detail or result.failure_code or "Zendesk ownership gate failed"),
+        repository=ticket_repository,
+        timestamp=timestamp,
+    )
     return False
 
 
@@ -1136,6 +1149,17 @@ async def _record_account_internal_email_failure(
         }
     )
     await async_to_thread(ticket_repository.save_account_case, updated)
+    await async_to_thread(
+        escalate_account_case_to_human_review,
+        account_case=updated,
+        ticket_id=ticket_id,
+        handler=handler,
+        failure_stage="internal_email",
+        failure_code=failure_code,
+        reason=result.reason or result.status,
+        repository=ticket_repository,
+        timestamp=updated.get("updated_at") or now_iso(),
+    )
     alert = await async_to_thread(
         notify_account_failure,
         repository=ticket_repository,
@@ -1232,12 +1256,17 @@ async def _record_account_execution_failure(
     classification["failure_incident_id"] = incident_id
     updated["route_classification"] = classification
     await async_to_thread(ticket_repository.save_account_case, updated)
-    if ticket_id:
-        await async_to_thread(
-            ticket_repository.cancel_pending_account_reply_jobs,
-            ticket_id,
-            updated_at=updated["updated_at"],
-        )
+    await async_to_thread(
+        escalate_account_case_to_human_review,
+        account_case=updated,
+        ticket_id=ticket_id,
+        handler=handler,
+        failure_stage=normalized_stage,
+        failure_code=normalized_code,
+        reason=str(detail or normalized_code),
+        repository=ticket_repository,
+        timestamp=updated.get("updated_at") or now_iso(),
+    )
     alert = await async_to_thread(
         notify_account_failure,
         repository=ticket_repository,
@@ -5708,6 +5737,18 @@ async def _create_account_intake_impl(
             stage_attempts=getattr(account_route_result, "stage_attempts", None),
         ),
     )
+    if response_status == "human_review_required" and execution_reason_code and not is_automation_route:
+        await async_to_thread(
+            escalate_account_case_to_human_review,
+            account_case=billing_ticket,
+            ticket_id=ticket_id,
+            handler=automation_handler or route,
+            failure_stage="field_extraction" if "field_extraction" in execution_reason_code else "execution",
+            failure_code=execution_reason_code,
+            reason=execution_reason_code,
+            repository=ticket_repository,
+            timestamp=timestamp,
+        )
     asked_field_keys = list(missing_fields) if missing_fields and not internal_email_payload else []
     reply_job = None
     if is_automation_route and not await async_to_thread(
@@ -6113,6 +6154,10 @@ async def _create_account_intake_impl(
         "semantic_intent": decision.semantic_intent or None,
         "route_family": decision.route_family,
         **route_metadata,
+        # Execution failures may move the case out of automation after the
+        # router has classified it; return the persisted post-failure state.
+        "route_status": str(billing_ticket.get("route_status") or route_metadata.get("route_status") or "not_automated"),
+        "automation_handler": billing_ticket.get("automation_handler") or route_metadata.get("automation_handler"),
         "automation_eligibility": decision.automation_eligibility or None,
         "policy_decision": decision.policy_decision or None,
         "not_automated_reason": decision.not_automated_reason or None,
@@ -12561,6 +12606,8 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
         "total_input_tokens": 0,
         "total_output_tokens": 0,
         "total_embedding_tokens": 0,
+        "cost_usd_total": 0.0,
+        "cost_usd_available": True,
     }
     if not cases:
         return page_total
@@ -12634,6 +12681,16 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
             ),
             "sources": {"rag": rag_source, "automation": automation_source},
         }
+        if available:
+            cost_estimate = estimate_token_usage_cost_usd(record["token_usage"])
+            record["token_usage"]["cost_usd"] = cost_estimate
+            if cost_estimate["available"]:
+                page_total["cost_usd_total"] += float(cost_estimate["total_usd"] or 0.0)
+            else:
+                page_total["cost_usd_available"] = False
+        else:
+            record["token_usage"]["cost_usd"] = {"available": False, "total_usd": None, "by_model": []}
+            page_total["cost_usd_available"] = False
         if available:
             page_total["total_input_tokens"] += total_input
             page_total["total_output_tokens"] += total_output

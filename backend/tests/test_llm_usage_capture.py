@@ -29,6 +29,23 @@ def _result(prompt_tokens: int = 12, completion_tokens: int = 7) -> LlmTextResul
     )
 
 
+def _result_with_details(
+    prompt_tokens: int = 100,
+    completion_tokens: int = 40,
+    cached_input_tokens: int = 0,
+    reasoning_tokens: int = 0,
+) -> LlmTextResult:
+    return LlmTextResult(
+        text="ok",
+        model_name="gpt-test",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_input_tokens=cached_input_tokens,
+        reasoning_tokens=reasoning_tokens,
+        provider_name="openai",
+    )
+
+
 def _profile() -> ModelProfile:
     return ModelProfile(
         scenario="account_route",
@@ -63,6 +80,25 @@ def test_begin_end_resets_capture_scope() -> None:
     end_case_usage_capture(token)
     record_llm_invocation(_result(), stage="later_unscoped")
     assert [entry["stage"] for entry in capture.entries] == ["account_route"]
+
+
+def test_capture_records_cached_and_reasoning_details() -> None:
+    repository = InMemoryTicketRepository()
+    with case_usage_capture(billing_ticket_id="AC-1", client_ticket_id="TK-1") as capture:
+        record_llm_invocation(
+            _result_with_details(cached_input_tokens=60, reasoning_tokens=25),
+            stage="account_route",
+        )
+        assert capture.entries[0]["cached_input_tokens"] == 60
+        assert capture.entries[0]["reasoning_tokens"] == 25
+        flush_case_usage_capture(repository, capture)
+    summaries = repository.account_case_llm_usage_summaries(["AC-1"])
+    summary = summaries["AC-1"]
+    assert summary["total_cached_input_tokens"] == 60
+    assert summary["total_reasoning_tokens"] == 25
+    model_row = next(row for row in summary["token_by_model"] if row["model"] == "gpt-test")
+    assert model_row["cached_input_tokens"] == 60
+    assert model_row["reasoning_tokens"] == 25
 
 
 def test_bind_case_overrides_identity() -> None:

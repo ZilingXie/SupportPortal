@@ -14,9 +14,15 @@
     "意外回复检索必须通过 backend/skills/ragflow-docs-search/scripts/search.py 的 ticket-agent read-only endpoint；仅带有效 docs.agora.io 或 api-ref.agora.io 引用的 grounded answer 可发布，skill/模型/JSON/citation 任一失败继续 fail-closed 转人工，不回退到旧本地 RAG。"
   ],
   "blockers": [
-    "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈验证。"
+    "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈和 EC2 api_production 容器验证。"
   ],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Shared Account escalation handoff regression",
+      "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
+      "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
+    },
     {
       "type": "test",
       "label": "Reply RAG fallback service and intake regression",
@@ -64,6 +70,12 @@
       "label": "Credentialed RAGFlow retrieval and grounded answer on official local stack",
       "command": "官方 deployment local_lightweight 栈 9f55be557628：容器内 ticket-agent read-only search、RagflowDocsSearchSkillClient.query 与 try_rag_fallback_answer",
       "details": "仅确认 RAGFLOW_API_KEY 非空且容器已加载，不读取或输出值。ticket-agent 检索返回 6 条非空 docs.agora.io 结果；adapter 通过内建 endpoint 默认值返回 answer（494 字符、2 条官方引用）；deployed fallback 默认客户端返回 answer（682 字符、References 与官方文档 URL 均存在）。全过程未创建 case、reply job、delivery ledger 或 Zendesk 评论。官方 image/health/runtime ref 均匹配 9f55be557628，auxiliary stack 不存在。"
+    },
+    {
+      "type": "deployment",
+      "label": "Production RAGFlow deployment and container-level grounded answer verification",
+      "command": "EC2 scripts/ops/deploy_surfaces_ec2.sh --skip-split + https://support.stellarix.space/health + deployment-api_production-1 container checks",
+      "details": "将 RAGFLOW_BASE_URL 和非空 RAGFLOW_API_KEY 原子写入 EC2 .env（未读取或输出 key），仅部署 main stack 到 52e9d3595a0e。外部 /health 返回同 ref、/production/ HTTP 200；api_production 使用 localhost/supportportal-app:52e9d3595a0e，默认 client 为 RagflowDocsSearchSkillClient，容器已加载 ticket-agent endpoint 与非空 key。通用 Agora RTC token 问题的容器内 adapter 调用返回 answer、答案非空、2 条 docs.agora.io 引用；api_production 与 production workers 启动后 ERROR/Traceback 计数均为 0。未创建 case、reply job、delivery ledger 或 Zendesk 评论，因此客户公开投递/readback blocker 保留。"
     }
   ],
   "source_refs": [
@@ -158,6 +170,11 @@
       "at": "2026-08-24",
       "event": "ragflow_credentialed_retrieval_verified",
       "summary": "用户配置 key 后，官方本地栈完成真实 ticket-agent 检索、grounded answer 生成与 deployed fallback 默认客户端验证，官方引用与 References 合同均通过且无业务副作用。key blocker 已解除；任务继续 blocked，仅等待新的 Production 测试工单完成客户公开投递、ledger 与 Zendesk readback。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "ragflow_production_deployed",
+      "summary": "EC2 主栈部署到 52e9d3595a0e，api_production 已加载 ticket-agent endpoint 与非空 key，默认 RagflowDocsSearchSkillClient 的无客户数据 grounded-answer 探针返回 answer 和 2 条 docs.agora.io 引用；未触发真实工单，Production 公开评论、delivery ledger 与 Zendesk readback 仍待用户指定新测试工单。"
     }
   ],
   "legacy_refs": [],

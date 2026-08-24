@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:54:19Z",
-  "source_base_commit": "52e9d3595a0e7c9f44fbd764cbd22f9d40d08357",
-  "registry_digest": "297f75819e1ced013b16a04b5b1779b136a3c51e305153a8507be4e60c3c6114",
+  "generated_at": "2026-08-24T10:55:42Z",
+  "source_base_commit": "745824687fe72bc0b26c4b90a849ac7217b6c45a",
+  "registry_digest": "0a3552caa0d13afcda45003249e69d4b143aada7b95ca3557da6f9d1ce88f8fc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -625,6 +625,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Shared Account escalation handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
+          "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
+        },
+        {
+          "type": "test",
           "label": "Reply RAG fallback service and intake regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
           "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
@@ -670,6 +676,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Credentialed RAGFlow retrieval and grounded answer on official local stack",
           "command": "官方 deployment local_lightweight 栈 9f55be557628：容器内 ticket-agent read-only search、RagflowDocsSearchSkillClient.query 与 try_rag_fallback_answer",
           "details": "仅确认 RAGFLOW_API_KEY 非空且容器已加载，不读取或输出值。ticket-agent 检索返回 6 条非空 docs.agora.io 结果；adapter 通过内建 endpoint 默认值返回 answer（494 字符、2 条官方引用）；deployed fallback 默认客户端返回 answer（682 字符、References 与官方文档 URL 均存在）。全过程未创建 case、reply job、delivery ledger 或 Zendesk 评论。官方 image/health/runtime ref 均匹配 9f55be557628，auxiliary stack 不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production RAGFlow deployment and container-level grounded answer verification",
+          "command": "EC2 scripts/ops/deploy_surfaces_ec2.sh --skip-split + https://support.stellarix.space/health + deployment-api_production-1 container checks",
+          "details": "将 RAGFLOW_BASE_URL 和非空 RAGFLOW_API_KEY 原子写入 EC2 .env（未读取或输出 key），仅部署 main stack 到 52e9d3595a0e。外部 /health 返回同 ref、/production/ HTTP 200；api_production 使用 localhost/supportportal-app:52e9d3595a0e，默认 client 为 RagflowDocsSearchSkillClient，容器已加载 ticket-agent endpoint 与非空 key。通用 Agora RTC token 问题的容器内 adapter 调用返回 answer、答案非空、2 条 docs.agora.io 引用；api_production 与 production workers 启动后 ERROR/Traceback 计数均为 0。未创建 case、reply job、delivery ledger 或 Zendesk 评论，因此客户公开投递/readback blocker 保留。"
         },
         {
           "type": "test",
@@ -954,6 +966,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 744,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
           "label": "PR #744"
+        },
+        {
+          "type": "test",
+          "label": "Account Human Review queue handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
+          "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
         },
         {
           "type": "pr",
@@ -1475,6 +1493,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "已知边界（代码核实）",
           "command": "",
           "details": "①独立 route_service 容器（/v1/cases 控制台流的路由+准备，设计上无 ticket DB）的 tokens 不采集：production /v1/cases 走 call_route HTTP 到该容器；若需要可后续经 RouteResult 契约透传另开任务。②provider 报错的重试 attempt 无 usage 可记（错误响应不含 usage），只记成功 invocation。③自动化侧历史无法回补，只有上线后新数据；RAG 侧含全部历史。④本地栈 admin 的 RAG 数字取决于该栈 RAG 服务指向的知识库，权威视图为 EC2 production 栈。"
+        },
+        {
+          "type": "test",
+          "label": "New unit suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_llm_pricing.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "factory details 解析 3 例（Responses/Chat/无 details 容错）+ pricing 7 例（未定价 unavailable、跨模型求和、cached 回落 input 价、cached 不超 input、空 usage=0、默认表全 None）+ capture 透传/InMemory roundtrip 含 token_by_model 分桶两列。"
+        },
+        {
+          "type": "test",
+          "label": "Affected full suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest \u003c15 个受影响套件> -q",
+          "details": "524 passed。两个失败（test_rag_agentic comparison first_pass_tools、test_rag_service_client probe_health_disabled）在干净 root main 以完全相同组合同样失败、单跑均通过——既有跨文件顺序污染，非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "Mock tuple migration",
+          "command": "",
+          "details": "test_rag_qa.py（25 处跨行+4 处内联+2 处直调解包+7 处类型注解）与 test_rag_agentic.py（3 处）的 _invoke_llm_payload_with_trace mock 4 元组→6 元组（尾部补 0,0）。"
+        },
+        {
+          "type": "decision",
+          "label": "价格表默认留空的决策依据",
+          "command": "",
+          "details": "docs/prompt_change_log.md（gpt54-token-only-observability-v1 条目）：旧成本展示曾因过时/不全价格造成噪音被有意移除，约定保留 unknown-cost markers、未定价显式标记不静默 0；gpt-5.4/gpt-5.6-luna 等为本环境具体模型，价格数字须用户提供，不可编造。knowledge_repository.py _model_cost_for_tokens 为引用不存在字典的死代码，未模仿。"
         }
       ],
       "source_refs": [
@@ -1484,7 +1526,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -1849,6 +1891,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Automation production blue-green deployment implementation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "新增专用蓝绿入口：candidate 使用 release 唯一服务名和生产 DB/Redis identity，readiness 通过后以 Nginx runtime include 原子切换并 graceful reload；/automation/production/ 禁止 upstream 自动重试，旧 compose project 默认排空 360 秒后停止，--rollback 只切换 upstream、不重放请求。当前本机缺少可用 Docker CLI/.env 完整必填变量，EC2 栈验证待执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 review remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
+          "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
         },
         {
           "type": "test",
@@ -3167,10 +3215,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "summary": "增加 AI 故障告警和人工接管机制。",
       "next_action": "",
       "acceptance_criteria": [
-        "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。"
+        "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。",
+        "fraud_account、enablement、detailed_invoice 和 account_suspension 的 Production fallback 通过共享 escalation service 写 Zendesk private internal note、释放 AI ownership 并 route back 到原始 queue；note/route 独立记录失败和 outcome_unknown，staging/preproduction 无 Zendesk side effect。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Account Human Review queue handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
+          "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
+        },
         {
           "type": "pr",
           "number": 744,
@@ -3182,7 +3237,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-17",
+      "updated_at": "2026-08-24",
       "history": [
         {
           "at": "2026-08-16",
@@ -3198,6 +3253,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-15 迁移为 p1-15；迁移到 phase-1 / account-automation / human-review。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "account_human_review_queue_handoff",
+          "summary": "四类 active Account automation fallback 统一进入 Human Review：Production 写 private internal note、route back 原始 Zendesk queue、释放 AI ownership、取消 pending reply jobs 并保留 alert/audit；staging/preproduction 仅本地状态。"
         }
       ],
       "legacy_refs": [
@@ -5728,6 +5788,82 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p1-52",
         "p2-93"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-107",
+      "title": "补齐 cached/reasoning tokens 采集 + token 用量 USD 换算展示（/workspace/admin）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "p2-105 的后续增强，两段：(A) cached/reasoning tokens 采集补齐——此前全仓库无任何代码解析 provider usage 明细，两条链路恒记 0；现在 llm_factory 的 _responses_usage/_chat_usage 解析 input_tokens_details.cached_tokens / prompt_tokens_details.cached_tokens / output_tokens_details.reasoning_tokens / completion_tokens_details.reasoning_tokens，LlmTextResult 新增 cached_input_tokens/reasoning_tokens 字段（默认 0，全调用方零破坏）；自动化链 capture 透传 + support_account_case_llm_usage 加两列（migration 2026_08_24_account_case_llm_usage_details.sql + repository 幂等 ALTER，历史数据两列=0 属预期）；RAG 链 query_understanding/rag_context_budget 补传参、rag_qa _invoke_llm_payload_with_trace 4 元组→6 元组（6 调用点+重试累加+RagQueryTrace 尾部两默认字段+fanout 聚合同步累加）、rag_api rag_answer ledger 条目带 trace 两值（usage_ledger JSONB 只增键，表零改动）；token_usage.aggregate_usage_ledger 的 token_by_model 分桶新增 cached_input_tokens/reasoning_tokens 供按模型计价。(B) USD 换算——新模块 backend/services/llm_pricing.py：LLM_PRICING_USD_PER_1M 单价表（key=provider:model，维度 input/output/cached_input/embedding，默认全 None=未定价，遵循仓库 unknown-cost marker 约定：未定价显式 —，绝不静默按 0）+ estimate_token_usage_cost_usd 纯函数（计价语义：input 含 cached，成本=(input−cached)×input价+cached×(cached价缺省回落 input 价)+output×output价+embedding×embedding价；任一模型未定价→该模型 usd=None 且整体 available=False）；main.py _attach_account_case_token_usage 对每 case 挂 token_usage.cost_usd，page_total 加 cost_usd_total/cost_usd_available；admin 前端 Tokens 单元格追加成本小字（$0.0123，未定价显示 $—带 title）、明细 by-model 表加 Cost 列、metric strip 本页合计带成本；版本 bump 20260824-token-cost-1。价格数字待用户提供后一行一改填入 LLM_PRICING_USD_PER_1M 即生效。",
+      "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+资产版本 20260824-token-cost-1+两列 ALTER 在库）；p2-107 翻 done；用户侧 EC2 仅部署 main stack（deploy_surfaces_ec2.sh --skip-split，与 p2-105 同）；价格数字待用户提供填入。",
+      "acceptance_criteria": [
+        "llm_factory 解析 Responses/Chat 两形态 usage 明细，缺 details 容错为 0；LlmTextResult 新字段默认 0 不破坏任何既有调用方。",
+        "自动化链 cached/reasoning 落列（capture→INSERT→summaries 聚合→token_by_model 分桶全透传）；RAG 链 ledger 只增键、检索/生成行为零变化。",
+        "llm_pricing：未定价模型 usd=None 且 available=False（无 0 美元假象）；cached⊂input 不双计；cached 价缺省回落 input 价；embedding 计价。",
+        "admin 前端：priced 显示 $x.xxxx，unpriced 显示 $—（title=model pricing not configured），usage 不可用时不显示成本；明细 Cost 列按模型分摊。",
+        "既有 API 响应只增不改；test_rag_qa/test_rag_agentic 的 mock 元组同步更新为 6 元组。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "New unit suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_llm_pricing.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "factory details 解析 3 例（Responses/Chat/无 details 容错）+ pricing 7 例（未定价 unavailable、跨模型求和、cached 回落 input 价、cached 不超 input、空 usage=0、默认表全 None）+ capture 透传/InMemory roundtrip 含 token_by_model 分桶两列。"
+        },
+        {
+          "type": "test",
+          "label": "Affected full suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest \u003c15 个受影响套件> -q",
+          "details": "524 passed。两个失败（test_rag_agentic comparison first_pass_tools、test_rag_service_client probe_health_disabled）在干净 root main 以完全相同组合同样失败、单跑均通过——既有跨文件顺序污染，非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "Mock tuple migration",
+          "command": "",
+          "details": "test_rag_qa.py（25 处跨行+4 处内联+2 处直调解包+7 处类型注解）与 test_rag_agentic.py（3 处）的 _invoke_llm_payload_with_trace mock 4 元组→6 元组（尾部补 0,0）。"
+        },
+        {
+          "type": "decision",
+          "label": "价格表默认留空的决策依据",
+          "command": "",
+          "details": "docs/prompt_change_log.md（gpt54-token-only-observability-v1 条目）：旧成本展示曾因过时/不全价格造成噪音被有意移除，约定保留 unknown-cost markers、未定价显式标记不静默 0；gpt-5.4/gpt-5.6-luna 等为本环境具体模型，价格数字须用户提供，不可编造。knowledge_repository.py _model_cost_for_tokens 为引用不存在字典的死代码，未模仿。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_factory.py",
+        "backend/services/token_usage.py",
+        "backend/services/llm_pricing.py",
+        "backend/services/llm_usage_capture.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/sql/migrations/2026_08_24_account_case_llm_usage_details.sql",
+        "backend/services/query_understanding.py",
+        "backend/services/rag_context_budget.py",
+        "backend/services/rag_qa.py",
+        "backend/rag_api.py",
+        "backend/main.py",
+        "ui/workspace-ui/admin/app.js",
+        "ui/workspace-ui/admin/styles.css",
+        "ui/workspace-ui/admin/index.html",
+        "docs/rag_change_log.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "用户追问缓存命中与美元换算。方案问答未获回复，按推荐定案：价格架子先行未配置显示 —、cached/reasoning 采集一起补齐、展示仅 /workspace/admin。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-105"
       ],
       "legacy_ids": [],
       "phase_id": "phase-1",
@@ -8733,7 +8869,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "蓝绿部署实现已完成，待在 Docker/EC2 上执行候选预热、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
+      "next_action": "蓝绿部署修复已完成，待在 Docker/EC2 上执行 release manifest 候选预热、共享 production Redis 检查、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -8845,6 +8981,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Automation production blue-green deployment implementation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "新增专用蓝绿入口：candidate 使用 release 唯一服务名和生产 DB/Redis identity，readiness 通过后以 Nginx runtime include 原子切换并 graceful reload；/automation/production/ 禁止 upstream 自动重试，旧 compose project 默认排空 360 秒后停止，--rollback 只切换 upstream、不重放请求。当前本机缺少可用 Docker CLI/.env 完整必填变量，EC2 栈验证待执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 review remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
+          "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
         }
       ],
       "source_refs": [
@@ -9247,9 +9389,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "意外回复检索必须通过 backend/skills/ragflow-docs-search/scripts/search.py 的 ticket-agent read-only endpoint；仅带有效 docs.agora.io 或 api-ref.agora.io 引用的 grounded answer 可发布，skill/模型/JSON/citation 任一失败继续 fail-closed 转人工，不回退到旧本地 RAG。"
       ],
       "blockers": [
-        "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈验证。"
+        "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈和 EC2 api_production 容器验证。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Shared Account escalation handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
+          "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
+        },
         {
           "type": "test",
           "label": "Reply RAG fallback service and intake regression",
@@ -9297,6 +9445,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Credentialed RAGFlow retrieval and grounded answer on official local stack",
           "command": "官方 deployment local_lightweight 栈 9f55be557628：容器内 ticket-agent read-only search、RagflowDocsSearchSkillClient.query 与 try_rag_fallback_answer",
           "details": "仅确认 RAGFLOW_API_KEY 非空且容器已加载，不读取或输出值。ticket-agent 检索返回 6 条非空 docs.agora.io 结果；adapter 通过内建 endpoint 默认值返回 answer（494 字符、2 条官方引用）；deployed fallback 默认客户端返回 answer（682 字符、References 与官方文档 URL 均存在）。全过程未创建 case、reply job、delivery ledger 或 Zendesk 评论。官方 image/health/runtime ref 均匹配 9f55be557628，auxiliary stack 不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production RAGFlow deployment and container-level grounded answer verification",
+          "command": "EC2 scripts/ops/deploy_surfaces_ec2.sh --skip-split + https://support.stellarix.space/health + deployment-api_production-1 container checks",
+          "details": "将 RAGFLOW_BASE_URL 和非空 RAGFLOW_API_KEY 原子写入 EC2 .env（未读取或输出 key），仅部署 main stack 到 52e9d3595a0e。外部 /health 返回同 ref、/production/ HTTP 200；api_production 使用 localhost/supportportal-app:52e9d3595a0e，默认 client 为 RagflowDocsSearchSkillClient，容器已加载 ticket-agent endpoint 与非空 key。通用 Agora RTC token 问题的容器内 adapter 调用返回 answer、答案非空、2 条 docs.agora.io 引用；api_production 与 production workers 启动后 ERROR/Traceback 计数均为 0。未创建 case、reply job、delivery ledger 或 Zendesk 评论，因此客户公开投递/readback blocker 保留。"
         }
       ],
       "source_refs": [
@@ -9391,6 +9545,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "ragflow_credentialed_retrieval_verified",
           "summary": "用户配置 key 后，官方本地栈完成真实 ticket-agent 检索、grounded answer 生成与 deployed fallback 默认客户端验证，官方引用与 References 合同均通过且无业务副作用。key blocker 已解除；任务继续 blocked，仅等待新的 Production 测试工单完成客户公开投递、ledger 与 Zendesk readback。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "ragflow_production_deployed",
+          "summary": "EC2 主栈部署到 52e9d3595a0e，api_production 已加载 ticket-agent endpoint 与非空 key，默认 RagflowDocsSearchSkillClient 的无客户数据 grounded-answer 探针返回 answer 和 2 条 docs.agora.io 引用；未触发真实工单，Production 公开评论、delivery ledger 与 Zendesk readback 仍待用户指定新测试工单。"
         }
       ],
       "legacy_refs": [],

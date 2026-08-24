@@ -5030,3 +5030,17 @@ For each new entry, record:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_ragflow_docs_search_skill backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker` (`295` tests passed).
   - Missing-key direct check returned `escalate / ragflow_skill_configuration` without invoking the model, creating a reply job, or publishing customer-visible content.
   - Upstream/local Git blob checks matched for both requested skill files: `SKILL.md` `73682d9676d7b092bc80b09cf383943db0283f27`; `search.py` `96f34efcf200acc578651d043c3b837f19c8d4f1`.
+
+## 2026-08-24 - Cached/reasoning token usage detail capture (p2-107)
+
+- Summary:
+  - `llm_factory` now parses provider usage details (`input_tokens_details.cached_tokens` / `prompt_tokens_details.cached_tokens`, `output_tokens_details.reasoning_tokens` / `completion_tokens_details.reasoning_tokens`) for both the Responses and Chat Completions paths, and `LlmTextResult` carries `cached_input_tokens` / `reasoning_tokens` (default 0).
+  - The RAG ledger chain populates the previously-always-zero fields: query expansion and context-compression entries pass the new values through, the `rag_answer` entry reads them from `RagQueryTrace` (new trailing default fields; retry and fanout aggregation accumulate them), and `aggregate_usage_ledger`'s `token_by_model` buckets gain `cached_input_tokens` / `reasoning_tokens` columns.
+- Reason:
+  - Per-case USD cost estimation requires cached-token discounts (OpenAI-style cached input ≈ 1/10 price); without detail capture every case would be costed at full input price.
+- Affected files/config:
+  - `backend/services/llm_factory.py`, `backend/services/token_usage.py`, `backend/services/query_understanding.py`, `backend/services/rag_context_budget.py`, `backend/services/rag_qa.py`, `backend/rag_api.py`, `backend/tests/test_rag_qa.py`, `backend/tests/test_rag_agentic.py`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or query behavior changes; `support_rag_query_runs.usage_ledger` JSONB only gains previously-zero keys. Historical rows keep cached/reasoning at 0 (cannot be backfilled).
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_rag_api.py backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_query_understanding.py backend/tests/test_rag_context_budget.py -q` (green; ledger detail case asserts rag_answer/expansion entries and token_by_model buckets carry the new values)

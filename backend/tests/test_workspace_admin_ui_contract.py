@@ -143,15 +143,22 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!casesMarkup.includes('All categories')) throw new Error('Automated Cases category filter missing');
             if (!casesMarkup.includes('<th>Tokens</th>') || !casesMarkup.includes('Page tokens')) throw new Error('Automated Cases token usage column missing');
             if (!casesMarkup.includes('admin-token-unavailable') || !casesMarkup.includes('token usage unavailable')) throw new Error('token usage unavailable placeholder missing');
-            automationData.cases[0].token_usage = { available: true, error_reason: null, total_input_tokens: 1234, total_output_tokens: 567, total_embedding_tokens: 89, token_by_model: [{ provider: 'openai', model: 'gpt-test', input_tokens: 1234, output_tokens: 567, embedding_tokens: 89 }], sources: { rag: { available: true, total_input_tokens: 900, total_output_tokens: 400, total_embedding_tokens: 89, stage_totals: { rag_answer: { input_tokens: 900, output_tokens: 400, calls: 1 } } }, automation: { available: true, call_count: 2, total_input_tokens: 334, total_output_tokens: 167, stage_totals: { quota_field_extractor: { input_tokens: 334, output_tokens: 167, calls: 2 } } } } };
-            automationData.token_usage_page_total = { total_input_tokens: 1234, total_output_tokens: 567, total_embedding_tokens: 89 };
+            automationData.cases[0].token_usage = { available: true, error_reason: null, total_input_tokens: 1234, total_output_tokens: 567, total_embedding_tokens: 89, cost_usd: { available: false, total_usd: null, by_model: [{ provider: 'openai', model: 'gpt-test', usd: null }] }, token_by_model: [{ provider: 'openai', model: 'gpt-test', input_tokens: 1234, output_tokens: 567, embedding_tokens: 89 }], sources: { rag: { available: true, total_input_tokens: 900, total_output_tokens: 400, total_embedding_tokens: 89, stage_totals: { rag_answer: { input_tokens: 900, output_tokens: 400, calls: 1 } } }, automation: { available: true, call_count: 2, total_input_tokens: 334, total_output_tokens: 167, stage_totals: { quota_field_extractor: { input_tokens: 334, output_tokens: 167, calls: 2 } } } } };
+            automationData.token_usage_page_total = { total_input_tokens: 1234, total_output_tokens: 567, total_embedding_tokens: 89, cost_usd_total: 0, cost_usd_available: false };
             const tokenMarkup = renderAutomatedCases();
             if (!tokenMarkup.includes('1,234 in / 567 out')) throw new Error('token usage cell numbers missing');
             if (!tokenMarkup.includes('data-action="toggle-token-detail"')) throw new Error('token usage toggle missing');
+            if (!tokenMarkup.includes('admin-token-cost-unknown') || !tokenMarkup.includes('$—')) throw new Error('unpriced cost badge missing');
             expandedTokenCaseKeys.add('AC-12715');
             const tokenDetailMarkup = renderAutomatedCases();
             if (!tokenDetailMarkup.includes('admin-token-detail-row') || !tokenDetailMarkup.includes('rag_answer') || !tokenDetailMarkup.includes('quota_field_extractor') || !tokenDetailMarkup.includes('openai:gpt-test')) throw new Error('token usage detail row missing');
             if (!tokenDetailMarkup.includes('2 calls') && !tokenDetailMarkup.includes('· 2 calls')) throw new Error('automation call count missing');
+            if (!tokenDetailMarkup.includes('<th>Cost</th>') || !tokenDetailMarkup.includes('model pricing not configured')) throw new Error('model cost column missing');
+            automationData.cases[0].token_usage.cost_usd = { available: true, total_usd: 0.0123, by_model: [{ provider: 'openai', model: 'gpt-test', usd: 0.0123 }] };
+            automationData.token_usage_page_total.cost_usd_available = true;
+            automationData.token_usage_page_total.cost_usd_total = 0.0123;
+            const pricedMarkup = renderAutomatedCases();
+            if (!pricedMarkup.includes('$0.0123')) throw new Error('priced cost badge missing');
             automationData.cases[0].token_usage = undefined;
             automationData.token_usage_page_total = undefined;
             automationData.automation_subcategories = undefined;
@@ -237,7 +244,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260824-token-usage-1", index)
+        self.assertIn("20260824-token-cost-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -599,7 +606,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260824-token-usage-1", html)
+        self.assertIn("20260824-token-cost-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
