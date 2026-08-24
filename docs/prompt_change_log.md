@@ -12,6 +12,25 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-24 - Fraud Account field extractor schema contract v4
+
+- Area or subsystem: `/account` Fraud Account field extraction managed Prompt
+- Prompt or model version: `fraud-account-fields-v4`; model configuration unchanged
+- Summary: Aligned the managed extractor Prompt output example with the seven canonical required fields used by the parser and removed the legacy four-field/contact-information terminology.
+- Reason: The parser accepts only `account_type`, `name`, `office_address`, `contact_number`, `contact_email`, `use_case_description`, and `console_configuration`, while the prior Prompt example still instructed the model to emit legacy keys that were discarded as missing evidence.
+- Affected files or config:
+  - `backend/services/prompts/account_routing.py`
+  - `backend/services/account_verification_field_extractor.py` (canonical contract reference)
+  - `backend/services/account_route_pipeline.py` (managed catalog reference)
+  - `backend/tests/test_account_verification_automation.py`
+  - `backend/tests/test_agent_config.py`
+- Expected behavior change:
+  - The managed Prompt emits exactly the seven canonical field keys and catalog version `fraud-account-fields-v4`.
+  - Existing grounding, optional-field, and sensitive-payment fail-closed behavior remains unchanged.
+- Verification:
+  - Structural Prompt contract test parses the `## Output` JSON and rejects missing or legacy keys.
+  - Targeted Account Verification, Agent Config, Intake, Persona, and Account AI regression suites: 227 passed, 24 subtests passed; 4 existing FastAPI deprecation warnings.
+
 ## 2026-08-24 - Fraud Account missing-information Persona format v12
 
 - Area or subsystem: `/account` Fraud Account customer reply and shared Automation Persona renderer
