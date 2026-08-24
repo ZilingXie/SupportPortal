@@ -2893,7 +2893,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                 10,
                                 5,
                                 "gpt-4.1",
-                            ),
+                                    0,
+                                    0,
+                                ),
                         ):
                             result = run_rag_query(
                                 "What does error 109 mean?",
@@ -3076,7 +3078,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                     12,
                                     6,
                                     "gpt-4.1",
-                                ),
+                                        0,
+                                        0,
+                                    ),
                             ):
                                 result = run_rag_query("How do I join a channel?", product="audio_video_calling")
 
@@ -3385,7 +3389,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-4.1",
-            ),
+                    0,
+                    0,
+                ),
         ), patch.object(
             rag_qa,
             "get_embedding_provider",

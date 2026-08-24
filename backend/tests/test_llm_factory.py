@@ -468,5 +468,77 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(result.text, "Recovered chat by DeepSeek.")
 
 
+    def test_invoke_responses_text_parses_cached_and_reasoning_usage_details(self) -> None:
+        def _fake_urlopen(request, timeout):
+            return _FakeResponse(
+                {
+                    "output_text": "Answer.",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 40,
+                        "input_tokens_details": {"cached_tokens": 60},
+                        "output_tokens_details": {"reasoning_tokens": 25},
+                    },
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile(api_mode=OPENAI_RESPONSES_API, max_retries=0),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(result.prompt_tokens, 100)
+        self.assertEqual(result.completion_tokens, 40)
+        self.assertEqual(result.cached_input_tokens, 60)
+        self.assertEqual(result.reasoning_tokens, 25)
+
+    def test_invoke_chat_text_parses_cached_and_reasoning_usage_details(self) -> None:
+        def _fake_urlopen(request, timeout):
+            return _FakeResponse(
+                {
+                    "choices": [{"message": {"content": "Chat answer."}}],
+                    "usage": {
+                        "prompt_tokens": 80,
+                        "completion_tokens": 30,
+                        "prompt_tokens_details": {"cached_tokens": 20},
+                        "completion_tokens_details": {"reasoning_tokens": 10},
+                    },
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_chat_text(
+                profile=self._profile(api_mode=OPENAI_CHAT_API, max_retries=0),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(result.prompt_tokens, 80)
+        self.assertEqual(result.completion_tokens, 30)
+        self.assertEqual(result.cached_input_tokens, 20)
+        self.assertEqual(result.reasoning_tokens, 10)
+
+    def test_usage_details_default_to_zero_without_details_blocks(self) -> None:
+        def _fake_urlopen(request, timeout):
+            return _FakeResponse(
+                {
+                    "output_text": "Plain.",
+                    "usage": {"input_tokens": 10, "output_tokens": 2},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile(api_mode=OPENAI_RESPONSES_API, max_retries=0),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(result.cached_input_tokens, 0)
+        self.assertEqual(result.reasoning_tokens, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

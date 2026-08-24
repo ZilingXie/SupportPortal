@@ -59,6 +59,8 @@ class CaseUsageCapture:
                 stage=stage,
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
+                cached_input_tokens=result.cached_input_tokens,
+                reasoning_tokens=result.reasoning_tokens,
             )
         )
 

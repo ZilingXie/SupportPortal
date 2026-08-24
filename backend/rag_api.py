@@ -278,6 +278,8 @@ def _build_usage_ledger(trace: Any) -> list[dict[str, Any]]:
                 output_tokens=int(getattr(trace, "completion_tokens", 0) or 0),
                 prompt_tokens=int(getattr(trace, "prompt_tokens", 0) or 0),
                 completion_tokens=int(getattr(trace, "completion_tokens", 0) or 0),
+                cached_input_tokens=int(getattr(trace, "cached_input_tokens", 0) or 0),
+                reasoning_tokens=int(getattr(trace, "reasoning_tokens", 0) or 0),
             )
         )
     embedding_model = _clean_text(getattr(trace, "embedding_model", None))

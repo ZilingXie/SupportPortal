@@ -416,7 +416,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         with patch("backend.services.rag_qa.invoke_responses_text", side_effect=_capture_answer_call):
-            payload, _prompt_tokens, _completion_tokens, _model_name = rag_qa._invoke_llm_payload_with_trace(
+            payload, _prompt_tokens, _completion_tokens, _model_name, _cached_tokens, _reasoning_tokens = rag_qa._invoke_llm_payload_with_trace(
                 "How do I join a channel in JavaScript?",
                 chunks,
                 {"api_key": "test-key", "chat_model": "gpt-5.4", "reasoning_effort": "low"},
@@ -462,7 +462,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         with patch("backend.services.rag_qa.invoke_responses_text", side_effect=_capture_answer_call):
-            payload, _prompt_tokens, _completion_tokens, _model_name = rag_qa._invoke_llm_payload_with_trace(
+            payload, _prompt_tokens, _completion_tokens, _model_name, _cached_tokens, _reasoning_tokens = rag_qa._invoke_llm_payload_with_trace(
                 "How to configure token auth?",
                 chunks,
                 {"api_key": "test-key", "chat_model": "gpt-5.4", "reasoning_effort": "low"},
@@ -1522,7 +1522,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                         with patch("backend.services.rag_qa._retrieve_fts_chunks", return_value=[]):
                             with patch("backend.services.rag_qa._metadata_rerank", return_value=([vector_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})):
                                 with patch("backend.services.rag_qa._rerank_chunks", return_value=[bm25_chunk, vector_chunk]):
-                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the BM25 chunk.", "key_steps": [], "citations": ["bm25-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1")):
+                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the BM25 chunk.", "key_steps": [], "citations": ["bm25-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1", 0, 0)):
                                         result = run_rag_query("How do I use BM25 for channel join retrieval?")
 
         self.assertIsNotNone(result)
@@ -1635,7 +1635,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     10,
                     5,
                     "gpt-5.4",
-                ),
+                        0,
+                        0,
+                    ),
             ):
                 result = run_rag_query("how to join channel")
 
@@ -1980,7 +1982,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             packed_evidence=None,
             product: str | None = None,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -1997,7 +1999,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-5.4",
-            )
+                    0,
+                    0,
+                )
 
         query_understanding = QueryUnderstandingResult(
             query_profile="en",
@@ -2698,7 +2702,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             product: str | None = None,
             citation_retry: bool = False,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -2717,7 +2721,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-5.4",
-            )
+                    0,
+                    0,
+                )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -3648,7 +3654,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     10,
                     5,
                     "gpt-5.4",
-                ),
+                        0,
+                        0,
+                    ),
             ) as llm_mock, patch(
                 "backend.services.rag_qa._run_rag_query_legacy",
                 side_effect=AssertionError("generic usage_configuration path should stay in agentic mode"),
@@ -4072,7 +4080,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             product: str | None = None,
             citation_retry: bool = False,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -4094,7 +4102,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-5.4",
-            )
+                    0,
+                    0,
+                )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -4235,7 +4245,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             packed_evidence=None,
             product: str | None = None,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -4252,7 +4262,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-5.4",
-            )
+                    0,
+                    0,
+                )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -4338,7 +4350,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             packed_evidence=None,
             product: str | None = None,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -4355,7 +4367,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-5.4",
-            )
+                    0,
+                    0,
+                )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -4491,7 +4505,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                         with patch("backend.services.rag_qa._retrieve_keyword_chunks", return_value=[keyword_chunk]):
                             with patch("backend.services.rag_qa._metadata_rerank", return_value=([vector_chunk, keyword_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})):
                                 with patch("backend.services.rag_qa._rerank_chunks", return_value=[vector_chunk, keyword_chunk]):
-                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the vector chunk.", "key_steps": [], "citations": ["vector-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1")):
+                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the vector chunk.", "key_steps": [], "citations": ["vector-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1", 0, 0)):
                                         result = run_rag_query("bm25 is down, use fallback")
 
         self.assertIsNotNone(result)
@@ -4553,7 +4567,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             packed_evidence=None,
             product: str | None = None,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -4570,7 +4584,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-4.1",
-            )
+                    0,
+                    0,
+                )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -4724,7 +4740,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                             10,
                                             5,
                                             "gpt-4.1",
-                                        ),
+                                                0,
+                                                0,
+                                            ),
                                     ):
                                         result = run_rag_query(query)
 
@@ -4789,7 +4807,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             packed_evidence=None,
             product: str | None = None,
             **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
+        ) -> tuple[dict[str, object], int, int, str, int, int]:
             _ = message
             _ = config
             _ = strict_retry
@@ -4806,7 +4824,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 10,
                 5,
                 "gpt-4.1",
-            )
+                    0,
+                    0,
+                )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -4967,7 +4987,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                         10,
                                         5,
                                         "gpt-4.1",
-                                    ),
+                                            0,
+                                            0,
+                                        ),
                                 ):
                                     result = run_rag_query(
                                         "BuildTokenWithUid 和 BuildTokenWithUidAndPrivilege 有什么区别？"
@@ -5043,7 +5065,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                 10,
                                                 5,
                                                 "gpt-4.1",
-                                            ),
+                                                    0,
+                                                    0,
+                                                ),
                                             (
                                                 {
                                                     "answer": "Generate the Agora token on your app server in production.",
@@ -5054,7 +5078,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                 12,
                                                 6,
                                                 "gpt-4.1",
-                                            ),
+                                                    0,
+                                                    0,
+                                                ),
                                         ],
                                     ):
                                         result = run_rag_query(
@@ -5133,7 +5159,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                             10,
                                             5,
                                             "gpt-4.1",
-                                        ),
+                                                0,
+                                                0,
+                                            ),
                                         (
                                             {
                                                 "answer": "Generate the Agora token on your app server in production.",
@@ -5144,7 +5172,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                             12,
                                             6,
                                             "gpt-4.1",
-                                        ),
+                                                0,
+                                                0,
+                                            ),
                                     ],
                                 ):
                                     result = run_rag_query(
@@ -5213,8 +5243,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                 with patch(
                                     "backend.services.rag_qa._invoke_llm_payload_with_trace",
                                     side_effect=[
-                                        (None, 10, 5, "gpt-4.1"),
-                                        (None, 11, 5, "gpt-4.1"),
+                                        (None, 10, 5, "gpt-4.1", 0, 0),
+                                        (None, 11, 5, "gpt-4.1", 0, 0),
                                     ],
                                 ):
                                     result = run_rag_query("How do I generate a token for users joining a channel?")
@@ -5517,7 +5547,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                     10,
                                                     5,
                                                     "gpt-4.1",
-                                                ),
+                                                        0,
+                                                        0,
+                                                    ),
                                                 (
                                                     {
                                                         "answer": INSUFFICIENT_EVIDENCE_REPLY,
@@ -5528,7 +5560,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                     11,
                                                     5,
                                                     "gpt-4.1",
-                                                ),
+                                                        0,
+                                                        0,
+                                                    ),
                                             ],
                                         ):
                                             result = run_rag_query(
@@ -5669,7 +5703,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                 10,
                                                 5,
                                                 "gpt-4.1",
-                                            ),
+                                                    0,
+                                                    0,
+                                                ),
                                         ):
                                             result = run_rag_query(
                                                 "How can we record the whole canvas with this Cloud Recording request body?",
@@ -6328,7 +6364,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                             10,
                                             5,
                                             "gpt-4.1",
-                                        ),
+                                                0,
+                                                0,
+                                            ),
                                     ):
                                         result = run_rag_query("How do I troubleshoot Cloud Recording jitter?")
 
@@ -6502,7 +6540,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                             10,
                                             5,
                                             "gpt-5.4",
-                                        ),
+                                                0,
+                                                0,
+                                            ),
                                     ):
                                         with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "0"}, clear=False):
                                             result = run_rag_query("How do I join a channel in Node.js?")
@@ -6755,7 +6795,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                 10,
                                                 5,
                                                 "gpt-5.4",
-                                            ),
+                                                    0,
+                                                    0,
+                                                ),
                                         ):
                                             with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "1"}, clear=False):
                                                 run_rag_query("How do I join a channel in Node.js with a token?")
@@ -6876,7 +6918,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     10,
                     5,
                     "gpt-5.4",
-                ),
+                        0,
+                        0,
+                    ),
             ):
                 result = run_rag_query(message)
             elapsed = time.perf_counter() - started_at
@@ -7007,7 +7051,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     10,
                     5,
                     "gpt-5.4",
-                ),
+                        0,
+                        0,
+                    ),
             ):
                 result = run_rag_query(message)
 
@@ -7120,7 +7166,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     10,
                     5,
                     "gpt-5.4",
-                ),
+                        0,
+                        0,
+                    ),
             ) as answer_mock:
                 started_at = time.perf_counter()
                 result = run_rag_query(message)
@@ -7233,7 +7281,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     10,
                     5,
                     "gpt-5.4",
-                ),
+                        0,
+                        0,
+                    ),
             ) as answer_mock:
                 result = run_rag_query(message)
 
