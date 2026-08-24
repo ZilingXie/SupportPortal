@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from backend.services.account_automation_handlers import (
@@ -12,6 +13,7 @@ from backend.services.account_verification_automation import (
 from backend.services.account_verification_field_extractor import (
     ACCOUNT_VERIFICATION_REQUIRED_GROUPS,
     AccountVerificationFieldExtraction,
+    build_account_verification_field_system_prompt,
     compose_account_verification_follow_up,
     detect_sensitive_payment_data,
     extract_account_verification_fields,
@@ -58,6 +60,17 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
         "We use Agora for live tutoring. "
         "Console configuration: RTC project configured."
     )
+
+    def test_system_prompt_output_schema_matches_required_groups(self) -> None:
+        prompt = build_account_verification_field_system_prompt()
+        output = prompt.split("## Output", 1)[1]
+        json_text = output.split("Return JSON only:\n", 1)[1].split("\nOmit source fields", 1)[0]
+        schema = json.loads(json_text)
+
+        self.assertEqual(set(schema["fields"]), set(ACCOUNT_VERIFICATION_REQUIRED_GROUPS))
+        for legacy_key in ("company_information", "use_case", "payment_information"):
+            self.assertNotIn(f'"{legacy_key}"', prompt)
+        self.assertNotIn("contact_information", prompt)
 
     def test_explicit_contact_section_wins_over_different_email_signature(self) -> None:
         message = (
