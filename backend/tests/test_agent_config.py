@@ -66,7 +66,7 @@ class AgentConfigTests(unittest.TestCase):
 
         route_prompts = {item["key"]: item for item in agents["route-agent"]["prompts"]}
         self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v2")
-        self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v8")
+        self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v10")
         self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v7")
         self.assertEqual(route_prompts["account-backend-operation-router-system"]["version"], "account-backend-operation-v1")
         self.assertEqual(route_prompts["account-account-billing-router-system"]["version"], "account-billing-v2")
@@ -78,7 +78,7 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(route_prompts["account-quota-field-extractor-system"]["version"], "account-quota-fields-v1")
         self.assertEqual(
             route_prompts["account-verification-field-extractor-system"]["version"],
-            "fraud-account-fields-v3",
+            "fraud-account-fields-v4",
         )
         self.assertEqual(
             route_prompts["account-suspension-field-extractor-system"]["version"],
@@ -169,14 +169,14 @@ class AgentConfigTests(unittest.TestCase):
         self.assertFalse(any("persona" in child for child in automation["children"]))
         fraud = self._navigation_node(route_navigation, "fraud-account")
         self.assertEqual(fraud["prompt_keys"], ["account-verification-field-extractor-system"])
-        self.assertEqual(len(payload["automation_workflows"]), 5)
+        self.assertEqual(len(payload["automation_workflows"]), 4)
         self.assertEqual(
             [item["subcategory"] for item in payload["automation_workflows"]],
-            ["fraud_account", "detailed_invoice", "enablement", "quota", "unregistered"],
+            ["fraud_account", "enablement", "quota", "unregistered"],
         )
         self.assertEqual(
             [item["status"] for item in payload["automation_workflows"]],
-            ["registered", "registered", "registered", "registered", "fallback"],
+            ["registered", "registered", "registered", "fallback"],
         )
         self.assertTrue(payload["route_runtime"]["router_prompt_version"])
         self.assertTrue(payload["route_runtime"]["stage_details"])

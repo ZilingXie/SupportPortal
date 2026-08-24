@@ -514,7 +514,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-verification-field-extractor",
                     "Fraud Account Field Extractor",
-                    "Extracts four grounded, non-sensitive fraud-review information groups from /account history.",
+                    "Extracts seven grounded, non-sensitive fraud-review information fields from /account history.",
                 ),
                 _component(
                     "account-suspension-field-extractor",

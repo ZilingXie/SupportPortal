@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:01:14Z",
-  "source_base_commit": "eeb636c8fb59b31a619312149dbd5ba5677e9733",
-  "registry_digest": "b22a61b5c01d0db69e8b78513f68d39820b9f5e77b7bf2216682fd5912eced62",
+  "generated_at": "2026-08-24T12:24:45Z",
+  "source_base_commit": "1117d2634fa378c82105e6b4caa21ee05a053c9d",
+  "registry_digest": "1fc80ba7ffe65af7cb2957e6c9b61fe56d788dfe645fecb5ef2514c43b2c9534",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -583,6 +583,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Fraud Account Prompt schema contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py",
+          "details": "227 项测试通过、24 个子测试通过、4 个既有 FastAPI deprecation warnings；结构测试解析 managed Prompt 的 Output JSON，确保七个 canonical keys 存在且旧四字段及 contact_information 不存在。"
+        },
+        {
+          "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
           "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
@@ -701,7 +707,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 15,
-      "done_count": 8,
+      "done_count": 7,
       "blocked_count": 1
     },
     {
@@ -5469,10 +5475,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-101",
       "title": "Fraud Account 字段改为 7 项 + Slack/邮件显示字段",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "无（Persona v12 已合并并完成官方单机栈验证）。",
+      "next_action": "合并后完成 Prompt Release、官方单机栈和 runtime provenance 验证，再关闭本 follow-up。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -5504,15 +5510,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Official single-host stack after merge",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c \"from backend.services.automation_persona import AUTOMATION_PERSONA_PROMPT_VERSION, _assert_missing_information_format_contract; print({'persona_prompt_version': AUTOMATION_PERSONA_PROMPT_VERSION, 'format_contract': _assert_missing_information_format_contract.__name__})\"",
           "details": "官方项目 deployment；root_main_ref、official_image_tag、official_health_build_ref、official_runtime_build_ref 均为 d8a40785739f；health 返回 200/status=ok；runtime_profile=local_lightweight；auxiliary_stack_present=false；容器内 Persona marker 为 automation-persona-v12。"
+        },
+        {
+          "type": "test",
+          "label": "Fraud Account Prompt schema contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py",
+          "details": "227 项测试通过、24 个子测试通过、4 个既有 FastAPI deprecation warnings；结构测试解析 managed Prompt 的 Output JSON，确保七个 canonical keys 存在且旧四字段及 contact_information 不存在。"
         }
       ],
       "source_refs": [
         "backend/services/account_verification_field_extractor.py",
+        "backend/services/agent_config.py",
         "backend/services/account_verification_automation.py",
         "backend/services/prompts/account_routing.py",
         "backend/services/account_slack_n8n.py",
         "backend/services/automation_persona.py",
         "backend/tests/test_account_verification_automation.py",
+        "backend/tests/test_agent_config.py",
         "backend/tests/test_account_slack_n8n.py",
         "backend/tests/test_account_intake.py",
         "backend/tests/test_automation_persona.py"
@@ -5539,6 +5553,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "live_stack_verified",
           "summary": "合并后官方 deployment 单机 lightweight 栈健康检查和 build provenance 均匹配，Persona v12 marker 已在容器内确认，无辅助栈。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "fraud_account_prompt_schema_contract",
+          "summary": "发现并修复 Fraud Account extractor required groups 与 managed Prompt Output 示例漂移；Prompt 升级为 fraud-account-fields-v4，增加结构一致性回归。"
         }
       ],
       "legacy_refs": [],
