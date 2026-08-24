@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:25:52Z",
-  "source_base_commit": "80d36908806287887c29747a548f97cc6a1e8eba",
-  "registry_digest": "836dcd9f22831bfa09ab0d983e4979cfc39f641fbc292082fd884aecb4d8abd7",
+  "generated_at": "2026-08-24T12:33:35Z",
+  "source_base_commit": "1805f744f0d94d664de9f81b1db85175bf1ce2d1",
+  "registry_digest": "a32c0be8eb73c3e2499d4a37b6ce3405f7e990dace2d8feb9f237784e295d32a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -583,6 +583,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Fraud Account Prompt schema contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py",
+          "details": "227 项测试通过、24 个子测试通过、4 个既有 FastAPI deprecation warnings；结构测试解析 managed Prompt 的 Output JSON，确保七个 canonical keys 存在且旧四字段及 contact_information 不存在。"
+        },
+        {
+          "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
           "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
@@ -731,7 +737,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 16,
-      "done_count": 9,
+      "done_count": 8,
       "blocked_count": 1
     },
     {
@@ -1714,6 +1720,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Comment ingestion and reply chain regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_comment_sync_postgres",
+          "details": "86 项通过：comment-sync-target 鉴权与 membership、PUT comments 快照校验/404/触发调用、agent/initial 忽略不占幂等、Engineer Case 分支事件落库、既有 intake/runtime/contracts/compose 全回归绿。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -2050,7 +2062,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 16,
+      "task_count": 17,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -5499,10 +5511,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-101",
       "title": "Fraud Account 字段改为 7 项 + Slack/邮件显示字段",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "无（Persona v12 已合并并完成官方单机栈验证）。",
+      "next_action": "合并后完成 Prompt Release、官方单机栈和 runtime provenance 验证，再关闭本 follow-up。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -5534,15 +5546,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Official single-host stack after merge",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c \"from backend.services.automation_persona import AUTOMATION_PERSONA_PROMPT_VERSION, _assert_missing_information_format_contract; print({'persona_prompt_version': AUTOMATION_PERSONA_PROMPT_VERSION, 'format_contract': _assert_missing_information_format_contract.__name__})\"",
           "details": "官方项目 deployment；root_main_ref、official_image_tag、official_health_build_ref、official_runtime_build_ref 均为 d8a40785739f；health 返回 200/status=ok；runtime_profile=local_lightweight；auxiliary_stack_present=false；容器内 Persona marker 为 automation-persona-v12。"
+        },
+        {
+          "type": "test",
+          "label": "Fraud Account Prompt schema contract",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py",
+          "details": "227 项测试通过、24 个子测试通过、4 个既有 FastAPI deprecation warnings；结构测试解析 managed Prompt 的 Output JSON，确保七个 canonical keys 存在且旧四字段及 contact_information 不存在。"
         }
       ],
       "source_refs": [
         "backend/services/account_verification_field_extractor.py",
+        "backend/services/agent_config.py",
         "backend/services/account_verification_automation.py",
         "backend/services/prompts/account_routing.py",
         "backend/services/account_slack_n8n.py",
         "backend/services/automation_persona.py",
         "backend/tests/test_account_verification_automation.py",
+        "backend/tests/test_agent_config.py",
         "backend/tests/test_account_slack_n8n.py",
         "backend/tests/test_account_intake.py",
         "backend/tests/test_automation_persona.py"
@@ -5569,6 +5589,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "live_stack_verified",
           "summary": "合并后官方 deployment 单机 lightweight 栈健康检查和 build provenance 均匹配，Persona v12 marker 已在容器内确认，无辅助栈。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "fraud_account_prompt_schema_contract",
+          "summary": "发现并修复 Fraud Account extractor required groups 与 managed Prompt Output 示例漂移；Prompt 升级为 fraud-account-fields-v4，增加结构一致性回归。"
         }
       ],
       "legacy_refs": [],
@@ -6088,6 +6113,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-110",
+      "title": "/automation/production 替代 /production：Phase C 评论摄入 + 客户回复链（纯移植）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
+      "next_action": "待用户 EC2 部署 + n8n commen_sync 的 production origin 换 URL 后做真实工单评论往返验收（追问进展、RAG fallback、suspension 确认）。随后 Phase D：状态同步端点（PUT status + solved/closed 关 case/Engineer Case 收尾）。",
+      "acceptance_criteria": [
+        "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
+        "触发链：幂等 per comment id、agent/initial/private/empty/前置评论忽略、非 production case 忽略、Engineer Case 分支记录客户评论事件。",
+        "回复链：ownership gate fail-closed 停自动化、suspension 两阶段状态机（确认→handoff→closing）、handler 进展判定与重路由、RAG fallback answer/escalation、追问与确认 reply job。",
+        "旧栈 /production 与 /account 零行为变化；preproduction/staging 契约不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Comment ingestion and reply chain regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_comment_sync_postgres",
+          "details": "86 项通过：comment-sync-target 鉴权与 membership、PUT comments 快照校验/404/触发调用、agent/initial 忽略不占幂等、Engineer Case 分支事件落库、既有 intake/runtime/contracts/compose 全回归绿。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/automation_account_intake.py",
+        "backend/automation_production_runtime.py",
+        "backend/main.py",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/deploy_automation_production_blue_green.sh",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "用户在 A（复用 backend.main，需放开镜像物理排除）与 B（纯移植，契约不变）之间选定 B。完成移植与接线；工程师 AI 调查回合按阶段边界留给 Slack 协作阶段。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-108",
+        "p2-109"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-111",
       "title": "RAGFlow 兜底答案改由 gpt-5.6-luna 生成并经 Persona 渲染后回复",
       "status": "active",
       "owner": "zac",
@@ -6129,6 +6204,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "created",
           "summary": "用户需求：RAGFlow 检索后生成模型换 gpt-5.6-luna（复用路由 luna 配置，问答定独立场景旋钮）；生成只需核心技术内容，最终回复经 persona 组装；References 渲染后确定性追加。任务号 p2-110（p2-108/109 已被 split-env 并行链占用）。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "updated",
+          "summary": "任务号 p2-110→p2-111：finalize 刷新时并行链（split-env Phase C，PR#927）已占用 p2-110；内容不变。"
         }
       ],
       "legacy_refs": [

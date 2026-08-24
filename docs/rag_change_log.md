@@ -5045,7 +5045,7 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_rag_api.py backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_query_understanding.py backend/tests/test_rag_context_budget.py -q` (green; ledger detail case asserts rag_answer/expansion entries and token_by_model buckets carry the new values)
 
-## 2026-08-24 - RAGFlow fallback answer generation moves to luna with persona rendering (p2-110)
+## 2026-08-24 - RAGFlow fallback answer generation moves to luna with persona rendering (p2-111)
 
 - Summary:
   - The production-case unexpected-reply fallback now generates its answer with the new pinned `ragflow_answer` scenario (default `gpt-5.6-luna`, xhigh) instead of the shared `rag_answer` profile (gpt-5.4); retrieval still runs against the external RAGFlow ticket-agent KB with the unchanged trusted-host citation validation.
