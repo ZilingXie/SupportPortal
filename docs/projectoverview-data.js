@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:55:42Z",
-  "source_base_commit": "745824687fe72bc0b26c4b90a849ac7217b6c45a",
-  "registry_digest": "0a3552caa0d13afcda45003249e69d4b143aada7b95ca3557da6f9d1ce88f8fc",
+  "generated_at": "2026-08-24T10:59:11Z",
+  "source_base_commit": "4dbcf3610f146273b68e260656242037fd3c9156",
+  "registry_digest": "db90d41d6ecb7448c0b301a43e078d84e2bbd22174b4f96591c448d6fb80e3c0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2209,8 +2209,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "summary": "Direct Slack sender, event-backed thread binding, worker fail-closed delivery, resolver API and inbound-only n8n workflow contracts are covered by focused tests.",
-          "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_investigation_flow.py"
+          "summary": "Latest-main regression passed with direct Slack sender, event-backed binding, fail-closed worker, resolver API, inbound-only n8n workflows, intake, Workspace, Zendesk delivery, repository and deployment coverage: 583 tests and 37 subtests.",
+          "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_investigation_flow.py, backend/tests/test_account_intake.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
         },
         {
           "type": "document",
@@ -2229,7 +2229,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "summary": "Intake, Engineer flow, repository, comment-sync, worker and runtime contract regressions passed; multi-agent cases require ENGINEER_MULTI_AGENT_ENABLED=true.",
+          "summary": "Latest-main intake, Engineer flow, repository, in-memory/PostgreSQL comment-sync, worker and runtime contract regression passed: 583 tests and 37 subtests with ENGINEER_MULTI_AGENT_ENABLED=true.",
           "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
         },
         {
@@ -7487,8 +7487,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "summary": "Direct Slack sender, event-backed thread binding, worker fail-closed delivery, resolver API and inbound-only n8n workflow contracts are covered by focused tests.",
-          "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_investigation_flow.py"
+          "summary": "Latest-main regression passed with direct Slack sender, event-backed binding, fail-closed worker, resolver API, inbound-only n8n workflows, intake, Workspace, Zendesk delivery, repository and deployment coverage: 583 tests and 37 subtests.",
+          "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_engineer_slack_workflows.py, backend/tests/test_investigation_flow.py, backend/tests/test_account_intake.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
         },
         {
           "type": "document",
@@ -7570,7 +7570,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "summary": "Intake, Engineer flow, repository, comment-sync, worker and runtime contract regressions passed; multi-agent cases require ENGINEER_MULTI_AGENT_ENABLED=true.",
+          "summary": "Latest-main intake, Engineer flow, repository, in-memory/PostgreSQL comment-sync, worker and runtime contract regression passed: 583 tests and 37 subtests with ENGINEER_MULTI_AGENT_ENABLED=true.",
           "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
         },
         {
