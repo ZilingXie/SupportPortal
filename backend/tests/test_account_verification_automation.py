@@ -10,6 +10,7 @@ from backend.services.account_verification_automation import (
     build_account_verification_automation_result,
 )
 from backend.services.account_verification_field_extractor import (
+    ACCOUNT_VERIFICATION_REQUIRED_GROUPS,
     AccountVerificationFieldExtraction,
     compose_account_verification_follow_up,
     detect_sensitive_payment_data,
@@ -29,47 +30,67 @@ def _provided(group: str, value: str, quote: str) -> dict[str, object]:
     }
 
 
+_NEW_FIELDS = dict.fromkeys(ACCOUNT_VERIFICATION_REQUIRED_GROUPS, "")
+_NEW_FIELDS.pop("account_type")
+_NEW_FIELDS.pop("name")
+
+
+def _complete_fields() -> dict[str, object]:
+    return {
+        "account_type": _provided("account_type", "Enterprise", "Account type: Enterprise"),
+        "name": _provided("name", "Roy Wang", "Name: Roy Wang"),
+        "office_address": _provided("office_address", "327 Pitt Street, Sydney", "Office address: 327 Pitt Street, Sydney"),
+        "contact_number": _provided("contact_number", "+61 412956557", "Contact number: +61 412956557"),
+        "contact_email": _provided("contact_email", "roy@example.com", "Contact email: roy@example.com"),
+        "use_case_description": _provided("use_case_description", "Live tutoring", "We use Agora for live tutoring"),
+        "console_configuration": _provided("console_configuration", "RTC project configured", "Console configuration: RTC project configured"),
+    }
+
+
 class AccountVerificationFieldExtractorTests(unittest.TestCase):
+    # Customer message that contains source quotes for every field in
+    # _complete_fields(); grounding requires source_quote to appear verbatim.
+    _FULL_MESSAGE = (
+        "Account type: Enterprise. Name: Roy Wang. "
+        "Office address: 327 Pitt Street, Sydney. "
+        "Contact number: +61 412956557. "
+        "Contact email: roy@example.com. "
+        "We use Agora for live tutoring. "
+        "Console configuration: RTC project configured."
+    )
+
     def test_explicit_contact_section_wins_over_different_email_signature(self) -> None:
         message = (
-            "Company information: StarX Technology Solutions Pty Ltd, Australia, 327 Pitt Street, Sydney. "
-            "Contact information: Roy Wang, DevOps Manager, +61 412956557, 327 Pitt Street, Sydney. "
+            "Account type: Enterprise. Name: Roy Wang, DevOps Manager. "
+            "Office address: 327 Pitt Street, Sydney. Contact number: +61 412956557. "
+            "Contact email: roy@example.com. "
             "We use Agora RTC for secure one-to-one voice and video calls. "
-            "We have not crossed the free-tier limit and have no payment history.\n"
+            "Console configuration: RTC project with token authentication.\n"
             "Kind regards,\nZoe\nProduct Manager"
+        )
+        # Use message-specific quotes for this test
+        fields = _complete_fields()
+        fields["use_case_description"] = _provided(
+            "use_case_description",
+            "Secure one-to-one voice and video calls",
+            "We use Agora RTC for secure one-to-one voice and video calls",
+        )
+        fields["console_configuration"] = _provided(
+            "console_configuration",
+            "RTC project with token authentication",
+            "Console configuration: RTC project with token authentication",
         )
         responses = iter(
             [
                 {
                     "status": "ambiguous",
-                    "ambiguous_fields": ["contact_information"],
+                    "ambiguous_fields": ["name"],
                     "reason": "The contact name differs from the signature.",
                     "fields": {},
                 },
                 {
                     "status": "complete",
-                    "fields": {
-                        "company_information": _provided(
-                            "company_information",
-                            "StarX Technology Solutions Pty Ltd; Australia; Sydney",
-                            "Company information: StarX Technology Solutions Pty Ltd, Australia, 327 Pitt Street, Sydney",
-                        ),
-                        "contact_information": _provided(
-                            "contact_information",
-                            "Roy Wang; DevOps Manager; +61 412956557; Sydney",
-                            "Contact information: Roy Wang, DevOps Manager, +61 412956557, 327 Pitt Street, Sydney",
-                        ),
-                        "use_case": _provided(
-                            "use_case",
-                            "Secure one-to-one voice and video calls",
-                            "We use Agora RTC for secure one-to-one voice and video calls",
-                        ),
-                        "payment_information": _provided(
-                            "payment_information",
-                            "No payment history; free tier",
-                            "We have not crossed the free-tier limit and have no payment history",
-                        ),
-                    },
+                    "fields": fields,
                 },
             ]
         )
@@ -81,14 +102,10 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "complete")
-        self.assertEqual(result.collected_fields["contact_information"].split(";", 1)[0], "Roy Wang")
+        self.assertEqual(result.collected_fields["name"], "Roy Wang")
         self.assertEqual(result.prompt_snapshot["verification_status"], "verified")
 
     def test_verification_repairs_unique_quote_source_message_id(self) -> None:
-        message = (
-            "Company: Example Ltd in Singapore. Contact: Maya Chen, +65 5555 0101. "
-            "We use Agora for live tutoring. No payment has been made yet."
-        )
         calls = 0
 
         def invoke(**_: object) -> dict[str, object]:
@@ -98,51 +115,26 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
                 return {
                     "status": "missing",
                     "fields": {
-                        "company_information": {
-                            **_provided(
-                                "company_information",
-                                "Example Ltd; Singapore",
-                                "Company: Example Ltd in Singapore",
-                            ),
+                        "account_type": {
+                            **_provided("account_type", "Enterprise", "Account type: Enterprise"),
                             "source_message_id": "wrong-message",
                         }
                     },
                 }
             return {
                 "status": "complete",
-                "fields": {
-                    "company_information": _provided(
-                        "company_information",
-                        "Example Ltd; Singapore",
-                        "Company: Example Ltd in Singapore",
-                    ),
-                    "contact_information": _provided(
-                        "contact_information",
-                        "Maya Chen; +65 5555 0101",
-                        "Contact: Maya Chen, +65 5555 0101",
-                    ),
-                    "use_case": _provided(
-                        "use_case",
-                        "Live tutoring",
-                        "We use Agora for live tutoring",
-                    ),
-                    "payment_information": _provided(
-                        "payment_information",
-                        "No payment made yet",
-                        "No payment has been made yet",
-                    ),
-                },
+                "fields": _complete_fields(),
             }
 
         result = extract_account_verification_fields(
             ticket_subject="Account verification",
-            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": self._FULL_MESSAGE}],
             invoke=invoke,
         )
 
         self.assertEqual(calls, 2)
         self.assertEqual(result.status, "complete")
-        self.assertEqual(result.source_message_ids["company_information"], "m1")
+        self.assertEqual(result.source_message_ids["account_type"], "m1")
         self.assertEqual(result.prompt_snapshot["verification_status"], "corrected_grounding")
 
     def test_invalid_verification_result_fails_closed(self) -> None:
@@ -155,8 +147,8 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
                 return {
                     "status": "missing",
                     "fields": {
-                        "company_information": {
-                            **_provided("company_information", "Example Ltd", "Company: Example Ltd"),
+                        "account_type": {
+                            **_provided("account_type", "Startup", "Account type: Startup"),
                             "source_message_id": "wrong-message",
                         }
                     },
@@ -169,7 +161,7 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
                 {
                     "message_id": "m1",
                     "role": "customer",
-                    "content": "Company: Example Ltd",
+                    "content": "Account type: Startup",
                 }
             ],
             invoke=invoke,
@@ -182,24 +174,15 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
 
     def test_explicit_missing_fields_do_not_trigger_verification(self) -> None:
         calls = 0
+        all_missing = list(ACCOUNT_VERIFICATION_REQUIRED_GROUPS)
 
         def invoke(**_: object) -> dict[str, object]:
             nonlocal calls
             calls += 1
             return {
                 "status": "missing",
-                "fields": {
-                    "company_information": {"status": "missing"},
-                    "contact_information": {"status": "missing"},
-                    "use_case": {"status": "missing"},
-                    "payment_information": {"status": "missing"},
-                },
-                "missing_fields": [
-                    "company_information",
-                    "contact_information",
-                    "use_case",
-                    "payment_information",
-                ],
+                "fields": {key: {"status": "missing"} for key in all_missing},
+                "missing_fields": all_missing,
             }
 
         result = extract_account_verification_fields(
@@ -210,49 +193,15 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
 
         self.assertEqual(calls, 1)
         self.assertEqual(result.status, "missing")
-        self.assertEqual(
-            result.missing_fields,
-            [
-                "company_information",
-                "contact_information",
-                "use_case",
-                "payment_information",
-            ],
-        )
+        self.assertEqual(result.missing_fields, all_missing)
 
-    def test_only_four_information_groups_are_required(self) -> None:
-        message = (
-            "Company: Example Ltd, registered in Singapore at 1 Main Street. "
-            "I am Maya Chen, phone +65 5555 0101, at the same company address. "
-            "We use Agora for live tutoring. We have not made any payment yet."
-        )
+    def test_seven_fields_are_required(self) -> None:
         result = extract_account_verification_fields(
             ticket_subject="Account verification",
-            customer_messages=[{"message_id": "m1", "role": "customer", "content": message}],
+            customer_messages=[{"message_id": "m1", "role": "customer", "content": self._FULL_MESSAGE}],
             invoke=lambda **_: {
                 "status": "complete",
-                "fields": {
-                    "company_information": _provided(
-                        "company_information",
-                        "Example Ltd; Singapore; 1 Main Street",
-                        "Company: Example Ltd, registered in Singapore at 1 Main Street",
-                    ),
-                    "contact_information": _provided(
-                        "contact_information",
-                        "Maya Chen; +65 5555 0101; same company address",
-                        "I am Maya Chen, phone +65 5555 0101, at the same company address",
-                    ),
-                    "use_case": _provided(
-                        "use_case",
-                        "Live tutoring",
-                        "We use Agora for live tutoring",
-                    ),
-                    "payment_information": _provided(
-                        "payment_information",
-                        "No payment made yet",
-                        "We have not made any payment yet",
-                    ),
-                },
+                "fields": _complete_fields(),
             },
         )
 
@@ -260,26 +209,6 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
         self.assertEqual(result.missing_fields, [])
         self.assertNotIn("website", result.collected_fields)
         self.assertNotIn("app_id", result.collected_fields)
-
-    def test_no_payment_free_tier_and_not_applicable_are_valid_payment_statements(self) -> None:
-        for statement in ("No payment has been made yet", "We use the free tier", "Payment is not applicable"):
-            with self.subTest(statement=statement):
-                result = extract_account_verification_fields(
-                    ticket_subject="Verification",
-                    customer_messages=[{"message_id": "m1", "role": "customer", "content": statement}],
-                    invoke=lambda **_: {
-                        "status": "missing",
-                        "fields": {
-                            "payment_information": _provided(
-                                "payment_information",
-                                statement,
-                                statement,
-                            )
-                        },
-                    },
-                )
-                self.assertEqual(result.collected_fields["payment_information"], statement)
-                self.assertNotIn("payment_information", result.missing_fields)
 
     def test_sensitive_payment_data_fails_closed_before_llm(self) -> None:
         invoked = False
@@ -314,32 +243,29 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_account_verification_follow_up("Please send your Website and App ID.")
 
-    def test_follow_up_must_cover_each_missing_group_and_safe_payment_alternative(self) -> None:
+    def test_follow_up_must_cover_each_missing_field(self) -> None:
         with self.assertRaises(ValueError):
             compose_account_verification_follow_up(
-                missing_fields=["contact_information", "payment_information"],
+                missing_fields=["contact_number", "contact_email"],
                 collected_fields={},
-                invoke=lambda **_: {"reply": "Please provide contact and payment information."},
+                invoke=lambda **_: {"reply": "Please provide your contact number."},
             )
         reply, _snapshot = compose_account_verification_follow_up(
-            missing_fields=["contact_information", "payment_information"],
+            missing_fields=["contact_number", "contact_email"],
             collected_fields={},
             invoke=lambda **_: {
-                "reply": (
-                    "Please share your name, phone number, and company address, plus a high-level payment "
-                    "status. You may say no payment has been made or payment is not applicable."
-                )
+                "reply": "Please share your official contact number and official contact email."
             },
         )
-        self.assertIn("payment is not applicable", reply)
+        self.assertIn("contact", reply)
 
 
 class AccountVerificationAutomationTests(unittest.TestCase):
     def test_missing_information_is_followed_up_only_once(self) -> None:
         extraction = AccountVerificationFieldExtraction(
             status="missing",
-            collected_fields={"use_case": "Live tutoring"},
-            missing_fields=["company_information", "contact_information", "payment_information"],
+            collected_fields={"use_case_description": "Live tutoring"},
+            missing_fields=["account_type", "name", "office_address"],
             grounding_status="passed",
         )
         first = build_account_verification_automation_result(
@@ -351,8 +277,7 @@ class AccountVerificationAutomationTests(unittest.TestCase):
             follow_up_count=0,
             extract=lambda **_: extraction,
             compose_follow_up=lambda **_: (
-                "Could you share your company and contact information, plus a safe high-level payment status? "
-                "You may say no payment has been made or payment is not applicable.",
+                "Could you share your account type, name, and office address?",
                 {"prompt_version": "test"},
             ),
         )
@@ -401,7 +326,7 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         extraction = AccountVerificationFieldExtraction(
             status="missing",
             collected_fields={},
-            missing_fields=["company_information"],
+            missing_fields=["account_type"],
             grounding_status="passed",
         )
         result = build_account_verification_automation_result(

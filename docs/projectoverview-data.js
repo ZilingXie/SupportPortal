@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T06:28:15Z",
-  "source_base_commit": "897e70c88f88ae5d6fa95e62e4c1b340174fca78",
-  "registry_digest": "9dbc348fc410f9fc0f186fa73a771ffbbcdd27e7d7e2c040e4582ba5e7e3e753",
+  "generated_at": "2026-08-24T07:06:38Z",
+  "source_base_commit": "698c23185819c502d32a737cd25401551c75ba11",
+  "registry_digest": "48b2142671526818502d7f3afb453db68559d11a8be2e444cf44f94fe8a0341f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -559,6 +559,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "7-field extraction + Slack fields + intake regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_verification_automation backend.tests.test_account_slack_n8n backend.tests.test_account_intake",
+          "details": "202 项测试全绿；覆盖 7 字段提取/grounding/追问覆盖验证、内部邮件 Provided+Missing 新标签、Slack 消息含 Provided/Missing 行、intake 全链路回归（fixture 已迁移到 7 键）。"
+        },
+        {
+          "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
           "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
@@ -640,7 +646,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 14,
+      "task_count": 15,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -1909,18 +1915,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "Scenario engine + API + UI contract",
-          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
-          "details": "39 用例全过：引擎 wait_for 推进/超时/取消/主题前缀、E1 全剧本脚本化（approval_required/received、ticket_linked、步骤全 PASS）与断言失败中断；API 401/422/409（含并发第二个 run）/cancel 语义/unknown 404/stale→interrupted；UI 契约（scenarios 端点注册、剧本卡/批准横幅/轮询 marker、版本戳）。"
-        },
-        {
-          "type": "test",
-          "label": "CLI wrapper against shared engine",
-          "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> .venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
-          "details": "--list 列四剧本；--check 实连 production 库/smtp.163.com/imap.163.com 全通零发信（引擎连通检查同路径）。node --check app.js 通过。"
-        },
-        {
-          "type": "test",
           "label": "Lazy-schema regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "新增 2 用例：SpyStore 断言 ticket/run 两 store 的 get/list 读路径都触发 ensure_schema；41 用例全过。"
@@ -1972,8 +1966,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 5,
-      "done_count": 5,
+      "task_count": 4,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -5301,62 +5295,48 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-101",
-      "title": "剧本回归后端化：/automation/test 网页一键发起与实时跟踪",
-      "status": "done",
+      "title": "Fraud Account 字段改为 7 项 + Slack/邮件显示字段",
+      "status": "active",
       "owner": "zac",
-      "summary": "把 p2-100 的本地剧本驱动器升级为后端能力：引擎移植 backend/services/automation_test_scenarios.py（四剧本 E1/E2/F1/S1 真链路：163 SMTP 发信 + IMAP 线程头续接含 163 ID 命令 + production 库结构化断言 + 人工批准暂停 + 取消），新表 automation_test_scenario_runs 持久化 run 状态/逐步结果；POST run 派生 daemon 线程驱动（多 uvicorn worker 安全：状态全落库），同一时刻仅允许一个 active run（409），>2h 未更新自动标 interrupted（发信副作用不可重放不自动续跑）；页面第 4 节 Scenario runs：剧本卡一键发起（运行前连通检查 fail-fast）、15s 轮询逐步 PASS/FAIL、waiting_approval 黄色人工批准横幅、取消按钮。CLI 保留为同引擎薄封装防双实现漂移。",
-      "next_action": "合并部署 EC2 主栈面后，用户在 /automation/test/ 页面直接点 Run scenario（建议先 E1）；引擎 IMAP 出网首次实测由运行前连通检查兜底。",
+      "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
+      "next_action": "部署 EC2 后用 fraud 测试工单验证：AI 追问 7 项信息、内部邮件列出 Provided/Missing 字段、Slack 消息含字段摘要。",
       "acceptance_criteria": [
-        "GET /api/automation-test/scenarios 返回四剧本定义与近 20 个 run；POST {id}/runs 未登录 401、未知剧本 422、已有 active run 409、连通检查失败 502 不建 run；GET/POST runs/{id}(/cancel) 语义正确。",
-        "run 状态机：queued→running→（waiting_approval⇄running）→completed/failed/cancelled；stale（>2h 未更新）标 interrupted 并保留原因。",
-        "引擎断言失败即中断剧本（record 失败抛 AssertionError），run 状态 failed 且步骤 FAIL 保留。",
-        "UI：剧本卡+Run 按钮（active 时禁用）、逐步结果折叠列表、MANUAL APPROVAL 黄色横幅、取消按钮、active run 期间 15s 轮询。",
-        "CLI --list/--check/--scenario 行为不变（同引擎）。"
+        "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
+        "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
+        "Slack 消息增加 Provided: 和 Missing: 行显示字段。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "test",
-          "label": "Scenario engine + API + UI contract",
-          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
-          "details": "39 用例全过：引擎 wait_for 推进/超时/取消/主题前缀、E1 全剧本脚本化（approval_required/received、ticket_linked、步骤全 PASS）与断言失败中断；API 401/422/409（含并发第二个 run）/cancel 语义/unknown 404/stale→interrupted；UI 契约（scenarios 端点注册、剧本卡/批准横幅/轮询 marker、版本戳）。"
-        },
-        {
-          "type": "test",
-          "label": "CLI wrapper against shared engine",
-          "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> .venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
-          "details": "--list 列四剧本；--check 实连 production 库/smtp.163.com/imap.163.com 全通零发信（引擎连通检查同路径）。node --check app.js 通过。"
+          "label": "7-field extraction + Slack fields + intake regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_account_verification_automation backend.tests.test_account_slack_n8n backend.tests.test_account_intake",
+          "details": "202 项测试全绿；覆盖 7 字段提取/grounding/追问覆盖验证、内部邮件 Provided+Missing 新标签、Slack 消息含 Provided/Missing 行、intake 全链路回归（fixture 已迁移到 7 键）。"
         }
       ],
       "source_refs": [
-        "backend/services/automation_test_scenarios.py",
-        "backend/services/automation_test_store.py",
-        "backend/main.py",
-        "scripts/testing/production_ticket_scenarios.py",
-        "ui/automation-test/index.html",
-        "ui/automation-test/styles.css",
-        "ui/automation-test/app.js",
-        "backend/tests/test_automation_test_scenarios.py",
-        "backend/tests/test_automation_test_ui_contract.py",
-        "docs/testing/production_ticket_regression_runbook.md"
+        "backend/services/account_verification_field_extractor.py",
+        "backend/services/account_verification_automation.py",
+        "backend/services/prompts/account_routing.py",
+        "backend/services/account_slack_n8n.py",
+        "backend/tests/test_account_verification_automation.py",
+        "backend/tests/test_account_slack_n8n.py",
+        "backend/tests/test_account_intake.py"
       ],
-      "created_at": "2026-08-23",
-      "updated_at": "2026-08-23",
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
       "history": [
         {
-          "at": "2026-08-23",
+          "at": "2026-08-24",
           "event": "created",
-          "summary": "用户要求把剧本驱动器做进后端、网页直接发起；确认同一时刻单 run、合并后由 agent ssh 部署 EC2。实现引擎移植+runs 表+四 API+线程驱动+UI 第 4 节；CLI 改同引擎薄封装。"
+          "summary": "按用户需求将 fraud 字段从 4 组改为 7 项独立字段，同步更新提取 prompt、邮件标签、Slack 模板。"
         }
       ],
-      "legacy_refs": [
-        "p2-97",
-        "p2-100"
-      ],
+      "legacy_refs": [],
       "legacy_ids": [],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "production-regression-testing"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,

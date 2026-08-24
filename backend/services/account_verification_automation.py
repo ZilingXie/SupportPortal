@@ -18,10 +18,13 @@ from backend.services.llm_factory import LlmInvocationError
 ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV = "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL"
 DEFAULT_ACCOUNT_VERIFICATION_INTERNAL_EMAIL = "xieziling@agora.io"
 _GROUP_LABELS = {
-    "company_information": "Company Information",
-    "contact_information": "Contact Information",
-    "use_case": "Use Case",
-    "payment_information": "Payment Information",
+    "account_type": "Account type",
+    "name": "Name",
+    "office_address": "Office address",
+    "contact_number": "Official Contact number",
+    "contact_email": "Official Contact email",
+    "use_case_description": "Use-case description",
+    "console_configuration": "Last known console configuration",
 }
 
 

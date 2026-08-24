@@ -73,7 +73,16 @@ def build_account_slack_event(
         raise ValueError("Slack handoff event requires case, message, Zendesk ticket, and title")
     event_id = f"account-automation-slack:{account_case_id}:{normalized_message_id}"
     zendesk_url = f"https://agoraio.zendesk.com/agent/tickets/{urllib.parse.quote(zendesk_ticket_id, safe='')}"
-    message_text = f"[{case_label}] {title}\nzendesk: {zendesk_url}\n{summary}"
+    lines = [f"[{case_label}] {title}", f"zendesk: {zendesk_url}", summary]
+    collected = account_case.get("collected_fields") or {}
+    missing = account_case.get("missing_fields") or []
+    if isinstance(collected, dict) and collected:
+        provided = "; ".join(f"{k}={v}" for k, v in sorted(collected.items()) if v)
+        if provided:
+            lines.append(f"Provided: {provided}")
+    if isinstance(missing, list) and missing:
+        lines.append(f"Missing: {', '.join(str(m) for m in missing)}")
+    message_text = "\n".join(lines)
     return {
         "schema_version": ACCOUNT_SLACK_SCHEMA_VERSION,
         "event_id": event_id,
