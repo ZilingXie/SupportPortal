@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T06:28:15Z",
-  "source_base_commit": "897e70c88f88ae5d6fa95e62e4c1b340174fca78",
-  "registry_digest": "9dbc348fc410f9fc0f186fa73a771ffbbcdd27e7d7e2c040e4582ba5e7e3e753",
+  "generated_at": "2026-08-24T07:04:20Z",
+  "source_base_commit": "698c23185819c502d32a737cd25401551c75ba11",
+  "registry_digest": "a9baa54bb1ad06c77fc68c2c1a3e5d4b28204f1f0e8bb561969d3e33db5f5e33",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5545,7 +5545,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "done",
       "owner": "zac",
       "summary": "在 /workspace/admin 的 Automated Cases（本就是 production cases）表格新增 Tokens 列与可展开明细，统计口径=RAG 链路 + 自动化链路合并。RAG 侧复用既有 support_rag_query_runs 落库数据（含历史），新增 POST /internal/rag/ticket-families/token-usage/batch 批量端点（≤200 families/次，紧凑 summary 含 stage_totals）避免 N+1。自动化侧此前 usage 全部被丢弃：新增 backend/services/llm_usage_capture.py（ContextVar 作用域采集），在 account_ai_execution 两个封装的 LlmTextResult 返回处埋点（覆盖路由 decide_account_route、quota/billing/enablement/发票/验证/封禁字段抽取、persona、enablement 分类器——它们全部经这两个封装），采集作用域为 worker _prepare_account_reply_job、main create_account_intake、main _process_account_customer_reply 三处 per-case 边界，finally best-effort flush 进新表 support_account_case_llm_usage（migration 2026_08_24 + repository 幂等 ensure，软引用 billing_ticket_id）。admin endpoint 在 payload 后合并两来源为每 case token_usage{available,totals,token_by_model,sources.rag/automation(含 stage_totals)}，RagServiceError 时 available=false+reason（不伪造 0），另附 token_usage_page_total 本页合计。前端加 Tokens 列（in/out，不可用显示 —）、行展开明细（RAG/Automation 两来源 stage 表 + 按模型表）、metric strip 本页 tokens；版本号 bump 20260824-token-usage-1。",
-      "next_action": "已 done（本地官方栈 live 验证通过）。用户侧剩余：EC2 三环境部署 deploy_surfaces_ec2.sh（表由 repository ensure 自动建，或用 migration DSN 双库执行 backend/sql/migrations/2026_08_24_account_case_llm_usage.sql）；部署后跑一条 production 自动化即可看到 automation 来源 tokens 入表。",
+      "next_action": "已 done（本地官方栈 live 验证通过）。用户侧剩余：仅需部署 EC2 main stack（/production 与 /workspace/admin 所在面，含 api/api_production/workers/nginx）——scripts/ops/deploy_surfaces_ec2.sh --skip-split；/automation/* 三环境与 route 容器不含本功能，无需部署。新表在 production 库由 repository ensure 自动建（或用 migration DSN 在 production 库执行 backend/sql/migrations/2026_08_24_account_case_llm_usage.sql）。部署后跑一条 production 自动化即可看到 automation 来源 tokens 入表。",
       "acceptance_criteria": [
         "自动化链路 LLM 调用（经 account_ai_execution 两封装）在采集作用域内的 tokens 落 support_account_case_llm_usage，失败重试的每次成功 attempt 各记一条。",
         "采集与 flush 均为旁路 best-effort：失败仅 warning log，不影响自动化主链路；无 billing id 的 entries 丢弃并告警。",
@@ -5624,6 +5624,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "updated",
           "summary": "PR#903 合并（root main 897e70c，finalize 成功含 workspace/分支清理）；首会话因 worktree 清理触发 shell ENOENT 故障，重启后完成官方栈重启（897e70c88f88，/health ok，provenance matched，无辅助栈）与全部 live 验证（资产版本 marker、admin 端点 401 守卫、新表 ensure、RAG batch 端点 12940/12951 真实数据逐项核对一致），翻 done。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "updated",
+          "summary": "用户纠正部署面说法：本功能只落 /production（EC2 main stack：api/api_production/workers/nginx），与 /automation/* 三环境和 route 容器无关；next_action 从'三环境部署'改为 deploy_surfaces_ec2.sh --skip-split 单发 main stack。"
         }
       ],
       "legacy_refs": [
