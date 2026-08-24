@@ -18,8 +18,10 @@ class AutomationContractsTest(unittest.TestCase):
             resolve_comment_visibility(AutomationEnvironment.PREPRODUCTION, None),
             CommentVisibility.INTERNAL,
         )
-        with self.assertRaises(ValueError):
-            resolve_comment_visibility(AutomationEnvironment.PRODUCTION, None)
+        # Production no longer forces an immediate comment (p2-109 Phase B):
+        # customer-visible replies are published by the parity worker, so the
+        # visibility field is optional and unused at intake.
+        self.assertIsNone(resolve_comment_visibility(AutomationEnvironment.PRODUCTION, None))
 
     def test_preproduction_requires_allowlisted_ticket_and_internal_comment(self):
         with patch.dict(os.environ, {"PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": "123,456"}, clear=False):
@@ -70,7 +72,7 @@ class AutomationContractsTest(unittest.TestCase):
                     CommentVisibility.INTERNAL,
                 )
 
-    def test_production_visibility_is_explicit(self):
+    def test_production_visibility_is_optional(self):
         self.assertEqual(
             validate_ticket_policy(
                 AutomationEnvironment.PRODUCTION,
@@ -79,8 +81,7 @@ class AutomationContractsTest(unittest.TestCase):
             ),
             CommentVisibility.INTERNAL,
         )
-        with self.assertRaises(ValueError):
-            validate_ticket_policy(AutomationEnvironment.PRODUCTION, "123", None)
+        self.assertIsNone(validate_ticket_policy(AutomationEnvironment.PRODUCTION, "123", None))
 
     def test_required_resource_identity_rejects_cross_environment_bindings(self):
         with patch.dict(

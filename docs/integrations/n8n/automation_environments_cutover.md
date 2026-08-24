@@ -23,7 +23,7 @@
 
 | n8n 工作流 | 节点 | 现在 | 切流后 |
 |---|---|---|---|
-| `new_case_2_supporportal_prod` | `HTTP Request`（最终投递） | `POST /production/account`，表单 `title/question/customer_email/source/customer_name`，无鉴权 | `POST /automation/production/v1/cases`，**body 原样不用改**（旧五字段表单直接可发，见 §3.2），加 `X-N8n-Request-Token` 头 + 表单里加一个 `comment_visibility=internal` 字段（production 仍强制显式可见性） |
+| `new_case_2_supporportal_prod` | `HTTP Request`（最终投递） | `POST /production/account`，表单 `title/question/customer_email/source/customer_name`，无鉴权 | `POST /automation/production/v1/cases`，**body 原样不用改**（旧五字段表单直接可发，见 §3.2），加 `X-N8n-Request-Token` 头即可（p2-109 起 production 废除即时 comment 副作用，`comment_visibility` 不再必填，可不传） |
 | `new_case_2_supporportal_staging` | `HTTP Request` | `POST /account`，表单，无鉴权 | `POST /automation/staging/v1/cases`，**body 原样不用改**，加 `X-N8n-Request-Token` 头；**不得**传 `comment_visibility` |
 | （可选新增）`new_case_automation_preproduction` | 克隆自 prod 工作流 | — | `POST /automation/preproduction/v1/cases`，body 原样 + 头，受服务端 allowlist 门控 |
 | `commen_sync` | 2× membership GET + 2× PUT comments | 旧端点 `…/api/integrations/zendesk/account-cases/{id}/…`（staging + production 两栈） | **不改 URL**。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
@@ -58,7 +58,7 @@ Header: X-N8n-Request-Token: <n8n_request_token 的值>
 
 表单字段只是**增量可选**：直接传新契约字段（`request_id`/`case_id`/`zendesk_ticket_id`/`comment_visibility`）时优先采用调用方值。除 `title`/`source` 两个被消费的旧字段外，其余未知字段仍然 422（`extra="forbid"` 的防呆保留——字段名拼错会立刻暴露而不是被静默忽略）。
 
-**唯一保留的强制项：production 的 `comment_visibility` 仍必须显式提供**（旧五字段表单没有它；production 工作流投递时在 body 里加一个 `comment_visibility=internal` 字段即可）。这是客户可见性的安全门（p2-88 验收标准"production 每次显式选择 internal/external"），不做服务端默认值。staging 传了它反而 422；preproduction 只接受 internal。
+**p2-109 起 production 不再要求 `comment_visibility`**：intake 改为旧栈 /production 语义（分类 → 内部邮件/追问 reply job → 延迟 public 回复），没有即时 Zendesk comment，该字段可选且仅作记录。staging 传了它反而 422；preproduction 只接受 internal（这两个环境契约不变）。
 
 原生 JSON 契约（显式传全字段）同样继续受支持，适合 UI 或脚本调用：
 
@@ -81,11 +81,11 @@ Header: X-N8n-Request-Token: <n8n_request_token 的值>
 
 | | staging | preproduction | production |
 |---|---|---|---|
-| Zendesk 写入 | 否（容器无凭据，`writes_zendesk=False`） | 是，强制 `internal`（请求 external → 422） | 是，**必须显式** `comment_visibility`（缺失 → 422） |
+| Zendesk 写入 | 否（容器无凭据，`writes_zendesk=False`） | 是，强制 `internal`（请求 external → 422） | 是（经 parity 管线：ownership gate + 延迟 public 回复；`comment_visibility` 可选） |
 | `zendesk_ticket_id` | 可选 | 必填 + 在 `PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST` 内（`*` 放行全部；空拒绝全部），否则 422 | 必填 |
 | side effects | 无 | ownership → internal comment → status→`pending`（开关已启用） | 同左，visibility 按请求 |
 
-n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod 同策略，客户不可见）；external 必须按单显式选择，不要做成工作流默认值。
+n8n 建议：prod 克隆无需加 `comment_visibility`；客户可见回复由 parity worker 延迟发布（public+solved）。
 
 ### 3.4 响应处理
 
@@ -99,7 +99,7 @@ n8n 建议：prod 克隆默认 `comment_visibility: 'internal'`（与 preprod �
 
 1. 在 n8n 复制 `new_case_2_supporportal_prod` 为 `new_case_automation_prod`：全部逻辑保留，body 五字段原样不动，仅改三处——
    - `Check_Company_ID1` 的 `TARGET_COMPANY_IDS` = **迁移名单**（初始建议 1 个低风险公司，如自有测试公司）；
-   - 最终 `HTTP Request` 节点改 URL（§3.1），并在表单里加一个 `comment_visibility` = `internal` 字段（production 强制，§3.2）；
+   - 最终 `HTTP Request` 节点改 URL（§3.1）；body 五字段原样不动（`comment_visibility` 已非必填）；
    - 挂上统一的 `X-N8n-Request-Token` 凭据（§6）。
 2. 把 `new_case_2_supporportal_prod` 的 `TARGET_COMPANY_IDS` 收缩为**未迁移名单**（从其中删除迁移的公司 ID）。两个名单必须互斥。
 3. 激活克隆工作流。此后：迁移公司的新单 → 新环境（execution 记录 + Zendesk 副作用）；其余公司 → 旧 `/production/account` 照旧。
