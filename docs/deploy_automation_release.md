@@ -50,14 +50,37 @@ Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如�
 
 三个环境共用同一个执行 token：`.env` 的 `n8n_request_token`（与主栈 n8n 集成、旧 Zendesk 同步端点同源同值，部署脚本会校验其必填；原先独立的三个 `AUTOMATION_*_EXECUTION_TOKEN` 已废弃删除）。Automation 的 `/v1/cases`、rerun、reset、reconcile、executions 与登录换取的执行端点都要求 `X-N8n-Request-Token: <n8n_request_token>` 头；token 缺失或错误时执行请求返回 401，未在 `.env` 配置时所有执行请求都会被拒绝。三个 Automation UI 各自提供 Execution token 输入框（输入值即该 token），输入值保存在浏览器 localStorage。
 
-## 3. 验收顺序
+## 3. Production Automation 蓝绿发布
+
+`/automation/production` 的新版本使用独立 candidate Compose project。candidate 必须从同一台 EC2 上已生成的 release manifest 启动；脚本会校验 route/automation image ID，复用现有 `supportportal-automation-production` project 的 production Redis、DB schema/table、queue 和 event channel，不会创建第二套 production Redis。
+
+执行前确认当前 `main` 已包含 runtime upstream mount，并设置 production 批准门：
+
+```bash
+DEPLOY_PRODUCTION_APPROVED=1 \
+  ./deployment/deploy_automation_production_blue_green.sh \
+  --release release-20260822-001
+```
+
+流程顺序为：candidate route/automation readiness -> Nginx `nginx -t` -> runtime upstream 原子替换 -> graceful reload -> `/automation/production/health` -> 旧 route/automation drain 360 秒并 stop。脚本使用与 `deploy_ec2.sh` 相同的 `.deploy_ec2.lock`，不会和普通部署并发运行；旧 candidate 的 Compose override 会保存在 `.deployments/automation-production-blue-green/`，以便 rollback 重新启动。
+
+如果切换后的 through-Nginx health 失败，脚本会自动恢复旧 upstream 并 stop candidate。手工回滚时：
+
+```bash
+DEPLOY_PRODUCTION_APPROVED=1 \
+  ./deployment/deploy_automation_production_blue_green.sh --rollback
+```
+
+首次运行如果发现现有 Nginx 容器没有 `/etc/nginx/runtime` 挂载，脚本只重建 Nginx 容器来安装该挂载，不重建 `/production`、API 或 worker 容器。Nginx upstream 使用 server-scope variable，因此未启用 production profile 时不会在 Nginx 启动阶段解析 `automation_production` hostname。
+
+## 4. 验收顺序
 
 - Staging：确认 `/v1/capabilities` 允许 rerun/reset，且 `zendesk=false`；带执行 token 提交一个 case，确认链路执行成功且无任何 Zendesk 出站。
 - Preproduction：在 `.env` 配置 `PREPRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PREPRODUCTION_TARGET_TICKET_STATUS`（如 `pending`）并 recreate 容器后，只使用 allowlisted ticket（`PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST`：逗号分隔工单号；`*` 放行全部、过滤交给上游；空拒绝全部），确认 ownership/status 和 internal comment，`public=false`。
 - Production：确认 rerun/reset 不存在；在 `.env` 配置 `PRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PRODUCTION_TARGET_TICKET_STATUS` 并 recreate 容器后，使用受控 ticket 分别验证 `comment_visibility=internal` 和 `comment_visibility=external`，并核对 Zendesk readback 与 delivery ledger。
 - 三个开关（`*_ZENDESK_SIDE_EFFECTS_ENABLED`）默认为 0、`AUTOMATION_TARGET_TICKET_STATUS` 默认为空；未显式开启时真实执行会以 `zendesk_side_effects_not_enabled` 或 `automation_target_ticket_status_missing` fail closed，不会写 Zendesk。
 
-## 4. 回滚
+## 5. 回滚
 
 部署成功后，`deploy_ec2.sh` 会在 `.deployments/<environment>.manifest` 保存当前和 previous image pointer。回滚时不要再次传入 release：
 
@@ -67,11 +90,11 @@ Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如�
 
 回滚只影响指定 split Compose project；Production 回滚仍需要现场的生产批准。
 
-## 5. 迁移兼容
+## 6. 迁移兼容
 
 未传 `--release` 时，脚本仍接受 `.env` 中的六个 digest image 变量，供已有主机迁移和紧急恢复使用；这条兼容路径仍可能执行 Compose pull。新发布流程应始终在目标 EC2 上使用 release builder 和 `--release`。
 
-## 6. 本地开发部署（podman）
+## 7. 本地开发部署（podman）
 
 本地（非 EC2）验证 split 环境改动时，不需要走 EC2 release 流程：
 
