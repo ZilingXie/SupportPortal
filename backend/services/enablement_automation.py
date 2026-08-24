@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
-from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
+from backend.services.graph_mail import DEFAULT_USERNAME, automation_internal_email_cc, send_graph_mail
 from backend.services.internal_email_template import (
     InternalEmailSection,
     namespaced_internal_email_subject,
@@ -318,6 +318,7 @@ def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict
             subject=subject,
             body=send_body,
             content_type="HTML" if body_html else "Text",
+            cc_addresses=automation_internal_email_cc(),
         )
     except (FileNotFoundError, ValueError) as exc:
         return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": str(exc)}

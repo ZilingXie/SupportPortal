@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T05:22:43Z",
-  "source_base_commit": "2fbb6b18805c2c2539dfaf82f3cb368da08f3fbb",
-  "registry_digest": "135d8f342d1e8c6c51d9821b2cf43151ee0c8feb47f0348b38dc8be832cd090a",
+  "generated_at": "2026-08-24T05:43:19Z",
+  "source_base_commit": "28bc796c13be39b4609dceede58180f9c5069b42",
+  "registry_digest": "6a58382f3e7635a45bcd800f44d27aa0dadabbf376b8cbc730d7b93e3c38476e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5243,6 +5243,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "created",
           "summary": "由 12953 suspension 邮件缩略图 Billing 问题和 12951 RAG 答案代码块渲染问题创建。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "email_cc_and_recipient_routing",
+          "summary": "所有自动化内部邮件统一 cc xieziling@agora.io（AUTOMATION_INTERNAL_EMAIL_CC env 可覆盖）；EC2 .env 变更：enablement→zhonghuang、suspension+verification→suhrid.das、fraud assignee→suhrid.das (31116644140308)。"
         }
       ],
       "legacy_refs": [],
