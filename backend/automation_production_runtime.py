@@ -501,6 +501,59 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         return result
 
+    @app.get(
+        "/api/integrations/slack/engineer-cases/thread-bindings/resolve",
+        dependencies=[Depends(_require_execution_token)],
+    )
+    async def resolve_slack_engineer_case_thread_binding(
+        team_id: str = Query(min_length=1, max_length=128),
+        channel_id: str = Query(min_length=1, max_length=128),
+        thread_ts: str = Query(min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        from backend.services.automation_account_reply_sync import ReplySyncError
+        from backend.services.automation_engineer_collab import (
+            resolve_slack_engineer_thread_binding,
+        )
+
+        try:
+            return await asyncio.to_thread(
+                resolve_slack_engineer_thread_binding,
+                _ticket_repository(),
+                team_id=team_id,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+            )
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post(
+        "/api/integrations/slack/engineer-cases/messages",
+        dependencies=[Depends(_require_execution_token)],
+    )
+    async def post_slack_engineer_case_message(http_request: Request) -> dict[str, Any]:
+        from backend.services.automation_account_reply_sync import ReplySyncError
+        from backend.services.automation_engineer_collab import handle_slack_engineer_message
+
+        payload = await http_request.json()
+        try:
+            return await handle_slack_engineer_message(_ticket_repository(), payload)
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post(
+        "/api/integrations/slack/engineer-cases/actions",
+        dependencies=[Depends(_require_execution_token)],
+    )
+    async def post_slack_engineer_case_action(http_request: Request) -> dict[str, Any]:
+        from backend.services.automation_account_reply_sync import ReplySyncError
+        from backend.services.automation_engineer_collab import handle_slack_engineer_action
+
+        payload = await http_request.json()
+        try:
+            return await handle_slack_engineer_action(_ticket_repository(), payload)
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
     @app.api_route("/{path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
     async def unknown_write_path(path: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="not found")

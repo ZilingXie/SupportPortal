@@ -29,6 +29,7 @@
 | `commen_sync` | 2× membership GET + 2× PUT comments | 旧端点 `…/api/integrations/zendesk/account-cases/{id}/…`（staging + production 两栈） | 灰度迁移期可将 production origin 指向 `/automation/production/api/integrations/zendesk/account-cases/{id}/…`（p2-110 起同构可用：membership GET + PUT comments + 评论触发链）；未迁移工单保持旧端点。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
 | `case_status_sync` | 2× membership GET + 2× PUT status | 同上 | 灰度迁移期可将 production origin 指向 `/automation/production/api/integrations/zendesk/account-cases/{id}/status`（p2-112 起同构可用：状态投影 + solved/closed 关 case/Engineer Case）；未迁移工单保持旧端点。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
 | `2_slack - SupportPortal Account Handoff -> Slack` | 入站 Webhook（SupportPortal→n8n） | 凭据 `2_SupportPortal`（`X-N8n-Request-Token`） | 结构不动。仅按 §6 把凭据值换成统一 token |
+| Slack App Mention/Interaction → Engineer（入向） | POST SupportPortal 端点 | 旧栈 `/api/integrations/slack/engineer-cases/messages\|actions` | 灰度迁移期可指向 `/automation/production/api/integrations/slack/engineer-cases/...`（p2-113 起同构可用：messages/actions/thread-bindings/resolve，幂等与 guardrail/final_approve 语义一致）；出站直发 Slack（#918）无需 n8n 改动 |
 
 Zendesk Trigger、取数/富化（Get_Case_Info、Get_Requester_Info、Prepare_Account_Data 等）与 Company ID 门控逻辑全部保留原样，不在本文改动范围。
 

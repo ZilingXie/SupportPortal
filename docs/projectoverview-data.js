@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:42:05Z",
-  "source_base_commit": "9b0cebe0d4a1f9ffac3ec3ce847ab833bdf7783e",
-  "registry_digest": "da8e0594e2a6e040e0a16dfc45da36b3d0341cef6faeda89cfd9f5e3caa5c54e",
+  "generated_at": "2026-08-24T13:54:56Z",
+  "source_base_commit": "ee7c6fdfa5aa8d0d140887915322be29df7288ed",
+  "registry_digest": "74eca5b19033e46341229b0e5c3d8de2d1709f8823131ea00e9a2d07959d3198",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1744,6 +1744,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Engineer Slack endpoints and parity regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose",
+          "details": "91 项通过：Slack 端点鉴权/非法载荷 422、messages 跑完整 AI 回合（conversation/draft 版本与 engineer_ai_response 事件断言）、thread-bindings 未配置 503、评论触发 Engineer 分支升级后版本断言；既有全回归绿。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -2080,7 +2086,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 18,
+      "task_count": 19,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -6302,6 +6308,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "p2-108",
         "p2-109",
         "p2-110"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-113",
+      "title": "/automation/production 替代 /production：Phase E Slack 协作收口（纯移植）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Phase E：把旧栈 Engineer Case Slack 协作闭环搬进 /automation/production——新增 backend/services/automation_engineer_collab.py：process_engineer_investigation_message（guardrail-only 路径的调查 AI 回合：状态版本管理、append_engineer_investigation_message + default_investigation_prompt、engineer_ai_response 线程事件）、handle_slack_engineer_message（event_id 幂等 claim/fail/complete）、handle_slack_engineer_action（guardrail 终审 + final_approve：guardrail 校验链、engineer Zendesk delivery 入队（幂等键/immutable_content/comments_revision 门控））、resolve_slack_engineer_thread_binding（team/channel hmac 校验 + 线程绑定解析）；runtime 新增三个入向端点（GET thread-bindings/resolve、POST messages、POST actions，X-N8n-Request-Token）；评论触发链的 Engineer Case 分支从'仅记录事件'升级为完整 AI 调查回合。刻意省略（登记）：multi-agent Plan/Execute/Review 刷新分支（两条 split 入向均 multi_agent_enabled=False）与 _normalize_engineer_case_payload_for_read 读取整形。",
+      "next_action": "待用户 EC2 部署 + n8n Slack 入向工作流（App Mention/Interaction→Engineer）切到 /automation/production 端点后做全链验收（工程师消息→AI 回合→guardrail→final_approve→Zendesk 公开评论投递，投递由 automation_production_worker 的 engineer zendesk delivery drain 执行）。随后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
+      "acceptance_criteria": [
+        "三个入向端点在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致；messages/actions 按 event_id/interaction_id 幂等。",
+        "评论触发链 Engineer 分支：客户评论→zendesk_customer_comment 事件→调查 AI 回合→engineer_ai_response 事件（conversation/draft 版本推进）。",
+        "guardrail→final_approve→engineer Zendesk delivery 入队（worker 侧投递），guardrail 校验链与 stale 防护语义一致。",
+        "旧栈与 preprod/staging 零行为变化。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Engineer Slack endpoints and parity regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose",
+          "details": "91 项通过：Slack 端点鉴权/非法载荷 422、messages 跑完整 AI 回合（conversation/draft 版本与 engineer_ai_response 事件断言）、thread-bindings 未配置 503、评论触发 Engineer 分支升级后版本断言；既有全回归绿。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_engineer_collab.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/automation_production_runtime.py",
+        "backend/main.py",
+        "backend/services/engineer_guardrail_agent.py",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "Phase D（p2-112/PR#929）合并后开工 Phase E。investigation AI 回合/三个入向端点/guardrail-final_approve 链按 B 纯移植方案完成；依赖的 engineer_guardrail_agent/investigation_flow/engineer_cases 均已在 production 镜像内。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-108",
+        "p2-109",
+        "p2-110",
+        "p2-112"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",
