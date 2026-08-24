@@ -404,6 +404,9 @@ class AutoDeployAssetTests(unittest.TestCase):
         self.assertIn("DEPLOY_LOCK_ALREADY_HELD", surface_script)
         self.assertIn("--skip-pull", surface_script)
         self.assertIn("verify_split", surface_script)
+        self.assertIn("last=0", surface_script)
+        self.assertIn('[[ -f "${manifest}" ]] || continue', surface_script)
+        self.assertNotIn("ls .deployments/releases 2>/dev/null | grep", surface_script)
 
 
 if __name__ == "__main__":

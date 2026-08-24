@@ -225,7 +225,7 @@ def _route_agent_navigation() -> dict[str, Any]:
     automation = _route_node(
         "automation-router",
         "Automation Router",
-        "Coordinates the four registered Automation outcomes across Account & Billing and Backend Operation; Unregistered is a diagnostic fallback for requests without a registered workflow.",
+        "Coordinates the three registered Automation outcomes across Account & Billing and Backend Operation; Unregistered is a diagnostic fallback for requests without a registered workflow.",
         kind="router",
         is_agent=True,
         prompt_keys=[
@@ -342,20 +342,20 @@ def _route_agent_navigation() -> dict[str, Any]:
             _route_node(
                 "detailed-invoice",
                 "Detailed Invoice",
-                "Extracts detailed invoice fields and lets the ownership-aware Automation Persona generate the customer reply.",
-                kind="automation",
+                "Classifies detailed invoice requests for downstream human handling without running Automation.",
+                kind="classification",
                 is_agent=False,
                 prompt_keys=["account-detailed-invoice-field-extractor-system"],
                 capabilities=[
-                    _component("billing-handler", "Billing Handler", "Runs the detailed-invoice workflow and internal handoff."),
+                    _component("classification-only", "Classification only", "Records the Detailed Invoice classification without invoking its dormant handler."),
                 ],
                 workflow={
                     "category": "account_billing",
                     "subcategory": "detailed_invoice",
-                    "route_family": "automated",
-                    "automation_handler": "billing",
-                    "status": "active",
-                    "steps": ["grounded field extraction", "internal handoff", "Persona ownership update"],
+                    "route_family": "human_review",
+                    "automation_handler": None,
+                    "status": "classification_only",
+                    "steps": ["record classification", "human review"],
                 },
             ),
             _route_node(
@@ -489,7 +489,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-automation-router",
                     "Automation Router",
-                    "Coordinates four registered Automation outcomes and retains Unregistered as a diagnostic fallback.",
+                    "Coordinates three registered Automation outcomes and retains Unregistered as a diagnostic fallback.",
                 ),
                 _component(
                     "account-backend-operation-router",
@@ -514,7 +514,7 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component(
                     "account-verification-field-extractor",
                     "Fraud Account Field Extractor",
-                    "Extracts four grounded, non-sensitive fraud-review information groups from /account history.",
+                    "Extracts seven grounded, non-sensitive fraud-review information fields from /account history.",
                 ),
                 _component(
                     "account-suspension-field-extractor",

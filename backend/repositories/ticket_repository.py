@@ -744,7 +744,6 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
                     OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
                 ) AND {primary} IN (
                     'account_billing:fraud_account',
-                    'account_billing:detailed_invoice',
                     'backend_operation:enablement',
                     'backend_operation:quota'
                 ) THEN 'automation' END,
@@ -753,7 +752,6 @@ def _account_case_filter_memberships_sql(alias: str = "bt") -> sql.SQL:
                     OR LOWER(COALESCE({alias}.route_family, '')) IN ('automated', 'billing_automation')
                 ) THEN CASE {primary}
                     WHEN 'account_billing:fraud_account' THEN 'automation:fraud_account'
-                    WHEN 'account_billing:detailed_invoice' THEN 'automation:detailed_invoice'
                     WHEN 'backend_operation:enablement' THEN 'automation:enablement'
                     WHEN 'backend_operation:quota' THEN 'automation:quota'
                 END END

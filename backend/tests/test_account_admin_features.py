@@ -25,6 +25,7 @@ from backend.services.account_admin import (
     account_automation_payload,
     environment_config_entries,
     environment_config_names,
+    _is_automated,
     route_execution_from_decision,
     routing_config_payload,
 )
@@ -68,6 +69,52 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(filtered["cases"][0]["category_label"], "Account & Billing")
         self.assertEqual(filtered["cases"][0]["subcategory_label"], "Fraud Account")
         self.assertIn("primary_label", filtered["cases"][0])
+
+    def test_inactive_detailed_invoice_is_not_counted_as_automation(self) -> None:
+        self.repository.save_billing_ticket(
+            {
+                "billing_ticket_id": "BT-INVOICE",
+                "client_ticket_id": "INVOICE",
+                "title": "Detailed invoice",
+                "question": "Please send a detailed invoice.",
+                "automation_status": "automation",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "detailed_invoice",
+                "category": "account_billing",
+                "subcategory": "detailed_invoice",
+            }
+        )
+
+        payload = account_automation_payload(self.repository)
+
+        self.assertEqual(payload["metrics"]["automated_cases"], 0)
+        self.assertEqual(payload["metrics"]["not_automated_cases"], 1)
+        self.assertEqual(
+            account_automation_payload(
+                self.repository,
+                route_status="automated",
+            )["total"],
+            0,
+        )
+
+    def test_legacy_automation_status_uses_subcategory_for_active_eligibility(self) -> None:
+        self.assertTrue(
+            _is_automated(
+                {
+                    "automation_status": "automation",
+                    "subcategory": "fraud_account",
+                }
+            )
+        )
+        self.assertFalse(
+            _is_automated(
+                {
+                    "automation_status": "automation",
+                    "subcategory": "detailed_invoice",
+                }
+            )
+        )
 
     def test_account_reply_supersede_marks_old_account_message(self) -> None:
         self.repository.save_ticket(
@@ -1062,7 +1109,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         )
         self.assertEqual(account_billing["handler_modes"]["account_suspension"], "classification_only")
         self.assertEqual(account_billing["handler_modes"]["fraud_account"], "billing")
-        self.assertEqual(account_billing["handler_modes"]["detailed_invoice"], "billing")
+        self.assertEqual(account_billing["handler_modes"]["detailed_invoice"], "classification_only")
         automation = next(category for category in payload["route_categories"] if category["name"] == "backend_operation")
         self.assertEqual(
             automation["subcategories"],
