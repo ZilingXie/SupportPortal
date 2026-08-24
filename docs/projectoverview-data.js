@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:45:49Z",
-  "source_base_commit": "52e9d3595a0e7c9f44fbd764cbd22f9d40d08357",
-  "registry_digest": "40f3f07b1e6aaebf09dc366e748bb148375563d02ca1bdf0de8d87daed01de38",
+  "generated_at": "2026-08-24T10:47:48Z",
+  "source_base_commit": "daaccdca05098ba0fe4adcbc2f911d1120d0038f",
+  "registry_digest": "25f77deca7b6e82d5b2ea03d4f66eae872c0927931005c07c73b8030e0426635",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -676,6 +676,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Credentialed RAGFlow retrieval and grounded answer on official local stack",
           "command": "官方 deployment local_lightweight 栈 9f55be557628：容器内 ticket-agent read-only search、RagflowDocsSearchSkillClient.query 与 try_rag_fallback_answer",
           "details": "仅确认 RAGFLOW_API_KEY 非空且容器已加载，不读取或输出值。ticket-agent 检索返回 6 条非空 docs.agora.io 结果；adapter 通过内建 endpoint 默认值返回 answer（494 字符、2 条官方引用）；deployed fallback 默认客户端返回 answer（682 字符、References 与官方文档 URL 均存在）。全过程未创建 case、reply job、delivery ledger 或 Zendesk 评论。官方 image/health/runtime ref 均匹配 9f55be557628，auxiliary stack 不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production RAGFlow deployment and container-level grounded answer verification",
+          "command": "EC2 scripts/ops/deploy_surfaces_ec2.sh --skip-split + https://support.stellarix.space/health + deployment-api_production-1 container checks",
+          "details": "将 RAGFLOW_BASE_URL 和非空 RAGFLOW_API_KEY 原子写入 EC2 .env（未读取或输出 key），仅部署 main stack 到 52e9d3595a0e。外部 /health 返回同 ref、/production/ HTTP 200；api_production 使用 localhost/supportportal-app:52e9d3595a0e，默认 client 为 RagflowDocsSearchSkillClient，容器已加载 ticket-agent endpoint 与非空 key。通用 Agora RTC token 问题的容器内 adapter 调用返回 answer、答案非空、2 条 docs.agora.io 引用；api_production 与 production workers 启动后 ERROR/Traceback 计数均为 0。未创建 case、reply job、delivery ledger 或 Zendesk 评论，因此客户公开投递/readback blocker 保留。"
         },
         {
           "type": "test",
@@ -1861,6 +1867,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Automation production blue-green deployment implementation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "新增专用蓝绿入口：candidate 使用 release 唯一服务名和生产 DB/Redis identity，readiness 通过后以 Nginx runtime include 原子切换并 graceful reload；/automation/production/ 禁止 upstream 自动重试，旧 compose project 默认排空 360 秒后停止，--rollback 只切换 upstream、不重放请求。当前本机缺少可用 Docker CLI/.env 完整必填变量，EC2 栈验证待执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 review remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
+          "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
         },
         {
           "type": "test",
@@ -8752,7 +8764,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "蓝绿部署实现已完成，待在 Docker/EC2 上执行候选预热、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
+      "next_action": "蓝绿部署修复已完成，待在 Docker/EC2 上执行 release manifest 候选预热、共享 production Redis 检查、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -8864,6 +8876,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Automation production blue-green deployment implementation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "新增专用蓝绿入口：candidate 使用 release 唯一服务名和生产 DB/Redis identity，readiness 通过后以 Nginx runtime include 原子切换并 graceful reload；/automation/production/ 禁止 upstream 自动重试，旧 compose project 默认排空 360 秒后停止，--rollback 只切换 upstream、不重放请求。当前本机缺少可用 Docker CLI/.env 完整必填变量，EC2 栈验证待执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 review remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
+          "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
         }
       ],
       "source_refs": [
@@ -9266,7 +9284,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "意外回复检索必须通过 backend/skills/ragflow-docs-search/scripts/search.py 的 ticket-agent read-only endpoint；仅带有效 docs.agora.io 或 api-ref.agora.io 引用的 grounded answer 可发布，skill/模型/JSON/citation 任一失败继续 fail-closed 转人工，不回退到旧本地 RAG。"
       ],
       "blockers": [
-        "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈验证。"
+        "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈和 EC2 api_production 容器验证。"
       ],
       "evidence": [
         {
@@ -9322,6 +9340,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Credentialed RAGFlow retrieval and grounded answer on official local stack",
           "command": "官方 deployment local_lightweight 栈 9f55be557628：容器内 ticket-agent read-only search、RagflowDocsSearchSkillClient.query 与 try_rag_fallback_answer",
           "details": "仅确认 RAGFLOW_API_KEY 非空且容器已加载，不读取或输出值。ticket-agent 检索返回 6 条非空 docs.agora.io 结果；adapter 通过内建 endpoint 默认值返回 answer（494 字符、2 条官方引用）；deployed fallback 默认客户端返回 answer（682 字符、References 与官方文档 URL 均存在）。全过程未创建 case、reply job、delivery ledger 或 Zendesk 评论。官方 image/health/runtime ref 均匹配 9f55be557628，auxiliary stack 不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production RAGFlow deployment and container-level grounded answer verification",
+          "command": "EC2 scripts/ops/deploy_surfaces_ec2.sh --skip-split + https://support.stellarix.space/health + deployment-api_production-1 container checks",
+          "details": "将 RAGFLOW_BASE_URL 和非空 RAGFLOW_API_KEY 原子写入 EC2 .env（未读取或输出 key），仅部署 main stack 到 52e9d3595a0e。外部 /health 返回同 ref、/production/ HTTP 200；api_production 使用 localhost/supportportal-app:52e9d3595a0e，默认 client 为 RagflowDocsSearchSkillClient，容器已加载 ticket-agent endpoint 与非空 key。通用 Agora RTC token 问题的容器内 adapter 调用返回 answer、答案非空、2 条 docs.agora.io 引用；api_production 与 production workers 启动后 ERROR/Traceback 计数均为 0。未创建 case、reply job、delivery ledger 或 Zendesk 评论，因此客户公开投递/readback blocker 保留。"
         }
       ],
       "source_refs": [
@@ -9416,6 +9440,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "ragflow_credentialed_retrieval_verified",
           "summary": "用户配置 key 后，官方本地栈完成真实 ticket-agent 检索、grounded answer 生成与 deployed fallback 默认客户端验证，官方引用与 References 合同均通过且无业务副作用。key blocker 已解除；任务继续 blocked，仅等待新的 Production 测试工单完成客户公开投递、ledger 与 Zendesk readback。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "ragflow_production_deployed",
+          "summary": "EC2 主栈部署到 52e9d3595a0e，api_production 已加载 ticket-agent endpoint 与非空 key，默认 RagflowDocsSearchSkillClient 的无客户数据 grounded-answer 探针返回 answer 和 2 条 docs.agora.io 引用；未触发真实工单，Production 公开评论、delivery ledger 与 Zendesk readback 仍待用户指定新测试工单。"
         }
       ],
       "legacy_refs": [],
