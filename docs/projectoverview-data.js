@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:59:11Z",
-  "source_base_commit": "4dbcf3610f146273b68e260656242037fd3c9156",
-  "registry_digest": "db90d41d6ecb7448c0b301a43e078d84e2bbd22174b4f96591c448d6fb80e3c0",
+  "generated_at": "2026-08-24T11:11:25Z",
+  "source_base_commit": "4dc624fbb1a7ae344d14b226acd09711934a9297",
+  "registry_digest": "eece4efbcf92e31a6678c4eb14e60911ad1ac21870e469b0b3806779d936374b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1517,6 +1517,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "价格表默认留空的决策依据",
           "command": "",
           "details": "docs/prompt_change_log.md（gpt54-token-only-observability-v1 条目）：旧成本展示曾因过时/不全价格造成噪音被有意移除，约定保留 unknown-cost markers、未定价显式标记不静默 0；gpt-5.4/gpt-5.6-luna 等为本环境具体模型，价格数字须用户提供，不可编造。knowledge_repository.py _model_cost_for_tokens 为引用不存在字典的死代码，未模仿。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#917 合并后官方栈运行 root main 4dc624f（含本任务，built 2026-08-24T11:06:13Z）：build_provenance_status=matched、official_health_build_ref=4dc624fbb1a7、auxiliary_stack_present=false；/workspace/admin/ 实际服务 app.js?v=20260824-token-cost-1；GET /api/workspace/admin/account-automation 未授权 401（守卫存活）；共享库 support_account_case_llm_usage 列序含 cached_input_tokens/reasoning_tokens（repository 幂等 ALTER 生效）。价格表未填时成本显示 $— 属预期。"
         }
       ],
       "source_refs": [
@@ -1527,7 +1533,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 9,
-      "done_count": 4,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -5798,10 +5804,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-107",
       "title": "补齐 cached/reasoning tokens 采集 + token 用量 USD 换算展示（/workspace/admin）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "p2-105 的后续增强，两段：(A) cached/reasoning tokens 采集补齐——此前全仓库无任何代码解析 provider usage 明细，两条链路恒记 0；现在 llm_factory 的 _responses_usage/_chat_usage 解析 input_tokens_details.cached_tokens / prompt_tokens_details.cached_tokens / output_tokens_details.reasoning_tokens / completion_tokens_details.reasoning_tokens，LlmTextResult 新增 cached_input_tokens/reasoning_tokens 字段（默认 0，全调用方零破坏）；自动化链 capture 透传 + support_account_case_llm_usage 加两列（migration 2026_08_24_account_case_llm_usage_details.sql + repository 幂等 ALTER，历史数据两列=0 属预期）；RAG 链 query_understanding/rag_context_budget 补传参、rag_qa _invoke_llm_payload_with_trace 4 元组→6 元组（6 调用点+重试累加+RagQueryTrace 尾部两默认字段+fanout 聚合同步累加）、rag_api rag_answer ledger 条目带 trace 两值（usage_ledger JSONB 只增键，表零改动）；token_usage.aggregate_usage_ledger 的 token_by_model 分桶新增 cached_input_tokens/reasoning_tokens 供按模型计价。(B) USD 换算——新模块 backend/services/llm_pricing.py：LLM_PRICING_USD_PER_1M 单价表（key=provider:model，维度 input/output/cached_input/embedding，默认全 None=未定价，遵循仓库 unknown-cost marker 约定：未定价显式 —，绝不静默按 0）+ estimate_token_usage_cost_usd 纯函数（计价语义：input 含 cached，成本=(input−cached)×input价+cached×(cached价缺省回落 input 价)+output×output价+embedding×embedding价；任一模型未定价→该模型 usd=None 且整体 available=False）；main.py _attach_account_case_token_usage 对每 case 挂 token_usage.cost_usd，page_total 加 cost_usd_total/cost_usd_available；admin 前端 Tokens 单元格追加成本小字（$0.0123，未定价显示 $—带 title）、明细 by-model 表加 Cost 列、metric strip 本页合计带成本；版本 bump 20260824-token-cost-1。价格数字待用户提供后一行一改填入 LLM_PRICING_USD_PER_1M 即生效。",
-      "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+资产版本 20260824-token-cost-1+两列 ALTER 在库）；p2-107 翻 done；用户侧 EC2 仅部署 main stack（deploy_surfaces_ec2.sh --skip-split，与 p2-105 同）；价格数字待用户提供填入。",
+      "next_action": "已 done（官方栈 4dc624fbb1a7 运行含本任务，live 验证通过）。用户侧剩余：EC2 仅部署 main stack（deploy_surfaces_ec2.sh --skip-split，与 p2-105 同，migration 由 repository 幂等 ALTER 自动生效）；各模型单价数字待用户提供后填入 backend/services/llm_pricing.py 的 LLM_PRICING_USD_PER_1M（默认全 None 时页面成本显示 $— 属预期上线态）。",
       "acceptance_criteria": [
         "llm_factory 解析 Responses/Chat 两形态 usage 明细，缺 details 容错为 0；LlmTextResult 新字段默认 0 不破坏任何既有调用方。",
         "自动化链 cached/reasoning 落列（capture→INSERT→summaries 聚合→token_by_model 分桶全透传）；RAG 链 ledger 只增键、检索/生成行为零变化。",
@@ -5834,6 +5840,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "价格表默认留空的决策依据",
           "command": "",
           "details": "docs/prompt_change_log.md（gpt54-token-only-observability-v1 条目）：旧成本展示曾因过时/不全价格造成噪音被有意移除，约定保留 unknown-cost markers、未定价显式标记不静默 0；gpt-5.4/gpt-5.6-luna 等为本环境具体模型，价格数字须用户提供，不可编造。knowledge_repository.py _model_cost_for_tokens 为引用不存在字典的死代码，未模仿。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#917 合并后官方栈运行 root main 4dc624f（含本任务，built 2026-08-24T11:06:13Z）：build_provenance_status=matched、official_health_build_ref=4dc624fbb1a7、auxiliary_stack_present=false；/workspace/admin/ 实际服务 app.js?v=20260824-token-cost-1；GET /api/workspace/admin/account-automation 未授权 401（守卫存活）；共享库 support_account_case_llm_usage 列序含 cached_input_tokens/reasoning_tokens（repository 幂等 ALTER 生效）。价格表未填时成本显示 $— 属预期。"
         }
       ],
       "source_refs": [
@@ -5860,6 +5872,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "created",
           "summary": "用户追问缓存命中与美元换算。方案问答未获回复，按推荐定案：价格架子先行未配置显示 —、cached/reasoning 采集一起补齐、展示仅 /workspace/admin。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "updated",
+          "summary": "PR#917 合并（root 前进至 633b524 后并行链又进 #918 至 4dc624f）；finalize 后会话 shell 第三次触发 ENOENT，重启 ZCode 后在官方栈 4dc624fbb1a7 完成全部 live 验证（provenance matched、资产 20260824-token-cost-1、端点 401、表两列 ALTER 生效），翻 done。"
         }
       ],
       "legacy_refs": [
