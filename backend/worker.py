@@ -102,11 +102,10 @@ from backend.services.account_slack_n8n import (
     get_account_slack_event_status,
     post_account_slack_event,
 )
-from backend.services.engineer_slack_n8n import (
-    EngineerSlackN8nError,
+from backend.services.engineer_slack import (
+    EngineerSlackDeliveryError,
     build_engineer_case_thread_event,
-    engineer_slack_n8n_configured,
-    get_engineer_slack_event_status,
+    engineer_slack_configured,
     post_engineer_slack_event,
 )
 from backend.services.app_build import get_app_build_info
@@ -1837,75 +1836,77 @@ def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
 def _drain_engineer_slack_events(*, limit: int = 20) -> None:
     if str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower() != "production":
         return
-    if not engineer_slack_n8n_configured():
-        LOGGER.warning("engineer_slack_delivery_paused failure_code=engineer_slack_n8n_config_incomplete")
+    if not engineer_slack_configured():
+        LOGGER.warning("engineer_slack_delivery_paused failure_code=engineer_slack_config_incomplete")
         return
     events = ticket_repository.list_engineer_slack_events(
-        statuses=("queued", "pending", "outcome_unknown"),
+        statuses=("queued",),
         limit=limit,
     )
     for event_record in events:
         event_id = str(event_record.get("event_id") or "").strip()
-        status = str(event_record.get("status") or "").strip().lower()
         if not event_id:
             continue
-        if status == "queued":
-            claimed = ticket_repository.claim_engineer_slack_event(
-                event_id=event_id,
-                claimed_at=now_iso(),
+        event = event_record.get("payload") if isinstance(event_record.get("payload"), dict) else {}
+        event_type = str(event.get("event_type") or event_record.get("event_type") or "").strip()
+        thread_ts: str | None = None
+        if event_type != "engineer_case_opened":
+            engineer_case_id = str(event_record.get("engineer_case_id") or "").strip()
+            binding = ticket_repository.get_engineer_slack_thread_binding(
+                engineer_case_id,
+                active_only=False,
             )
-            if not isinstance(claimed, dict) or not claimed.get("claimed"):
-                continue
-            event = claimed.get("payload") if isinstance(claimed.get("payload"), dict) else {}
-            try:
-                result = post_engineer_slack_event(event)
-            except EngineerSlackN8nError as exc:
-                ticket_repository.complete_engineer_slack_event(
-                    event_id=event_id,
-                    status="outcome_unknown" if exc.outcome_unknown else "failed",
-                    failure_code=exc.code,
-                    completed_at=now_iso(),
-                )
-                LOGGER.warning(
-                    "engineer_slack_delivery_failed event_id=%s status=%s failure_code=%s",
+            if not isinstance(binding, dict):
+                LOGGER.info(
+                    "engineer_slack_delivery_waiting event_id=%s failure_code=engineer_slack_thread_binding_missing",
                     event_id,
-                    "outcome_unknown" if exc.outcome_unknown else "failed",
-                    exc.code,
                 )
                 continue
-        else:
-            try:
-                result = get_engineer_slack_event_status(event_id)
-            except EngineerSlackN8nError as exc:
+            configured_channel = str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip()
+            if str(binding.get("slack_channel_id") or "").strip() != configured_channel:
                 LOGGER.warning(
-                    "engineer_slack_reconciliation_failed event_id=%s status=%s failure_code=%s",
+                    "engineer_slack_delivery_waiting event_id=%s failure_code=engineer_slack_thread_channel_mismatch",
                     event_id,
-                    status,
-                    exc.code,
                 )
                 continue
-
-        remote_status = str(result.get("status") or "").strip().lower()
-        if remote_status == "missing":
-            ticket_repository.requeue_engineer_slack_event(
+            thread_ts = str(binding.get("slack_thread_ts") or "").strip()
+        claimed = ticket_repository.claim_engineer_slack_event(
+            event_id=event_id,
+            claimed_at=now_iso(),
+        )
+        if not isinstance(claimed, dict) or not claimed.get("claimed"):
+            continue
+        event = claimed.get("payload") if isinstance(claimed.get("payload"), dict) else {}
+        try:
+            result = post_engineer_slack_event(event, thread_ts=thread_ts)
+        except EngineerSlackDeliveryError as exc:
+            failed_status = "outcome_unknown" if exc.outcome_unknown else "failed"
+            ticket_repository.complete_engineer_slack_event(
                 event_id=event_id,
-                requeued_at=now_iso(),
+                status=failed_status,
+                failure_code=exc.code,
+                completed_at=now_iso(),
             )
             LOGGER.warning(
-                "engineer_slack_delivery_requeued event_id=%s failure_code=remote_event_missing",
+                "engineer_slack_delivery_failed event_id=%s status=%s failure_code=%s",
                 event_id,
+                failed_status,
+                exc.code,
             )
             continue
         ticket_repository.complete_engineer_slack_event(
             event_id=event_id,
-            status=remote_status,
+            status="delivered",
             failure_code=result.get("failure_code"),
             completed_at=now_iso(),
+            slack_channel_id=result.get("slack_channel_id"),
+            slack_message_ts=result.get("slack_message_ts"),
+            slack_thread_ts=result.get("slack_thread_ts"),
         )
         LOGGER.info(
             "engineer_slack_delivery_recorded event_id=%s status=%s failure_code=%s",
             event_id,
-            remote_status,
+            "delivered",
             result.get("failure_code") or "none",
         )
 

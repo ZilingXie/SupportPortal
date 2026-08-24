@@ -90,7 +90,7 @@
 - revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。
 - Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。
 - Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。
-- Production Non automated Case 会创建一个 active Engineer Case，由 n8n 固定 Slack Channel/thread 承载工程师 `@bot` 指导、AI 草稿、两阶段批准和 Zendesk public comment；发布一轮后 Engineer Case、派单和 thread 继续保持活跃，Zendesk 新客户评论会回到同一 thread 并触发 Engineer AI。
+- Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。AI 草稿、两阶段批准、Zendesk public comment 和后续客户评论都回到同一 thread；发布一轮后 Engineer Case、派单和 thread 继续保持活跃。
 - Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。
 
 ### 未完成

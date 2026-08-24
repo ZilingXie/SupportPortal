@@ -140,6 +140,9 @@ _ENGINEER_SLACK_EVENT_FIELDS = (
     "payload",
     "status",
     "failure_code",
+    "slack_channel_id",
+    "slack_message_ts",
+    "slack_thread_ts",
     "confirmed_at",
     "created_at",
     "updated_at",
@@ -169,6 +172,9 @@ def _new_engineer_slack_event_record(
         "payload": copy.deepcopy(event),
         "status": "queued",
         "failure_code": None,
+        "slack_channel_id": None,
+        "slack_message_ts": None,
+        "slack_thread_ts": None,
         "confirmed_at": None,
         "created_at": created_at,
         "updated_at": created_at,
@@ -1997,11 +2003,19 @@ class TicketRepository(Protocol):
         status: str,
         failure_code: str | None,
         completed_at: str,
+        slack_channel_id: str | None = None,
+        slack_message_ts: str | None = None,
+        slack_thread_ts: str | None = None,
     ) -> dict[str, Any] | None:
         ...
 
-    def requeue_engineer_slack_event(
-        self, *, event_id: str, requeued_at: str
+    def get_engineer_slack_thread_binding(
+        self, engineer_case_id: str, *, active_only: bool = True
+    ) -> dict[str, Any] | None:
+        ...
+
+    def resolve_engineer_slack_thread_binding(
+        self, *, slack_channel_id: str, slack_thread_ts: str
     ) -> dict[str, Any] | None:
         ...
 
@@ -5546,10 +5560,20 @@ class InMemoryTicketRepository:
         status: str,
         failure_code: str | None,
         completed_at: str,
+        slack_channel_id: str | None = None,
+        slack_message_ts: str | None = None,
+        slack_thread_ts: str | None = None,
     ) -> dict[str, Any] | None:
         normalized_status = str(status or "").strip().lower()
         if normalized_status not in {"pending", "delivered", "failed", "outcome_unknown"}:
             raise ValueError("invalid Engineer Slack event status")
+        normalized_remote_refs = (
+            str(slack_channel_id or "").strip(),
+            str(slack_message_ts or "").strip(),
+            str(slack_thread_ts or "").strip(),
+        )
+        if normalized_status == "delivered" and not all(normalized_remote_refs):
+            raise ValueError("delivered Engineer Slack event requires Slack remote references")
         with self._assignment_lock:
             event = self._engineer_slack_events.get(str(event_id).strip())
             if event is None:
@@ -5559,21 +5583,91 @@ class InMemoryTicketRepository:
             event.update(
                 status=normalized_status,
                 failure_code=str(failure_code or "").strip() or None,
+                slack_channel_id=(
+                    normalized_remote_refs[0]
+                    if normalized_status == "delivered"
+                    else event.get("slack_channel_id")
+                ),
+                slack_message_ts=(
+                    normalized_remote_refs[1]
+                    if normalized_status == "delivered"
+                    else event.get("slack_message_ts")
+                ),
+                slack_thread_ts=(
+                    normalized_remote_refs[2]
+                    if normalized_status == "delivered"
+                    else event.get("slack_thread_ts")
+                ),
                 confirmed_at=completed_at if normalized_status == "delivered" else None,
                 updated_at=completed_at,
             )
             return copy.deepcopy(event)
 
-    def requeue_engineer_slack_event(
-        self, *, event_id: str, requeued_at: str
+    def get_engineer_slack_thread_binding(
+        self, engineer_case_id: str, *, active_only: bool = True
     ) -> dict[str, Any] | None:
+        normalized_case_id = str(engineer_case_id or "").strip()
         with self._assignment_lock:
-            event = self._engineer_slack_events.get(str(event_id).strip())
+            engineer_case = self._engineer_cases.get(normalized_case_id)
+            active = bool(
+                isinstance(engineer_case, dict)
+                and _normalize_investigation_state(engineer_case.get("investigation_state"))
+                != "closed"
+            )
+            if active_only and not active:
+                return None
+            event = next(
+                (
+                    item
+                    for item in self._engineer_slack_events.values()
+                    if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
+                    and str(item.get("event_type") or "").strip() == "engineer_case_opened"
+                    and str(item.get("status") or "").strip().lower() == "delivered"
+                    and str(item.get("slack_channel_id") or "").strip()
+                    and str(item.get("slack_thread_ts") or "").strip()
+                ),
+                None,
+            )
             if event is None:
                 return None
-            if str(event.get("status") or "").strip().lower() in {"pending", "outcome_unknown"}:
-                event.update(status="queued", failure_code=None, updated_at=requeued_at)
-            return copy.deepcopy(event)
+            return {
+                "engineer_case_id": normalized_case_id,
+                "slack_channel_id": str(event.get("slack_channel_id") or "").strip(),
+                "slack_thread_ts": str(event.get("slack_thread_ts") or "").strip(),
+                "active": active,
+            }
+
+    def resolve_engineer_slack_thread_binding(
+        self, *, slack_channel_id: str, slack_thread_ts: str
+    ) -> dict[str, Any] | None:
+        normalized_channel_id = str(slack_channel_id or "").strip()
+        normalized_thread_ts = str(slack_thread_ts or "").strip()
+        with self._assignment_lock:
+            event = next(
+                (
+                    item
+                    for item in self._engineer_slack_events.values()
+                    if str(item.get("event_type") or "").strip() == "engineer_case_opened"
+                    and str(item.get("status") or "").strip().lower() == "delivered"
+                    and str(item.get("slack_channel_id") or "").strip() == normalized_channel_id
+                    and str(item.get("slack_thread_ts") or "").strip() == normalized_thread_ts
+                ),
+                None,
+            )
+            if event is None:
+                return None
+            engineer_case_id = str(event.get("engineer_case_id") or "").strip()
+            engineer_case = self._engineer_cases.get(engineer_case_id)
+            if not isinstance(engineer_case, dict) or (
+                _normalize_investigation_state(engineer_case.get("investigation_state")) == "closed"
+            ):
+                return None
+            return {
+                "engineer_case_id": engineer_case_id,
+                "slack_channel_id": normalized_channel_id,
+                "slack_thread_ts": normalized_thread_ts,
+                "active": True,
+            }
 
     def claim_engineer_case(
         self,
@@ -7983,10 +8077,20 @@ class PostgresTicketRepository:
         status: str,
         failure_code: str | None,
         completed_at: str,
+        slack_channel_id: str | None = None,
+        slack_message_ts: str | None = None,
+        slack_thread_ts: str | None = None,
     ) -> dict[str, Any] | None:
         normalized_status = str(status or "").strip().lower()
         if normalized_status not in {"pending", "delivered", "failed", "outcome_unknown"}:
             raise ValueError("invalid Engineer Slack event status")
+        normalized_remote_refs = (
+            str(slack_channel_id or "").strip(),
+            str(slack_message_ts or "").strip(),
+            str(slack_thread_ts or "").strip(),
+        )
+        if normalized_status == "delivered" and not all(normalized_remote_refs):
+            raise ValueError("delivered Engineer Slack event requires Slack remote references")
         columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
@@ -7994,12 +8098,24 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         "UPDATE {} SET status=%s, failure_code=%s, "
+                        "slack_channel_id=CASE WHEN %s='delivered' THEN "
+                        "COALESCE(NULLIF(%s, ''), slack_channel_id) ELSE slack_channel_id END, "
+                        "slack_message_ts=CASE WHEN %s='delivered' THEN "
+                        "COALESCE(NULLIF(%s, ''), slack_message_ts) ELSE slack_message_ts END, "
+                        "slack_thread_ts=CASE WHEN %s='delivered' THEN "
+                        "COALESCE(NULLIF(%s, ''), slack_thread_ts) ELSE slack_thread_ts END, "
                         "confirmed_at=CASE WHEN %s='delivered' THEN %s::timestamptz ELSE NULL END, "
                         "updated_at=%s WHERE event_id=%s AND status<>'delivered' RETURNING " + columns
                     ).format(self._table("support_engineer_slack_events")),
                     (
                         normalized_status,
                         str(failure_code or "").strip() or None,
+                        normalized_status,
+                        normalized_remote_refs[0],
+                        normalized_status,
+                        normalized_remote_refs[1],
+                        normalized_status,
+                        normalized_remote_refs[2],
                         normalized_status,
                         completed_at,
                         completed_at,
@@ -8019,32 +8135,84 @@ class PostgresTicketRepository:
 
         return self._run_with_connection_retry("complete_engineer_slack_event", _operation)
 
-    def requeue_engineer_slack_event(
-        self, *, event_id: str, requeued_at: str
+    def get_engineer_slack_thread_binding(
+        self, engineer_case_id: str, *, active_only: bool = True
     ) -> dict[str, Any] | None:
-        columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
+        normalized_case_id = str(engineer_case_id or "").strip()
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
-            with conn.transaction(), conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "UPDATE {} SET status='queued', failure_code=NULL, updated_at=%s "
-                        "WHERE event_id=%s AND status IN ('pending','outcome_unknown') RETURNING " + columns
-                    ).format(self._table("support_engineer_slack_events")),
-                    (requeued_at, str(event_id or "").strip()),
+                        """
+                        SELECT event.engineer_case_id, event.slack_channel_id,
+                               event.slack_thread_ts, (engineer.closed_at IS NULL) AS active
+                        FROM {} AS event
+                        JOIN {} AS engineer ON engineer.engineer_case_id = event.engineer_case_id
+                        WHERE event.engineer_case_id=%s
+                          AND event.event_type='engineer_case_opened'
+                          AND event.status='delivered'
+                          AND event.slack_channel_id IS NOT NULL
+                          AND event.slack_thread_ts IS NOT NULL
+                          AND (%s=FALSE OR engineer.closed_at IS NULL)
+                        LIMIT 1
+                        """
+                    ).format(
+                        self._table("support_engineer_slack_events"),
+                        self._table("support_engineer_cases"),
+                    ),
+                    (normalized_case_id, bool(active_only)),
                 )
                 row = cur.fetchone()
                 if row is None:
-                    cur.execute(
-                        sql.SQL("SELECT " + columns + " FROM {} WHERE event_id=%s").format(
-                            self._table("support_engineer_slack_events")
-                        ),
-                        (str(event_id or "").strip(),),
-                    )
-                    row = cur.fetchone()
-                return _engineer_slack_event_from_row(row)
+                    return None
+                return {
+                    "engineer_case_id": str(row[0] or "").strip(),
+                    "slack_channel_id": str(row[1] or "").strip(),
+                    "slack_thread_ts": str(row[2] or "").strip(),
+                    "active": bool(row[3]),
+                }
 
-        return self._run_with_connection_retry("requeue_engineer_slack_event", _operation)
+        return self._run_with_connection_retry("get_engineer_slack_thread_binding", _operation)
+
+    def resolve_engineer_slack_thread_binding(
+        self, *, slack_channel_id: str, slack_thread_ts: str
+    ) -> dict[str, Any] | None:
+        normalized_channel_id = str(slack_channel_id or "").strip()
+        normalized_thread_ts = str(slack_thread_ts or "").strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT event.engineer_case_id
+                        FROM {} AS event
+                        JOIN {} AS engineer ON engineer.engineer_case_id = event.engineer_case_id
+                        WHERE event.event_type='engineer_case_opened'
+                          AND event.status='delivered'
+                          AND event.slack_channel_id=%s
+                          AND event.slack_thread_ts=%s
+                          AND engineer.closed_at IS NULL
+                        LIMIT 1
+                        """
+                    ).format(
+                        self._table("support_engineer_slack_events"),
+                        self._table("support_engineer_cases"),
+                    ),
+                    (normalized_channel_id, normalized_thread_ts),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return {
+                    "engineer_case_id": str(row[0] or "").strip(),
+                    "slack_channel_id": normalized_channel_id,
+                    "slack_thread_ts": normalized_thread_ts,
+                    "active": True,
+                }
+
+        return self._run_with_connection_retry("resolve_engineer_slack_thread_binding", _operation)
 
     def get_account_case_details(
         self, identifiers: list[str]
@@ -9865,6 +10033,9 @@ class PostgresTicketRepository:
                                 status IN ('queued','pending','delivered','outcome_unknown','failed')
                             ),
                             failure_code TEXT,
+                            slack_channel_id TEXT,
+                            slack_message_ts TEXT,
+                            slack_thread_ts TEXT,
                             confirmed_at TIMESTAMPTZ,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
@@ -9875,11 +10046,33 @@ class PostgresTicketRepository:
                         self._table("support_engineer_cases"),
                     )
                 )
+                for column_definition in (
+                    "slack_channel_id TEXT",
+                    "slack_message_ts TEXT",
+                    "slack_thread_ts TEXT",
+                ):
+                    cur.execute(
+                        sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {}").format(
+                            self._table("support_engineer_slack_events"),
+                            sql.SQL(column_definition),
+                        )
+                    )
                 cur.execute(
                     sql.SQL(
                         "CREATE INDEX IF NOT EXISTS {} ON {} (status, created_at, event_id)"
                     ).format(
                         sql.Identifier("idx_support_engineer_slack_events_delivery"),
+                        self._table("support_engineer_slack_events"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} "
+                        "(slack_channel_id, slack_thread_ts) "
+                        "WHERE event_type='engineer_case_opened' AND status='delivered' "
+                        "AND slack_channel_id IS NOT NULL AND slack_thread_ts IS NOT NULL"
+                    ).format(
+                        sql.Identifier("idx_support_engineer_slack_events_root_thread"),
                         self._table("support_engineer_slack_events"),
                     )
                 )
