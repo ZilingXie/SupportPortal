@@ -32,6 +32,11 @@
       "at": "2026-08-24",
       "event": "created",
       "summary": "由 12953 suspension 邮件缩略图 Billing 问题和 12951 RAG 答案代码块渲染问题创建。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "email_cc_and_recipient_routing",
+      "summary": "所有自动化内部邮件统一 cc xieziling@agora.io（AUTOMATION_INTERNAL_EMAIL_CC env 可覆盖）；EC2 .env 变更：enablement→zhonghuang、suspension+verification→suhrid.das、fraud assignee→suhrid.das (31116644140308)。"
     }
   ],
   "legacy_refs": [],

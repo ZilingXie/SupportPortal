@@ -10,6 +10,16 @@ from typing import Any
 
 
 GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
+
+# Every automation internal email cc's this address so the automation owner
+# keeps visibility; override via env if the owner changes.
+AUTOMATION_INTERNAL_EMAIL_CC_ENV = "AUTOMATION_INTERNAL_EMAIL_CC"
+DEFAULT_AUTOMATION_INTERNAL_EMAIL_CC = "xieziling@agora.io"
+
+
+def automation_internal_email_cc() -> list[str]:
+    cc = _clean(os.getenv(AUTOMATION_INTERNAL_EMAIL_CC_ENV)) or DEFAULT_AUTOMATION_INTERNAL_EMAIL_CC
+    return [cc] if cc else []
 DEFAULT_TENANT_ID = "60275374-3eaa-49c2-83c3-cc189d126981"
 DEFAULT_CLIENT_ID = "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80"
 DEFAULT_USERNAME = "ai-support-agent@agora.io"
@@ -70,6 +80,7 @@ def send_graph_mail(
     subject: str,
     body: str,
     content_type: str = "Text",
+    cc_addresses: list[str] | None = None,
 ) -> None:
     config = load_graph_mail_config()
     missing = [name for name, value in config.items() if not value]
@@ -82,6 +93,7 @@ def send_graph_mail(
         subject=subject,
         body=body,
         content_type=content_type,
+        cc_addresses=cc_addresses,
     )
 
 
@@ -92,20 +104,27 @@ def send_graph_mail_with_token(
     subject: str,
     body: str,
     content_type: str = "Text",
+    cc_addresses: list[str] | None = None,
 ) -> None:
     normalized_content_type = str(content_type or "Text").strip().lower()
     if normalized_content_type not in {"text", "html"}:
         raise ValueError("Graph mail content_type must be Text or HTML")
     graph_content_type = "HTML" if normalized_content_type == "html" else "Text"
+    normalized_cc = [addr for addr in (_clean(cc) for cc in (cc_addresses or [])) if addr]
+    message: dict[str, Any] = {
+        "subject": subject,
+        "body": {"contentType": graph_content_type, "content": body},
+        "toRecipients": [{"emailAddress": {"address": to_address}}],
+    }
+    if normalized_cc:
+        message["ccRecipients"] = [
+            {"emailAddress": {"address": cc}} for cc in normalized_cc
+        ]
     request = urllib.request.Request(
         GRAPH_SENDMAIL_URL,
         data=json.dumps(
             {
-                "message": {
-                    "subject": subject,
-                    "body": {"contentType": graph_content_type, "content": body},
-                    "toRecipients": [{"emailAddress": {"address": to_address}}],
-                },
+                "message": message,
                 "saveToSentItems": True,
             }
         ).encode("utf-8"),
