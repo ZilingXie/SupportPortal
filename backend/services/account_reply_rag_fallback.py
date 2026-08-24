@@ -22,7 +22,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.services.account_automation_ownership import mark_production_ownership_released
-from backend.services.rag_service_client import RagServiceClient, RagServiceError
+from backend.services.ragflow_docs_search_skill import (
+    RagflowDocsSearchError,
+    RagflowDocsSearchSkillClient,
+)
 from backend.services.zendesk_comments import ZendeskCommentError, add_ticket_comment
 from backend.services.zendesk_ticket_assignment import route_ticket_back_to_queue
 
@@ -157,7 +160,7 @@ def try_rag_fallback_answer(
     ticket_id: str | None = None,
     customer_id: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
-    client: RagServiceClient | None = None,
+    client: RagflowDocsSearchSkillClient | None = None,
 ) -> RagFallbackOutcome:
     """Ask RAG the customer's unexpected message.
 
@@ -165,7 +168,7 @@ def try_rag_fallback_answer(
     escalate: the safe direction for this chain is a human, never a guessed
     answer.
     """
-    rag_client = client or RagServiceClient()
+    rag_client = client or RagflowDocsSearchSkillClient()
     try:
         payload = rag_client.query(
             question=question,
@@ -175,10 +178,10 @@ def try_rag_fallback_answer(
             ticket_context=ticket_context,
             timeout_seconds=rag_fallback_timeout_seconds(),
         )
-    except RagServiceError as exc:
-        return RagFallbackOutcome(kind=ESCALATE, reason=f"rag_error_{exc.failure_kind}")
-    except Exception as exc:  # defensive: RAG must never break reply processing
-        return RagFallbackOutcome(kind=ESCALATE, reason=f"rag_error_{type(exc).__name__}")
+    except RagflowDocsSearchError as exc:
+        return RagFallbackOutcome(kind=ESCALATE, reason=f"ragflow_skill_{exc.failure_kind}")
+    except Exception as exc:  # defensive: skill execution must never break reply processing
+        return RagFallbackOutcome(kind=ESCALATE, reason=f"ragflow_skill_{type(exc).__name__}")
     decision = str(payload.get("decision") or "").strip().lower()
     answer = _strip_trailing_signature(str(payload.get("answer") or "").strip())
     if decision == "answer" and answer:

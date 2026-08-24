@@ -5007,3 +5007,26 @@ For each new entry, record:
   - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or query behavior changes; read-only telemetry aggregation over `support_rag_query_runs`.
 - Verification:
   - `rtk python3.12 -m pytest backend/tests/test_rag_api.py -q` (90 tests green across the affected suites, including the new batch endpoint case)
+
+## 2026-08-24 - Automated-case unexpected replies use ragflow-docs-search (p2-93)
+
+- Summary:
+  - Vendored the upstream `ragflow-docs-search` skill manifest and standard-library search script from `AgoraIO-Support/AgentsGateway-Skills-Scripts@main` under `backend/skills/`.
+  - Replaced the unexpected-reply fallback's local `/internal/rag/query` client with a narrow adapter that runs the vendored search in JSON mode without NVIDIA rerank, then uses the existing RAG answer model profile to generate a grounded customer answer.
+  - Accepts only answers with citations mapped to retrieved `docs.agora.io` or `api-ref.agora.io` URLs. Retrieval, generation, JSON, or citation failures remain fail-closed and use the existing Human Review escalation chain; there is no fallback to the old local RAG path.
+- Reason:
+  - Automated cases that receive an unexpected customer reply should use the shared, live-docs RAGFlow knowledge skill instead of SupportPortal's local RAG index.
+- Affected files/config:
+  - `backend/skills/ragflow-docs-search/SKILL.md`
+  - `backend/skills/ragflow-docs-search/scripts/search.py`
+  - `backend/services/ragflow_docs_search_skill.py`
+  - `backend/services/account_reply_rag_fallback.py`
+  - `.env.example` (`RAGFLOW_BASE_URL`, `RAGFLOW_API_KEY`)
+  - Focused fallback and skill adapter tests
+- Data impact:
+  - No SupportPortal schema, ingestion, chunking, embedding, vector table, or backfill changes.
+  - Unexpected-reply lookups read the upstream ticket-agent RAGFlow proxy; the configured token is not written to SupportPortal storage and the adapter does not expose it in output.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_ragflow_docs_search_skill backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker` (`295` tests passed).
+  - Missing-key direct check returned `escalate / ragflow_skill_configuration` without invoking the model, creating a reply job, or publishing customer-visible content.
+  - Upstream/local Git blob checks matched for both requested skill files: `SKILL.md` `73682d9676d7b092bc80b09cf383943db0283f27`; `search.py` `96f34efcf200acc578651d043c3b837f19c8d4f1`.

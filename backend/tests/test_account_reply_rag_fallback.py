@@ -19,7 +19,7 @@ from backend.services.account_reply_rag_fallback import (  # noqa: E402
     should_run_reply_rag_fallback,
     try_rag_fallback_answer,
 )
-from backend.services.rag_service_client import RagServiceError  # noqa: E402
+from backend.services.ragflow_docs_search_skill import RagflowDocsSearchError  # noqa: E402
 from backend.services.zendesk_comments import ZendeskCommentError  # noqa: E402
 
 
@@ -88,6 +88,24 @@ class RagFallbackGatingTest(unittest.TestCase):
 
 
 class RagFallbackAnswerTest(unittest.TestCase):
+    def test_default_client_is_the_ragflow_docs_search_skill(self) -> None:
+        client = _FakeRagClient(
+            payload={
+                "decision": "answer",
+                "answer": "An App ID identifies your Agora project.",
+                "citations": [{"source_url": "https://docs.agora.io/en/get-started/manage-agora-account"}],
+            }
+        )
+        with patch(
+            "backend.services.account_reply_rag_fallback.RagflowDocsSearchSkillClient",
+            return_value=client,
+        ) as skill_client:
+            outcome = try_rag_fallback_answer(question="what is appid?", request_id="req-default")
+
+        skill_client.assert_called_once_with()
+        self.assertEqual(outcome.kind, "answer")
+        self.assertIn("docs.agora.io", outcome.answer)
+
     def test_answer_decision_returns_the_answer(self) -> None:
         client = _FakeRagClient(
             payload={"decision": "answer", "answer": "An App ID identifies your Agora project."}
@@ -195,10 +213,10 @@ class RagFallbackAnswerTest(unittest.TestCase):
         transport = try_rag_fallback_answer(
             question="q",
             request_id="req-3",
-            client=_FakeRagClient(error=RagServiceError("boom", failure_kind="transport")),
+            client=_FakeRagClient(error=RagflowDocsSearchError("transport")),
         )
         self.assertEqual(transport.kind, "escalate")
-        self.assertEqual(transport.reason, "rag_error_transport")
+        self.assertEqual(transport.reason, "ragflow_skill_transport")
 
         unexpected = try_rag_fallback_answer(
             question="q",
@@ -206,7 +224,7 @@ class RagFallbackAnswerTest(unittest.TestCase):
             client=_FakeRagClient(error=RuntimeError("unexpected")),
         )
         self.assertEqual(unexpected.kind, "escalate")
-        self.assertEqual(unexpected.reason, "rag_error_RuntimeError")
+        self.assertEqual(unexpected.reason, "ragflow_skill_RuntimeError")
 
 
 class RagFallbackEscalationTest(unittest.TestCase):
