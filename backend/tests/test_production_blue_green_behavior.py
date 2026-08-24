@@ -61,9 +61,12 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "printf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_LOG\"\n"
             "if [[ \"$1 $2\" == \"image inspect\" ]]; then printf '%s\\n' \"$FAKE_IMAGE_ID\"; exit 0; fi\n"
+            "if [[ \"$1\" == inspect && \"$*\" == *'{{.Config.Image}}'* ]]; then printf '%s\\n' \"$FAKE_APP_IMAGE\"; exit 0; fi\n"
+            "if [[ \"$1\" == inspect && \"$*\" == *'.Config.Env'* ]]; then printf 'APP_BUILD_REF=%s\\n' \"$FAKE_APP_BUILD_REF\"; exit 0; fi\n"
             "if [[ \"$1\" == inspect ]]; then printf 'mounted\\n'; exit 0; fi\n"
             "if [[ \"$1\" == compose ]]; then\n"
             "  [[ \"$*\" == *'ps -q nginx'* ]] && printf 'nginx\\n'\n"
+            "  [[ \"$*\" == *'ps -q api'* ]] && printf 'api\\n'\n"
             "  [[ \"$*\" == *'ps -q automation_redis_production'* ]] && printf 'redis\\n'\n"
             "  exit 0\n"
             "fi\n"
@@ -95,6 +98,8 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
                 "FAKE_RELOAD_MARKER": str(self.reload_marker),
                 "FAKE_RELOAD_COUNT": str(self.reload_count),
                 "FAKE_IMAGE_ID": IMAGE_ID,
+                "FAKE_APP_IMAGE": "localhost/supportportal-app:test",
+                "FAKE_APP_BUILD_REF": "test-commit",
             }
         )
         environment.update(extra_env)
@@ -145,6 +150,26 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("NGINX_HOST_PORT must be numeric", result.stdout + result.stderr)
+        self.assertNotIn("Starting candidate project", result.stdout)
+
+    def test_resolves_app_image_from_running_api_when_env_key_is_missing(self) -> None:
+        env_file = self.project / ".env"
+        env_file.write_text(env_file.read_text().replace("APP_RUNTIME_IMAGE=localhost/supportportal-app:test\n", ""))
+
+        result = self._run("--release", "release-test-1", "--drain-seconds", "0", "--skip-health")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Resolved APP_RUNTIME_IMAGE from the official api container", result.stdout)
+        self.assertIn("automation_production_worker", self.docker_log.read_text())
+
+    def test_rejects_running_api_from_another_commit(self) -> None:
+        env_file = self.project / ".env"
+        env_file.write_text(env_file.read_text().replace("APP_RUNTIME_IMAGE=localhost/supportportal-app:test\n", ""))
+
+        result = self._run("--release", "release-test-1", "--skip-health", FAKE_APP_BUILD_REF="old-commit")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("does not match release commit", result.stdout + result.stderr)
         self.assertNotIn("Starting candidate project", result.stdout)
 
     def test_new_process_rollback_reloads_previous_release_manifest(self) -> None:
