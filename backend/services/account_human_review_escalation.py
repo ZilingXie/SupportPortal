@@ -54,6 +54,68 @@ class AccountHumanReviewEscalationResult:
         }
 
 
+def reconcile_account_human_review_queue_mismatches(
+    *,
+    repository: Any,
+    processing_profile: str,
+    limit: int = 25,
+    timestamp: str | None = None,
+) -> list[AccountHumanReviewEscalationResult]:
+    """Repair persisted Account cases marked for review but still AI-routed.
+
+    This is deliberately bounded and Production-only. The worker calls it as a
+    reconciliation pass so cases created by an older failure branch (such as a
+    reply job that was only marked ``manual_attention``) receive the same
+    idempotent handoff as new failures.
+    """
+    if str(processing_profile or "").strip().lower() != "production":
+        return []
+    cases = repository.list_account_cases(
+        limit=max(1, min(int(limit), 100)),
+        route_status="automated",
+        processing_profile="production",
+    )
+    results: list[AccountHumanReviewEscalationResult] = []
+    for case in cases or []:
+        if not isinstance(case, dict):
+            continue
+        action = canonical_automation_subcategory(
+            case.get("execution_action") or case.get("route") or ""
+        )
+        if action not in ACTIVE_AUTOMATION_SUBCATEGORIES:
+            continue
+        if str(case.get("automation_status") or "").strip().lower() != "human_review_required":
+            continue
+        context = case.get("automation_context")
+        context = context if isinstance(context, dict) else {}
+        ownership = context.get("zendesk_ownership")
+        ownership = ownership if isinstance(ownership, dict) else {}
+        if str(ownership.get("state") or "").strip().lower() != "assigned":
+            continue
+        escalation = context.get("human_review_escalation")
+        escalation = escalation if isinstance(escalation, dict) else {}
+        handoff_status = str(
+            escalation.get("handoff_status") or ownership.get("handoff_status") or ""
+        ).strip().lower()
+        if handoff_status in {"queued", "already_human_owned", "outcome_unknown"}:
+            continue
+        ticket_id = str(case.get("client_ticket_id") or "").strip()
+        failure_code = str(case.get("failure_code") or "account_human_review_reconciliation").strip()
+        results.append(
+            escalate_account_case_to_human_review(
+                account_case=case,
+                ticket_id=ticket_id,
+                handler=str(case.get("automation_handler") or action),
+                failure_stage=str(case.get("failure_stage") or "reconciliation"),
+                failure_code=failure_code,
+                reason="Persisted Human Review state still had automated Zendesk routing.",
+                repository=repository,
+                timestamp=timestamp,
+            )
+        )
+    return results
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -270,6 +332,34 @@ def escalate_account_case_to_human_review(
         account_case.get("failure_incident_id")
         or f"{account_case_id or ticket_id}:{normalized_stage}:{normalized_code}"
     ).strip()
+    prior_context = account_case.get("automation_context")
+    prior_context = prior_context if isinstance(prior_context, dict) else {}
+    prior_escalation = prior_context.get("human_review_escalation")
+    prior_escalation = prior_escalation if isinstance(prior_escalation, dict) else {}
+    prior_ownership = prior_context.get("zendesk_ownership")
+    prior_ownership = prior_ownership if isinstance(prior_ownership, dict) else {}
+    prior_handoff = str(
+        prior_escalation.get("handoff_status")
+        or prior_ownership.get("handoff_status")
+        or ""
+    ).strip().lower()
+    if prior_handoff in {"queued", "already_human_owned", "outcome_unknown"}:
+        terminal_status = "degraded" if prior_handoff == "outcome_unknown" else "completed"
+        return AccountHumanReviewEscalationResult(
+            status=terminal_status,
+            account_case_id=account_case_id,
+            handler=normalized_handler,
+            zendesk_ticket_id=_zendesk_ticket_id(account_case, ticket_id) or None,
+            internal_note_status=str(
+                prior_escalation.get("internal_note_status") or "already_reconciled"
+            ),
+            route_back_status=str(
+                prior_escalation.get("route_back_status") or prior_handoff
+            ),
+            handoff_status=prior_handoff,
+            note_comment_id=str(prior_escalation.get("note_comment_id") or "").strip() or None,
+            failure_code=str(prior_escalation.get("failure_code") or "").strip() or None,
+        )
 
     updated = reconcile_automation_execution_failure(
         dict(account_case),
