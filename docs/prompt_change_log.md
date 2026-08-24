@@ -3912,3 +3912,23 @@ For each new entry, record:
 - Verification:
   - Focused Account routing and ownership suite: 340 passed with 51 subtests passed.
   - Direct deterministic repetition check: 20 of 20 identical Media Relay activation requests resolved to `media_relay` without an Agora Router model call.
+
+## 2026-08-24 - Unexpected-reply grounding tool switched to ragflow-docs-search
+
+- Area or subsystem: Account Automation unexpected-customer-reply answer generation (`p2-93`)
+- Prompt or model version: existing `RAG_ANSWER_SCENARIO` model profile and `backend/services/prompts/rag_answer.py` prompt unchanged; tooling mode changed to `ragflow-docs-search` upstream `main`
+- Summary: The fallback adapter now supplies RAGFlow official-doc passages as the only factual context to the existing strict RAG answer prompt. Recent ticket messages are labeled interpretation-only, and generated output must cite at least one retrieved chunk before it can enter the existing Account reply job.
+- Reason: The user requested that unexpected replies for automated cases use the shared official-document skill instead of SupportPortal's local RAG service.
+- Affected files or config:
+  - `backend/services/ragflow_docs_search_skill.py`
+  - `backend/services/account_reply_rag_fallback.py`
+  - `backend/skills/ragflow-docs-search/SKILL.md`
+  - `backend/skills/ragflow-docs-search/scripts/search.py`
+  - `RAGFLOW_BASE_URL` and `RAGFLOW_API_KEY`
+- Expected behavior change:
+  - The model sees only official-document passages returned by the RAGFlow skill as citable evidence.
+  - Answers without a valid retrieved citation, malformed JSON, insufficient evidence, missing credentials, or tool/model errors are not published and move through the established fail-closed Human Review path.
+  - The generation call uses the remaining fallback timeout as a hard single-attempt budget; model retries and provider/model fallbacks are disabled on this customer-outbound path so timeout cannot multiply across attempts.
+  - The existing RAG answer model selection, reasoning effort, signature removal, reply job, Production public-delivery, and route-back behavior remain unchanged.
+- Verification:
+  - Skill/fallback plus Account intake/worker regression passed `295` tests, including default-client selection, command/env contract, grounded answer mapping, untrusted-source rejection, hard total-timeout enforcement, missing-key/timeout reasons, and existing Production/staging escalation behavior.

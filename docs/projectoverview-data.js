@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T09:30:55Z",
-  "source_base_commit": "fe1f2a4ba1fe5db5cafac383448b1cea2f8790dd",
-  "registry_digest": "f0b24d712d42337234d92e82c186b65dc670e25aa8dabac20ee7fc083c1b65be",
+  "generated_at": "2026-08-24T09:36:09Z",
+  "source_base_commit": "8b9a4431ee4b2d6457f19b463f9fd5ec9adfa1d7",
+  "registry_digest": "d2a0fe6f4a713755ba16e3e92de7b24a00e2fe930c4faf7dfab42ad5f3e8eeb1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -643,6 +643,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "RAGFlow skill adapter and caller-path regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_ragflow_docs_search_skill backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker",
+          "details": "295 tests passed；覆盖 skill 命令与 env 合同、grounded answer/citation 校验、检索耗尽总预算时禁止启动模型、超时与错误转人工、Account intake 及 reply worker 既有发布合同。"
+        },
+        {
+          "type": "test",
+          "label": "Missing-key fail-closed verification",
+          "command": "在未配置 RAGFLOW_API_KEY 的进程中直接调用 try_rag_fallback_answer，并注入禁止执行的模型 invoker/job publisher",
+          "details": "结果为 escalate / ragflow_skill_configuration；未调用模型、未创建 reply job、未产生客户发布。"
+        },
+        {
+          "type": "test",
+          "label": "Upstream ragflow-docs-search source parity",
+          "command": "比较 AgoraIO-Support/AgentsGateway-Skills-Scripts@main 与本地 vendored 文件的 Git blob SHA",
+          "details": "SKILL.md 均为 73682d9676d7b092bc80b09cf383943db0283f27；scripts/search.py 均为 96f34efcf200acc578651d043c3b837f19c8d4f1。"
+        },
+        {
+          "type": "test",
           "label": "Citations append and marketing footer strip",
           "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker",
           "details": "新增 3 项单测：12940 真实营销尾模板整块剥离（May Collins/Discord/support-plans 全部移除且正文保留）、citations 按 URL 去重并以 heading — url 附加 References、短签名规则回归；11 项 fallback 单测 + intake/worker 套件全绿。"
@@ -659,8 +677,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 15,
-      "done_count": 8,
-      "blocked_count": 0
+      "done_count": 7,
+      "blocked_count": 1
     },
     {
       "schema_version": 2,
@@ -9177,17 +9195,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-93",
       "title": "意外客户回复的 RAG 兜底与人工升级",
-      "status": "done",
+      "status": "blocked",
       "owner": "zac",
       "summary": "自动化多轮对话中客户回复意料之外的内容（如反问 what is appid?）时不再静默：先用 RAG 尝试回答（能答则走标准 reply job 管线回复客户），RAG 无法回答（含服务故障）时把 case 交回人工——production 写 internal note 并复用 route_ticket_back_to_queue 放回 Zendesk queue、本地置 human review 并取消 pending reply jobs；staging 仅本地人工标记。行为通过共享 service 落地，/account 与 /production 立即生效，split 三环境在承接客户对话后同源继承。",
-      "next_action": "已完成。RAG 兜底双路径（answer 直发公开评论、escalate 放回队列+internal note）均经 production 真实工单闭环；遗留观察项：重复追问去重失效排查、n8n 评论转发未自动触发（本轮用 API 快照通道）。",
+      "next_action": "用户在根 .env 配置 RAGFLOW_API_KEY 后重启官方栈；先在运行容器内执行只读 search 验证，再用新的 Production 测试工单完成 RAGFlow answer -> rag_fallback_answer -> Zendesk public delivery/ledger/readback 闭环。",
       "acceptance_criteria": [
         "意外回复（重路由为非 automation 路由、或命中同一 handler 但无字段进展且追问已问尽）时先调用 RAG；RAG answer 经 reply job 直发客户（production 走 Zendesk 公开评论与既有延迟），RAG escalate 时执行人工升级链。",
         "人工升级链：production 写 internal note（AI agent unable to handle this request, require human review. + 原因与客户原文摘要）、route_ticket_back_to_queue 放回 queue、本地 human_review_required + ownership released + 取消 pending reply jobs + workspace audit event；staging 仅本地标记，不出站 Zendesk。",
         "防抖：case 已 human_review_required 或 ownership 已 released_to_queue 时不重复触发；RAG 任何故障一律升级人工（fail-safe），ACCOUNT_REPLY_RAG_FALLBACK_ENABLED 可关闭回到旧行为。",
-        "quota follow_up_count 二次兜底、suspension 两段确认、字段提取失败转人工等既有路径行为不变。"
+        "quota follow_up_count 二次兜底、suspension 两段确认、字段提取失败转人工等既有路径行为不变。",
+        "意外回复检索必须通过 backend/skills/ragflow-docs-search/scripts/search.py 的 ticket-agent read-only endpoint；仅带有效 docs.agora.io 或 api-ref.agora.io 引用的 grounded answer 可发布，skill/模型/JSON/citation 任一失败继续 fail-closed 转人工，不回退到旧本地 RAG。"
       ],
-      "blockers": [],
+      "blockers": [
+        "RAGFLOW_API_KEY 尚未由用户配置，因此真实 RAGFlow retrieval、grounded answer 与 Production Zendesk public delivery/readback 尚未验收；当前仅验证缺 key 时 fail-closed 转人工。"
+      ],
       "evidence": [
         {
           "type": "test",
@@ -9212,17 +9233,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production RAG answer delivered as public comment on 12935",
           "command": "EC2 主栈 31745e3 + Zendesk 工单 12935 + n8n 评论快照触发",
           "details": "工单 12935（Enablement answer delivery test）完整闭环 answer 路径：n8n 自动 intake（AC-12935，enablement）→ AI 接管并公开追问 App ID → 客户反问 \"what is the App ID exactly?\" 经评论快照触发（processed）→ 重路由 rag → RAG 兜底 answer → rag_fallback_answer job 直发 → production 延迟后作为公开评论 52809771838100 发布（\"The App ID is the unique random string Agora generates in Agora Console...\"，public=true）→ delivery ledger 状态 delivered/is_public=true/comment id 一致。至此 p2-93 两条路径均在 production live 闭环（escalate=12931/12933，answer=12935）；过程共修复四层 automation 注册门（worker 投递门 PR#886、评论触发门 PR#888、InMemory+Postgres delivery ledger eligibility PR#889/#890）。"
+        },
+        {
+          "type": "test",
+          "label": "RAGFlow skill adapter and caller-path regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_ragflow_docs_search_skill backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake backend.tests.test_worker",
+          "details": "295 tests passed；覆盖 skill 命令与 env 合同、grounded answer/citation 校验、检索耗尽总预算时禁止启动模型、超时与错误转人工、Account intake 及 reply worker 既有发布合同。"
+        },
+        {
+          "type": "test",
+          "label": "Missing-key fail-closed verification",
+          "command": "在未配置 RAGFLOW_API_KEY 的进程中直接调用 try_rag_fallback_answer，并注入禁止执行的模型 invoker/job publisher",
+          "details": "结果为 escalate / ragflow_skill_configuration；未调用模型、未创建 reply job、未产生客户发布。"
+        },
+        {
+          "type": "test",
+          "label": "Upstream ragflow-docs-search source parity",
+          "command": "比较 AgoraIO-Support/AgentsGateway-Skills-Scripts@main 与本地 vendored 文件的 Git blob SHA",
+          "details": "SKILL.md 均为 73682d9676d7b092bc80b09cf383943db0283f27；scripts/search.py 均为 96f34efcf200acc578651d043c3b837f19c8d4f1。"
         }
       ],
       "source_refs": [
         "backend/main.py",
         "backend/services/account_reply_rag_fallback.py",
+        "backend/services/ragflow_docs_search_skill.py",
+        "backend/skills/ragflow-docs-search/SKILL.md",
+        "backend/skills/ragflow-docs-search/scripts/search.py",
         "backend/services/zendesk_ticket_assignment.py",
         "backend/services/zendesk_comments.py",
         "backend/services/rag_service_client.py"
       ],
       "created_at": "2026-08-23",
-      "updated_at": "2026-08-23",
+      "updated_at": "2026-08-24",
       "history": [
         {
           "at": "2026-08-23",
@@ -9288,6 +9330,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "production_answer_path_verified",
           "summary": "12935 上 answer 路径 production 全链路闭环（RAG 答案→公开评论 52809771838100→ledger delivered）；p2-93 双路径 production 验证完成，任务收尾。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "ragflow_docs_search_skill_integration_started",
+          "summary": "按用户要求重新打开 p2-93：从 AgoraIO-Support/AgentsGateway-Skills-Scripts@main 原样安装 ragflow-docs-search 的 SKILL.md 与 scripts/search.py，计划仅替换意外回复的知识检索/grounded answer 适配层，保留既有 reply job、Production public delivery、签名门禁与 fail-closed 人工升级合同。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "ragflow_docs_search_skill_implementation_verified",
+          "summary": "vendored 上游文件与 main blob 一致，RAGFlow adapter、Account intake 与 worker 共 295 项回归通过；缺 key 时确认 fail-closed 且无客户发布。任务因 RAGFLOW_API_KEY 尚未配置及真实 Production answer/readback 未验收而标记 blocked。"
         }
       ],
       "legacy_refs": [],
