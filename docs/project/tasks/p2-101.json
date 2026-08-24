@@ -5,11 +5,12 @@
   "status": "active",
   "owner": "zac",
   "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-  "next_action": "部署 EC2 后用 fraud 测试工单验证：AI 追问 7 项信息、内部邮件列出 Provided/Missing 字段、Slack 消息含字段摘要。",
+  "next_action": "合并 Persona v12 后部署并用 fraud 测试工单验证：1-2 项缺失信息同句、3+ 项为 bullet，内部邮件和 Slack 字段摘要保持不变。",
   "acceptance_criteria": [
     "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
     "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
-    "Slack 消息增加 Provided: 和 Missing: 行显示字段。"
+    "Slack 消息增加 Provided: 和 Missing: 行显示字段。",
+    "客户追问缺失字段时，1-2 项以内嵌入自然句子，3 项及以上每项独立使用 bullet；不合规 Persona 输出不得发布。"
   ],
   "blockers": [],
   "evidence": [
@@ -18,6 +19,18 @@
       "label": "7-field extraction + Slack fields + intake regression",
       "command": ".venv/bin/python -m unittest backend.tests.test_account_verification_automation backend.tests.test_account_slack_n8n backend.tests.test_account_intake",
       "details": "202 项测试全绿；覆盖 7 字段提取/grounding/追问覆盖验证、内部邮件 Provided+Missing 新标签、Slack 消息含 Provided/Missing 行、intake 全链路回归（fixture 已迁移到 7 键）。"
+    },
+    {
+      "type": "test",
+      "label": "Persona v12 missing-information layout and tone contract",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py",
+      "details": "38 项测试通过、13 个子测试通过；覆盖 Fraud Account 1-2 项 inline、3+ 项 bullet、编号列表拒绝、Persona v12 prompt wording，以及现有四次 Account AI 校验预算。"
+    },
+    {
+      "type": "test",
+      "label": "Fraud Account/Intake/Worker regression",
+      "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_account_slack_n8n.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_account_reply_version_fence.py",
+      "details": "318 项测试通过、33 个子测试通过；覆盖 7 字段提取、Slack/邮件摘要、Intake 追问与第二次回复、Persona Worker 发布和版本 fence。"
     }
   ],
   "source_refs": [
@@ -25,9 +38,11 @@
     "backend/services/account_verification_automation.py",
     "backend/services/prompts/account_routing.py",
     "backend/services/account_slack_n8n.py",
+    "backend/services/automation_persona.py",
     "backend/tests/test_account_verification_automation.py",
     "backend/tests/test_account_slack_n8n.py",
-    "backend/tests/test_account_intake.py"
+    "backend/tests/test_account_intake.py",
+    "backend/tests/test_automation_persona.py"
   ],
   "created_at": "2026-08-24",
   "updated_at": "2026-08-24",
@@ -41,6 +56,11 @@
       "at": "2026-08-24",
       "event": "persona_missing_format",
       "summary": "persona 指令增加缺失信息格式规则（1-2 项入句、3+ 项编号列表），missing_information 在送 LLM 前转换为人类可读标签（Account type 而非 account_type）。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "persona_v12_missing_format_contract",
+      "summary": "将 3+ 缺失信息从编号列表改为每项独立 bullet，收紧 1-2 项同句与 warm first-person 语气，并在现有四次 Account AI 预算内拒绝不合规格式。"
     }
   ],
   "legacy_refs": [],
