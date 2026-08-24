@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:33:35Z",
-  "source_base_commit": "1805f744f0d94d664de9f81b1db85175bf1ce2d1",
-  "registry_digest": "a32c0be8eb73c3e2499d4a37b6ce3405f7e990dace2d8feb9f237784e295d32a",
+  "generated_at": "2026-08-24T12:40:06Z",
+  "source_base_commit": "23c19e3bd7d4c73d69617215b926c26ff3dde458",
+  "registry_digest": "2596a617dd5a4e77ed86de52b4dba1878a706ced2506d2c0bc19c3130419f5c4",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -636,6 +636,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "515 passed。新增用例：skill 侧 core_content_only 提示词+capture 内 entries 落 stage=ragflow_docs_answer+场景默认值/env 覆盖；persona 侧 rag_fallback 转述策略进 system prompt+user_prompt 携带 provided_answer+缺字段报错；worker 侧 prepare 走 persona 渲染（persona_v8_scheduled）+publish 时 References 确定性追加；intake 侧 job 以 facts 入队。既有断言按新契约更新（references 拆分、facts 入队、verbatim 测试重写为 persona+References）。"
         },
         {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "PR#928 合并后官方栈运行 root main 23c19e3（镜像 23c19e3bd7d4，built 2026-08-24T12:35:25Z）：/health ok（rag_service ok、runtime_profile=local_lightweight）、build_provenance_status=matched、auxiliary_stack_present=false；容器内实测 resolve_model_profile(ragflow_answer) → model=gpt-5.6-luna / effort=xhigh / fallbacks=()。纯后端改动无资产版本 marker 要求。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -737,7 +743,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 16,
-      "done_count": 8,
+      "done_count": 9,
       "blocked_count": 1
     },
     {
@@ -6164,10 +6170,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-111",
       "title": "RAGFlow 兜底答案改由 gpt-5.6-luna 生成并经 Persona 渲染后回复",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "production case 意外回复兜底链路的两项行为变更（p2-93 后续）：(A) 生成侧——新场景 RAGFLOW_ANSWER（llm_profiles.py，默认 openai/gpt-5.6-luna/xhigh/120s/pinned 无 fallback，独立 env 旋钮 RAGFLOW_ANSWER_MODEL/RAGFLOW_ANSWER_REASONING_EFFORT，不动全仓共享的 RAG_ANSWER 场景）；ragflow_docs_search_skill 生成提示词新增 core_content_only（answer=核心技术内容，无问候/签名，Persona 负责口吻；JSON 契约 answer/key_steps/citations/insufficient_evidence 不变）；生成后 record_llm_invocation(stage=ragflow_docs_answer) 补上 p2-107 发现的 token 采集缺口。(B) 回复侧——RagFallbackOutcome 拆分 references；main.py 入队改为 reply_facts（behavior/reply_intent=rag_fallback_answer、provided_answer、references、customer_first_name）走 persona 管线；worker prepare 短路分支与 publish 的 rag 特判改为仅 legacy draft-only job 保真发布，新 job 经 render_automation_reply 渲染；persona 提示词 v12→v13 新增 rag_fallback_answer 转述策略（第一人称转述 provided_answer，不增删技术事实，不编造链接，References 由系统追加）；发布前把 facts.references 确定性追加到 persona 正文后（链接零丢失）。fail-closed 语义全保留（检索/证据/引用/生成/persona 任一失败→人工）。单次兜底成本 = luna(xhigh) 生成 + mini persona 渲染两次调用，token 两侧均采集。",
-      "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+provenance matched，纯后端改动无资产 marker）；p2-110 翻 done；用户侧 EC2 仅部署 main stack（--skip-split）；可选经 /automation/test 触发一条带意外回复的剧本做 E2E 复验。",
+      "next_action": "已 done（官方栈 23c19e3bd7d4 运行含本任务，live 验证通过）。用户侧剩余：EC2 仅部署 main stack（deploy_surfaces_ec2.sh --skip-split）；可选经 /automation/test 触发一条带意外回复的剧本做 E2E 复验（persona 化回复+末尾 References）。",
       "acceptance_criteria": [
         "RAGFLOW_ANSWER 场景默认 gpt-5.6-luna/xhigh/pinned，env 可覆盖；RAG_ANSWER 场景（本地 RAG 管线/dashboard 客户端流）行为不变。",
         "ragflow 生成 token 落 support_account_case_llm_usage（stage=ragflow_docs_answer），在 worker/main 采集作用域内生效。",
@@ -6182,6 +6188,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "New + affected suites",
           "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_persona.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py backend/tests/test_account_ai_execution.py backend/tests/test_llm_usage_capture.py -q",
           "details": "515 passed。新增用例：skill 侧 core_content_only 提示词+capture 内 entries 落 stage=ragflow_docs_answer+场景默认值/env 覆盖；persona 侧 rag_fallback 转述策略进 system prompt+user_prompt 携带 provided_answer+缺字段报错；worker 侧 prepare 走 persona 渲染（persona_v8_scheduled）+publish 时 References 确定性追加；intake 侧 job 以 facts 入队。既有断言按新契约更新（references 拆分、facts 入队、verbatim 测试重写为 persona+References）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "PR#928 合并后官方栈运行 root main 23c19e3（镜像 23c19e3bd7d4，built 2026-08-24T12:35:25Z）：/health ok（rag_service ok、runtime_profile=local_lightweight）、build_provenance_status=matched、auxiliary_stack_present=false；容器内实测 resolve_model_profile(ragflow_answer) → model=gpt-5.6-luna / effort=xhigh / fallbacks=()。纯后端改动无资产版本 marker 要求。"
         }
       ],
       "source_refs": [
@@ -6209,6 +6221,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "updated",
           "summary": "任务号 p2-110→p2-111：finalize 刷新时并行链（split-env Phase C，PR#927）已占用 p2-110；内容不变。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "updated",
+          "summary": "PR#928 合并（root 23c19e3）；finalize 后会话 shell 第五次触发 ENOENT，重启 ZCode 后官方栈重启至 23c19e3bd7d4 并完成 live 验证（provenance matched、容器内场景解析 gpt-5.6-luna/xhigh/无 fallback），翻 done。"
         }
       ],
       "legacy_refs": [
