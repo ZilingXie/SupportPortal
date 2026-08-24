@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T04:26:55Z",
-  "source_base_commit": "4679ad23923cdff92f2e8b094a2e37941b6f8229",
-  "registry_digest": "4f089cc1c7b22c66dccd0ec9e8198a6acda5d701174682618a81fa640cf805b1",
+  "generated_at": "2026-08-24T05:22:43Z",
+  "source_base_commit": "2fbb6b18805c2c2539dfaf82f3cb368da08f3fbb",
+  "registry_digest": "135d8f342d1e8c6c51d9821b2cf43151ee0c8feb47f0348b38dc8be832cd090a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1747,6 +1747,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "T4 n8n cutover design (company-ID canary + unified token)",
           "command": "docs/integrations/n8n/automation_environments_cutover.md",
           "details": "2026-08-23 产出 T4 方案先行设计：确认 /automation/{env}/v1/cases 新工单投递端点已存在且已验证，评论/状态同步在新环境无等价端点、保持旧端点；production 采用克隆工作流 + TARGET_COMPANY_IDS 互斥名单灰度分流（零双写、可回滚）；token 统一为同一密钥值贯穿 AUTOMATION_{三环境}_EXECUTION_TOKEN、ZENDESK_ACCOUNT_SYNC_TOKEN、n8n_request_token（旧同步端点已支持 Bearer 回退，backend/main.py require_zendesk_account_sync_token），n8n 单个 Bearer 凭据覆盖全部入向调用。含 EC2/n8n 操作 runbook、双写防护红线与验证清单；实施待 T3 完成与用户批准。"
+        },
+        {
+          "type": "document",
+          "label": "Report v2 refresh with cutover direction",
+          "command": "docs/split_environments_report.md",
+          "details": "2026-08-24 按用户决策将报告刷新为 v2：新增第 0 节总目标（三环境上线并完全替代旧 /account 与 /production；preproduction 与 production 配置统一、进入 case 由 n8n 控制、production 最后切流）；修正第 1 节过时内容（鉴权已统一为单一 X-N8n-Request-Token/n8n_request_token，旧 Bearer 与三个 AUTOMATION_*_EXECUTION_TOKEN 已废弃；allowlist 三态含 * 放行）；T1/T6 标完成（p2-89），T2/T5 标未承接并降级（T5 探针半边放弃、被 /automation/test 回归体系超越），T3/T4 剩余并入新包；新增 T7（preproduction 配置统一 + n8n 筛选流量影子验收）与 T8（production 最终切流与旧端点下线，以 automation_environments_cutover.md 为权威操作手册）。纯文档刷新，无运行时变更。"
         },
         {
           "type": "test",
@@ -8433,7 +8439,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "Zendesk 凭据已由运维修复（verify_split_environments.sh 36/36 全绿）。真实写入验收（preproduction allowlist 工单 internal 全链路、production internal/external 与 Zendesk readback）按用户指示暂缓、不使用真实工单测试，待用户明确批准测试工单或由用户在 UI 自行执行；三环境保持 release-20260822-005。T4 切流设计已产出（docs/integrations/n8n/automation_environments_cutover.md：Company ID 灰度分流）；其 token 统一方案已按用户决策升级为单一 X-N8n-Request-Token/n8n_request_token 机制并在 p2-91 实施服务端代码，EC2 部署与 n8n 切换窗口随 p2-91/p2-90 的下一次 release 进行；n8n 投递切流实施仍待 T3 完成与用户单独批准。",
+      "next_action": "2026-08-24 用户决策刷新方向（终态=三环境上线并完全替代旧 /account 与 /production，报告 v2 第 0 节）：下一步为 T7——preproduction 配置与 production 统一（automation_contracts.py POLICIES 将 preproduction 由 forced internal 改为 requires_visibility，EC2 设 PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST=* 放行、过滤交 n8n IF 门），并接 n8n 筛选流量完成影子验收（completed + ledger 三条 completed + Zendesk readback，即原 T3 preproduction 段）；T8 production 最终切流（Company ID 互斥灰度、production 最后上线避免与现有 /production 冲突、旧端点下线）待 T7 全绿与用户批准切流窗口。用户侧待办：preproduction 重测、production exec-bf0c82e1 先 reconcile 后重试、PR #899（p2-104）部署。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -8533,6 +8539,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "T4 n8n cutover design (company-ID canary + unified token)",
           "command": "docs/integrations/n8n/automation_environments_cutover.md",
           "details": "2026-08-23 产出 T4 方案先行设计：确认 /automation/{env}/v1/cases 新工单投递端点已存在且已验证，评论/状态同步在新环境无等价端点、保持旧端点；production 采用克隆工作流 + TARGET_COMPANY_IDS 互斥名单灰度分流（零双写、可回滚）；token 统一为同一密钥值贯穿 AUTOMATION_{三环境}_EXECUTION_TOKEN、ZENDESK_ACCOUNT_SYNC_TOKEN、n8n_request_token（旧同步端点已支持 Bearer 回退，backend/main.py require_zendesk_account_sync_token），n8n 单个 Bearer 凭据覆盖全部入向调用。含 EC2/n8n 操作 runbook、双写防护红线与验证清单；实施待 T3 完成与用户批准。"
+        },
+        {
+          "type": "document",
+          "label": "Report v2 refresh with cutover direction",
+          "command": "docs/split_environments_report.md",
+          "details": "2026-08-24 按用户决策将报告刷新为 v2：新增第 0 节总目标（三环境上线并完全替代旧 /account 与 /production；preproduction 与 production 配置统一、进入 case 由 n8n 控制、production 最后切流）；修正第 1 节过时内容（鉴权已统一为单一 X-N8n-Request-Token/n8n_request_token，旧 Bearer 与三个 AUTOMATION_*_EXECUTION_TOKEN 已废弃；allowlist 三态含 * 放行）；T1/T6 标完成（p2-89），T2/T5 标未承接并降级（T5 探针半边放弃、被 /automation/test 回归体系超越），T3/T4 剩余并入新包；新增 T7（preproduction 配置统一 + n8n 筛选流量影子验收）与 T8（production 最终切流与旧端点下线，以 automation_environments_cutover.md 为权威操作手册）。纯文档刷新，无运行时变更。"
         }
       ],
       "source_refs": [
@@ -8556,7 +8568,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "design.md"
       ],
       "created_at": "2026-08-22",
-      "updated_at": "2026-08-23",
+      "updated_at": "2026-08-24",
       "history": [
         {
           "at": "2026-08-22",
@@ -8632,6 +8644,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-23",
           "event": "preexisting_test_debt_found",
           "summary": "p2-91 验证期间发现干净 main（8307746）存量测试失败 7 项且与顺序耦合：test_deploy_ec2 的 6 项（DSN 回退期望 example.invalid/test 与 TICKET_DB_DSN 不符、requires_execution_token/successful_deploy 批量跑时才失败）+ test_account_zendesk_status_sync 1 项（zendesk_status_synced_at 硬编码 startswith '2026-08-21'）。均非 p2-91 引入（同命令基线对比一致），按协调规则不顺手修，留待专项清理。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "direction_refresh",
+          "summary": "用户决策终态方向：三环境上线并完全替代旧 /account 与 /production；preproduction 与 production 配置做成一模一样（仅保留架构固有差异），进入的 case 由 n8n 控制（production 收 production case、preproduction 收 n8n 筛选后的 case）；production 最后切流以避免与现有 /production 冲突。报告刷新为 v2：T1/T6 已完成（p2-89），T2/T5 未承接降级为可选 backlog（T5 探针半边放弃），T3/T4 剩余分别并入新增 T7（preproduction 配置统一 + n8n 筛选流量影子验收）与 T8（production 最终切流与旧端点下线）。"
         }
       ],
       "legacy_refs": [
