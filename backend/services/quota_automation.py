@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.services.customer_reply_composer import compose_customer_reply_email
-from backend.services.graph_mail import DEFAULT_USERNAME, send_graph_mail
+from backend.services.graph_mail import DEFAULT_USERNAME, automation_internal_email_cc, send_graph_mail
 from backend.services.internal_email_template import InternalEmailSection, render_internal_handoff_email, namespaced_internal_email_subject
 from backend.services.account_ai_execution import (
     AccountProcessingFailure,
@@ -117,6 +117,7 @@ def send_quota_internal_email(email_payload: dict[str, Any] | None) -> dict[str,
             subject=subject,
             body=send_body,
             content_type="HTML" if body_html else "Text",
+            cc_addresses=automation_internal_email_cc(),
         )
     except (FileNotFoundError, ValueError) as exc:
         return {"status": "retry", "reason": str(exc)}

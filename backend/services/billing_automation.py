@@ -20,6 +20,7 @@ from backend.services.automation_routing import (
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import (
     acquire_graph_access_token,
+    automation_internal_email_cc,
     load_graph_mail_config,
     send_graph_mail_with_token,
 )
@@ -592,6 +593,7 @@ def _send_graph_mail(
         subject=subject,
         body=body,
         content_type=content_type,
+        cc_addresses=automation_internal_email_cc(),
     )
 
 
