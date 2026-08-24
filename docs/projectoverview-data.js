@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T06:00:21Z",
-  "source_base_commit": "86723f217b60b594be4fb006ff0397770a0aa1aa",
-  "registry_digest": "5233dca26efecea552f643b793e77659e720cd446b1cd489e347914044cb4d9a",
+  "generated_at": "2026-08-24T06:28:15Z",
+  "source_base_commit": "897e70c88f88ae5d6fa95e62e4c1b340174fca78",
+  "registry_digest": "9dbc348fc410f9fc0f186fa73a771ffbbcdd27e7d7e2c040e4582ba5e7e3e753",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1411,6 +1411,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "本地 podman 栈与 EC2 共用 RDS supportportal 库且 worker 会争抢 reply/rerun job（既有教训）；本次为纯展示改动，用 TestClient 端点测试 + Node sandbox 契约测试确定性覆盖渲染逻辑，避免未合并代码抢占真实生产 job。runtime live 验证按仓库规则留待合并后官方栈重启执行。"
         },
         {
+          "type": "deployment",
+          "label": "Post-merge official stack restart + live verification",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "PR#903 合并后（root main 897e70c）重启官方轻量栈：镜像 localhost/supportportal-app:897e70c88f88；/health ok 且 app_build.ref=897e70c88f88（rag_service ok、runtime_profile=local_lightweight）；inspect_single_host_stack_mode.sh 复查 build_provenance_status=matched、auxiliary_stack_present=false。live marker：/workspace/admin/ 页面资产 app.js?v=20260824-token-usage-1；GET /api/workspace/admin/account-automation 未授权返回 401（守卫与路由存活）；repository ensure 已在共享库建好 support_account_case_llm_usage 表与索引（to_regclass 双确认，rows=0 属预期）。"
+        },
+        {
+          "type": "test",
+          "label": "RAG batch endpoint live data check",
+          "command": "podman exec deployment_api_1 python (POST http://rag_api:8020/internal/rag/ticket-families/token-usage/batch)",
+          "details": "真实数据验证（经运行栈、内部 auth）：ticket 12940 返回 11,561 in / 4,358 out / 28 emb，stage_totals=rag_answer×4+embedding×4+query_self_query×2+query_rewrite×2，token_by_model=openai:gpt-5.4 / openai:gpt-5.4-mini / siliconflow:BAAI/bge-m3，与库内 support_rag_query_runs 逐项一致；12951 同样非零且明细正确；errors=[]。"
+        },
+        {
           "type": "decision",
           "label": "已知边界（代码核实）",
           "command": "",
@@ -1425,7 +1437,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 8,
-      "done_count": 3,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -5530,10 +5542,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-105",
       "title": "/workspace/admin 统计 production 每 case 的 LLM token 用量",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "在 /workspace/admin 的 Automated Cases（本就是 production cases）表格新增 Tokens 列与可展开明细，统计口径=RAG 链路 + 自动化链路合并。RAG 侧复用既有 support_rag_query_runs 落库数据（含历史），新增 POST /internal/rag/ticket-families/token-usage/batch 批量端点（≤200 families/次，紧凑 summary 含 stage_totals）避免 N+1。自动化侧此前 usage 全部被丢弃：新增 backend/services/llm_usage_capture.py（ContextVar 作用域采集），在 account_ai_execution 两个封装的 LlmTextResult 返回处埋点（覆盖路由 decide_account_route、quota/billing/enablement/发票/验证/封禁字段抽取、persona、enablement 分类器——它们全部经这两个封装），采集作用域为 worker _prepare_account_reply_job、main create_account_intake、main _process_account_customer_reply 三处 per-case 边界，finally best-effort flush 进新表 support_account_case_llm_usage（migration 2026_08_24 + repository 幂等 ensure，软引用 billing_ticket_id）。admin endpoint 在 payload 后合并两来源为每 case token_usage{available,totals,token_by_model,sources.rag/automation(含 stage_totals)}，RagServiceError 时 available=false+reason（不伪造 0），另附 token_usage_page_total 本页合计。前端加 Tokens 列（in/out，不可用显示 —）、行展开明细（RAG/Automation 两来源 stage 表 + 按模型表）、metric strip 本页 tokens；版本号 bump 20260824-token-usage-1。",
-      "next_action": "本地栈验证 admin 页面展示后 finalize 到 main；合并后按流程重启官方栈并 live 验证 /workspace/admin Tokens 列（含 RAG 历史的 case 应非 0）；EC2 生产侧迁移由 repository ensure 或 migration DSN 生效，部署由用户执行。",
+      "next_action": "已 done（本地官方栈 live 验证通过）。用户侧剩余：EC2 三环境部署 deploy_surfaces_ec2.sh（表由 repository ensure 自动建，或用 migration DSN 双库执行 backend/sql/migrations/2026_08_24_account_case_llm_usage.sql）；部署后跑一条 production 自动化即可看到 automation 来源 tokens 入表。",
       "acceptance_criteria": [
         "自动化链路 LLM 调用（经 account_ai_execution 两封装）在采集作用域内的 tokens 落 support_account_case_llm_usage，失败重试的每次成功 attempt 各记一条。",
         "采集与 flush 均为旁路 best-effort：失败仅 warning log，不影响自动化主链路；无 billing id 的 entries 丢弃并告警。",
@@ -5568,6 +5580,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "本地 podman 栈与 EC2 共用 RDS supportportal 库且 worker 会争抢 reply/rerun job（既有教训）；本次为纯展示改动，用 TestClient 端点测试 + Node sandbox 契约测试确定性覆盖渲染逻辑，避免未合并代码抢占真实生产 job。runtime live 验证按仓库规则留待合并后官方栈重启执行。"
         },
         {
+          "type": "deployment",
+          "label": "Post-merge official stack restart + live verification",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "PR#903 合并后（root main 897e70c）重启官方轻量栈：镜像 localhost/supportportal-app:897e70c88f88；/health ok 且 app_build.ref=897e70c88f88（rag_service ok、runtime_profile=local_lightweight）；inspect_single_host_stack_mode.sh 复查 build_provenance_status=matched、auxiliary_stack_present=false。live marker：/workspace/admin/ 页面资产 app.js?v=20260824-token-usage-1；GET /api/workspace/admin/account-automation 未授权返回 401（守卫与路由存活）；repository ensure 已在共享库建好 support_account_case_llm_usage 表与索引（to_regclass 双确认，rows=0 属预期）。"
+        },
+        {
+          "type": "test",
+          "label": "RAG batch endpoint live data check",
+          "command": "podman exec deployment_api_1 python (POST http://rag_api:8020/internal/rag/ticket-families/token-usage/batch)",
+          "details": "真实数据验证（经运行栈、内部 auth）：ticket 12940 返回 11,561 in / 4,358 out / 28 emb，stage_totals=rag_answer×4+embedding×4+query_self_query×2+query_rewrite×2，token_by_model=openai:gpt-5.4 / openai:gpt-5.4-mini / siliconflow:BAAI/bge-m3，与库内 support_rag_query_runs 逐项一致；12951 同样非零且明细正确；errors=[]。"
+        },
+        {
           "type": "decision",
           "label": "已知边界（代码核实）",
           "command": "",
@@ -5595,6 +5619,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "created",
           "summary": "用户需求：统计 /production 每个 case 的 token 用量并展示在 /workspace/admin。方案问答未获回复，按推荐口径（全链路合并）实施：RAG 复用既有落库，自动化链路新增采集表与埋点。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "updated",
+          "summary": "PR#903 合并（root main 897e70c，finalize 成功含 workspace/分支清理）；首会话因 worktree 清理触发 shell ENOENT 故障，重启后完成官方栈重启（897e70c88f88，/health ok，provenance matched，无辅助栈）与全部 live 验证（资产版本 marker、admin 端点 401 守卫、新表 ensure、RAG batch 端点 12940/12951 真实数据逐项核对一致），翻 done。"
         }
       ],
       "legacy_refs": [
