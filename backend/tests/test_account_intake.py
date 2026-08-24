@@ -340,11 +340,35 @@ def _fake_render_automation_reply(**kwargs: object) -> AutomationPersonaResult:
     intent = str(facts.get("reply_intent") or "")
     behavior = str(facts.get("behavior") or "request").replace("_", " ")
     if intent == "request_missing_information":
-        missing = [str(item).replace("_", " ") for item in facts.get("missing_information", [])]
-        body = (
-            f"Could you share {', '.join(missing)}? I will continue coordinating the request "
-            "after receiving the missing information."
-        )
+        missing_labels = {
+            "account_type": "Account type",
+            "name": "Name",
+            "office_address": "Office address",
+            "contact_number": "Official contact number",
+            "contact_email": "Official contact email",
+            "use_case_description": "Use-case description",
+            "console_configuration": "Last known console configuration",
+            "app_id": "App ID",
+        }
+        missing = [
+            missing_labels.get(str(item), str(item).replace("_", " "))
+            for item in facts.get("missing_information", [])
+        ]
+        if len(missing) <= 2:
+            if len(missing) == 2:
+                missing_request = f"{missing[0]} and {missing[1]}"
+            else:
+                missing_request = missing[0] if missing else "the missing information"
+            body = (
+                f"Could you share {missing_request}? I will continue coordinating the request "
+                "after receiving the missing information."
+            )
+        else:
+            body = (
+                "Could you share the following details?\n\n"
+                + "\n".join(f"- {item}" for item in missing)
+                + "\n\nI will continue coordinating the request after receiving the missing information."
+            )
     elif intent == "submission_confirmation":
         if behavior == "enablement":
             body = (
@@ -6281,7 +6305,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         assert ticket is not None
         draft = ticket["messages"][-1]["content"]
         self.assertTrue(draft.startswith("Hi Taylor,"))
-        self.assertIn("use case", draft)
+        self.assertIn("use-case description", draft.lower())
 
     def test_account_verification_second_incomplete_reply_sends_internal_email_without_reasking(self) -> None:
         decision = SupportRouteDecision(

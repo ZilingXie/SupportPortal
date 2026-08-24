@@ -33,7 +33,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v11"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v12"
 
 _HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 
@@ -397,13 +397,17 @@ def _assert_fraud_handoff_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
 
 
-def _assert_missing_information_contract(reply: str) -> None:
+def _assert_missing_information_contract(
+    reply: str,
+    missing_information: list[str] | tuple[str, ...] | None = None,
+) -> None:
     """A missing-information ask must not promise any handoff/SLA follow-up."""
     sentences = _standalone_sentences(reply)
     if _HANDOFF_COMMITMENT_SENTENCE in sentences:
         raise AutomationPersonaError(
             "automation_persona_missing_information_contract_failed"
         )
+    _assert_missing_information_format_contract(reply, missing_information or [])
     if _has_positive_clause(
         reply,
         r"(?:\b\d+\s*[- ]?\s*hours?\b|\b\d+\s*[- ]?\s*(?:business\s+)?days?\b)",
@@ -440,6 +444,64 @@ def _facts_with_readable_missing(facts: dict[str, Any]) -> dict[str, Any]:
     if isinstance(missing, list) and missing:
         return {**facts, "missing_information": _humanize_missing_fields([str(m) for m in missing])}
     return facts
+
+
+def _normalized_label_text(value: str) -> str:
+    return " ".join(str(value or "").casefold().replace("-", " ").split())
+
+
+def _contains_label(text: str, label: str) -> bool:
+    normalized_label = _normalized_label_text(label)
+    normalized_text = _normalized_label_text(text)
+    return bool(re.search(rf"(?<!\w){re.escape(normalized_label)}(?!\w)", normalized_text))
+
+
+def _assert_missing_information_format_contract(
+    reply: str,
+    missing_information: list[str] | tuple[str, ...],
+) -> None:
+    """Keep the Persona's missing-information layout deterministic."""
+    labels = _humanize_missing_fields(
+        [str(item).strip() for item in missing_information if str(item).strip()]
+    )
+    if not labels:
+        return
+
+    lines = [line.strip() for line in str(reply or "").splitlines() if line.strip()]
+    list_marker = re.compile(r"^(?:[-*]\s+|\d+[.)]\s+)")
+    numbered_lines = [line for line in lines if re.match(r"^\d+[.)]\s+", line)]
+    if len(labels) <= 2:
+        if any(list_marker.match(line) for line in lines):
+            raise AutomationPersonaError(
+                "automation_persona_missing_information_format_failed"
+            )
+        sentences = [
+            sentence
+            for sentence in re.split(r"(?<=[.!?])\s+|\n", str(reply or ""))
+            if sentence.strip()
+        ]
+        if not any(all(_contains_label(sentence, label) for label in labels) for sentence in sentences):
+            raise AutomationPersonaError(
+                "automation_persona_missing_information_format_failed"
+            )
+        return
+
+    if numbered_lines:
+        raise AutomationPersonaError("automation_persona_missing_information_format_failed")
+    bullet_lines = [line for line in lines if re.match(r"^[-*]\s+", line)]
+    matching_bullet_indexes = {
+        index
+        for label in labels
+        for index, line in enumerate(bullet_lines)
+        if _contains_label(line, label)
+    }
+    if len(bullet_lines) < len(labels) or len(matching_bullet_indexes) < len(labels):
+        raise AutomationPersonaError("automation_persona_missing_information_format_failed")
+    if any(
+        sum(_contains_label(line, label) for line in bullet_lines) != 1
+        for label in labels
+    ):
+        raise AutomationPersonaError("automation_persona_missing_information_format_failed")
 
 
 def _assert_suspension_contact_contract(reply: str) -> None:
@@ -510,7 +572,10 @@ def validate_account_reply_contract(
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         _assert_enablement_completion_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION:
-        _assert_missing_information_contract(normalized_reply)
+        _assert_missing_information_contract(
+            normalized_reply,
+            facts.get("missing_information"),
+        )
     if intent in {
         ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
         ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
@@ -638,12 +703,14 @@ def render_automation_reply(
         "the party responsible for contacting the customer. Do not use job-title narration such as 'The assigned "
         "Support Engineer', 'the case is in progress with them', or any wording that makes the customer wait for an "
         "internal team to follow up. For request_missing_information, do not imply that internal review has started; "
-        "explain that you will continue the coordination after the missing information is received. Do not promise a "
-        "time or outcome. When listing missing information: if only one or two items are missing, weave them "
-        "naturally into a single sentence (for example, 'we are still missing your account type and name'). If three "
-        "or more items are missing, use a brief lead-in sentence followed by a numbered list, with each missing "
-        "item on its own line using the field label exactly as provided. Never run multiple missing items together "
-        "into one long unbroken sentence. Semantic fields such as ownership_state and customer_update_commitment "
+        "explain that you will continue coordinating the review once the missing information is received. Do not promise a "
+        "time or outcome. Use a warm, direct first-person voice with natural phrasing rather than wording such as "
+        "'the missing details below' or 'as soon as I have'. When listing missing information: if only one or two items "
+        "are missing, weave them naturally into one sentence (for example, 'we are still missing your account type and "
+        "name'). If three or more items are missing, use a brief lead-in sentence followed by one Markdown-style bullet "
+        "line starting with '- ' for each item, with each missing item on its own line using the field label exactly as "
+        "provided. Never use a numbered list or run multiple missing items together into one unbroken line. Semantic "
+        "fields such as ownership_state and customer_update_commitment "
         "are instructions, not customer-facing phrases; never repeat their raw values. "
         if account_scope
         else ""

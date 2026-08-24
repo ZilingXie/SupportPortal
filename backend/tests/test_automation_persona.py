@@ -277,6 +277,79 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
         self.assertNotIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
 
+    def test_missing_information_format_contract_uses_inline_or_bullets(self) -> None:
+        inline_facts = build_account_automation_reply_facts(
+            handler="fraud_account",
+            action="fraud_account",
+            missing_fields=["account_type", "name"],
+            collected_fields={},
+        )
+        validate_account_reply_contract(
+            "We are still missing your account type and name. I will continue coordinating the review once you "
+            "share them.",
+            inline_facts,
+        )
+        with self.assertRaisesRegex(
+            AutomationPersonaError,
+            "automation_persona_missing_information_format_failed",
+        ):
+            validate_account_reply_contract(
+                "We are still missing:\n- Account type\n- Name\nI will continue coordinating the review.",
+                inline_facts,
+            )
+
+        bullet_facts = build_account_automation_reply_facts(
+            handler="fraud_account",
+            action="fraud_account",
+            missing_fields=["account_type", "name", "office_address"],
+            collected_fields={},
+        )
+        validate_account_reply_contract(
+            "I am still missing the following details:\n\n- Account type\n- Name\n- Office address\n\n"
+            "I will continue coordinating the review once you share them.",
+            bullet_facts,
+        )
+        with self.assertRaisesRegex(
+            AutomationPersonaError,
+            "automation_persona_missing_information_format_failed",
+        ):
+            validate_account_reply_contract(
+                "I am still missing the following details: 1. Account type 2. Name 3. Office address. "
+                "I will continue coordinating the review once you share them.",
+                bullet_facts,
+            )
+
+    def test_missing_information_persona_prompt_requires_bullets_and_warm_wording(self) -> None:
+        facts = build_account_automation_reply_facts(
+            handler="fraud_account",
+            action="fraud_account",
+            missing_fields=["account_type", "name", "office_address"],
+            collected_fields={},
+            customer_name="Taylor",
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "I am still missing the following details:\n\n- Account type\n- Name\n- Office address\n\n"
+                "I will continue coordinating the review once you share them."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+
+        self.assertTrue(result.content.startswith("Hi Taylor,"))
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("Markdown-style bullet", system_prompt)
+        self.assertIn("Never use a numbered list", system_prompt)
+        self.assertIn("warm, direct first-person voice", system_prompt)
+
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
         self.assertEqual(customer_first_name("md anisur rahman"), "Md")

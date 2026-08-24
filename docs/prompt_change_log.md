@@ -12,6 +12,24 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-24 - Fraud Account missing-information Persona format v12
+
+- Area or subsystem: `/account` Fraud Account customer reply and shared Automation Persona renderer
+- Prompt or model version: `automation-persona-v12`; model configuration unchanged
+- Summary: Replaced the 3+ missing-information numbered-list instruction with a Markdown-style bullet-list rule, clarified the 1-2 inline sentence rule, and tightened the missing-information wording toward a warm first-person support voice. Added deterministic output validation so 1-2 missing fields must appear in one sentence and 3+ fields must each appear on their own `-` bullet line.
+- Reason: The v11 prompt allowed numbered lists and relied on model compliance; the resulting Zendesk reply concatenated seven numbered fields into one hard-to-scan paragraph and sounded mechanical. The requested product rule is inline for 1-2 fields and bullets for 3+.
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/tests/test_automation_persona.py`
+  - `docs/project/tasks/p2-101.json`
+- Expected behavior change:
+  - Fraud Account replies with one or two missing fields use a natural inline sentence.
+  - Replies with three or more missing fields use one `-` bullet per missing field; numbered or concatenated formats fail validation and are retried within the existing four-call Account AI budget.
+  - Persona ownership/grounding and publication fences remain unchanged; exhausted invalid output remains Human Review.
+- Verification:
+  - `pytest -q backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py`: 38 passed, 13 subtests passed.
+  - Python compilation and `git diff --check` passed in the task worktree.
+
 ## 2026-08-23 - detailed_invoice automation activation + completion persona contract (routing-gate change, no prompt text change)
 
 - Area or subsystem: Account route gates; Automation Persona reply contract
