@@ -251,13 +251,43 @@ async def process_zendesk_comment_trigger(
             new_messages=[],
             slack_events=[customer_event],
         )
-        # The engineer AI investigation round is wired in the Slack
-        # collaboration phase; the comment is durably recorded in the thread.
+        from backend.services.automation_engineer_collab import (
+            process_engineer_investigation_message,
+        )
+
+        try:
+            processed = await process_engineer_investigation_message(
+                repository,
+                engineer_case_id,
+                engineer_id="zendesk:customer",
+                message=customer_text,
+                message_role="customer",
+                message_meta={
+                    "source": "zendesk_comment",
+                    "zendesk_comment_id": trigger_comment_id,
+                    "occurred_at": str(trigger_comment.created_at or ""),
+                },
+                slack_event_id=f"zendesk-comment:{account_case_id}:{trigger_comment_id}:ai-response",
+            )
+        except ReplySyncError as exc:
+            return await _complete(
+                {
+                    "trigger_status": "failed",
+                    "trigger_comment_id": trigger_comment_id,
+                    "error": str(exc.detail),
+                }
+            )
         return await _complete(
             {
                 "trigger_status": "processed_engineer_case",
                 "trigger_comment_id": trigger_comment_id,
                 "engineer_case_id": engineer_case_id,
+                "conversation_version": int(
+                    (processed.get("engineer_agent_state") or {}).get("conversation_version") or 0
+                ),
+                "draft_version": int(
+                    (processed.get("engineer_agent_state") or {}).get("draft_version") or 0
+                ),
             }
         )
     if (

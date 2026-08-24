@@ -188,17 +188,29 @@ class CommentTriggerTest(unittest.TestCase):
         repository.save_engineer_case = fake_save_engineer_case
         import asyncio
 
-        result = asyncio.run(
-            reply_module.process_zendesk_comment_trigger(
-                repository=repository,
-                account_case=repository.account_case,
-                snapshot=self._snapshot(),
-                trigger_comment_id="c1",
+        with patch(
+            "backend.services.automation_engineer_collab.process_engineer_investigation_message",
+            new_callable=AsyncMock,
+            return_value={
+                "engineer_agent_state": {"conversation_version": 2, "draft_version": 1},
+            },
+        ) as ai_round:
+            result = asyncio.run(
+                reply_module.process_zendesk_comment_trigger(
+                    repository=repository,
+                    account_case=repository.account_case,
+                    snapshot=self._snapshot(),
+                    trigger_comment_id="c1",
+                )
             )
-        )
         self.assertEqual(result["trigger_status"], "processed_engineer_case")
         self.assertEqual(result["engineer_case_id"], "123-1")
+        self.assertEqual(result["conversation_version"], 2)
+        self.assertEqual(result["draft_version"], 1)
         self.assertEqual(saved[0]["slack_events"][0]["event_type"], "zendesk_customer_comment")
+        ai_round.assert_awaited_once()
+        self.assertEqual(ai_round.call_args.args[1], "123-1")
+        self.assertEqual(ai_round.call_args.kwargs["message_role"], "customer")
 
 
 if __name__ == "__main__":
@@ -296,3 +308,105 @@ class StatusSyncEndpointTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertFalse(response.json()["engineer_case_closed"])
                 self.assertEqual(repository.saved_engineer, [])
+
+
+class EngineerSlackEndpointTest(unittest.TestCase):
+    def _collab_repo(self):
+        repository = _FakeRepository()
+        repository.get_engineer_case = lambda case_id, include_client_messages=True: {
+            "engineer_case_id": "123-1",
+            "client_ticket_ref": {"ticket_id": "123"},
+            "active_investigation": {"id": "123-1-round-1", "state": "active", "messages": []},
+            "engineer_agent_state": {"conversation_version": 0, "draft_version": 0},
+        }
+        repository.get_ticket = lambda ticket_id: {
+            "ticket_id": "123",
+            "status": "open",
+            "messages": [],
+            "requester": "c@example.com",
+            "customer_id": "c@example.com",
+        }
+        repository.fail_idempotent_request = lambda scope, key, response_payload=None, updated_at=None: None
+        saved_cases: list[dict] = []
+        repository.save_engineer_case = (
+            lambda engineer_case, new_messages=None, slack_events=None, zendesk_delivery=None: saved_cases.append(
+                {"case": engineer_case, "messages": new_messages, "events": slack_events, "delivery": zendesk_delivery}
+            )
+        )
+        repository.save_ticket = lambda ticket, new_messages=None: None
+        repository.saved_cases = saved_cases
+        return repository
+
+    def test_slack_endpoints_require_token_and_valid_payload(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                self.assertEqual(
+                    client.post(
+                        "/api/integrations/slack/engineer-cases/messages", json={}
+                    ).status_code,
+                    401,
+                )
+                self.assertEqual(
+                    client.post("/api/integrations/slack/engineer-cases/actions", json={}).status_code,
+                    401,
+                )
+                repository = self._collab_repo()
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ):
+                    invalid = client.post(
+                        "/api/integrations/slack/engineer-cases/messages",
+                        json={"schema_version": 1, "event_id": "e1", "engineer_case_id": "123-1", "text": ""},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                    self.assertEqual(invalid.status_code, 422)
+
+    def test_slack_message_runs_investigation_ai_round(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                repository = self._collab_repo()
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ), patch(
+                    "backend.services.automation_engineer_collab.append_engineer_investigation_message",
+                    return_value={
+                        "active_investigation": {"id": "123-1-round-1", "draft_customer_reply": "draft reply"},
+                        "new_internal_messages": [
+                            {"role": "engineer_ai", "content": "analysis of the reply"}
+                        ],
+                    },
+                ):
+                    response = client.post(
+                        "/api/integrations/slack/engineer-cases/messages",
+                        json={
+                            "schema_version": 1,
+                            "event_id": "evt-1",
+                            "engineer_case_id": "123-1",
+                            "slack_user_id": "U1",
+                            "text": "please investigate the quota mismatch",
+                            "occurred_at": "2026-08-24T00:00:00Z",
+                        },
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                self.assertEqual(response.status_code, 200, response.text)
+                body = response.json()
+                self.assertEqual(body["status"], "processed")
+                self.assertEqual(body["conversation_version"], 1)
+                self.assertEqual(body["draft_version"], 1)
+                self.assertEqual(repository.saved_cases[0]["events"][0]["event_type"], "engineer_ai_response")
+
+    def test_thread_binding_requires_config(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=self._collab_repo(),
+                ), patch.dict(os.environ, {"ENGINEER_SLACK_TEAM_ID": "", "ENGINEER_SLACK_CHANNEL_ID": ""}, clear=False):
+                    response = client.get(
+                        "/api/integrations/slack/engineer-cases/thread-bindings/resolve",
+                        params={"team_id": "T1", "channel_id": "C1", "thread_ts": "123.456"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                self.assertEqual(response.status_code, 503)
