@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:00:00Z",
-  "source_base_commit": "9f55be5576282592f73cc5145a84939514207980",
-  "registry_digest": "39a0c0e7096404d652f987a8bdc275d69d620fe46eb2658bc389f30d9e790695",
+  "generated_at": "2026-08-24T10:17:05Z",
+  "source_base_commit": "10814506bbac122a1b95dfe36b664d3a0a73a276",
+  "registry_digest": "57cfdf53e11d3c3210c08e9c1546504236e7c0e65bd2f8befa9160dbd3780614",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1843,6 +1843,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Report v2 refresh with cutover direction",
           "command": "docs/split_environments_report.md",
           "details": "2026-08-24 按用户决策将报告刷新为 v2：新增第 0 节总目标（三环境上线并完全替代旧 /account 与 /production；preproduction 与 production 配置统一、进入 case 由 n8n 控制、production 最后切流）；修正第 1 节过时内容（鉴权已统一为单一 X-N8n-Request-Token/n8n_request_token，旧 Bearer 与三个 AUTOMATION_*_EXECUTION_TOKEN 已废弃；allowlist 三态含 * 放行）；T1/T6 标完成（p2-89），T2/T5 标未承接并降级（T5 探针半边放弃、被 /automation/test 回归体系超越），T3/T4 剩余并入新包；新增 T7（preproduction 配置统一 + n8n 筛选流量影子验收）与 T8（production 最终切流与旧端点下线，以 automation_environments_cutover.md 为权威操作手册）。纯文档刷新，无运行时变更。"
+        },
+        {
+          "type": "deployment",
+          "label": "Automation production blue-green deployment implementation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
+          "details": "新增专用蓝绿入口：candidate 使用 release 唯一服务名和生产 DB/Redis identity，readiness 通过后以 Nginx runtime include 原子切换并 graceful reload；/automation/production/ 禁止 upstream 自动重试，旧 compose project 默认排空 360 秒后停止，--rollback 只切换 upstream、不重放请求。当前本机缺少可用 Docker CLI/.env 完整必填变量，EC2 栈验证待执行。"
         },
         {
           "type": "test",
@@ -8722,7 +8728,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "2026-08-24 用户决策刷新方向（终态=三环境上线并完全替代旧 /account 与 /production，报告 v2 第 0 节）：下一步为 T7——preproduction 配置与 production 统一（automation_contracts.py POLICIES 将 preproduction 由 forced internal 改为 requires_visibility，EC2 设 PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST=* 放行、过滤交 n8n IF 门），并接 n8n 筛选流量完成影子验收（completed + ledger 三条 completed + Zendesk readback，即原 T3 preproduction 段）；T8 production 最终切流（Company ID 互斥灰度、production 最后上线避免与现有 /production 冲突、旧端点下线）待 T7 全绿与用户批准切流窗口。用户侧待办：preproduction 重测、production exec-bf0c82e1 先 reconcile 后重试、PR #899（p2-104）部署。",
+      "next_action": "蓝绿部署实现已完成，待在 Docker/EC2 上执行候选预热、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -8828,6 +8834,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Report v2 refresh with cutover direction",
           "command": "docs/split_environments_report.md",
           "details": "2026-08-24 按用户决策将报告刷新为 v2：新增第 0 节总目标（三环境上线并完全替代旧 /account 与 /production；preproduction 与 production 配置统一、进入 case 由 n8n 控制、production 最后切流）；修正第 1 节过时内容（鉴权已统一为单一 X-N8n-Request-Token/n8n_request_token，旧 Bearer 与三个 AUTOMATION_*_EXECUTION_TOKEN 已废弃；allowlist 三态含 * 放行）；T1/T6 标完成（p2-89），T2/T5 标未承接并降级（T5 探针半边放弃、被 /automation/test 回归体系超越），T3/T4 剩余并入新包；新增 T7（preproduction 配置统一 + n8n 筛选流量影子验收）与 T8（production 最终切流与旧端点下线，以 automation_environments_cutover.md 为权威操作手册）。纯文档刷新，无运行时变更。"
+        },
+        {
+          "type": "deployment",
+          "label": "Automation production blue-green deployment implementation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
+          "details": "新增专用蓝绿入口：candidate 使用 release 唯一服务名和生产 DB/Redis identity，readiness 通过后以 Nginx runtime include 原子切换并 graceful reload；/automation/production/ 禁止 upstream 自动重试，旧 compose project 默认排空 360 秒后停止，--rollback 只切换 upstream、不重放请求。当前本机缺少可用 Docker CLI/.env 完整必填变量，EC2 栈验证待执行。"
         }
       ],
       "source_refs": [

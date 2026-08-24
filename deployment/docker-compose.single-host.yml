@@ -8,6 +8,7 @@ services:
       - "${NGINX_HOST_PORT:-8080}:80"
     volumes:
       - ./nginx/supportportal.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/runtime:/etc/nginx/runtime:ro
     networks:
       - default
       - automation_edge
