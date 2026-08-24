@@ -7,6 +7,23 @@ from fastapi.testclient import TestClient
 from backend.automation_production_runtime import create_app
 
 
+def _intake_outcome(response_status: str, **extra):
+    outcome = {
+        "response_status": response_status,
+        "route": "enablement",
+        "automation_handler": "enablement",
+        "execution_reason_code": None,
+        "reply_job": None,
+        "engineer_case_id": None,
+        "internal_email_send_status": "not_applicable",
+        "internal_email_send_reason": "",
+        "route_status": "automated",
+        "account_case": {},
+    }
+    outcome.update(extra)
+    return outcome
+
+
 class AutomationProductionRuntimeContractTest(unittest.TestCase):
     def test_production_openapi_has_no_rerun_or_reset_paths(self):
         with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1"}, clear=False):
@@ -16,18 +33,38 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                 self.assertNotIn("/v1/reset", paths)
                 self.assertFalse(client.get("/v1/capabilities").json()["rerun"])
 
-    def test_production_requires_explicit_visibility_before_route_call(self):
+    def test_production_runs_parity_pipeline_without_comment_visibility(self):
+        from backend.services.automation_contracts import AutomationEnvironment, RouteResult
+
+        route_result = RouteResult(
+            request_id="req-1",
+            idempotency_key="production:route:req-1",
+            environment=AutomationEnvironment.PRODUCTION,
+            case_id="AC-1",
+            route={"execution_action": "enablement", "route_family": "automated"},
+            automation={"eligible": True},
+            action_plan={"preparation_status": "prepared"},
+        )
         with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
-            "backend.automation_production_runtime.call_route", new_callable=AsyncMock
-        ) as call:
+            "backend.automation_production_runtime.call_route", new_callable=AsyncMock, return_value=route_result
+        ), patch(
+            "backend.services.automation_account_intake.run_production_account_intake",
+            new_callable=AsyncMock,
+            return_value=_intake_outcome("automation"),
+        ) as intake, patch(
+            "backend.automation_production_runtime._ticket_repository", return_value=object()
+        ) as repository:
             with TestClient(create_app()) as client:
                 response = client.post(
                     "/v1/cases",
                     json={"request_id": "req-1", "case_id": "AC-1", "zendesk_ticket_id": "123", "question": "hello"},
                     headers={"X-N8n-Request-Token": "execution-token"},
                 )
-                self.assertEqual(response.status_code, 422)
-                call.assert_not_awaited()
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["status"], "completed")
+                self.assertEqual(response.json()["execution"]["intake_outcome"]["response_status"], "automation")
+                intake.assert_awaited_once()
+                self.assertIs(intake.call_args.kwargs["repository"], repository.return_value)
 
     def test_execution_requires_bearer_token(self):
         with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
@@ -87,7 +124,11 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
             os.environ,
             {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"},
             clear=False,
-        ), patch("backend.automation_production_runtime.call_route", new_callable=AsyncMock, return_value=route_result):
+        ), patch("backend.automation_production_runtime.call_route", new_callable=AsyncMock, return_value=route_result), patch(
+            "backend.services.automation_account_intake.run_production_account_intake",
+            new_callable=AsyncMock,
+            return_value=_intake_outcome("human_review_required", execution_reason_code="field_extraction_failed"),
+        ), patch("backend.automation_production_runtime._ticket_repository", return_value=object()):
             with TestClient(create_app()) as client:
                 self.assertEqual(client.get("/v1/executions").status_code, 401)
                 headers = {"X-N8n-Request-Token": "execution-token"}
@@ -120,7 +161,11 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
 
         with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED": "1", "AUTOMATION_TARGET_TICKET_STATUS": "open", "n8n_request_token": "execution-token"}, clear=False), patch(
             "backend.automation_production_runtime.call_route", new_callable=AsyncMock
-        ) as call, patch("backend.automation_production_runtime.execute_side_effects") as effects:
+        ) as call, patch("backend.automation_production_runtime.execute_side_effects") as effects, patch(
+            "backend.services.automation_account_intake.run_production_account_intake",
+            new_callable=AsyncMock,
+            return_value=_intake_outcome("human_review_required", execution_reason_code="field_extraction_insufficient"),
+        ), patch("backend.automation_production_runtime._ticket_repository", return_value=object()):
             call.return_value = RouteResult(
                 request_id="req-human",
                 idempotency_key="production:route:req-human",
@@ -138,19 +183,12 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["status"], "human_review")
+                self.assertEqual(response.json()["execution"]["side_effects"], [])
                 effects.assert_not_called()
 
-    def test_outcome_unknown_requires_explicit_delivery_reconcile(self):
+    def test_pipeline_failure_records_failed_and_replays_conflict(self):
         from backend.services.automation_contracts import AutomationEnvironment, RouteResult
-        from backend.services.automation_side_effects import SideEffectError
 
-        env = {
-            "AUTOMATION_ENVIRONMENT": "production",
-            "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1",
-            "AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED": "1",
-            "AUTOMATION_TARGET_TICKET_STATUS": "open",
-            "n8n_request_token": "execution-token",
-        }
         route_result = RouteResult(
             request_id="req-unknown",
             idempotency_key="production:route:req-unknown",
@@ -160,19 +198,13 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
             automation={"eligible": True},
             action_plan={"preparation_status": "prepared", "reply_body": "reply", "side_effects": []},
         )
-        with patch.dict(os.environ, env, clear=False), patch(
+        with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
             "backend.automation_production_runtime.call_route", new_callable=AsyncMock, return_value=route_result
         ), patch(
-            "backend.automation_production_runtime.execute_side_effects",
-            side_effect=SideEffectError(
-                "status_timeout",
-                completed_operations=[{"operation": "take_ownership", "status": "assigned"}, {"operation": "comment", "status": "completed", "comment_id": "c1"}],
-                outcome_unknown=True,
-            ),
-        ), patch(
-            "backend.automation_production_runtime.verify_delivery_operation",
-            return_value={"operation": "status", "status": "completed", "ticket_status": "open", "readback_source": "zendesk_ticket"},
-        ) as verify:
+            "backend.services.automation_account_intake.run_production_account_intake",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("pipeline exploded"),
+        ), patch("backend.automation_production_runtime._ticket_repository", return_value=object()):
             with TestClient(create_app()) as client:
                 response = client.post(
                     "/v1/cases",
@@ -181,28 +213,34 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 502)
                 execution = response.json()["detail"]["execution"]
-                self.assertEqual(execution["status"], "outcome_unknown")
-                self.assertEqual(execution["delivery_ledger"][-1]["status"], "outcome_unknown")
+                self.assertEqual(execution["status"], "failed")
+                self.assertEqual(execution["failure_code"], "automation_pipeline_error")
                 replay = client.post(
                     "/v1/cases",
                     json={"request_id": "req-unknown", "case_id": "AC-UNKNOWN", "zendesk_ticket_id": "123", "question": "hello", "comment_visibility": "internal"},
                     headers={"X-N8n-Request-Token": "execution-token"},
                 )
                 self.assertEqual(replay.status_code, 409)
-                reconciled = client.post(
-                    f"/v1/executions/{execution['execution_id']}/reconcile",
-                    json={"operations": [{"operation": "status", "status": "completed", "ticket_status": "forged", "readback": {"ticket_status": "forged"}}]},
-                    headers={"X-N8n-Request-Token": "execution-token"},
-                )
-                self.assertEqual(reconciled.status_code, 200)
-                verify.assert_called_once()
-                self.assertEqual(verify.call_args.kwargs["ticket_id"], "123")
-                self.assertEqual(verify.call_args.kwargs["ledger_item"]["target_status"], "open")
 
-    def test_production_legacy_form_body_still_requires_comment_visibility(self):
+    def test_production_legacy_form_body_without_visibility_is_accepted(self):
         with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
             "backend.automation_production_runtime.call_route", new_callable=AsyncMock
-        ):
+        ) as call, patch(
+            "backend.services.automation_account_intake.run_production_account_intake",
+            new_callable=AsyncMock,
+            return_value=_intake_outcome("not_automated", automation_handler=None, route_status="not_automated", engineer_case_id="12998-1"),
+        ), patch("backend.automation_production_runtime._ticket_repository", return_value=object()):
+            from backend.services.automation_contracts import AutomationEnvironment, RouteResult
+
+            call.return_value = RouteResult(
+                request_id="n8n-zd-12998",
+                idempotency_key="production:route:n8n-zd-12998",
+                environment=AutomationEnvironment.PRODUCTION,
+                case_id="AC-12998",
+                route={"execution_action": "human_review_required"},
+                automation={"eligible": False},
+                action_plan={"preparation_status": "human_review"},
+            )
             with TestClient(create_app()) as client:
                 response = client.post(
                     "/v1/cases",
@@ -211,17 +249,24 @@ class AutomationProductionRuntimeContractTest(unittest.TestCase):
                         "question": "q",
                         "customer_email": "customer@example.com",
                         "customer_name": "Customer",
-                        "source": "https://agoraio.zendesk.com/agent/tickets/12999",
+                        "source": "https://agoraio.zendesk.com/agent/tickets/12998",
                     },
                     headers={"X-N8n-Request-Token": "execution-token"},
                 )
-                self.assertEqual(response.status_code, 422)
-                self.assertIn("comment_visibility", response.text)
+                self.assertEqual(response.status_code, 200, response.text)
+                execution = response.json()["execution"]
+                self.assertEqual(execution["status"], "completed")
+                self.assertEqual(execution["intake_outcome"]["engineer_case_id"], "12998-1")
+                self.assertEqual(execution["request"]["zendesk_ticket_id"], "12998")
 
     def test_production_legacy_form_body_with_internal_visibility_maps_identity(self):
         with patch.dict(os.environ, {"AUTOMATION_ENVIRONMENT": "production", "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1", "n8n_request_token": "execution-token"}, clear=False), patch(
             "backend.automation_production_runtime.call_route", new_callable=AsyncMock
-        ) as call:
+        ) as call, patch(
+            "backend.services.automation_account_intake.run_production_account_intake",
+            new_callable=AsyncMock,
+            return_value=_intake_outcome("human_review_required", execution_reason_code="field_extraction_insufficient"),
+        ), patch("backend.automation_production_runtime._ticket_repository", return_value=object()):
             from backend.services.automation_contracts import AutomationEnvironment, RouteResult
 
             call.return_value = RouteResult(

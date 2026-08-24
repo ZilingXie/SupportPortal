@@ -36,12 +36,6 @@ RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
         /app/backend/services/account_rerun_preflight.py \
         /app/backend/services/account_rerun_recovery.py \
         /app/backend/worker.py \
-        /app/backend/services/account_reply_jobs.py \
-        /app/backend/services/account_automation_delivery.py \
-        /app/backend/services/account_failure_alerts.py \
-        /app/backend/services/account_ai_execution.py \
-        /app/backend/services/internal_email_payload.py \
-        /app/backend/services/automation_persona.py \
         /app/backend/services/rag_reset.py; \
       rm -rf /app/backend/scripts /app/backend/tests; \
       rm -rf /app/ui/automation-staging /app/ui/automation-preproduction \

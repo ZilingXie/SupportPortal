@@ -82,6 +82,7 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                 case_id="AC-2",
                 route={"execution_action": "human_review_required"},
                 automation={"eligible": False},
+                action_plan={"preparation_status": "human_review"},
             )
             with TestClient(create_app()) as client:
                 self.assertFalse(client.get("/v1/capabilities").json()["rerun"])
@@ -90,7 +91,10 @@ class AutomationRuntimeContractTest(unittest.TestCase):
                     json={"request_id": "req-2", "case_id": "AC-2", "zendesk_ticket_id": "123", "question": "hello"},
                     headers={"X-N8n-Request-Token": "execution-token"},
                 )
-                self.assertEqual(missing_visibility.status_code, 422)
+                # Production visibility is optional since the parity intake
+                # replaced the immediate-comment contract (p2-109 Phase B);
+                # the request now proceeds to routing instead of a 422.
+                self.assertEqual(missing_visibility.status_code, 200)
                 rerun = client.post(
                     "/v1/reruns",
                     json={"request_id": "req-rerun", "case_id": "AC-2", "rerun_of_execution_id": "exec-1"},

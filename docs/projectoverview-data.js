@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T11:33:38Z",
-  "source_base_commit": "f15df1c8684f495317cdfc9c5cd897a6ae1fe8b6",
-  "registry_digest": "7099fd0d7fdb3f97c6a9eee78ea2b84166c63d18b22ad5993c144b6b47519f6c",
+  "generated_at": "2026-08-24T12:00:50Z",
+  "source_base_commit": "b27d4ce9217557749791b27609ae3ce2f275397f",
+  "registry_digest": "619dea07b562fcfd75dbdd4f38395f00d4f08803ab929180cf3c6dbab266d96f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1672,6 +1672,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Parity intake and runtime contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_account_intake backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 backend.tests.test_build_automation_release",
+          "details": "111 项全部通过：intake 六分支单测（fraud 缺/齐字段、suspension contact、抽取失败→#916 升级、not_automated→Engineer Case+派单、ownership fail-closed）；production runtime 契约（无 visibility 也进管线、pipeline 异常→failed+409 重放、legacy 五字段免 visibility、intake_outcome 落库）；契约矩阵（production visibility 可选，preprod forced internal 不变）；route_payload decision 字段；bundle/镜像清单（依赖模块留在 production 镜像）；compose/deploy/蓝绿假命令回归。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -2008,7 +2014,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 15,
+      "task_count": 16,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -5942,6 +5948,55 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_refs": [
         "p2-88"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-109",
+      "title": "/automation/production 替代 /production：Phase B intake 旧栈语义（进行中）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Phase B：把旧栈 /production 的 intake 执行语义搬进 /automation/production——新增 backend/services/automation_account_intake.py（完整移植 main.py _create_account_intake_impl 自动执行段：ticket/account case/route execution 持久化、四类 ACTIVE handler 的字段抽取与内部邮件、缺字段追问与确认 reply job、ownership gate（含事件与 fail-closed）、#916 human queue 升级、失败 reconcile+alert、not_automated→Engineer Case+派单）；automation_production_runtime /v1/cases 改为调用该管线（废除即时 comment/status 三副作用与 delivery ledger 流，execution 记录保留为审计视图）；production 契约废除 comment_visibility 必填（preproduction forced internal 不动）。",
+      "next_action": "代码与测试已完成待用户侧部署验证：EC2 部署新 release（deploy_ec2 --environment production 或蓝绿，含 bootstrap 建表与 automation_production_worker）后，用受控 ticket 验证 intake 全链（内部邮件送达、缺字段追问 reply job 的延迟 public 回复、not_automated→Engineer Case+Slack、失败转人工队列）。随后进入 Phase C：评论摄入端点（comment-sync-target/PUT comments）+ 客户回复触发链（含 RAGFlow fallback 与 escalation），n8n commen_sync production origin 换 URL 由用户执行。",
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Parity intake and runtime contract regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_account_intake backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 backend.tests.test_build_automation_release",
+          "details": "111 项全部通过：intake 六分支单测（fraud 缺/齐字段、suspension contact、抽取失败→#916 升级、not_automated→Engineer Case+派单、ownership fail-closed）；production runtime 契约（无 visibility 也进管线、pipeline 异常→failed+409 重放、legacy 五字段免 visibility、intake_outcome 落库）；契约矩阵（production visibility 可选，preprod forced internal 不变）；route_payload decision 字段；bundle/镜像清单（依赖模块留在 production 镜像）；compose/deploy/蓝绿假命令回归。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_account_intake.py",
+        "backend/automation_production_runtime.py",
+        "backend/services/automation_contracts.py",
+        "backend/main.py",
+        "backend/services/account_human_review_escalation.py",
+        "deployment/docker-compose.single-host.yml",
+        "backend/Dockerfile.automation"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "Phase A（p2-108/PR#921）合并后开工 Phase B。已读齐移植面（main.py 薄壳与 intake 自动执行段、route_service/route_preparation 返回结构、#916 升级服务、engineer case 构造与派单）。关键澄清：is_registered_automation 只认 ACTIVE 集合，quota 在旧栈同样是 not_automated→Engineer Case，与用户'quota→human_review 预期'的旧描述相比按旧栈语义统一走 Engineer Case（Slack 协作按旧栈）。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "phase_b_completed",
+          "summary": "收尾清单①-⑤完成：route_payload 增补全部 decision 语义字段（stage_attempts/matched_signals/semantic_intent 等，RouteResult route 为自由 dict 无需模型变更）；Dockerfile production 角色放开六个依赖模块（保留 main.py/rerun 系/worker.py/rag_reset 排除）并同步 bundle 断言；compose 与蓝绿 candidate 补 TICKET_DB/[automation] 前缀/OPENAI/DEEPSEEK/Graph 全套 env；契约与 runtime 测试按新行为重写并新增 intake 六分支单测（共 111 项绿）；cutover/runbook 文档同步（production comment_visibility 不再必填）。已知取舍：route prepare 与 runtime attempt 各做一次字段抽取（旧栈语义忠实移植的代价，后续可加 prepare:false 优化）；reconcile 端点保留但新流程不再产生 outcome_unknown 记录。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88",
+        "p2-108"
       ],
       "legacy_ids": [],
       "phase_id": "phase-2",
