@@ -127,7 +127,7 @@ POLICIES: dict[AutomationEnvironment, EnvironmentPolicy] = {
         writes_zendesk=True,
         performs_ownership=True,
         performs_status=True,
-        requires_visibility=True,
+        requires_visibility=False,
     ),
 }
 

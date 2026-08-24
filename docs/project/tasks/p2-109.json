@@ -1,0 +1,34 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-109",
+  "title": "/automation/production 替代 /production：Phase B intake 旧栈语义（进行中）",
+  "status": "active",
+  "owner": "zac",
+  "summary": "Phase B：把旧栈 /production 的 intake 执行语义搬进 /automation/production——新增 backend/services/automation_account_intake.py（完整移植 main.py _create_account_intake_impl 自动执行段：ticket/account case/route execution 持久化、四类 ACTIVE handler 的字段抽取与内部邮件、缺字段追问与确认 reply job、ownership gate（含事件与 fail-closed）、#916 human queue 升级、失败 reconcile+alert、not_automated→Engineer Case+派单）；automation_production_runtime /v1/cases 改为调用该管线（废除即时 comment/status 三副作用与 delivery ledger 流，execution 记录保留为审计视图）；production 契约废除 comment_visibility 必填（preproduction forced internal 不动）。",
+  "next_action": "WIP 已提交到 codex/split-pb-intake 分支，剩余工作：① route_service route_payload 增补 decision 字段（semantic_intent/automation_eligibility/policy_decision/not_automated_reason/risk_flags/evidence_spans/matched_signals/stage_attempts，加到 RouteResult 与 automation_contracts，additive）；② Dockerfile.automation production 角色删除清单放开 Phase B 依赖模块（account_reply_jobs/account_automation_delivery/internal_email_payload/account_failure_alerts/account_ai_execution/automation_persona，保留 main.py/rerun 系排除）并同步 test_production_bundle 断言；③ compose automation_production 与蓝绿 candidate override 补 env（TICKET_DB_DSN/SCHEMA、Graph 凭据、INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]、OPENAI/模型/代理）；④ 更新 test_automation_production_runtime_contract/test_automation_conferences 等既有断言并新增 intake 全分支契约测试（fraud 缺/齐字段、suspension、enablement、detailed_invoice、not_automated→engineer、ownership fail-closed、幂等 replay/409、visibility 不再必填）；⑤ cutover/runbook 文档联动（production 不再需要 comment_visibility）；⑥ finalize 合入。",
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [
+    "backend/services/automation_account_intake.py",
+    "backend/automation_production_runtime.py",
+    "backend/services/automation_contracts.py",
+    "backend/main.py",
+    "backend/services/account_human_review_escalation.py",
+    "deployment/docker-compose.single-host.yml",
+    "backend/Dockerfile.automation"
+  ],
+  "created_at": "2026-08-24",
+  "updated_at": "2026-08-24",
+  "history": [
+    {
+      "at": "2026-08-24",
+      "event": "created",
+      "summary": "Phase A（p2-108/PR#921）合并后开工 Phase B。已读齐移植面（main.py 薄壳与 intake 自动执行段、route_service/route_preparation 返回结构、#916 升级服务、engineer case 构造与派单）。关键澄清：is_registered_automation 只认 ACTIVE 集合，quota 在旧栈同样是 not_automated→Engineer Case，与用户'quota→human_review 预期'的旧描述相比按旧栈语义统一走 Engineer Case（Slack 协作按旧栈）。"
+    }
+  ],
+  "legacy_refs": ["p2-88", "p2-108"],
+  "legacy_ids": [],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment"
+}
