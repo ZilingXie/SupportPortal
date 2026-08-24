@@ -56,11 +56,30 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         runtime = (ROOT / "deployment/nginx/runtime/automation_production_active.conf").read_text()
         compose = (ROOT / "deployment/docker-compose.single-host.yml").read_text()
         self.assertIn("include /etc/nginx/runtime/automation_production_active.conf", nginx)
-        self.assertIn("proxy_pass http://automation_production_active", nginx)
+        self.assertIn("proxy_pass http://$automation_production_active", nginx)
         self.assertIn("proxy_next_upstream off", nginx)
-        self.assertIn("automation_production:8000", runtime)
+        self.assertIn("set $automation_production_active automation_production:8000", runtime)
         self.assertIn("./nginx/runtime:/etc/nginx/runtime:ro", compose)
-        for marker in ("extends:", "route_production_candidate_", "automation_production_candidate_", "nginx -t", "nginx -s reload", "DRAIN_SECONDS", "--rollback", "no request was replayed"):
+        for marker in (
+            "extends:",
+            "route_production_candidate_",
+            "automation_production_candidate_",
+            "AUTOMATION_REDIS_URL: redis://automation_redis_production:6379/0",
+            "refusing to create a second Redis",
+            "RELEASE_DIR/${RELEASE}.env",
+            "docker image inspect",
+            "flock -n 9",
+            "nginx -t",
+            "nginx -s reload",
+            "ensure_nginx_runtime_mount",
+            "--no-deps nginx",
+            "DRAIN_SECONDS",
+            "previous_override",
+            "previous pointer was restored",
+            "previous upstream was restored when possible",
+            "--rollback",
+            "no request was replayed",
+        ):
             self.assertIn(marker, script)
 
     def test_production_bundle_has_no_rerun_ui_or_main_module(self):
