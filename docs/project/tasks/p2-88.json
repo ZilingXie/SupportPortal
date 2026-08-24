@@ -227,6 +227,11 @@
       "at": "2026-08-24",
       "event": "direction_refresh",
       "summary": "用户决策终态方向：三环境上线并完全替代旧 /account 与 /production；preproduction 与 production 配置做成一模一样（仅保留架构固有差异），进入的 case 由 n8n 控制（production 收 production case、preproduction 收 n8n 筛选后的 case）；production 最后切流以避免与现有 /production 冲突。报告刷新为 v2：T1/T6 已完成（p2-89），T2/T5 未承接降级为可选 backlog（T5 探针半边放弃），T3/T4 剩余分别并入新增 T7（preproduction 配置统一 + n8n 筛选流量影子验收）与 T8（production 最终切流与旧端点下线）。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "production_parity_split_to_p2_108",
+      "summary": "用户进一步改变路线：直接用 /automation/production 替代 /production（不再走 T7 preprod 先行的顺序），并逐项确认功能差距处置（quota→human_review 预期、human review 流跳过、detailed_invoice 回复闭环与运维工具跳过、执行内容/客户回复链/状态同步/Slack 按旧栈、评论与状态摄入由 n8n 转发）。七阶段搬迁计划 Phase A（schema bootstrap + automation_production_worker + deploy/蓝绿覆盖）分流到新任务 p2-108 承接；本任务保留三环境基础设施与蓝绿演进范围，T7/T8 顺序由用户后续迁移节奏决定。"
     }
   ],
   "legacy_refs": ["p2-73", "p2-74"],

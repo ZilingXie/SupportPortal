@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_SOURCE = REPO_ROOT / "deployment" / "deploy_ec2.sh"
+BOOTSTRAP_SOURCE = REPO_ROOT / "deployment" / "bootstrap_automation_production_schema.sh"
 
 
 def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -57,6 +58,10 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self._write_executable(
             self.repo / "deployment" / "deploy_ec2.sh",
             SCRIPT_SOURCE.read_text(encoding="utf-8"),
+        )
+        self._write_executable(
+            self.repo / "deployment" / "bootstrap_automation_production_schema.sh",
+            BOOTSTRAP_SOURCE.read_text(encoding="utf-8"),
         )
         _git(["add", "."], cwd=self.repo)
         _git(["commit", "-m", "Initial commit"], cwd=self.repo)
@@ -275,6 +280,9 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     sys.exit(0)
 
                 if "run" in args:
+                    if "runtime_bootstrap" in args:
+                        print('{"mode": "bootstrap", "ok": true}')
+                        sys.exit(0)
                     if "prepare" in args:
                         print("release-candidate\\ttrue")
                     elif "validate" in args:
@@ -1313,6 +1321,9 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 """\
                 TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
                 PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                TICKET_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets-production
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                APP_RUNTIME_IMAGE=registry.example/app@sha256:app-production
                 ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
                 AUTOMATION_PRODUCTION_IMAGE=registry.example/automation@sha256:automation-production
                 ROUTE_PRODUCTION_SERVICE_TOKEN=route-token

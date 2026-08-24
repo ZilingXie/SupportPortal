@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SplitEnvironmentDeploymentTest(unittest.TestCase):
-    def test_compose_declares_six_profile_services_and_pointers(self):
+    def test_compose_declares_profile_services_and_pointers(self):
         compose = (ROOT / "deployment/docker-compose.single-host.yml").read_text()
         for service in (
             "route_staging",
@@ -15,6 +15,7 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
             "automation_staging",
             "automation_preproduction",
             "automation_production",
+            "automation_production_worker",
         ):
             self.assertIn(f"  {service}:", compose)
             self.assertIn('profiles: ["automation"]', compose)
@@ -79,8 +80,66 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
             "previous upstream was restored when possible",
             "--rollback",
             "no request was replayed",
+            "APP_RUNTIME_IMAGE is required for the automation production worker",
+            "up -d --no-build --no-deps automation_production_worker",
         ):
             self.assertIn(marker, script)
+
+    def test_automation_production_worker_contract(self):
+        compose = (ROOT / "deployment/docker-compose.single-host.yml").read_text()
+        env_example = (ROOT / ".env.example").read_text()
+        # Full app image: the production automation image physically excludes
+        # backend.worker and the reply-job services.
+        self.assertIn("image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}", compose)
+        self.assertIn("command:\n      - python\n      - -m\n      - backend.worker", compose)
+        worker_block = compose.split("automation_production_worker:", 1)[1].split("\n  automation_redis_staging:", 1)[0]
+        # Bound to the split production schema, never the legacy one.
+        self.assertIn("TICKET_DB_DSN: ${AUTOMATION_PRODUCTION_DB_DSN:-${PRODUCTION_TICKET_DB_DSN:-}}", worker_block)
+        self.assertIn("TICKET_DB_SCHEMA: ${AUTOMATION_PRODUCTION_DB_SCHEMA:-supportportal_production}", worker_block)
+        self.assertIn("TICKET_DB_APPLICATION_NAME: supportportal-automation-production-worker", worker_block)
+        # Fail fast when the bootstrap script has not provisioned the schema.
+        self.assertIn("RUNTIME_SCHEMA_MODE: check", worker_block)
+        # Queue/event identity must be distinct from the legacy production
+        # stack (support.ticket_queries.production / support.events.production).
+        self.assertIn("TICKET_QUERY_QUEUE_NAME: support.ticket_queries.automation_production", worker_block)
+        self.assertIn("TICKET_AUX_QUEUE_NAME: support.ticket_aux.automation_production", worker_block)
+        self.assertIn("EVENT_BUS_CHANNEL: support.events.automation.production", worker_block)
+        self.assertNotIn("support.ticket_queries.production\n", worker_block)
+        # Third mailbox namespace: the empty namespace belongs to the legacy
+        # production stack only.
+        self.assertIn('INTERNAL_EMAIL_SUBJECT_NAMESPACE: "[automation]"', worker_block)
+        # Reply pollers on; internal-email consumption stays off by default.
+        self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "true"', worker_block)
+        self.assertIn("AUTOMATION_REPLY_POLL_ENABLED: ${AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED:-false}", worker_block)
+        self.assertIn("AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED=false", env_example)
+        self.assertIn("AUTOMATION_PRODUCTION_RAG_SERVICE_URL=", env_example)
+        # Graph token cache mount, shared with the legacy aux worker.
+        self.assertIn("- ../.msgraph:/app/.msgraph", worker_block)
+        # Egress-capable split network only.
+        self.assertIn("networks: [automation_internal_production]", worker_block)
+
+    def test_production_schema_bootstrap_script_contract(self):
+        script_path = ROOT / "deployment/bootstrap_automation_production_schema.sh"
+        self.assertTrue(script_path.exists())
+        script = script_path.read_text()
+        # DDL runs through the migration role on the split production schema.
+        self.assertIn("TICKET_DB_MIGRATION_DSN is required", script)
+        self.assertIn('schema="${schema:-supportportal_production}"', script)
+        self.assertIn("TICKET_DB_MIGRATION_DSN", script)
+        self.assertIn("runtime_bootstrap", script)
+        self.assertIn("--profile bootstrap", script)
+        # Fail-closed guards: never target the staging main database and never
+        # run DDL against a different database than the runtime DSN.
+        self.assertIn("production DB DSN must differ from TICKET_DB_DSN", script)
+        self.assertIn("must target the same database", script)
+        # Deploy integration: the production split deploy bootstraps before up.
+        deploy = (ROOT / "deployment/deploy_ec2.sh").read_text()
+        self.assertIn("bootstrap_automation_production_schema.sh", deploy)
+        self.assertIn("APP_RUNTIME_IMAGE is required for automation_production_worker", deploy)
+        self.assertIn("SPLIT_SERVICES=(route_production automation_production automation_production_worker)", deploy)
+        # Workers have no HTTP health port; deploy readiness accepts a running
+        # container for *_worker services.
+        self.assertIn("*_worker", deploy)
 
     def test_production_bundle_has_no_rerun_ui_or_main_module(self):
         production_js = (ROOT / "ui/automation-production/app.js").read_text().lower()
