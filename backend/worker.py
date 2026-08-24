@@ -82,6 +82,9 @@ from backend.services.account_automation_delivery import (
 )
 from backend.services.automation_routing import is_registered_automation
 from backend.services.account_automation_ownership import ensure_production_automation_ownership
+from backend.services.account_human_review_escalation import (
+    escalate_account_case_to_human_review,
+)
 from backend.services.zendesk_comments import (
     ZendeskCommentError,
     add_ticket_comment,
@@ -1979,6 +1982,21 @@ def _move_automation_reply_to_human_review(
         return False
     job.clear()
     job.update(transitioned)
+    account_case = ticket_repository.get_account_case_by_ticket_id(
+        str(job.get("ticket_id") or ticket.get("ticket_id") or "").strip()
+    )
+    if isinstance(account_case, dict):
+        payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+        escalate_account_case_to_human_review(
+            account_case=account_case,
+            ticket_id=str(job.get("ticket_id") or ticket.get("ticket_id") or "").strip(),
+            handler=str(account_case.get("automation_handler") or account_case.get("execution_action") or "automation"),
+            failure_stage=str(failure_stage or payload.get("failure_stage") or "reply_worker"),
+            failure_code=str(failure_code or payload.get("failure_code") or "automation_human_review"),
+            reason=reason,
+            repository=ticket_repository,
+            timestamp=now_iso(),
+        )
     return True
 
 
@@ -2007,6 +2025,18 @@ def _mark_account_case_for_human_review(
     )
     account_case["policy_decision"] = policy_decision
     account_case["updated_at"] = timestamp
+    ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    if ticket_id:
+        escalate_account_case_to_human_review(
+            account_case=account_case,
+            ticket_id=ticket_id,
+            handler=str(account_case.get("automation_handler") or account_case.get("execution_action") or "automation"),
+            failure_stage="persona" if persona_unavailable else "persona_render",
+            failure_code=reason_code,
+            reason=reason,
+            repository=ticket_repository,
+            timestamp=timestamp,
+        )
 
 
 def _render_case_persona_reply(

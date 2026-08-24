@@ -19,6 +19,12 @@
   "evidence": [
     {
       "type": "test",
+      "label": "Shared Account escalation handoff regression",
+      "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
+      "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
+    },
+    {
+      "type": "test",
       "label": "Reply RAG fallback service and intake regression",
       "command": ".venv/bin/python -m unittest backend.tests.test_account_reply_rag_fallback backend.tests.test_account_intake",
       "details": "新增 account_reply_rag_fallback service 单测 7 项（answer/escalate 映射、RAG 故障升级、staging 仅本地标记、production note+route back+ownership、route back 失败不抛异常）与 test_account_intake 3 个新用例（RAG answer 创建 draft reply job、escalate 置 human_review_required、开关关闭保持静默旧行为）；test_account_intake 170 项全过（旧用例经 env 隔离维持原语义）。"
