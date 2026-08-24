@@ -413,6 +413,35 @@ def _assert_missing_information_contract(reply: str) -> None:
         )
 
 
+# Human-readable labels for common automation field keys so the persona LLM
+# renders friendly names instead of raw snake_case identifiers.
+_FIELD_LABELS = {
+    "account_type": "Account type",
+    "name": "Name",
+    "office_address": "Office address",
+    "contact_number": "Official contact number",
+    "contact_email": "Official contact email",
+    "use_case_description": "Use-case description",
+    "console_configuration": "Last known console configuration",
+    "app_id": "App ID",
+    "company_information": "Company Information",
+    "contact_information": "Contact Information",
+    "use_case": "Use Case",
+    "payment_information": "Payment Information",
+}
+
+
+def _humanize_missing_fields(fields: list[str]) -> list[str]:
+    return [_FIELD_LABELS.get(item, item.replace("_", " ")) for item in fields]
+
+
+def _facts_with_readable_missing(facts: dict[str, Any]) -> dict[str, Any]:
+    missing = facts.get("missing_information")
+    if isinstance(missing, list) and missing:
+        return {**facts, "missing_information": _humanize_missing_fields([str(m) for m in missing])}
+    return facts
+
+
 def _assert_suspension_contact_contract(reply: str) -> None:
     lowered = str(reply or "").casefold()
     if "email" not in lowered and "e-mail" not in lowered:
@@ -610,8 +639,12 @@ def render_automation_reply(
         "Support Engineer', 'the case is in progress with them', or any wording that makes the customer wait for an "
         "internal team to follow up. For request_missing_information, do not imply that internal review has started; "
         "explain that you will continue the coordination after the missing information is received. Do not promise a "
-        "time or outcome. Semantic fields such as ownership_state and customer_update_commitment are instructions, "
-        "not customer-facing phrases; never repeat their raw values. "
+        "time or outcome. When listing missing information: if only one or two items are missing, weave them "
+        "naturally into a single sentence (for example, 'we are still missing your account type and name'). If three "
+        "or more items are missing, use a brief lead-in sentence followed by a numbered list, with each missing "
+        "item on its own line using the field label exactly as provided. Never run multiple missing items together "
+        "into one long unbroken sentence. Semantic fields such as ownership_state and customer_update_commitment "
+        "are instructions, not customer-facing phrases; never repeat their raw values. "
         if account_scope
         else ""
     )
@@ -693,7 +726,7 @@ def render_automation_reply(
             ),
             user_prompt=(
                 "Automation facts (JSON):\n"
-                f"{json.dumps(facts, ensure_ascii=False, sort_keys=True, indent=2)}"
+                f"{json.dumps(_facts_with_readable_missing(facts), ensure_ascii=False, sort_keys=True, indent=2)}"
             ),
             stage="automation_persona",
             validate_response=validate_response,
