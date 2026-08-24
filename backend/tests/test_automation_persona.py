@@ -110,6 +110,49 @@ class AutomationPersonaTests(unittest.TestCase):
                     persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
                 )
 
+    def test_render_rag_fallback_restates_provided_answer_with_policy(self) -> None:
+        facts = {
+            "behavior": "rag_fallback_answer",
+            "reply_intent": "rag_fallback_answer",
+            "provided_answer": "An App ID identifies an Agora project created in Console.",
+            "customer_first_name": "Maya",
+        }
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="I checked this for you: an App ID identifies an Agora project created in Console.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("restate the provided_answer technical content", system_prompt)
+        self.assertIn("Do not invent links", system_prompt)
+        user_prompt = invoke.call_args.kwargs["user_prompt"]
+        self.assertIn("An App ID identifies an Agora project created in Console.", user_prompt)
+        self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
+        self.assertIn("an App ID identifies an Agora project", result.content)
+
+    def test_render_rag_fallback_requires_provided_answer(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile):
+            with self.assertRaisesRegex(
+                AutomationPersonaError, "automation_persona_missing_provided_answer"
+            ):
+                render_automation_reply(
+                    reply_facts={
+                        "behavior": "rag_fallback_answer",
+                        "reply_intent": "rag_fallback_answer",
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+
     def test_final_reply_allows_canonical_feature_label(self) -> None:
         facts = build_automation_reply_facts(
             behavior="enablement", reply_intent="resolution_update",

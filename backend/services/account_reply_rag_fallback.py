@@ -103,12 +103,14 @@ def _format_citations(payload: dict[str, Any]) -> list[str]:
     return references
 
 
-def _append_references(answer: str, references: list[str]) -> str:
+def format_rag_fallback_references(references: list[str] | tuple[str, ...]) -> str:
+    """Render the deterministic References block appended after the persona reply."""
     if not references:
-        return answer
+        return ""
     lines = ["", "References:"]
     lines.extend(f"- {item}" for item in references)
-    return answer + "\n" + "\n".join(lines)
+    return "\n".join(lines)
+
 
 ANSWER = "answer"
 ESCALATE = "escalate"
@@ -119,6 +121,7 @@ class RagFallbackOutcome:
     kind: str  # "answer" | "escalate"
     answer: str = ""
     reason: str = ""
+    references: tuple[str, ...] = ()
 
 
 def rag_fallback_enabled() -> bool:
@@ -186,7 +189,13 @@ def try_rag_fallback_answer(
     answer = _strip_trailing_signature(str(payload.get("answer") or "").strip())
     if decision == "answer" and answer:
         references = _format_citations(payload)
-        return RagFallbackOutcome(kind=ANSWER, answer=_append_references(answer, references))
+        # The answer carries core technical content only; the persona render
+        # voices the customer reply and references are appended afterwards.
+        return RagFallbackOutcome(
+            kind=ANSWER,
+            answer=answer,
+            references=tuple(references),
+        )
     reason = str(payload.get("reason") or "").strip().lower() or "escalated"
     return RagFallbackOutcome(kind=ESCALATE, reason=reason)
 

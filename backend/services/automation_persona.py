@@ -12,6 +12,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+    ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
     ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
     ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
@@ -33,7 +34,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v12"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v13"
 
 _HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 
@@ -694,6 +695,11 @@ def render_automation_reply(
     forbidden_values = [str(value) for value in facts.pop("_forbidden_values", []) if str(value)]
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
+    if (
+        str(facts.get("reply_intent") or "").strip().lower() == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        and not str(facts.get("provided_answer") or "").strip()
+    ):
+        raise AutomationPersonaError("automation_persona_missing_provided_answer")
 
     greeting = f"Hi {customer_first_name(facts.get('customer_first_name'))},"
     ownership_policy = (
@@ -753,6 +759,14 @@ def render_automation_reply(
             "For a completed Detailed Invoice request, explicitly state that the detailed invoice has been "
             "provided - attached to this very message when the facts say attachments are included - and "
             "explain that the ticket is closing. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER:
+        reply_contract_policy = (
+            "For a knowledge-base answer, restate the provided_answer technical content in your own natural "
+            "first-person voice so it reads as your personal reply. Keep every technical fact, instruction, "
+            "and conclusion exactly as provided: do not add, drop, soften, or re-interpret anything technical. "
+            "Do not invent links or citations; the application appends the reference links itself after your "
+            "reply. Do not mention knowledge bases, documentation searches, or where the content came from. "
         )
     validated: dict[str, Any] = {}
 

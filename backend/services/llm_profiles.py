@@ -21,6 +21,7 @@ ENABLEMENT_REPLY_SCENARIO = "enablement_reply"
 ENABLEMENT_COMPLETION_CLASSIFIER_SCENARIO = "enablement_completion_classifier"
 AUTOMATION_PERSONA_SCENARIO = "automation_persona"
 RAG_ANSWER_SCENARIO = "rag_answer"
+RAGFLOW_ANSWER_SCENARIO = "ragflow_answer"
 RAG_SUFFICIENCY_SCENARIO = "rag_sufficiency_judge"
 QUERY_EXPANSION_SCENARIO = "query_expansion"
 RAG_AGENT_PLANNER_SCENARIO = "rag_agent_planner"
@@ -48,6 +49,7 @@ _PROVIDER_FALLBACK_EXCLUDED_SCENARIOS = {
     BENCHMARK_JUDGE_SCENARIO,
     ACCOUNT_ROUTE_SCENARIO,
     AUTOMATION_PERSONA_SCENARIO,
+    RAGFLOW_ANSWER_SCENARIO,
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -449,6 +451,21 @@ def resolve_model_profile(
             max_retries=_safe_int_env_any(("RAG_AGENT_ANSWER_MAX_RETRIES", "RAG_OPENAI_MAX_RETRIES"), 1),
             fallback_models=("gpt-5.4-mini",),
         ))
+    if scenario == RAGFLOW_ANSWER_SCENARIO:
+        # RAGFlow fallback answers for production cases: pinned single model
+        # (mirrors the account-route luna config) with independent knobs so
+        # retuning account_route never silently changes fallback answers.
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("RAGFLOW_ANSWER_MODEL")) or "gpt-5.6-luna",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("RAGFLOW_ANSWER_REASONING_EFFORT")) or "xhigh",
+            temperature=None,
+            timeout_seconds=_safe_positive_float_env("RAGFLOW_ANSWER_TIMEOUT_SECONDS", 120.0),
+            max_retries=1,
+        )
     if scenario == RAG_SUFFICIENCY_SCENARIO:
         _warn_if_deprecated_alias_used("REVIEW_AGENT_POSTCHECK_MODEL", "RAG_SUFFICIENCY_JUDGE_MODEL")
         _warn_if_deprecated_alias_used(

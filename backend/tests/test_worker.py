@@ -3896,15 +3896,23 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertTrue(transition_call.kwargs["transitioned_at"])
         repository.save_account_reply_job.assert_not_called()
 
-    def test_rag_fallback_draft_job_skips_regeneration_and_persona(self) -> None:
+    def test_rag_fallback_job_renders_through_persona(self) -> None:
         job = {
             "job_id": "account-reply-rag-fallback",
             "ticket_id": "TK-RAG-FALLBACK",
             "trigger_message_created_at": "2026-08-23T00:00:00+00:00",
             "status": "preparing",
+            "claimed_at": "2026-08-23T00:00:01+00:00",
+            "attempt_count": 0,
             "payload": {
-                "draft_content": "An App ID identifies your Agora project.",
                 "reply_intent": "rag_fallback_answer",
+                "reply_pipeline": "automation_persona_v8",
+                "reply_facts": {
+                    "behavior": "rag_fallback_answer",
+                    "reply_intent": "rag_fallback_answer",
+                    "provided_answer": "An App ID identifies your Agora project.",
+                    "references": ["https://docs.agora.io/en/get-started"],
+                },
             },
         }
         ticket = {
@@ -3920,36 +3928,61 @@ class WorkerResilienceTests(unittest.TestCase):
         repository = Mock()
         repository.get_account_reply_job.return_value = job
         repository.get_ticket.return_value = ticket
+        repository.resolve_account_persona_for_claimed_reply.return_value = {
+            "persona_key": "default-support",
+            "version": 1,
+            "content": {"instruction": "Answer warmly and precisely."},
+        }
+        rendered = Mock(
+            content="Hi Customer,\n\nAn App ID identifies your Agora project.",
+            model="gpt-5.4-mini",
+            prompt_version="automation-persona-v13",
+        )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "resolve_support_message"
-        ) as resolve, patch.object(worker, "render_automation_reply") as render:
+        ) as resolve, patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ) as render:
             worker._prepare_account_reply_job(job)
 
-        # The RAG fallback answer is final content: neither the legacy
-        # re-generation path nor the automation persona may touch it.
+        # The RAGFlow answer enters the persona pipeline as provided_answer
+        # facts; the legacy regeneration path must not run.
         resolve.assert_not_called()
-        render.assert_not_called()
-        self.assertEqual(job["status"], "scheduled")
+        render.assert_called_once()
         self.assertEqual(
-            job["payload"]["draft_content"],
+            render.call_args.kwargs["reply_facts"]["provided_answer"],
             "An App ID identifies your Agora project.",
         )
+        self.assertEqual(job["status"], "persona_v8_scheduled")
+        self.assertEqual(
+            job["payload"]["generated_content"],
+            "Hi Customer,\n\nAn App ID identifies your Agora project.",
+        )
         self.assertEqual(job["payload"]["reply_intent"], "rag_fallback_answer")
-        repository.save_billing_ticket.assert_not_called()
-        repository.record_event.assert_not_called()
-        render.assert_not_called()
         repository.publish_account_reply.assert_not_called()
 
-    def test_rag_fallback_draft_job_publishes_verbatim(self) -> None:
+    def test_rag_fallback_publish_appends_references_after_persona_content(self) -> None:
         job = {
             "job_id": "account-reply-rag-fallback-publish",
             "ticket_id": "TK-RAG-FALLBACK-PUB",
             "trigger_message_created_at": "2026-08-23T00:00:00+00:00",
             "status": "publishing",
             "payload": {
-                "draft_content": "You can find the App ID on the Projects page in Agora Console.",
                 "reply_intent": "rag_fallback_answer",
+                "reply_pipeline": "automation_persona_v8",
+                "generated_content": "Hi Customer,\n\nYou can find the App ID on the Projects page in Agora Console.",
+                "persona_render_status": "generated",
+                "persona_prompt_version": "automation-persona-v13",
+                "reply_facts": {
+                    "behavior": "rag_fallback_answer",
+                    "reply_intent": "rag_fallback_answer",
+                    "provided_answer": "You can find the App ID on the Projects page in Agora Console.",
+                    "references": [
+                        "https://docs.agora.io/en/get-started/manage-agora-account",
+                        "https://api-ref.agora.io/cpp",
+                    ],
+                },
             },
         }
         ticket = {
@@ -3976,14 +4009,16 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as deliver:
             worker._publish_account_reply_job(job)
 
-        # The RAG answer must be published verbatim: no persona render, no
-        # rewrite, no contract re-validation.
+        # The persona body publishes with the reference links appended
+        # deterministically; no re-render for a current-version payload.
         render.assert_not_called()
         repository.publish_account_reply.assert_called_once()
         publish_call = repository.publish_account_reply.call_args
         self.assertEqual(
             publish_call.kwargs["content"],
-            "You can find the App ID on the Projects page in Agora Console.",
+            "Hi Customer,\n\nYou can find the App ID on the Projects page in Agora Console."
+            "\n\nReferences:\n- https://docs.agora.io/en/get-started/manage-agora-account"
+            "\n- https://api-ref.agora.io/cpp",
         )
         deliver.assert_called_once()
         self.assertEqual(

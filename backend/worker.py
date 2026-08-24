@@ -86,6 +86,7 @@ from backend.services.account_human_review_escalation import (
     escalate_account_case_to_human_review,
     reconcile_account_human_review_queue_mismatches,
 )
+from backend.services.account_reply_rag_fallback import format_rag_fallback_references
 from backend.services.zendesk_comments import (
     ZendeskCommentError,
     add_ticket_comment,
@@ -738,21 +739,6 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
         except AutomationPersonaError as exc:
             _move_invalid_account_reply_to_human_review(job, ticket, exc)
             return
-        if (
-            str(payload.get("reply_intent") or "").strip() == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
-            and str(payload.get("draft_content") or "").strip()
-        ):
-            # The RAG fallback answer is final content: route it straight to
-            # publication, bypassing the legacy re-generation path and the
-            # automation persona render. Normalization above attaches a
-            # synthetic reply_facts entry for any intent; drop it so the
-            # publish stage also skips persona rendering and contract checks.
-            payload.pop("reply_facts", None)
-            job["payload"] = payload
-            job["status"] = "scheduled"
-            job["updated_at"] = now_iso()
-            _update_claimed_account_reply_job(job, expected_status=claimed_status)
-            return
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
         if payload.get("reply_pipeline") not in {
             None,
@@ -992,14 +978,19 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         _cancel_stale_account_reply_job(current_job, expected_status=claimed_status)
         return
 
+    rag_facts = payload.get("reply_facts") if isinstance(payload.get("reply_facts"), dict) else {}
+    legacy_rag_draft = (
+        str(payload.get("reply_intent") or "").strip() == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        and not str(rag_facts.get("provided_answer") or "").strip()
+    )
     if (
         existing_message is None
-        # RAG fallback answers publish their draft verbatim: normalization
-        # would attach synthetic reply_facts and push the job into the
-        # persona render and reply-contract validation below.
-        and str(payload.get("reply_intent") or "").strip() != ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        # Legacy draft-only rag_fallback jobs still publish verbatim:
+        # normalization would attach synthetic intent-only facts and push them
+        # into the persona render, which rejects them for missing facts.
+        and not legacy_rag_draft
         and (
-            (isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"))
+            rag_facts
             or payload.get("reply_intent")
             or payload.get("close_after_publish")
         )
@@ -1107,6 +1098,17 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 AutomationPersonaError("automation_persona_empty_response"),
             )
             return
+        # RAGFlow fallback replies append the reference links deterministically
+        # after the persona body so the links survive the persona rendering.
+        rag_references = []
+        if isinstance(payload.get("reply_facts"), dict):
+            rag_references = [
+                str(item).strip()
+                for item in (payload["reply_facts"].get("references") or [])
+                if str(item).strip()
+            ]
+        if rag_references:
+            content = f"{content}\n{format_rag_fallback_references(rag_references)}"
 
     published_at = str((existing_message or {}).get("created_at") or now_iso())
     billing_ticket = ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)

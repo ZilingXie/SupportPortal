@@ -215,10 +215,19 @@ def create_account_reply_job(
         ),
         "visibility": "account_only",
     }
-    if normalized_facts and canonical_intent != ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER:
-        # RAG fallback answers publish their draft verbatim: attaching the
-        # synthetic intent-only facts here would push the job into the persona
-        # pipeline state machine, whose contract checks reject it.
+    rag_fallback_without_provided_answer = (
+        canonical_intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        and not str((normalized_facts or {}).get("provided_answer") or "").strip()
+    )
+    if normalized_facts and not rag_fallback_without_provided_answer:
+        # Legacy rag_fallback jobs (draft-only, no provided_answer fact) keep
+        # publishing verbatim; intent-only synthetic facts must not enter the
+        # persona pipeline state machine.
+        if canonical_intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER:
+            references = normalized_facts.get("references")
+            normalized_facts["references"] = [
+                str(item).strip() for item in references if str(item).strip()
+            ] if isinstance(references, list) else []
         payload["reply_facts"] = normalized_facts
         payload["reply_pipeline"] = ACCOUNT_REPLY_PERSONA_PIPELINE
     if persona_assignment:

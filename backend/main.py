@@ -10818,11 +10818,17 @@ async def _process_account_customer_reply_impl(
                     _create_account_reply_job,
                     ticket_id=client_ticket_id,
                     trigger_message_created_at=timestamp,
-                    draft_content=fallback.answer,
-                    # The RAG answer is final content: the intent routes the
-                    # job past the legacy re-generation path and the persona
-                    # render so draft_content is published verbatim.
+                    # The RAGFlow answer is core technical content: the persona
+                    # render voices the customer reply and the references are
+                    # appended deterministically before publication.
                     reply_intent=ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+                    reply_facts={
+                        "behavior": "rag_fallback_answer",
+                        "reply_intent": ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+                        "provided_answer": fallback.answer,
+                        "references": list(fallback.references),
+                        "customer_first_name": str(canonical_ticket.get("requester") or "").strip(),
+                    },
                 )
             except Exception as exc:
                 billing_ticket = await _record_account_reply_job_failure(
