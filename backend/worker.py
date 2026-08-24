@@ -2867,6 +2867,13 @@ def handle_billing_request_reply(reply: Any) -> str:
             return _dismiss_cross_environment_reply(
                 reply_key, owner_token, client_ticket_id, "billing_ticket_not_found"
             )
+        if not is_registered_automation(
+            route_family=billing_ticket.get("route_family"),
+            execution_action=billing_ticket.get("execution_action") or billing_ticket.get("route"),
+        ):
+            return _dismiss_cross_environment_reply(
+                reply_key, owner_token, client_ticket_id, "inactive_automation"
+            )
         canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
         if canonical_ticket is None:
             return _dismiss_cross_environment_reply(

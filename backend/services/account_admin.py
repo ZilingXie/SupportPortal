@@ -19,7 +19,11 @@ from backend.services.prompts.account_routing import (
     build_account_backend_operation_system_prompt,
     build_account_intent_system_prompt,
 )
-from backend.services.automation_routing import automation_metadata
+from backend.services.automation_routing import (
+    AUTOMATED_ROUTE_FAMILY,
+    automation_metadata,
+    is_registered_automation,
+)
 
 
 ROUTER_PROMPT_VERSION = ACCOUNT_ROUTE_PIPELINE_VERSION
@@ -306,23 +310,31 @@ def environment_config_entries(env_path: Path, *, required: bool = False) -> lis
 def _is_automated(ticket: dict[str, Any]) -> bool:
     # Legacy billing rows may only carry automation_status. Preserve that
     # compatibility signal before normalized route_status defaults to false.
-    if not ticket.get("route_family") and str(
+    legacy_automated = not ticket.get("route_family") and str(
         ticket.get("automation_status") or ticket.get("status") or ""
-    ).strip().lower() in {"automation", "automated"}:
-        return True
+    ).strip().lower() in {"automation", "automated"}
+    execution_action = (
+        ticket.get("execution_action")
+        or ticket.get("route")
+        or ticket.get("subcategory")
+    )
     route_status = str(ticket.get("route_status") or "").strip().lower()
     if route_status:
-        return route_status == "automated"
+        if route_status != "automated":
+            return False
+        return is_registered_automation(
+            route_family=ticket.get("route_family") or AUTOMATED_ROUTE_FAMILY,
+            execution_action=execution_action,
+        )
     metadata = automation_metadata(
         route_family=ticket.get("route_family"),
-        execution_action=ticket.get("execution_action") or ticket.get("route"),
+        execution_action=execution_action,
     )
     if metadata["route_status"] == "automated":
         return True
-    return (
-        not ticket.get("route_family")
-        and str(ticket.get("automation_status") or ticket.get("status") or "").strip().lower()
-        in {"automation", "automated"}
+    return legacy_automated and is_registered_automation(
+        route_family=AUTOMATED_ROUTE_FAMILY,
+        execution_action=execution_action,
     )
 
 
@@ -631,7 +643,7 @@ def routing_config_payload() -> dict[str, Any]:
             "handler_modes": {
                 "account_suspension": "classification_only",
                 "fraud_account": "billing",
-                "detailed_invoice": "billing",
+                "detailed_invoice": "classification_only",
                 "other": "none",
             },
         },

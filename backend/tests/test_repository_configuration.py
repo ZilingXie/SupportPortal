@@ -436,11 +436,11 @@ class RepositoryConfigurationTests(unittest.TestCase):
         sql_text = _account_case_filter_memberships_sql("bt").as_string()
         for child in (
             "automation:fraud_account",
-            "automation:detailed_invoice",
             "automation:enablement",
             "automation:quota",
         ):
             self.assertIn(child, sql_text)
+        self.assertNotIn("automation:detailed_invoice", sql_text)
         self.assertIn("'account_billing:fraud_account'", sql_text)
         self.assertIn("'backend_operation:quota'", sql_text)
         self.assertIn("NULLIF(BTRIM", sql_text)

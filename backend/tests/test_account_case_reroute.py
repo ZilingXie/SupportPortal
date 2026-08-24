@@ -16,10 +16,7 @@ def _route_result(
     agora_route: str = "account_billing",
 ) -> AccountRouteResult:
     is_backend_automation = agora_route == "backend_operation" and action in {"enablement", "quota"}
-    is_account_billing_automation = agora_route == "account_billing" and action in {
-        "fraud_account",
-        "detailed_invoice",
-    }
+    is_account_billing_automation = agora_route == "account_billing" and action == "fraud_account"
     decision_action = action if is_backend_automation or is_account_billing_automation else "human_review_required"
     decision_scope = action if is_backend_automation else "account_billing" if agora_route == "account_billing" else "backend_operation"
     decision_family = "automated" if is_backend_automation or is_account_billing_automation else "human_review"
@@ -210,29 +207,46 @@ class AccountCaseRerouteTests(unittest.TestCase):
         self.assertEqual(result.account_case["automation_status"], "not_automated")
 
     def test_account_billing_automation_keeps_domain_category_and_handler(self) -> None:
-        for action in ("detailed_invoice", "fraud_account"):
-            with self.subTest(action=action):
-                result = reroute_account_case(
-                    {
-                        "account_case_id": "AC-1",
-                        "billing_ticket_id": "AC-1",
-                        "client_ticket_id": "1",
-                        "title": action,
-                        "question": f"Please process {action}.",
-                    },
-                    route_agent=Mock(
-                        return_value=_route_result(action=action, agora_route="account_billing")
-                    ),
-                )
+        result = reroute_account_case(
+            {
+                "account_case_id": "AC-1",
+                "billing_ticket_id": "AC-1",
+                "client_ticket_id": "1",
+                "title": "fraud_account",
+                "question": "Please process fraud_account.",
+            },
+            route_agent=Mock(
+                return_value=_route_result(action="fraud_account", agora_route="account_billing")
+            ),
+        )
 
-                self.assertEqual(result.account_case["category"], "account_billing")
-                self.assertEqual(result.account_case["subcategory"], action)
-                self.assertEqual(result.account_case["route_status"], "automated")
-                self.assertEqual(result.account_case["automation_handler"], "billing")
-                self.assertEqual(
-                    result.account_case["route_classification"]["secondary_label"],
-                    f"Account & Billing / {action.replace('_', ' ').title()}",
-                )
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "fraud_account")
+        self.assertEqual(result.account_case["route_status"], "automated")
+        self.assertEqual(result.account_case["automation_handler"], "billing")
+
+    def test_detailed_invoice_reroute_keeps_classification_without_handler(self) -> None:
+        result = reroute_account_case(
+            {
+                "account_case_id": "AC-1",
+                "billing_ticket_id": "AC-1",
+                "client_ticket_id": "1",
+                "title": "detailed_invoice",
+                "question": "Please process detailed_invoice.",
+            },
+            route_agent=Mock(
+                return_value=_route_result(action="detailed_invoice", agora_route="account_billing")
+            ),
+        )
+
+        self.assertEqual(result.account_case["category"], "account_billing")
+        self.assertEqual(result.account_case["subcategory"], "detailed_invoice")
+        self.assertEqual(result.account_case["route_status"], "not_automated")
+        self.assertIsNone(result.account_case["automation_handler"])
+        self.assertEqual(
+            result.account_case["route_classification"]["secondary_label"],
+            "Account & Billing / Detailed Invoice",
+        )
 
     def test_backend_operation_handlers_are_automated_and_unregistered_is_human_review(self) -> None:
         for action in ("enablement", "quota"):

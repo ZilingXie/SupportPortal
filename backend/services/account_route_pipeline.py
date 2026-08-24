@@ -1649,9 +1649,11 @@ def decide_account_route(
             subcategory == "account_suspension" and bool(billing_additional_intents)
         )
         automation_bound = (
-            subcategory == "fraud_account"
-            or subcategory == "detailed_invoice"
-            or (subcategory == "account_suspension" and not suspension_has_additional_intents)
+            is_registered_automation(
+                route_family=AUTOMATED_ROUTE_FAMILY,
+                execution_action=subcategory,
+            )
+            and not suspension_has_additional_intents
         )
         classification.update(
             account_billing_subcategory=subcategory,
