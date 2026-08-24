@@ -173,6 +173,7 @@ def _build_billing_attempt(
     customer_email: str | None,
     requester: str | None,
     zendesk_ticket_url: str | None,
+    already_requested_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     result = build_billing_automation_result(
         action=action,
@@ -182,6 +183,7 @@ def _build_billing_attempt(
         requester=requester,
         billing_ticket_id=billing_ticket_id,
         zendesk_ticket_url=zendesk_ticket_url,
+        already_requested_fields=already_requested_fields,
         use_llm_field_extractor=True,
         generate_customer_reply=False,
     )
@@ -207,6 +209,8 @@ def _build_verification_attempt(
     account_case_id: str,
     customer_email: str | None,
     zendesk_ticket_url: str | None,
+    existing_fields: dict[str, Any] | None = None,
+    follow_up_count: int = 0,
 ) -> dict[str, Any]:
     result = build_account_verification_automation_result(
         ticket_subject=ticket_subject,
@@ -214,6 +218,8 @@ def _build_verification_attempt(
         ticket_id=ticket_id,
         account_case_id=account_case_id,
         customer_email=customer_email,
+        existing_fields=existing_fields,
+        follow_up_count=follow_up_count,
         zendesk_ticket_url=zendesk_ticket_url,
     )
     to_send = dict(result.internal_email) if result.internal_email else None
@@ -240,10 +246,13 @@ def _build_enablement_attempt(
     account_case_id: str,
     customer_email: str | None,
     zendesk_ticket_url: str | None,
+    existing_fields: dict[str, Any] | None = None,
+    already_requested_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     extraction = extract_enablement_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
+        existing_fields=existing_fields,
     )
     if extraction.requires_human_review:
         return {
