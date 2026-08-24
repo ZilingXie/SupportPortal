@@ -208,15 +208,20 @@ class RagFallbackAnswerTest(unittest.TestCase):
         outcome = try_rag_fallback_answer(question="what is appid", request_id="req-c", client=client)
         self.assertEqual(outcome.answer, "App ID is the application identifier.")
         self.assertEqual(
-            outcome.references.count("get-started-sdk"), 1
+            sum(1 for item in outcome.references if "get-started-sdk" in item), 1
         )  # dedup by URL
-        self.assertIn(
-            "Quickstart > Initialize the engine — https://docs.agora.io/en/voice-calling/get-started/get-started-sdk",
-            outcome.references,
+        self.assertTrue(
+            any(
+                "Quickstart > Initialize the engine — https://docs.agora.io/en/voice-calling/get-started/get-started-sdk"
+                in item
+                for item in outcome.references
+            )
         )
-        self.assertIn(
-            "https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk",
-            outcome.references,
+        self.assertTrue(
+            any(
+                "https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk" in item
+                for item in outcome.references
+            )
         )
         rendered = format_rag_fallback_references(outcome.references)
         self.assertIn("References:", rendered)
