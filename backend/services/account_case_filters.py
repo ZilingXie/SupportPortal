@@ -345,7 +345,6 @@ def account_case_filter_memberships(item: dict[str, Any]) -> frozenset[str]:
     route_family = str(item.get("route_family") or "").strip().lower()
     automation_child_by_primary = {
         "account_billing:fraud_account": "fraud_account",
-        "account_billing:detailed_invoice": "detailed_invoice",
         "backend_operation:enablement": "enablement",
         "backend_operation:quota": "quota",
     }

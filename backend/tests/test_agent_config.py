@@ -60,6 +60,21 @@ class AgentConfigTests(unittest.TestCase):
             self.assertEqual(persona["versions"][0]["content"]["opener"], "")
             self.assertEqual(set(persona["versions"][0]["content"]), {"instruction", "opener"})
 
+    def test_detailed_invoice_is_classification_only_and_not_an_automation_workflow(self) -> None:
+        payload = build_agent_config_payload([])
+        route_navigation = payload["route_navigation"]
+
+        detailed_invoice = self._navigation_node(route_navigation, "detailed-invoice")
+
+        self.assertEqual(detailed_invoice["kind"], "classification")
+        self.assertEqual(detailed_invoice["workflow"]["route_family"], "human_review")
+        self.assertEqual(detailed_invoice["workflow"]["status"], "classification_only")
+        self.assertIsNone(detailed_invoice["workflow"]["automation_handler"])
+        self.assertNotIn(
+            "detailed_invoice",
+            {item["subcategory"] for item in payload["automation_workflows"]},
+        )
+
     def test_catalog_exposes_prompt_skill_and_empty_mcp_contracts(self) -> None:
         payload = build_agent_config_payload([])
         agents = {agent["key"]: agent for agent in payload["agents"]}
@@ -149,7 +164,7 @@ class AgentConfigTests(unittest.TestCase):
             [item["key"] for item in automation["children"]],
             ["enablement", "quota", "unregistered"],
         )
-        self.assertIn("four registered Automation outcomes", automation["description"])
+        self.assertIn("three registered Automation outcomes", automation["description"])
         unregistered = self._navigation_node(route_navigation, "unregistered")
         self.assertEqual(unregistered["workflow"]["status"], "fallback")
         self.assertIn("not a registered Automation or Human Review filter member", unregistered["description"])
@@ -169,14 +184,18 @@ class AgentConfigTests(unittest.TestCase):
         self.assertFalse(any("persona" in child for child in automation["children"]))
         fraud = self._navigation_node(route_navigation, "fraud-account")
         self.assertEqual(fraud["prompt_keys"], ["account-verification-field-extractor-system"])
-        self.assertEqual(len(payload["automation_workflows"]), 5)
+        detailed_invoice = self._navigation_node(route_navigation, "detailed-invoice")
+        self.assertEqual(detailed_invoice["kind"], "classification")
+        self.assertEqual(detailed_invoice["workflow"]["status"], "classification_only")
+        self.assertIsNone(detailed_invoice["workflow"]["automation_handler"])
+        self.assertEqual(len(payload["automation_workflows"]), 4)
         self.assertEqual(
             [item["subcategory"] for item in payload["automation_workflows"]],
-            ["fraud_account", "detailed_invoice", "enablement", "quota", "unregistered"],
+            ["fraud_account", "enablement", "quota", "unregistered"],
         )
         self.assertEqual(
             [item["status"] for item in payload["automation_workflows"]],
-            ["registered", "registered", "registered", "registered", "fallback"],
+            ["registered", "registered", "registered", "fallback"],
         )
         self.assertTrue(payload["route_runtime"]["router_prompt_version"])
         self.assertTrue(payload["route_runtime"]["stage_details"])

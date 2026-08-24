@@ -26,7 +26,7 @@ class AutomationRoutingTests(unittest.TestCase):
             ),
         )
 
-    def test_only_active_billing_subcategory_receives_automation_metadata(self) -> None:
+    def test_detailed_invoice_remains_registered_but_not_active(self) -> None:
         self.assertEqual(
             automation_metadata(
                 route_family="automated",
@@ -45,10 +45,10 @@ class AutomationRoutingTests(unittest.TestCase):
                 execution_action="detailed_invoice",
             ),
             {
-                "category": "automation",
+                "category": None,
                 "subcategory": "detailed_invoice",
-                "route_status": "automated",
-                "automation_handler": "billing",
+                "route_status": "not_automated",
+                "automation_handler": None,
             },
         )
         metadata = automation_metadata(
@@ -99,14 +99,14 @@ class AutomationRoutingTests(unittest.TestCase):
             },
         )
 
-    def test_legacy_billing_route_automates_detailed_invoice(self) -> None:
+    def test_legacy_billing_route_does_not_activate_detailed_invoice(self) -> None:
         metadata = automation_metadata(
             route_family="billing_automation",
             execution_action="detailed_invoice",
         )
 
-        self.assertEqual(metadata["route_status"], "automated")
-        self.assertEqual(metadata["automation_handler"], "billing")
+        self.assertEqual(metadata["route_status"], "not_automated")
+        self.assertIsNone(metadata["automation_handler"])
 
     def test_unknown_subcategory_fails_closed(self) -> None:
         self.assertFalse(

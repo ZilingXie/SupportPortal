@@ -2687,6 +2687,8 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "record_billing_request_reply",
         ) as record_mock, patch.object(
+            worker, "is_registered_automation", return_value=True,
+        ), patch.object(
             worker, "_render_case_persona_reply", return_value="Hi Customer,\n\nThe detailed invoice is ready.\n\nBest,\nSid"
         ):
             handled = worker.handle_billing_request_reply(reply)
@@ -2727,6 +2729,42 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_ticket.assert_not_called()
         repository.save_billing_ticket.assert_not_called()
         repository.record_event.assert_not_called()
+
+    def test_inactive_detailed_invoice_reply_is_dismissed_before_side_effects(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.dismiss_automation_reply_claim.return_value = True
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "BT-INACTIVE-INVOICE",
+            "client_ticket_id": "TK-INACTIVE-INVOICE",
+            "route_family": "automated",
+            "execution_action": "detailed_invoice",
+        }
+        reply = types.SimpleNamespace(
+            message_id="inactive-invoice-reply",
+            subject="Re: [Billing Request] Detailed invoice - Ticket TK-INACTIVE-INVOICE",
+            body_text="The detailed invoice is attached.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "record_billing_request_reply"
+        ), patch.object(
+            worker, "_store_billing_reply_pdf_attachments", return_value=([], [])
+        ) as store_attachments, patch.object(
+            worker, "_queue_billing_completion_reply_job", return_value="completed"
+        ) as queue_reply_job:
+            handled = worker.handle_billing_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        repository.dismiss_automation_reply_claim.assert_called_once()
+        self.assertEqual(
+            repository.dismiss_automation_reply_claim.call_args.kwargs["reason"],
+            "inactive_automation",
+        )
+        repository.get_ticket.assert_not_called()
+        store_attachments.assert_not_called()
+        queue_reply_job.assert_not_called()
+        repository.commit_automation_reply_result.assert_not_called()
 
     def test_enablement_resolution_reply_uses_canonical_feature_key(self) -> None:
         repository = Mock()
@@ -3408,7 +3446,9 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
             "record_billing_request_reply",
-        ) as record_mock:
+        ) as record_mock, patch.object(
+            worker, "is_registered_automation", return_value=True,
+        ):
             with self.assertRaisesRegex(ValueError, "body is empty"):
                 worker.handle_billing_request_reply(reply)
 
@@ -3454,6 +3494,8 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "record_billing_request_reply",
         ) as record_mock, patch.object(
+            worker, "is_registered_automation", return_value=True,
+        ), patch.object(
             worker, "_render_case_persona_reply", return_value="Hi Customer,\n\nThe detailed invoice is ready.\n\nBest,\nSid"
         ):
             worker.handle_billing_request_reply(reply)
@@ -3528,6 +3570,8 @@ class WorkerResilienceTests(unittest.TestCase):
             worker,
             "record_billing_request_reply",
         ) as record_mock, patch.object(
+            worker, "is_registered_automation", return_value=True,
+        ), patch.object(
             worker, "_render_case_persona_reply",
             return_value="Hi Customer,\n\nThe attached invoice is ready.\n\nBest,\nSid",
         ), patch.object(
@@ -3629,6 +3673,8 @@ class WorkerResilienceTests(unittest.TestCase):
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker, "record_billing_request_reply"
+        ), patch.object(
+            worker, "is_registered_automation", return_value=True,
         ), patch.object(
             worker, "_render_case_persona_reply"
         ) as render_inline, patch.object(
@@ -4339,7 +4385,11 @@ class WorkerResilienceTests(unittest.TestCase):
 
                 with patch.object(worker, "ticket_repository", repository), patch.object(
                     worker, "record_billing_request_reply"
-                ), patch.object(worker, "render_automation_reply") as render, patch.object(
+                ), patch.object(
+                    worker, "is_registered_automation", return_value=True,
+                ) as is_registered, patch.object(
+                    worker, "render_automation_reply"
+                ) as render, patch.object(
                     worker,
                     "classify_enablement_completion",
                     return_value=_classifier_regex_fallback(),
@@ -4365,6 +4415,10 @@ class WorkerResilienceTests(unittest.TestCase):
                 )
                 self.assertEqual(updates["route_classification"]["handler_binding_status"], "human_review")
                 self.assertEqual(updates["route_classification"]["automation_subcategory"], account_case["execution_action"])
+                if handler == "billing":
+                    is_registered.assert_called_once()
+                else:
+                    is_registered.assert_not_called()
                 render.assert_not_called()
 
     def test_internal_followups_persona_render_failure_persist_generic_human_review(self) -> None:
