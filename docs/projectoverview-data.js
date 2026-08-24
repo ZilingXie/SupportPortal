@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:00:50Z",
-  "source_base_commit": "b27d4ce9217557749791b27609ae3ce2f275397f",
-  "registry_digest": "619dea07b562fcfd75dbdd4f38395f00d4f08803ab929180cf3c6dbab266d96f",
+  "generated_at": "2026-08-24T12:01:14Z",
+  "source_base_commit": "eeb636c8fb59b31a619312149dbd5ba5677e9733",
+  "registry_digest": "b22a61b5c01d0db69e8b78513f68d39820b9f5e77b7bf2216682fd5912eced62",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -972,6 +972,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account Human Review queue handoff regression",
           "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
           "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
+        },
+        {
+          "type": "test",
+          "label": "Human Review queue mismatch reconciliation",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
+          "details": "297 passed；覆盖旧 worker manual_attention 漏接、Production bounded reconciliation、staging/no-side-effect、AI ownership guard 和 handoff 终态幂等。"
         },
         {
           "type": "pr",
@@ -3245,6 +3251,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
         },
         {
+          "type": "test",
+          "label": "Human Review queue mismatch reconciliation",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
+          "details": "297 passed；覆盖旧 worker manual_attention 漏接、Production bounded reconciliation、staging/no-side-effect、AI ownership guard 和 handoff 终态幂等。"
+        },
+        {
           "type": "pr",
           "number": 744,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
@@ -3276,6 +3288,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "account_human_review_queue_handoff",
           "summary": "四类 active Account automation fallback 统一进入 Human Review：Production 写 private internal note、route back 原始 Zendesk queue、释放 AI ownership、取消 pending reply jobs 并保留 alert/audit；staging/preproduction 仅本地状态。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "account_human_review_queue_mismatch_reconciliation",
+          "summary": "修复 reply worker 直接写 manual_attention 的 prepare/publish 分支，并在 Account poller 增加 bounded Production reconciliation，处理 automation_status=human_review_required 且 route_status=automated、仍由 AI 持有的历史 case；queued/already_human_owned/outcome_unknown 不重复写 Zendesk。"
         }
       ],
       "legacy_refs": [

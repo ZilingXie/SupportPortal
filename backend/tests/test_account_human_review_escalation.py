@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from backend.services.account_human_review_escalation import (
     escalate_account_case_to_human_review,
+    reconcile_account_human_review_queue_mismatches,
 )
 from backend.services.zendesk_comments import ZendeskCommentError
 
@@ -149,6 +150,80 @@ class AccountHumanReviewEscalationTests(unittest.TestCase):
         self.assertEqual(second.internal_note_status, "outcome_unknown")
         add_comment.assert_not_called()
         self.assertEqual(route.call_count, 2)
+
+    @patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue")
+    @patch("backend.services.account_human_review_escalation.add_ticket_comment")
+    @patch("backend.services.account_human_review_escalation.read_ticket_comment_audit")
+    def test_reconciliation_repairs_human_review_automated_mismatch(
+        self, audit, add_comment, route
+    ) -> None:
+        audit.return_value = (None, False)
+        add_comment.return_value = SimpleNamespace(comment_id="reconciled-note")
+        route.return_value = SimpleNamespace(status="queued")
+        self.repository.list_account_cases.return_value = [
+            {
+                **self.case,
+                "automation_status": "human_review_required",
+                "route_status": "automated",
+                "failure_stage": "reply_prepare",
+                "failure_code": "account_reply_preparation_failed",
+                "automation_context": {
+                    "zendesk_ownership": {
+                        **self.case["automation_context"]["zendesk_ownership"],
+                        "state": "assigned",
+                    }
+                },
+            }
+        ]
+
+        results = reconcile_account_human_review_queue_mismatches(
+            repository=self.repository,
+            processing_profile="production",
+            timestamp="2026-08-24T00:00:00+00:00",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].route_back_status, "queued")
+        self.repository.list_account_cases.assert_called_once_with(
+            limit=25,
+            route_status="automated",
+            processing_profile="production",
+        )
+        route.assert_called_once_with(ticket_id="123", source_group_id="2721")
+
+    @patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue")
+    @patch("backend.services.account_human_review_escalation.add_ticket_comment")
+    def test_reconciliation_skips_staging_and_non_ai_owned_cases(self, add_comment, route) -> None:
+        self.repository.list_account_cases.return_value = [
+            {**self.case, "automation_status": "human_review_required", "route_status": "automated"},
+            {
+                **self.case,
+                "automation_status": "human_review_required",
+                "route_status": "automated",
+                "automation_context": {
+                    "zendesk_ownership": {"state": "released_to_queue"}
+                },
+            },
+        ]
+
+        self.assertEqual(
+            reconcile_account_human_review_queue_mismatches(
+                repository=self.repository,
+                processing_profile="staging",
+            ),
+            [],
+        )
+        # Production scan is allowed, but only the assigned case is eligible.
+        self.repository.list_account_cases.return_value = self.repository.list_account_cases.return_value[1:]
+        self.assertEqual(
+            reconcile_account_human_review_queue_mismatches(
+                repository=self.repository,
+                processing_profile="production",
+            ),
+            [],
+        )
+        add_comment.assert_not_called()
+        route.assert_not_called()
 
 
 if __name__ == "__main__":
