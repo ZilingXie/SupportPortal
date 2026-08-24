@@ -326,6 +326,8 @@ class RagQueryTrace:
     packed_context_token_estimate: int = 0
     compression_triggered: bool = False
     compression_trigger_reason: str | None = None
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
     compression_mode: str | None = None
     compression_model: str | None = None
     extractive_segment_count: int = 0
@@ -7412,7 +7414,7 @@ def _invoke_llm_payload_with_trace(
     ticket_id: str | None = None,
     customer_id: str | None = None,
     kg_facts_context_block: str | None = None,
-) -> tuple[dict[str, Any] | None, int, int, str | None]:
+) -> tuple[dict[str, Any] | None, int, int, str | None, int, int]:
     query_class_label = str(query_class or "").strip() or None
     preferred_code_language: str | None = None
     supported_code_languages: tuple[str, ...] | None = None
@@ -7453,12 +7455,19 @@ def _invoke_llm_payload_with_trace(
             user_prompt=prompt,
         )
     except LlmInvocationError:
-        return None, 0, 0, None
+        return None, 0, 0, None, 0, 0
     payload = _extract_json_payload(response.text)
     if payload is not None:
         model_label = response.provider_model_name if response.provider_name != "openai" else response.model_name
-        return payload, response.prompt_tokens, response.completion_tokens, model_label
-    return None, 0, 0, None
+        return (
+            payload,
+            response.prompt_tokens,
+            response.completion_tokens,
+            model_label,
+            response.cached_input_tokens,
+            response.reasoning_tokens,
+        )
+    return None, 0, 0, None, 0, 0
 
 
 def _confidence_from_chunks(chunks: list[RetrievedChunk]) -> float:
@@ -7876,6 +7885,8 @@ def _run_rag_query_legacy(
     rerank_latency_ms = 0.0
     prompt_tokens = 0
     completion_tokens = 0
+    cached_input_tokens = 0
+    reasoning_tokens = 0
     model_name: str | None = None
     structured_retry_used = False
     generation_mode = "structured_answer"
@@ -8398,7 +8409,7 @@ def _run_rag_query_legacy(
         legacy_kg_facts_context_block = format_kg_facts_context_block(
             legacy_kg_facts_result.facts
         )
-        payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
+        payload, prompt_tokens, completion_tokens, model_name, cached_input_tokens, reasoning_tokens = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
             generation_config,
@@ -8416,7 +8427,7 @@ def _run_rag_query_legacy(
         )
         if retry_required:
             structured_retry_used = True
-            retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+            retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name, retry_cached_tokens, retry_reasoning_tokens = _invoke_llm_payload_with_trace(
                 effective_question,
                 final_chunks,
                 generation_config,
@@ -8429,6 +8440,8 @@ def _run_rag_query_legacy(
             )
             prompt_tokens += retry_prompt_tokens
             completion_tokens += retry_completion_tokens
+            cached_input_tokens += retry_cached_tokens
+            reasoning_tokens += retry_reasoning_tokens
             model_name = retry_model_name or model_name
             payload = retry_payload
         generation_latency_ms = round((time.perf_counter() - generation_started_at) * 1000, 2)
@@ -8483,6 +8496,8 @@ def _run_rag_query_legacy(
             total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cached_input_tokens=cached_input_tokens,
+            reasoning_tokens=reasoning_tokens,
             embedding_tokens=_estimate_embedding_tokens(effective_question),
             embedding_provider=config["embedding_provider"],
             embedding_model=config["embedding_model"],
@@ -8985,6 +9000,8 @@ def _run_rag_query_agentic_single(
     generation_latency_ms = 0.0
     prompt_tokens = 0
     completion_tokens = 0
+    cached_input_tokens = 0
+    reasoning_tokens = 0
     model_name: str | None = None
     structured_retry_used = False
     generation_mode = "structured_answer"
@@ -9470,6 +9487,8 @@ def _run_rag_query_agentic_single(
             total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cached_input_tokens=cached_input_tokens,
+            reasoning_tokens=reasoning_tokens,
             embedding_tokens=_estimate_embedding_tokens(effective_question),
             embedding_provider=config["embedding_provider"],
             embedding_model=config["embedding_model"],
@@ -9834,7 +9853,7 @@ def _run_rag_query_agentic_single(
     initial_profile_with_deadline = _profile_with_remaining_budget(initial_profile)
     if initial_profile_with_deadline is None:
         return _deadline_handoff_result("answer_generation")
-    payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
+    payload, prompt_tokens, completion_tokens, model_name, cached_input_tokens, reasoning_tokens = _invoke_llm_payload_with_trace(
         effective_question,
         final_chunks,
         generation_config,
@@ -9863,7 +9882,7 @@ def _run_rag_query_agentic_single(
         primary_profile_with_deadline = _profile_with_remaining_budget(primary_answer_profile)
         if primary_profile_with_deadline is None:
             return _deadline_handoff_result("answer_generation")
-        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name, retry_cached_tokens, retry_reasoning_tokens = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
             generation_config,
@@ -9878,6 +9897,8 @@ def _run_rag_query_agentic_single(
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
+        cached_input_tokens += retry_cached_tokens
+        reasoning_tokens += retry_reasoning_tokens
         model_name = retry_model_name or model_name
         answer_profile_used = model_name or primary_profile_with_deadline.model
         payload = retry_payload
@@ -9896,7 +9917,7 @@ def _run_rag_query_agentic_single(
         primary_profile_with_deadline = _profile_with_remaining_budget(primary_answer_profile)
         if primary_profile_with_deadline is None:
             return _deadline_handoff_result("answer_generation")
-        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name, retry_cached_tokens, retry_reasoning_tokens = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
             generation_config,
@@ -9911,6 +9932,8 @@ def _run_rag_query_agentic_single(
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
+        cached_input_tokens += retry_cached_tokens
+        reasoning_tokens += retry_reasoning_tokens
         model_name = retry_model_name or model_name
         answer_profile_used = model_name or primary_profile_with_deadline.model
         payload = retry_payload
@@ -9935,7 +9958,7 @@ def _run_rag_query_agentic_single(
         primary_profile_with_deadline = _profile_with_remaining_budget(primary_answer_profile)
         if primary_profile_with_deadline is None:
             return _deadline_handoff_result("answer_generation")
-        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name, retry_cached_tokens, retry_reasoning_tokens = _invoke_llm_payload_with_trace(
             effective_question,
             final_chunks,
             generation_config,
@@ -9951,6 +9974,8 @@ def _run_rag_query_agentic_single(
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
+        cached_input_tokens += retry_cached_tokens
+        reasoning_tokens += retry_reasoning_tokens
         if retry_payload is not None and _is_valid_response(retry_payload, allowed_chunk_ids):
             model_name = retry_model_name or model_name
             answer_profile_used = model_name or primary_profile_with_deadline.model
@@ -10260,6 +10285,8 @@ def _aggregate_fanout_results(
         total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
         prompt_tokens=sum(int(result.trace.prompt_tokens or 0) for result in child_results),
         completion_tokens=sum(int(result.trace.completion_tokens or 0) for result in child_results),
+        cached_input_tokens=sum(int(getattr(result.trace, "cached_input_tokens", 0) or 0) for result in child_results),
+        reasoning_tokens=sum(int(getattr(result.trace, "reasoning_tokens", 0) or 0) for result in child_results),
         embedding_tokens=sum(int(result.trace.embedding_tokens or 0) for result in child_results),
         answer_length=len(answer.answer.strip()),
         citation_count=len(answer.citations),

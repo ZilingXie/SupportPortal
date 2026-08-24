@@ -383,6 +383,8 @@ def _compress_entries_with_llm(
         completion_tokens=response.completion_tokens,
         input_tokens=response.prompt_tokens,
         output_tokens=response.completion_tokens,
+        cached_input_tokens=response.cached_input_tokens,
+        reasoning_tokens=response.reasoning_tokens,
     )
     try:
         parsed = json.loads(str(response.text or "").strip())

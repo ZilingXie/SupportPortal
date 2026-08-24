@@ -827,6 +827,20 @@ function formatTokenCount(value) {
   return num.toLocaleString("en-US");
 }
 
+function formatTokenCostUsd(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return "$0.0000";
+  return `$${num.toFixed(4)}`;
+}
+
+function renderTokenCostBadge(cost) {
+  if (!cost) return "";
+  if (cost.available) {
+    return `<span class="admin-token-cost"> · ${escapeHtml(formatTokenCostUsd(cost.total_usd))}</span>`;
+  }
+  return `<span class="admin-token-cost admin-token-cost-unknown" title="cost unavailable: some models have no pricing configured"> · $—</span>`;
+}
+
 function tokenCaseKey(item) {
   return String(item.billing_ticket_id || item.account_case_id || item.client_ticket_id || "");
 }
@@ -841,7 +855,7 @@ function renderTokenUsageCell(item) {
   const label = `${formatTokenCount(usage.total_input_tokens)} in / ${formatTokenCount(usage.total_output_tokens)} out`;
   const caseKey = tokenCaseKey(item);
   const expanded = expandedTokenCaseKeys.has(caseKey);
-  return `<button type="button" class="admin-token-toggle" data-action="toggle-token-detail" data-case-key="${escapeHtml(caseKey)}" aria-expanded="${expanded ? "true" : "false"}" title="Toggle token usage detail">${escapeHtml(label)}${embedding ? `<span class="admin-token-embedding"> · ${escapeHtml(formatTokenCount(embedding))} emb</span>` : ""}</button>`;
+  return `<button type="button" class="admin-token-toggle" data-action="toggle-token-detail" data-case-key="${escapeHtml(caseKey)}" aria-expanded="${expanded ? "true" : "false"}" title="Toggle token usage detail">${escapeHtml(label)}${embedding ? `<span class="admin-token-embedding"> · ${escapeHtml(formatTokenCount(embedding))} emb</span>` : ""}${renderTokenCostBadge(usage.cost_usd)}</button>`;
 }
 
 function renderTokenStageRows(stageTotals) {
@@ -850,10 +864,18 @@ function renderTokenStageRows(stageTotals) {
   return stages.map(([stage, totals]) => `<tr><td>${escapeHtml(stage)}</td><td>${formatTokenCount(totals.input_tokens)}</td><td>${formatTokenCount(totals.output_tokens)}</td><td>${Number(totals.calls || 0)}</td></tr>`).join("");
 }
 
-function renderTokenModelRows(models) {
+function renderTokenModelRows(models, costByModel) {
   const list = Array.isArray(models) ? models : [];
-  if (!list.length) return `<tr><td colspan="4" class="admin-token-empty-cell">No recorded models.</td></tr>`;
-  return list.map((model) => `<tr><td>${escapeHtml(`${model.provider}:${model.model}`)}</td><td>${formatTokenCount(model.input_tokens)}</td><td>${formatTokenCount(model.output_tokens)}</td><td>${formatTokenCount(model.embedding_tokens)}</td></tr>`).join("");
+  const costs = costByModel || {};
+  if (!list.length) return `<tr><td colspan="5" class="admin-token-empty-cell">No recorded models.</td></tr>`;
+  return list.map((model) => {
+    const modelKey = `${model.provider}:${model.model}`;
+    const cost = costs[modelKey];
+    const costCell = cost === undefined || cost === null
+      ? `<span class="admin-token-cost-unknown" title="model pricing not configured">—</span>`
+      : formatTokenCostUsd(cost);
+    return `<tr><td>${escapeHtml(modelKey)}</td><td>${formatTokenCount(model.input_tokens)}</td><td>${formatTokenCount(model.output_tokens)}</td><td>${formatTokenCount(model.embedding_tokens)}</td><td>${costCell}</td></tr>`;
+  }).join("");
 }
 
 function renderTokenDetailRow(item) {
@@ -861,6 +883,11 @@ function renderTokenDetailRow(item) {
   if (!usage || !usage.available || !expandedTokenCaseKeys.has(tokenCaseKey(item))) return "";
   const rag = (usage.sources && usage.sources.rag) || {};
   const automation = (usage.sources && usage.sources.automation) || {};
+  const costByModel = {};
+  const costEntries = (usage.cost_usd && Array.isArray(usage.cost_usd.by_model)) ? usage.cost_usd.by_model : [];
+  costEntries.forEach((entry) => {
+    costByModel[`${entry.provider}:${entry.model}`] = entry.usd;
+  });
   return `<tr class="admin-token-detail-row"><td colspan="9">
     <div class="admin-token-detail">
       <section aria-label="RAG pipeline token usage">
@@ -873,7 +900,7 @@ function renderTokenDetailRow(item) {
       </section>
       <section aria-label="Token usage by model">
         <header>By model</header>
-        <table class="admin-token-table"><thead><tr><th>Model</th><th>In</th><th>Out</th><th>Embedding</th></tr></thead><tbody>${renderTokenModelRows(usage.token_by_model)}</tbody></table>
+        <table class="admin-token-table"><thead><tr><th>Model</th><th>In</th><th>Out</th><th>Embedding</th><th>Cost</th></tr></thead><tbody>${renderTokenModelRows(usage.token_by_model, costByModel)}</tbody></table>
       </section>
     </div>
   </td></tr>`;
@@ -890,7 +917,7 @@ function renderAutomatedCases() {
       <div><span>Total account cases</span><strong>${Number(metric.total_account_cases || 0)}</strong></div>
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
-      <div><span>Page tokens</span><strong>${escapeHtml(formatTokenCount(pageTokens.total_input_tokens))} in / ${escapeHtml(formatTokenCount(pageTokens.total_output_tokens))} out</strong></div>
+      <div><span>Page tokens</span><strong>${escapeHtml(formatTokenCount(pageTokens.total_input_tokens))} in / ${escapeHtml(formatTokenCount(pageTokens.total_output_tokens))} out${pageTokens.cost_usd_available ? ` · ${escapeHtml(formatTokenCostUsd(pageTokens.cost_usd_total))}` : ""}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
     </section>
     ${renderAutomationSubcategoryCards()}

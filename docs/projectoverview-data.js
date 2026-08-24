@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T10:47:48Z",
-  "source_base_commit": "daaccdca05098ba0fe4adcbc2f911d1120d0038f",
-  "registry_digest": "25f77deca7b6e82d5b2ea03d4f66eae872c0927931005c07c73b8030e0426635",
+  "generated_at": "2026-08-24T10:51:31Z",
+  "source_base_commit": "655fe921872a6fbb2ce784a8736e631a324ac286",
+  "registry_digest": "6054a0ab2e73380eccef6571411ed588e8c6603d8376dc74bbf3db2c265be9fb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1493,6 +1493,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "已知边界（代码核实）",
           "command": "",
           "details": "①独立 route_service 容器（/v1/cases 控制台流的路由+准备，设计上无 ticket DB）的 tokens 不采集：production /v1/cases 走 call_route HTTP 到该容器；若需要可后续经 RouteResult 契约透传另开任务。②provider 报错的重试 attempt 无 usage 可记（错误响应不含 usage），只记成功 invocation。③自动化侧历史无法回补，只有上线后新数据；RAG 侧含全部历史。④本地栈 admin 的 RAG 数字取决于该栈 RAG 服务指向的知识库，权威视图为 EC2 production 栈。"
+        },
+        {
+          "type": "test",
+          "label": "New unit suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_llm_pricing.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "factory details 解析 3 例（Responses/Chat/无 details 容错）+ pricing 7 例（未定价 unavailable、跨模型求和、cached 回落 input 价、cached 不超 input、空 usage=0、默认表全 None）+ capture 透传/InMemory roundtrip 含 token_by_model 分桶两列。"
+        },
+        {
+          "type": "test",
+          "label": "Affected full suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest \u003c15 个受影响套件> -q",
+          "details": "524 passed。两个失败（test_rag_agentic comparison first_pass_tools、test_rag_service_client probe_health_disabled）在干净 root main 以完全相同组合同样失败、单跑均通过——既有跨文件顺序污染，非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "Mock tuple migration",
+          "command": "",
+          "details": "test_rag_qa.py（25 处跨行+4 处内联+2 处直调解包+7 处类型注解）与 test_rag_agentic.py（3 处）的 _invoke_llm_payload_with_trace mock 4 元组→6 元组（尾部补 0,0）。"
+        },
+        {
+          "type": "decision",
+          "label": "价格表默认留空的决策依据",
+          "command": "",
+          "details": "docs/prompt_change_log.md（gpt54-token-only-observability-v1 条目）：旧成本展示曾因过时/不全价格造成噪音被有意移除，约定保留 unknown-cost markers、未定价显式标记不静默 0；gpt-5.4/gpt-5.6-luna 等为本环境具体模型，价格数字须用户提供，不可编造。knowledge_repository.py _model_cost_for_tokens 为引用不存在字典的死代码，未模仿。"
         }
       ],
       "source_refs": [
@@ -1502,7 +1526,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -5764,6 +5788,82 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_refs": [
         "p1-52",
         "p2-93"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-107",
+      "title": "补齐 cached/reasoning tokens 采集 + token 用量 USD 换算展示（/workspace/admin）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "p2-105 的后续增强，两段：(A) cached/reasoning tokens 采集补齐——此前全仓库无任何代码解析 provider usage 明细，两条链路恒记 0；现在 llm_factory 的 _responses_usage/_chat_usage 解析 input_tokens_details.cached_tokens / prompt_tokens_details.cached_tokens / output_tokens_details.reasoning_tokens / completion_tokens_details.reasoning_tokens，LlmTextResult 新增 cached_input_tokens/reasoning_tokens 字段（默认 0，全调用方零破坏）；自动化链 capture 透传 + support_account_case_llm_usage 加两列（migration 2026_08_24_account_case_llm_usage_details.sql + repository 幂等 ALTER，历史数据两列=0 属预期）；RAG 链 query_understanding/rag_context_budget 补传参、rag_qa _invoke_llm_payload_with_trace 4 元组→6 元组（6 调用点+重试累加+RagQueryTrace 尾部两默认字段+fanout 聚合同步累加）、rag_api rag_answer ledger 条目带 trace 两值（usage_ledger JSONB 只增键，表零改动）；token_usage.aggregate_usage_ledger 的 token_by_model 分桶新增 cached_input_tokens/reasoning_tokens 供按模型计价。(B) USD 换算——新模块 backend/services/llm_pricing.py：LLM_PRICING_USD_PER_1M 单价表（key=provider:model，维度 input/output/cached_input/embedding，默认全 None=未定价，遵循仓库 unknown-cost marker 约定：未定价显式 —，绝不静默按 0）+ estimate_token_usage_cost_usd 纯函数（计价语义：input 含 cached，成本=(input−cached)×input价+cached×(cached价缺省回落 input 价)+output×output价+embedding×embedding价；任一模型未定价→该模型 usd=None 且整体 available=False）；main.py _attach_account_case_token_usage 对每 case 挂 token_usage.cost_usd，page_total 加 cost_usd_total/cost_usd_available；admin 前端 Tokens 单元格追加成本小字（$0.0123，未定价显示 $—带 title）、明细 by-model 表加 Cost 列、metric strip 本页合计带成本；版本 bump 20260824-token-cost-1。价格数字待用户提供后一行一改填入 LLM_PRICING_USD_PER_1M 即生效。",
+      "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+资产版本 20260824-token-cost-1+两列 ALTER 在库）；p2-107 翻 done；用户侧 EC2 仅部署 main stack（deploy_surfaces_ec2.sh --skip-split，与 p2-105 同）；价格数字待用户提供填入。",
+      "acceptance_criteria": [
+        "llm_factory 解析 Responses/Chat 两形态 usage 明细，缺 details 容错为 0；LlmTextResult 新字段默认 0 不破坏任何既有调用方。",
+        "自动化链 cached/reasoning 落列（capture→INSERT→summaries 聚合→token_by_model 分桶全透传）；RAG 链 ledger 只增键、检索/生成行为零变化。",
+        "llm_pricing：未定价模型 usd=None 且 available=False（无 0 美元假象）；cached⊂input 不双计；cached 价缺省回落 input 价；embedding 计价。",
+        "admin 前端：priced 显示 $x.xxxx，unpriced 显示 $—（title=model pricing not configured），usage 不可用时不显示成本；明细 Cost 列按模型分摊。",
+        "既有 API 响应只增不改；test_rag_qa/test_rag_agentic 的 mock 元组同步更新为 6 元组。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "New unit suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_llm_pricing.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "factory details 解析 3 例（Responses/Chat/无 details 容错）+ pricing 7 例（未定价 unavailable、跨模型求和、cached 回落 input 价、cached 不超 input、空 usage=0、默认表全 None）+ capture 透传/InMemory roundtrip 含 token_by_model 分桶两列。"
+        },
+        {
+          "type": "test",
+          "label": "Affected full suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest \u003c15 个受影响套件> -q",
+          "details": "524 passed。两个失败（test_rag_agentic comparison first_pass_tools、test_rag_service_client probe_health_disabled）在干净 root main 以完全相同组合同样失败、单跑均通过——既有跨文件顺序污染，非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "Mock tuple migration",
+          "command": "",
+          "details": "test_rag_qa.py（25 处跨行+4 处内联+2 处直调解包+7 处类型注解）与 test_rag_agentic.py（3 处）的 _invoke_llm_payload_with_trace mock 4 元组→6 元组（尾部补 0,0）。"
+        },
+        {
+          "type": "decision",
+          "label": "价格表默认留空的决策依据",
+          "command": "",
+          "details": "docs/prompt_change_log.md（gpt54-token-only-observability-v1 条目）：旧成本展示曾因过时/不全价格造成噪音被有意移除，约定保留 unknown-cost markers、未定价显式标记不静默 0；gpt-5.4/gpt-5.6-luna 等为本环境具体模型，价格数字须用户提供，不可编造。knowledge_repository.py _model_cost_for_tokens 为引用不存在字典的死代码，未模仿。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_factory.py",
+        "backend/services/token_usage.py",
+        "backend/services/llm_pricing.py",
+        "backend/services/llm_usage_capture.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/sql/migrations/2026_08_24_account_case_llm_usage_details.sql",
+        "backend/services/query_understanding.py",
+        "backend/services/rag_context_budget.py",
+        "backend/services/rag_qa.py",
+        "backend/rag_api.py",
+        "backend/main.py",
+        "ui/workspace-ui/admin/app.js",
+        "ui/workspace-ui/admin/styles.css",
+        "ui/workspace-ui/admin/index.html",
+        "docs/rag_change_log.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "用户追问缓存命中与美元换算。方案问答未获回复，按推荐定案：价格架子先行未配置显示 —、cached/reasoning 采集一起补齐、展示仅 /workspace/admin。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-105"
       ],
       "legacy_ids": [],
       "phase_id": "phase-1",

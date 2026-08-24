@@ -5,6 +5,7 @@ import os
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -19,6 +20,7 @@ import backend.rag_api as rag_api
 from backend.repositories.event_repository import InMemoryEventRepository
 from backend.services.local_source_sync import SourceIngestResult
 from backend.services.rag_qa import RagAnswer, RagKnowledgeIndexReadiness, RagQueryResult, RagQueryTrace
+from backend.services.token_usage import aggregate_usage_ledger
 
 
 class _TrackingKnowledgeRepository:
@@ -318,6 +320,45 @@ class RagApiTests(unittest.TestCase):
             summary["stage_totals"]["embedding"],
             {"input_tokens": 0, "output_tokens": 0, "calls": 1},
         )
+
+    def test_usage_ledger_carries_cached_and_reasoning_from_trace(self) -> None:
+        trace = SimpleNamespace(
+            query_expansion_usage_ledger=[
+                {
+                    "provider": "openai",
+                    "model": "gpt-5.4-mini",
+                    "stage": "query_rewrite",
+                    "input_tokens": 50,
+                    "output_tokens": 10,
+                    "cached_input_tokens": 20,
+                    "reasoning_tokens": 0,
+                }
+            ],
+            context_compression_usage_ledger=[],
+            model_name="openai:gpt-5.4",
+            prompt_tokens=100,
+            completion_tokens=40,
+            cached_input_tokens=60,
+            reasoning_tokens=25,
+            embedding_model="BAAI/bge-m3",
+            embedding_provider="siliconflow",
+            embedding_tokens=30,
+        )
+        ledger = rag_api._build_usage_ledger(trace)
+        answer_entry = next(item for item in ledger if item["stage"] == "rag_answer")
+        self.assertEqual(answer_entry["cached_input_tokens"], 60)
+        self.assertEqual(answer_entry["reasoning_tokens"], 25)
+        rewrite_entry = next(item for item in ledger if item["stage"] == "query_rewrite")
+        self.assertEqual(rewrite_entry["cached_input_tokens"], 20)
+        embedding_entry = next(item for item in ledger if item["stage"] == "embedding")
+        self.assertEqual(embedding_entry["embedding_tokens"], 30)
+        summary = aggregate_usage_ledger(ledger)
+        self.assertEqual(summary["total_cached_input_tokens"], 80)
+        self.assertEqual(summary["total_reasoning_tokens"], 25)
+        mini_row = next(
+            row for row in summary["token_by_model"] if row["model"] == "gpt-5.4-mini"
+        )
+        self.assertEqual(mini_row["cached_input_tokens"], 20)
 
     def test_internal_query_answer_includes_query_class_and_light_path_in_quality_signals(self) -> None:
         repository = _TrackingKnowledgeRepository()

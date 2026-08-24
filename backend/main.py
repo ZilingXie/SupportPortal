@@ -335,6 +335,7 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_pricing import estimate_token_usage_cost_usd
 from backend.services.llm_usage_capture import (
     CaseUsageCapture,
     begin_case_usage_capture,
@@ -12605,6 +12606,8 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
         "total_input_tokens": 0,
         "total_output_tokens": 0,
         "total_embedding_tokens": 0,
+        "cost_usd_total": 0.0,
+        "cost_usd_available": True,
     }
     if not cases:
         return page_total
@@ -12678,6 +12681,16 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
             ),
             "sources": {"rag": rag_source, "automation": automation_source},
         }
+        if available:
+            cost_estimate = estimate_token_usage_cost_usd(record["token_usage"])
+            record["token_usage"]["cost_usd"] = cost_estimate
+            if cost_estimate["available"]:
+                page_total["cost_usd_total"] += float(cost_estimate["total_usd"] or 0.0)
+            else:
+                page_total["cost_usd_available"] = False
+        else:
+            record["token_usage"]["cost_usd"] = {"available": False, "total_usd": None, "by_model": []}
+            page_total["cost_usd_available"] = False
         if available:
             page_total["total_input_tokens"] += total_input
             page_total["total_output_tokens"] += total_output

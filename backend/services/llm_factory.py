@@ -33,6 +33,8 @@ class LlmTextResult:
     model_name: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
     raw_payload: dict[str, Any] | None = None
     provider_name: str = "openai"
 
@@ -104,18 +106,40 @@ def _chat_text(payload: dict[str, Any]) -> str:
     return _normalize_text(content)
 
 
-def _responses_usage(payload: dict[str, Any]) -> tuple[int, int]:
+def _usage_details(usage: dict[str, Any]) -> tuple[int, int]:
+    input_details = usage.get("input_tokens_details")
+    input_details = input_details if isinstance(input_details, dict) else {}
+    prompt_details = usage.get("prompt_tokens_details")
+    prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
+    output_details = usage.get("output_tokens_details")
+    output_details = output_details if isinstance(output_details, dict) else {}
+    completion_details = usage.get("completion_tokens_details")
+    completion_details = completion_details if isinstance(completion_details, dict) else {}
+    cached_tokens = int(
+        input_details.get("cached_tokens") or prompt_details.get("cached_tokens") or 0
+    )
+    reasoning_tokens = int(
+        output_details.get("reasoning_tokens")
+        or completion_details.get("reasoning_tokens")
+        or 0
+    )
+    return cached_tokens, reasoning_tokens
+
+
+def _responses_usage(payload: dict[str, Any]) -> tuple[int, int, int, int]:
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     prompt_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-    return prompt_tokens, completion_tokens
+    cached_tokens, reasoning_tokens = _usage_details(usage)
+    return prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens
 
 
-def _chat_usage(payload: dict[str, Any]) -> tuple[int, int]:
+def _chat_usage(payload: dict[str, Any]) -> tuple[int, int, int, int]:
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
-    return prompt_tokens, completion_tokens
+    cached_tokens, reasoning_tokens = _usage_details(usage)
+    return prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens
 
 
 def _is_model_unavailable(error_payload: str) -> bool:
@@ -326,7 +350,7 @@ def _invoke_responses_text_once(
 
             payload = raw_payload if isinstance(raw_payload, dict) else {}
             text = _responses_text(payload)
-            prompt_tokens, completion_tokens = _responses_usage(payload)
+            prompt_tokens, completion_tokens, cached_input_tokens, reasoning_tokens = _responses_usage(payload)
             if openai_agent_tracing.current_trace_ref() is not None:
                 openai_agent_tracing.record_generation_span(
                     system_prompt=system_prompt,
@@ -343,6 +367,8 @@ def _invoke_responses_text_once(
                 model_name=model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_input_tokens=cached_input_tokens,
+                reasoning_tokens=reasoning_tokens,
                 raw_payload=payload,
                 provider_name=profile.provider,
             )
@@ -490,12 +516,14 @@ def _invoke_chat_text_once(
 
             payload = raw_payload if isinstance(raw_payload, dict) else {}
             text = _chat_text(payload)
-            prompt_tokens, completion_tokens = _chat_usage(payload)
+            prompt_tokens, completion_tokens, cached_input_tokens, reasoning_tokens = _chat_usage(payload)
             return LlmTextResult(
                 text=text,
                 model_name=model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_input_tokens=cached_input_tokens,
+                reasoning_tokens=reasoning_tokens,
                 raw_payload=payload,
                 provider_name=profile.provider,
             )

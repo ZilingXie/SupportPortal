@@ -92,11 +92,15 @@ def aggregate_usage_ledger(entries: list[dict[str, Any]] | tuple[dict[str, Any],
                 "model": model,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cached_input_tokens": 0,
+                "reasoning_tokens": 0,
                 "embedding_tokens": 0,
             },
         )
         group["input_tokens"] += _safe_int(entry.get("input_tokens"))
         group["output_tokens"] += _safe_int(entry.get("output_tokens"))
+        group["cached_input_tokens"] += _safe_int(entry.get("cached_input_tokens"))
+        group["reasoning_tokens"] += _safe_int(entry.get("reasoning_tokens"))
         group["embedding_tokens"] += _safe_int(entry.get("embedding_tokens"))
     return {
         "entries": ledger,
