@@ -1346,7 +1346,7 @@ function renderAutomationBehaviorOverview(routeAgent, node) {
     : (node?.children || []).filter(child => !child.is_agent);
   if (!behaviors.length) return "";
   return `<section class="admin-automation-behaviors" aria-labelledby="automation-behaviors-title">
-    <header><div><h3 id="automation-behaviors-title">Automation Workflow</h3><p>Four registered outcomes run Automation workflows. Unregistered is a diagnostic fallback and stays under Backend Operation; it is not a registered Automated child or Human Review filter member.</p></div><span>${behaviors.length}</span></header>
+    <header><div><h3 id="automation-behaviors-title">Automation Workflow</h3><p>Three registered outcomes run Automation workflows. Unregistered is a diagnostic fallback and stays under Backend Operation; it is not a registered Automated child or Human Review filter member.</p></div><span>${behaviors.length}</span></header>
     <div class="admin-automation-behavior-list">${behaviors.map((behavior) => {
       const expanded = selectedAutomationBehaviorKey === behavior.key;
       const prompts = promptsForRouteNode(routeAgent, behavior);

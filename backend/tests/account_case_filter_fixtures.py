@@ -58,8 +58,6 @@ ACCOUNT_CASE_FILTER_PARITY_FIXTURES: tuple[
             {
                 "account_billing:detailed_invoice",
                 "account_billing",
-                "automation",
-                "automation:detailed_invoice",
             }
         ),
     ),
@@ -219,8 +217,6 @@ ACCOUNT_CASE_FILTER_PARITY_FIXTURES: tuple[
             {
                 "account_billing:detailed_invoice",
                 "account_billing",
-                "automation",
-                "automation:detailed_invoice",
             }
         ),
     ),

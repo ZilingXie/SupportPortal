@@ -67,8 +67,8 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
         "scope_label": "account_billing",
         "execution_action": "detailed_invoice",
-        "route_family": AUTOMATED_ROUTE_FAMILY,
-        "tooling_profile": "deterministic_billing_intake",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
         "account_billing_subcategory": "detailed_invoice",
     },
     {
@@ -147,8 +147,9 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
         "scope_label": "billing",
         "execution_action": "detailed_invoice",
-        "route_family": AUTOMATED_ROUTE_FAMILY,
-        "tooling_profile": "deterministic_billing_intake",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+        "account_billing_subcategory": "detailed_invoice",
     },
     {
         "scope_label": "enablement",

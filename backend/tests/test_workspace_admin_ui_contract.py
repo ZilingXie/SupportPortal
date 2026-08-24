@@ -93,7 +93,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "data-action=\"retry-environment-config\"", "automation_personas", "route_navigation",
             "automation_workflows", "Automation Workflow", "All categories", "Account & Billing", "Handler",
             "/account only", "/client and shared legacy router",
-            "Classification reason code", "Execution reason code", "Diagnostic fallback", "Four registered outcomes",
+            "Classification reason code", "Execution reason code", "Diagnostic fallback", "Three registered outcomes",
             "data-persona-draft-form", 'data-action="publish-persona"',
             'data-action="rollback-persona"', 'data-action="toggle-persona"',
             "description.toLowerCase()", "admin-config-description", "admin-config-copy",
