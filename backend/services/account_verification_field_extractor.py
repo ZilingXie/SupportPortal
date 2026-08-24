@@ -33,10 +33,13 @@ LOGGER = logging.getLogger(__name__)
 ACCOUNT_VERIFICATION_FIELD_PROMPT_KEY = "account-verification-field-extractor-system"
 ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_KEY = "account-verification-follow-up-composer-system"
 ACCOUNT_VERIFICATION_REQUIRED_GROUPS = (
-    "company_information",
-    "contact_information",
-    "use_case",
-    "payment_information",
+    "account_type",
+    "name",
+    "office_address",
+    "contact_number",
+    "contact_email",
+    "use_case_description",
+    "console_configuration",
 )
 DEFAULT_FIELD_CONFIDENCE_THRESHOLD = 0.8
 
@@ -53,8 +56,7 @@ _UNSAFE_FOLLOW_UP_RE = re.compile(
     re.I,
 )
 _OPTIONAL_FIELD_REQUEST_RE = re.compile(
-    r"\b(?:website|web site|app id|application id|contact email|email address|transaction id|"
-    r"invoice number)\b",
+    r"\b(?:website|web site|app id|application id|transaction id|invoice number)\b",
     re.I,
 )
 
@@ -550,10 +552,15 @@ def validate_account_verification_follow_up(reply: str) -> None:
 def _validate_follow_up_coverage(reply: str, missing_fields: list[str]) -> None:
     lowered = str(reply or "").lower()
     required_markers = {
-        "company_information": (("company",), ("country",), ("address",)),
-        "contact_information": (("name",), ("phone",), ("address",)),
-        "use_case": (("use case", "how you use", "how your company uses"),),
-        "payment_information": (("payment",), ("no payment", "not applicable", "free tier")),
+        "account_type": (("account type",),),
+        "name": (("name",),),
+        "office_address": (("office address", "address",),),
+        "contact_number": (("contact number", "phone",),),
+        "contact_email": (("contact email", "email",),),
+        "use_case_description": (("use case", "use-case", "how you use",),),
+        "console_configuration": (
+            ("console", "configuration", "setup", "interaction",),
+        ),
     }
     for field_name in missing_fields:
         marker_groups = required_markers.get(field_name, ())

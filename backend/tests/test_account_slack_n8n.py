@@ -53,7 +53,8 @@ class AccountSlackN8nContractTests(unittest.TestCase):
                 "question": " Please   review this account. ",
                 "execution_action": "fraud_account",
                 "customer_name": "Must not leak",
-                "collected_fields": {"payment": "Must not leak"},
+                "collected_fields": {"account_type": "Enterprise", "name": "John"},
+                "missing_fields": ["office_address", "contact_number"],
             },
             message_id="42",
             reply_intent="fraud_handoff_confirmation",
@@ -64,7 +65,9 @@ class AccountSlackN8nContractTests(unittest.TestCase):
             event["message_text"],
             "[Fraud Account] Suspicious activity\n"
             "zendesk: https://agoraio.zendesk.com/agent/tickets/12838\n"
-            "Please review this account.",
+            "Please review this account.\n"
+            "Provided: account_type=Enterprise; name=John\n"
+            "Missing: office_address, contact_number",
         )
         self.assertEqual(
             set(event),

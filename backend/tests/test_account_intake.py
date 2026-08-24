@@ -235,21 +235,30 @@ def _fake_account_verification_field_extraction(**kwargs: object) -> AccountVeri
     ).lower()
     existing = kwargs.get("existing_fields")
     fields = dict(existing) if isinstance(existing, dict) else {}
-    if "company" in text and any(marker in text for marker in ("location", "registered", "address")):
-        fields["company_information"] = "ExampleCorp; Singapore"
-    if "phone" in text and any(marker in text for marker in ("contact name", "my name", "i am ")):
-        fields["contact_information"] = "Customer contact and company address"
-    if "use case:" in text or "we use agora" in text:
-        fields["use_case"] = "Customer-described Agora use case"
-    if any(marker in text for marker in ("no payment", "free tier", "not applicable")):
-        fields["payment_information"] = "No payment made yet"
+    if "enterprise" in text or "account type" in text:
+        fields["account_type"] = "Enterprise"
+    if "my name" in text or "i am " in text:
+        fields["name"] = "Customer Name"
+    if "office" in text or "address" in text:
+        fields["office_address"] = "Customer office address"
+    if "phone" in text or "contact number" in text:
+        fields["contact_number"] = "+86 123 4567 8900"
+    if "email" in text:
+        fields["contact_email"] = "customer@example.com"
+    if "use case" in text or "we use agora" in text:
+        fields["use_case_description"] = "Customer-described Agora use case"
+    if "console" in text or "configuration" in text or "setup" in text:
+        fields["console_configuration"] = "Last known console setup"
     missing = [
         group
         for group in (
-            "company_information",
-            "contact_information",
-            "use_case",
-            "payment_information",
+            "account_type",
+            "name",
+            "office_address",
+            "contact_number",
+            "contact_email",
+            "use_case_description",
+            "console_configuration",
         )
         if not fields.get(group)
     ]
@@ -514,9 +523,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self._account_verification_follow_up_patcher = patch(
             "backend.services.account_verification_automation.compose_account_verification_follow_up",
             side_effect=lambda **kwargs: (
-                "Could you share your company name, registered country, and address; your contact name, "
-                "phone number, and company address; your use case; and a safe high-level payment status? "
-                "You may say no payment has been made or payment is not applicable.",
+                "Could you share your account type, name, office address, official contact number, "
+                "official contact email, use case description, and your last known console "
+                "configuration or setup?",
                 {"prompt_version": "test"},
             ),
         )
@@ -6136,9 +6145,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 json={
                     "title": "Account verification",
                     "question": (
-                        "Company: ExampleCorp. Company registered country and address: Singapore. "
-                        "My name is Taylor. Phone: +65-1234-5678. Company address: Singapore. "
-                        "Use Case: internal video calls. No payment has been made yet."
+                        "Account type: Enterprise. My name is Taylor. "
+                        "Office address: 1 Example Street, Singapore. "
+                        "Contact number: +65-1234-5678. Contact email: taylor@example.com. "
+                        "Use case: internal video calls. Console configuration: RTC project."
                     ),
                     "customer_email": "customer@example.com",
                 },
@@ -6212,9 +6222,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 json={
                     "title": "Account verification",
                     "question": (
-                        "Company name: ExampleCorp. Company registered country and address: Singapore. "
-                        "My name is Taylor. Phone number: +65-1234-5678. Company address: Singapore. "
-                        "No payment has been made yet."
+                        "Account type: Enterprise. My name is Taylor. "
+                        "Office address: 1 Example Street, Singapore. "
+                        "Contact number: +65-1234-5678. Contact email: taylor@example.com. "
+                        "Console configuration: basic RTC project."
                     ),
                     "customer_email": "taylor@example.com",
                     "customer_name": "Taylor",
@@ -6224,12 +6235,12 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["route"], "fraud_account")
-        self.assertEqual(payload["missing_fields"], ["use_case"])
+        self.assertEqual(payload["missing_fields"], ["use_case_description"])
         job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         assert job is not None
         reply_facts = job["payload"]["reply_facts"]
         self.assertEqual(reply_facts["customer_first_name"], "Taylor")
-        self.assertEqual(reply_facts["missing_information"], ["use_case"])
+        self.assertEqual(reply_facts["missing_information"], ["use_case_description"])
         self._publish_latest_account_reply(payload["ticket_id"])
         ticket = self.repository.get_ticket(payload["ticket_id"])
         assert ticket is not None
@@ -6276,7 +6287,7 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertTrue(created_case["automation_context"]["follow_up_scheduled"])
             self.assertEqual(
                 set(first_job["payload"]["asked_field_keys"]),
-                {"company_information", "contact_information", "use_case", "payment_information"},
+                {"account_type", "name", "office_address", "contact_number", "contact_email", "use_case_description", "console_configuration"},
             )
             self._publish_latest_account_reply(created["ticket_id"])
 
@@ -6345,10 +6356,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 f"/api/account/billing-tickets/{bt_id}/reply",
                 json={
                     "message": (
-                        "Company name: Acme Corp. Company registered country and address: Singapore. "
-                        "My name is Taylor. Company address: Singapore. "
-                        "Phone number: +65-12345678. "
-                        "Use case: live streaming. No payment has been made yet."
+                        "Account type: Enterprise. My name is Taylor. "
+                        "Office address: 1 Main Street, Singapore. "
+                        "Contact number: +65-12345678. Email: taylor@example.com. "
+                        "Use case: live streaming. Console configuration: RTC project setup."
                     ),
                 },
             )
@@ -6371,7 +6382,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         # Check billing ticket was updated.
         bt = self.repository.get_billing_ticket(bt_id)
         self.assertEqual(bt["missing_fields"], [])
-        self.assertIn("company_information", bt["collected_fields"])
+        self.assertIn("account_type", bt["collected_fields"])
 
     def test_fraud_followup_with_missing_fields_queues_missing_info_reply(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
@@ -6469,10 +6480,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 f"/api/account/billing-tickets/{bt_id}/reply",
                 json={
                     "message": (
-                        "Company name: Acme Corp. Company registered country and address: Singapore. "
-                        "My name is Taylor. Company address: Singapore. "
-                        "Phone number: +65-12345678. "
-                        "Use case: live streaming. No payment has been made yet."
+                        "Account type: Enterprise. My name is Taylor. "
+                        "Office address: 1 Main Street, Singapore. "
+                        "Contact number: +65-12345678. Email: taylor@example.com. "
+                        "Use case: live streaming. Console configuration: RTC project setup."
                     ),
                 },
             )
@@ -6525,10 +6536,10 @@ class AccountIntakeApiTests(unittest.TestCase):
                 f"/api/account/billing-tickets/{bt_id}/reply",
                 json={
                     "message": (
-                        "Company name: Acme Corp. Company registered country and address: Singapore. "
-                        "My name is Taylor. Company address: Singapore. "
-                        "Phone number: +65-12345678. "
-                        "Use case: live streaming. No payment has been made yet."
+                        "Account type: Enterprise. My name is Taylor. "
+                        "Office address: 1 Main Street, Singapore. "
+                        "Contact number: +65-12345678. Email: taylor@example.com. "
+                        "Use case: live streaming. Console configuration: RTC project setup."
                     ),
                 },
             )
@@ -7137,14 +7148,17 @@ class AccountIntakeApiTests(unittest.TestCase):
             (
                 "Suspicious activity verification",
                 (
-                    "The fraud review asks us to submit company, contact, use case, and payment "
-                    "information to verify and restore our account."
+                    "Our account has been suspended and we need help restoring it. "
+                    "We are reaching out to resolve this."
                 ),
                 {
-                    "company_information",
-                    "contact_information",
-                    "use_case",
-                    "payment_information",
+                    "account_type",
+                    "name",
+                    "office_address",
+                    "contact_number",
+                    "contact_email",
+                    "use_case_description",
+                    "console_configuration",
                 },
             ),
             (
