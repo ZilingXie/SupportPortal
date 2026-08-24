@@ -181,8 +181,17 @@ fi
 
 if [[ "${need_split}" == 1 ]]; then
   today="$(date +%Y%m%d)"
-  last="$(ls .deployments/releases 2>/dev/null | grep -o "release-${today}-[0-9]*" | sed 's/.*-//' | sort -n | tail -1)"
-  next="$((10#${last:-0} + 1))"
+  last=0
+  for manifest in .deployments/releases/release-"${today}"-*.env; do
+    [[ -f "${manifest}" ]] || continue
+    number="${manifest%.env}"
+    number="${number##*-}"
+    [[ "${number}" =~ ^[0-9]+$ ]] || continue
+    if (( 10#${number} > 10#${last} )); then
+      last="${number}"
+    fi
+  done
+  next="$((10#${last} + 1))"
   NEW_ID="$(printf 'release-%s-%03d' "${today}" "${next}")"
   log "building split release ${NEW_ID}"
   deploy_step build-split ./deployment/build_automation_release.sh --release-id "${NEW_ID}"
