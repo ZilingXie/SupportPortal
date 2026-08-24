@@ -30,12 +30,15 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         )
         self.assertEqual(unclear["route_family"], "human_review")
 
-    def test_valid_billing_detailed_invoice_derives_full_tuple(self) -> None:
+    def test_valid_billing_detailed_invoice_is_classification_only(self) -> None:
         result = validate_route_correction(scope_label="billing", execution_action="detailed_invoice")
         self.assertEqual(result["scope_label"], "billing")
         self.assertEqual(result["execution_action"], "detailed_invoice")
-        self.assertEqual(result["route_family"], "automated")
-        self.assertEqual(result["tooling_profile"], "deterministic_billing_intake")
+        self.assertEqual(result["route_family"], "human_review")
+        self.assertEqual(result["tooling_profile"], "classification_only")
+        self.assertEqual(result["category"], "account_billing")
+        self.assertEqual(result["subcategory"], "detailed_invoice")
+        self.assertIsNone(result["automation_handler"])
 
     def test_valid_agora_technical_rag(self) -> None:
         result = validate_route_correction(scope_label="agora_technical", execution_action="rag")
@@ -106,14 +109,14 @@ class RouteCorrectionValidationTests(unittest.TestCase):
             ("account_billing", "human_review_required", "human_review", "classification_only"),
             ("account_billing", "account_suspension", "human_review", "classification_only"),
             ("account_billing", "fraud_account", "automated", "deterministic_billing_intake"),
-            ("account_billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
+            ("account_billing", "detailed_invoice", "human_review", "classification_only"),
             ("automation", "unregistered", "human_review", "classification_only"),
             ("backend_operation", "unregistered", "human_review", "classification_only"),
             ("backend_operation", "human_review_required", "human_review", "classification_only"),
             ("backend_operation", "enablement", "automated", "deterministic_enablement_intake"),
             ("backend_operation", "quota", "automated", "deterministic_quota_intake"),
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
-            ("billing", "detailed_invoice", "automated", "deterministic_billing_intake"),
+            ("billing", "detailed_invoice", "human_review", "classification_only"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),
             ("account_suspension", "human_review_required", "human_review", "classification_only"),
             ("fraud_account", "fraud_account", "automated", "deterministic_billing_intake"),
