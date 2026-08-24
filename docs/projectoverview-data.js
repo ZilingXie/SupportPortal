@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T09:36:09Z",
-  "source_base_commit": "8b9a4431ee4b2d6457f19b463f9fd5ec9adfa1d7",
-  "registry_digest": "d2a0fe6f4a713755ba16e3e92de7b24a00e2fe930c4faf7dfab42ad5f3e8eeb1",
+  "generated_at": "2026-08-24T09:50:20Z",
+  "source_base_commit": "d8a40785739f7cb9b0b319cb1b13e9b0cbd37759",
+  "registry_digest": "52b3d39cec17a694c80aa0f51bba0a658722ef65dab8f7b8f1c0f3cc6d982583",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -576,6 +576,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "318 项测试通过、33 个子测试通过；覆盖 7 字段提取、Slack/邮件摘要、Intake 追问与第二次回复、Persona Worker 发布和版本 fence。"
         },
         {
+          "type": "deployment",
+          "label": "Official single-host stack after merge",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c \"from backend.services.automation_persona import AUTOMATION_PERSONA_PROMPT_VERSION, _assert_missing_information_format_contract; print({'persona_prompt_version': AUTOMATION_PERSONA_PROMPT_VERSION, 'format_contract': _assert_missing_information_format_contract.__name__})\"",
+          "details": "官方项目 deployment；root_main_ref、official_image_tag、official_health_build_ref、official_runtime_build_ref 均为 d8a40785739f；health 返回 200/status=ok；runtime_profile=local_lightweight；auxiliary_stack_present=false；容器内 Persona marker 为 automation-persona-v12。"
+        },
+        {
           "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
@@ -677,7 +683,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 15,
-      "done_count": 7,
+      "done_count": 8,
       "blocked_count": 1
     },
     {
@@ -5356,10 +5362,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-101",
       "title": "Fraud Account 字段改为 7 项 + Slack/邮件显示字段",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "合并 Persona v12 后部署并用 fraud 测试工单验证：1-2 项缺失信息同句、3+ 项为 bullet，内部邮件和 Slack 字段摘要保持不变。",
+      "next_action": "无（Persona v12 已合并并完成官方单机栈验证）。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -5385,6 +5391,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Fraud Account/Intake/Worker regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_account_slack_n8n.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_account_reply_version_fence.py",
           "details": "318 项测试通过、33 个子测试通过；覆盖 7 字段提取、Slack/邮件摘要、Intake 追问与第二次回复、Persona Worker 发布和版本 fence。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official single-host stack after merge",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c \"from backend.services.automation_persona import AUTOMATION_PERSONA_PROMPT_VERSION, _assert_missing_information_format_contract; print({'persona_prompt_version': AUTOMATION_PERSONA_PROMPT_VERSION, 'format_contract': _assert_missing_information_format_contract.__name__})\"",
+          "details": "官方项目 deployment；root_main_ref、official_image_tag、official_health_build_ref、official_runtime_build_ref 均为 d8a40785739f；health 返回 200/status=ok；runtime_profile=local_lightweight；auxiliary_stack_present=false；容器内 Persona marker 为 automation-persona-v12。"
         }
       ],
       "source_refs": [
@@ -5415,6 +5427,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "persona_v12_missing_format_contract",
           "summary": "将 3+ 缺失信息从编号列表改为每项独立 bullet，收紧 1-2 项同句与 warm first-person 语气，并在现有四次 Account AI 预算内拒绝不合规格式。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "live_stack_verified",
+          "summary": "合并后官方 deployment 单机 lightweight 栈健康检查和 build provenance 均匹配，Persona v12 marker 已在容器内确认，无辅助栈。"
         }
       ],
       "legacy_refs": [],
