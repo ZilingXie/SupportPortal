@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-23T16:58:45Z",
-  "source_base_commit": "ea2f19eabae78a3b8adbd5b6c55524f512245536",
-  "registry_digest": "a132610efcd6ce5c07e6784aebdc5c415764f0044c360d84a57ed6b054a40a10",
+  "generated_at": "2026-08-24T04:26:55Z",
+  "source_base_commit": "4679ad23923cdff92f2e8b094a2e37941b6f8229",
+  "registry_digest": "4f089cc1c7b22c66dccd0ec9e8198a6acda5d701174682618a81fa640cf805b1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -553,6 +553,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Email prefix mapping and fenced code HTML conversion",
+          "command": ".venv/bin/python -m unittest backend.tests.test_email_prefix_and_codeblocks backend.tests.test_billing_automation_email backend.tests.test_internal_email_template backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_reply_rag_fallback",
+          "details": "新增 7 项单测（request_type 按 action 映射、suspension 邮件正文不再含 Billing:、围栏代码块转 pre/code HTML、HTML 转义、多代码块、纯代码体、无代码块返回 None）；70 项相关回归全绿。"
+        },
+        {
+          "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
           "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
@@ -634,7 +640,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 13,
+      "task_count": 14,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -1855,18 +1861,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "Driver smoke (no side effects)",
-          "command": ".venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
-          "details": "--list 输出四剧本；--check 用根 .env 实连 production 库（support_account_cases 可查）、smtp.163.com 登录、imap.163.com INBOX 可选，全程零发信。"
-        },
-        {
-          "type": "test",
-          "label": "Console suite regression",
-          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
-          "details": "intent 键修复后 23 用例全过。"
-        },
-        {
-          "type": "test",
           "label": "Scenario engine + API + UI contract",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_scenarios backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "39 用例全过：引擎 wait_for 推进/超时/取消/主题前缀、E1 全剧本脚本化（approval_required/received、ticket_linked、步骤全 PASS）与断言失败中断；API 401/422/409（含并发第二个 run）/cancel 语义/unknown 404/stale→interrupted；UI 契约（scenarios 端点注册、剧本卡/批准横幅/轮询 marker、版本戳）。"
@@ -1930,8 +1924,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 6,
-      "done_count": 6,
+      "task_count": 5,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -5212,54 +5206,44 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-100",
-      "title": "生产工单回归剧本驱动器 + 追踪快照 intent 键修复",
-      "status": "done",
+      "title": "内部邮件 Billing 前缀修正与 Zendesk 评论代码块渲染",
+      "status": "active",
       "owner": "zac",
-      "summary": "新增 scripts/testing/production_ticket_scenarios.py：四条多回合回归剧本（E1 enablement 顺路 / E2 enablement 缺 AppID+RAG 兜底+补齐闭环 / F1 fraud 追问→交接→assign 不关单 / S1 suspension 确认邮箱→closing+solved）全真链路自动化——客户回合经 163 SMTP 发信并用 IMAP 读 Zendesk 通知邮件线程头续接同一工单（拿不到则 support+{id} 加号寻址兜底），内部批准保留人工（脚本暂停轮询 enablement_internal_resolution_received 事件），断言只看结构化状态（reply_intent/内部邮件状态/suspension 状态机/zendesk 状态）；--check 模式只验连通不发信。附带修复：/automation/test 追踪快照 reply_job 的 intent 读了不存在的 payload.intent 键，改为实际键 payload.reply_intent。",
-      "next_action": "无服务端部署依赖（脚本本地跑，读根 .env）。用户按需运行：--check 验连通后 --scenario E1 起逐个剧本回归；每跑一次产生真实 Zendesk 工单（[zac test] 标记，用后清理）。",
+      "summary": "两处修复：①suspension/verification/invoice 的内部邮件正文第二行硬编码 'Billing: ' 前缀，按 action 映射正确类型（Account Suspension/Account Verification/Detailed Invoice）；②Zendesk 评论中 Markdown 围栏代码块以纯文本字面反引号显示，add_ticket_comment 自动检测围栏代码块并生成 html_body（pre/code 标签），无代码块的评论不受影响。",
+      "next_action": "部署 EC2 后在真实工单上验证两处修复效果。",
       "acceptance_criteria": [
-        "四剧本覆盖用户指定的四条流程（含 RAG 兜底断言 rag_fallback_answer、fraud 不自动 solved 断言、suspension 两阶段状态机断言）。",
-        "enablement 内部批准为人工步骤：脚本暂停提示并轮询 enablement_internal_resolution_received 事件后继续。",
-        "--check 只做 DB/SMTP/IMAP 连通验证，不发任何邮件；--scenario 运行前有确认提示（--yes 跳过）。",
-        "追踪快照 linked_case_snapshot.reply_job.intent 使用正确键 payload.reply_intent。"
+        "suspension 内部邮件正文第二行显示 'Account Suspension: ...' 而非 'Billing: ...'。",
+        "包含围栏代码块的 Zendesk 评论以 pre/code HTML 渲染（html_body 字段），无代码块的评论不变。",
+        "审计对账仍按纯文本 body 匹配，不受 html_body 影响。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "test",
-          "label": "Driver smoke (no side effects)",
-          "command": ".venv/bin/python scripts/testing/production_ticket_scenarios.py --list / --check",
-          "details": "--list 输出四剧本；--check 用根 .env 实连 production 库（support_account_cases 可查）、smtp.163.com 登录、imap.163.com INBOX 可选，全程零发信。"
-        },
-        {
-          "type": "test",
-          "label": "Console suite regression",
-          "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
-          "details": "intent 键修复后 23 用例全过。"
+          "label": "Email prefix mapping and fenced code HTML conversion",
+          "command": ".venv/bin/python -m unittest backend.tests.test_email_prefix_and_codeblocks backend.tests.test_billing_automation_email backend.tests.test_internal_email_template backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_reply_rag_fallback",
+          "details": "新增 7 项单测（request_type 按 action 映射、suspension 邮件正文不再含 Billing:、围栏代码块转 pre/code HTML、HTML 转义、多代码块、纯代码体、无代码块返回 None）；70 项相关回归全绿。"
         }
       ],
       "source_refs": [
-        "scripts/testing/production_ticket_scenarios.py",
-        "backend/main.py",
-        "docs/testing/production_ticket_regression_runbook.md"
+        "backend/services/billing_automation.py",
+        "backend/services/zendesk_comments.py",
+        "backend/tests/test_email_prefix_and_codeblocks.py"
       ],
-      "created_at": "2026-08-23",
-      "updated_at": "2026-08-23",
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
       "history": [
         {
-          "at": "2026-08-23",
+          "at": "2026-08-24",
           "event": "created",
-          "summary": "用户要求把四条人工回归流程自动化；确认形态=本地脚本、enablement 批准保留人工（163 代发方案被否）。实现剧本驱动器（真链路多回合）并顺手修 p2-97 快照 intent 键 bug。"
+          "summary": "由 12953 suspension 邮件缩略图 Billing 问题和 12951 RAG 答案代码块渲染问题创建。"
         }
       ],
-      "legacy_refs": [
-        "p2-97",
-        "p2-99"
-      ],
+      "legacy_refs": [],
       "legacy_ids": [],
-      "phase_id": "phase-2",
+      "phase_id": "phase-1",
       "module_id": "account-automation",
-      "function_id": "production-regression-testing"
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,

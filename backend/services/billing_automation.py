@@ -1090,6 +1090,13 @@ def _build_escalation_reply(action: str) -> str:
     )
 
 
+_REQUEST_TYPE_BY_ACTION = {
+    BILLING_ACTION_ACCOUNT_SUSPENSION: "Account Suspension",
+    BILLING_ACTION_ACCOUNT_VERIFICATION: "Account Verification",
+    BILLING_ACTION_DETAILED_INVOICE: "Detailed Invoice",
+}
+
+
 def _build_internal_email(
     *,
     action: str,
@@ -1160,7 +1167,7 @@ def _build_internal_email(
             "Your reply will be attached to the ticket for customer follow-up."
         )
     rendered = render_internal_handoff_email(
-        request_type="Billing",
+        request_type=_REQUEST_TYPE_BY_ACTION.get(action, "Billing"),
         title=request_title,
         ticket_id=normalized_ticket_id,
         intro=lead,

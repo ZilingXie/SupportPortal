@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import html
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -17,6 +19,32 @@ ZENDESK_BASIC_AUTH_ENV = "zendesk_basic_auth"
 # This Zendesk workspace marks these checkbox fields as required-on-solve; the
 # API rejects a solving PUT without them (422 RecordInvalid).
 ZENDESK_SOLVE_REQUIRED_CHECKBOX_FIELDS = ("36379228408724",)
+
+# Matches ```lang\n...\n``` fenced code blocks in Markdown-style bodies.
+_FENCED_CODE_RE = re.compile(r"```([A-Za-z0-9_+-]*)\n(.*?)```", re.DOTALL)
+
+
+def _fenced_code_html_body(body: str) -> str | None:
+    """Render a plain-text body with fenced code blocks as Zendesk html_body.
+
+    Returns None when the body has no fenced code block, so callers keep the
+    plain-text-only path (and the audit reconciliation stays byte-identical).
+    """
+    matches = list(_FENCED_CODE_RE.finditer(body))
+    if not matches:
+        return None
+    parts: list[str] = []
+    cursor = 0
+    for match in matches:
+        before = body[cursor : match.start()].strip()
+        if before:
+            parts.append(f"<p>{html.escape(before).replace(chr(10), '<br>')}</p>")
+        parts.append(f"<pre><code>{html.escape(match.group(2).rstrip())}</code></pre>")
+        cursor = match.end()
+    trailing = body[cursor:].strip()
+    if trailing:
+        parts.append(f"<p>{html.escape(trailing).replace(chr(10), '<br>')}</p>")
+    return "".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,6 +393,9 @@ def add_ticket_comment(
     timeout = _request_timeout(timeout_seconds)
     url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
     comment_payload: dict[str, Any] = {"body": normalized_body, "public": expected_public}
+    html_body = _fenced_code_html_body(normalized_body)
+    if html_body:
+        comment_payload["html_body"] = html_body
     normalized_uploads = tuple(
         token for token in (str(item or "").strip() for item in (uploads or ())) if token
     )
