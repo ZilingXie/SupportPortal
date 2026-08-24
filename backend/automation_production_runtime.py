@@ -462,6 +462,45 @@ def create_app() -> FastAPI:
             **trigger,
         }
 
+    @app.put(
+        "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/status",
+        dependencies=[Depends(_require_execution_token)],
+    )
+    async def sync_zendesk_account_ticket_status(zendesk_ticket_id: str, http_request: Request) -> dict[str, Any]:
+        import re
+
+        from backend.services.automation_account_reply_sync import (
+            ReplySyncError,
+            sync_account_case_ticket_status,
+        )
+
+        normalized_ticket_id = _normalize_comment_sync_ticket_id(zendesk_ticket_id)
+        payload = await http_request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="status payload must be a JSON object")
+        zendesk_status = str(payload.get("zendesk_status") or "").strip().lower()
+        if not re.fullmatch(r"(new|open|pending|hold|solved|closed)", zendesk_status):
+            raise HTTPException(status_code=422, detail="zendesk_status is invalid")
+        source_updated_at = str(payload.get("updated_at") or "").strip() or None
+        if source_updated_at:
+            try:
+                from datetime import datetime, timezone
+
+                parsed = datetime.fromisoformat(source_updated_at.replace("Z", "+00:00"))
+                source_updated_at = parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="updated_at is not an ISO timestamp") from exc
+        try:
+            result = await sync_account_case_ticket_status(
+                repository=_ticket_repository(),
+                normalized_ticket_id=normalized_ticket_id,
+                zendesk_status=zendesk_status,
+                source_updated_at=source_updated_at,
+            )
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return result
+
     @app.api_route("/{path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
     async def unknown_write_path(path: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="not found")

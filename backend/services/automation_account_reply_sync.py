@@ -56,7 +56,17 @@ from backend.services.billing_automation import (
     send_billing_internal_email,
 )
 from backend.services.enablement_automation import send_enablement_internal_email
+from backend.services.engineer_assignment import EngineerAssignmentService
+from backend.services.engineer_cases import (
+    apply_case_context_to_engineer_case,
+    build_engineer_case_context,
+    close_case_context_active_investigation,
+)
 from backend.services.engineer_slack import build_engineer_case_thread_event
+from backend.services.investigation_flow import (
+    RESOLVED_STATUS,
+    normalize_ticket_status,
+)
 from backend.services.automation_account_intake import _zendesk_ticket_url as _ticket_url_helper
 
 
@@ -938,4 +948,152 @@ async def process_account_customer_reply(
         "messages": canonical_ticket.get("messages", []),
         "support_ticket_status": canonical_ticket.get("status"),
         **_reply_job_public(reply_job),
+    }
+
+
+def _active_investigation_from_case_payload(engineer_case: dict[str, Any]) -> dict[str, Any] | None:
+    active = engineer_case.get("active_investigation")
+    if isinstance(active, dict):
+        return active
+    history = engineer_case.get("investigation_history")
+    if isinstance(history, list) and history and isinstance(history[0], dict):
+        return history[0]
+    return None
+
+
+def _engineer_case_payload_to_record(engineer_case: dict[str, Any]) -> dict[str, Any]:
+    investigation = _active_investigation_from_case_payload(engineer_case) or {}
+    return {
+        "engineer_case_id": str(engineer_case.get("engineer_case_id") or engineer_case.get("ticket_id") or "").strip(),
+        "client_ticket_id": str(
+            engineer_case.get("client_ticket_id")
+            or ((engineer_case.get("client_ticket_ref") or {}).get("ticket_id"))
+            or ""
+        ).strip(),
+        "case_sequence": engineer_case.get("case_sequence"),
+        "title": str(engineer_case.get("title") or engineer_case.get("subject") or "Engineer case").strip(),
+        "status": normalize_ticket_status(engineer_case.get("status")),
+        "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
+        "trigger_source": str(investigation.get("trigger_source") or engineer_case.get("trigger_source") or "").strip(),
+        "trigger_reason": str(investigation.get("trigger_reason") or engineer_case.get("trigger_reason") or "").strip(),
+        "thread_id": str(investigation.get("id") or engineer_case.get("thread_id") or "").strip(),
+        "draft_customer_reply": str(investigation.get("draft_customer_reply") or "").strip(),
+        "final_confirmation_requested_at": investigation.get("final_confirmation_requested_at"),
+        "engineer_handoff_packet": (
+            engineer_case.get("engineer_handoff_packet")
+            if isinstance(engineer_case.get("engineer_handoff_packet"), dict)
+            else None
+        ),
+        "engineer_agent_state": (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else None
+        ),
+        "opened_at": investigation.get("opened_at") or engineer_case.get("opened_at") or engineer_case.get("created_at"),
+        "updated_at": investigation.get("updated_at") or engineer_case.get("updated_at"),
+        "closed_at": investigation.get("closed_at") or engineer_case.get("closed_at"),
+        "investigation_state": str(investigation.get("state") or ("closed" if engineer_case.get("closed_at") else "active")).strip().lower(),
+        "messages": investigation.get("messages") if isinstance(investigation.get("messages"), list) else [],
+    }
+
+
+def _close_engineer_case_for_customer_resolution(
+    ticket: dict[str, Any],
+    engineer_case: dict[str, Any],
+    *,
+    now_value: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    case_context = build_engineer_case_context(ticket, engineer_case)
+    _, investigation_messages = close_case_context_active_investigation(
+        case_context,
+        now_value=now_value,
+        system_note="Investigation closed because the customer confirmed the issue is resolved.",
+    )
+    engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+    engineer_case["status"] = RESOLVED_STATUS
+    engineer_case["investigation_state"] = "closed"
+    ticket["active_engineer_case_id"] = None
+    return engineer_case, investigation_messages
+
+
+async def sync_account_case_ticket_status(
+    *,
+    repository: Any,
+    normalized_ticket_id: str,
+    zendesk_status: str,
+    source_updated_at: str | None,
+) -> dict[str, Any]:
+    """Port of the old /production PUT .../status semantics (p2-112 Phase D)."""
+    import asyncio
+
+    def _sync(call, *args, **kwargs):
+        return asyncio.get_running_loop().run_in_executor(None, lambda: call(*args, **kwargs))
+
+    account_case = await _sync(repository.get_account_case_by_ticket_id, normalized_ticket_id)
+    if not isinstance(account_case, dict):
+        raise ReplySyncError(404, "Account Case not found")
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    if not account_case_id:
+        raise ReplySyncError(409, "Account Case has no canonical id")
+
+    try:
+        result = await _sync(
+            repository.update_account_case_zendesk_status,
+            account_case_id=account_case_id,
+            zendesk_status=zendesk_status,
+            synced_at=_now_iso(),
+            source_updated_at=source_updated_at,
+        )
+    except KeyError as exc:
+        raise ReplySyncError(404, "Account Case not found") from exc
+    engineer_case_closed = False
+    normalized_zendesk_status = str(zendesk_status or "").strip().lower()
+    if normalized_zendesk_status in {"solved", "closed"}:
+        client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+        active_case_payload = (
+            repository.get_active_engineer_case(client_ticket_id, include_client_messages=True)
+            if client_ticket_id
+            else None
+        )
+        ticket = repository.get_ticket(client_ticket_id) if client_ticket_id else None
+        if isinstance(active_case_payload, dict) and isinstance(ticket, dict):
+            engineer_case = _engineer_case_payload_to_record(active_case_payload)
+            engineer_case, closed_messages = _close_engineer_case_for_customer_resolution(
+                ticket,
+                engineer_case,
+                now_value=_now_iso(),
+            )
+            engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip()
+            thread_closed_event = build_engineer_case_thread_event(
+                event_id=f"engineer-slack:{engineer_case_id}:closed:{normalized_zendesk_status}",
+                event_type="engineer_case_closed",
+                engineer_case_id=engineer_case_id,
+                message_text=f"Zendesk ticket is {normalized_zendesk_status}. This Case thread is closed.",
+                investigation_id=str(engineer_case.get("thread_id") or "") or None,
+            )
+            ticket["status"] = RESOLVED_STATUS
+            ticket["closed_at"] = _now_iso()
+            ticket["updated_at"] = ticket["closed_at"]
+            repository.save_ticket(ticket, new_messages=[])
+            repository.save_engineer_case(
+                engineer_case,
+                new_messages=closed_messages,
+                slack_events=[thread_closed_event],
+            )
+            EngineerAssignmentService(repository).resolve_case(
+                engineer_case_id,
+                actor="zendesk_status_sync",
+            )
+            engineer_case_closed = True
+    return {
+        "status": str(result.get("status") or "updated"),
+        "is_account_case": True,
+        "zendesk_ticket_id": normalized_ticket_id,
+        "account_case_id": account_case_id,
+        "zendesk_status": normalized_zendesk_status,
+        "engineer_case_closed": engineer_case_closed,
+        "source_updated_at": source_updated_at,
+        "synced_at": result.get("synced_at"),
     }
