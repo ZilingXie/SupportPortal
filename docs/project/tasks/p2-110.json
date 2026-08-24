@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-110",
+  "title": "/automation/production 替代 /production：Phase C 评论摄入 + 客户回复链（纯移植）",
+  "status": "active",
+  "owner": "zac",
+  "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
+  "next_action": "待用户 EC2 部署 + n8n commen_sync 的 production origin 换 URL 后做真实工单评论往返验收（追问进展、RAG fallback、suspension 确认）。随后 Phase D：状态同步端点（PUT status + solved/closed 关 case/Engineer Case 收尾）。",
+  "acceptance_criteria": [
+    "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
+    "触发链：幂等 per comment id、agent/initial/private/empty/前置评论忽略、非 production case 忽略、Engineer Case 分支记录客户评论事件。",
+    "回复链：ownership gate fail-closed 停自动化、suspension 两阶段状态机（确认→handoff→closing）、handler 进展判定与重路由、RAG fallback answer/escalation、追问与确认 reply job。",
+    "旧栈 /production 与 /account 零行为变化；preproduction/staging 契约不变。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Comment ingestion and reply chain regression",
+      "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_comment_sync_postgres",
+      "details": "86 项通过：comment-sync-target 鉴权与 membership、PUT comments 快照校验/404/触发调用、agent/initial 忽略不占幂等、Engineer Case 分支事件落库、既有 intake/runtime/contracts/compose 全回归绿。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_account_reply_sync.py",
+    "backend/services/automation_account_intake.py",
+    "backend/automation_production_runtime.py",
+    "backend/main.py",
+    "deployment/docker-compose.single-host.yml",
+    "deployment/deploy_automation_production_blue_green.sh",
+    "docs/integrations/n8n/automation_environments_cutover.md"
+  ],
+  "created_at": "2026-08-24",
+  "updated_at": "2026-08-24",
+  "history": [
+    {
+      "at": "2026-08-24",
+      "event": "created",
+      "summary": "用户在 A（复用 backend.main，需放开镜像物理排除）与 B（纯移植，契约不变）之间选定 B。完成移植与接线；工程师 AI 调查回合按阶段边界留给 Slack 协作阶段。"
+    }
+  ],
+  "legacy_refs": [
+    "p2-108",
+    "p2-109"
+  ],
+  "legacy_ids": [],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment"
+}

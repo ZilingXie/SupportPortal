@@ -333,6 +333,135 @@ def create_app() -> FastAPI:
         updated = store.save({**record, "status": "completed", "delivery_ledger": updated_ledger, "reconciled": True})
         return {"status": "completed", "environment": environment.value, "execution": updated, "reconciled": True}
 
+    def _normalize_comment_sync_ticket_id(value: str) -> str:
+        import re
+
+        normalized = str(value or "").strip()
+        if not normalized or not re.fullmatch(r"\d{1,128}", normalized):
+            raise HTTPException(status_code=422, detail="Zendesk ticket id must be numeric")
+        return normalized
+
+    @app.get(
+        "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comment-sync-target",
+        dependencies=[Depends(_require_execution_token)],
+    )
+    async def get_zendesk_account_comment_sync_target(zendesk_ticket_id: str) -> dict[str, Any]:
+        normalized_ticket_id = _normalize_comment_sync_ticket_id(zendesk_ticket_id)
+        repository = _ticket_repository()
+        account_case = await asyncio.to_thread(
+            repository.get_account_case_by_ticket_id, normalized_ticket_id
+        )
+        if not isinstance(account_case, dict):
+            return {"is_account_case": False, "zendesk_ticket_id": normalized_ticket_id}
+        account_case_id = str(
+            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+        ).strip()
+        return {
+            "is_account_case": bool(account_case_id),
+            "zendesk_ticket_id": normalized_ticket_id,
+            "account_case_id": account_case_id or None,
+            "comments_endpoint": (
+                f"/api/integrations/zendesk/account-cases/{normalized_ticket_id}/comments"
+                if account_case_id
+                else None
+            ),
+            "status_endpoint": (
+                f"/api/integrations/zendesk/account-cases/{normalized_ticket_id}/status"
+                if account_case_id
+                else None
+            ),
+        }
+
+    @app.put(
+        "/api/integrations/zendesk/account-cases/{zendesk_ticket_id}/comments",
+        dependencies=[Depends(_require_execution_token)],
+    )
+    async def sync_zendesk_account_comments(zendesk_ticket_id: str, http_request: Request) -> dict[str, Any]:
+        from backend.services.account_zendesk_comments import (
+            ZendeskCommentSnapshotError,
+            normalize_snapshot,
+        )
+        from backend.services.automation_account_reply_sync import (
+            ReplySyncError,
+            process_zendesk_comment_trigger,
+        )
+
+        normalized_ticket_id = _normalize_comment_sync_ticket_id(zendesk_ticket_id)
+        payload = await http_request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="snapshot payload must be a JSON object")
+        if not str(payload.get("source_updated_at") or "").strip() or not isinstance(
+            payload.get("snapshot_complete"), bool
+        ):
+            raise HTTPException(status_code=422, detail="source_updated_at and snapshot_complete are required")
+        comments = payload.get("comments")
+        if not isinstance(comments, list) or len(comments) > 10_000:
+            raise HTTPException(status_code=422, detail="comments must be a list of at most 10000 items")
+        try:
+            snapshot = normalize_snapshot(payload)
+        except ZendeskCommentSnapshotError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code, "message": exc.message}
+            ) from exc
+
+        repository = _ticket_repository()
+        account_case = await asyncio.to_thread(
+            repository.get_account_case_by_ticket_id, normalized_ticket_id
+        )
+        if not isinstance(account_case, dict):
+            raise HTTPException(status_code=404, detail="Account Case not found")
+        account_case_id = str(
+            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+        ).strip()
+        if not account_case_id:
+            raise HTTPException(status_code=409, detail="Account Case has no canonical id")
+
+        result = await asyncio.to_thread(
+            repository.sync_account_case_comments,
+            ticket_id=normalized_ticket_id,
+            account_case_id=account_case_id,
+            snapshot=snapshot,
+            synced_at=_now(),
+        )
+        status = str(result.get("status") or "").strip().lower()
+        if status == "incomplete_snapshot":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "incomplete_snapshot",
+                    "message": "Zendesk snapshot omitted comments already stored in Account.",
+                    "missing_comment_ids": list(result.get("missing_comment_ids") or []),
+                },
+            )
+        unresolved_author_count = sum(
+            1 for comment in snapshot.comments if comment.author_kind == "unknown"
+        )
+        try:
+            trigger = await process_zendesk_comment_trigger(
+                repository=repository,
+                account_case=account_case,
+                snapshot=snapshot,
+                trigger_comment_id=str(payload.get("trigger_comment_id") or "").strip() or None,
+                zendesk_side_effects_enabled=str(
+                    os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or ""
+                ).strip()
+                == "1",
+            )
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return {
+            "status": status or "synced",
+            "is_account_case": True,
+            "zendesk_ticket_id": normalized_ticket_id,
+            "account_case_id": account_case_id,
+            "comment_count": int(result.get("comment_count") or 0),
+            "unresolved_author_count": unresolved_author_count,
+            "source_updated_at": result.get("source_updated_at"),
+            "synced_at": result.get("synced_at"),
+            "comments_revision": result.get("comments_revision"),
+            **trigger,
+        }
+
     @app.api_route("/{path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
     async def unknown_write_path(path: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="not found")
