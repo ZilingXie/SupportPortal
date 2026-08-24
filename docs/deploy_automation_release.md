@@ -64,7 +64,7 @@ DEPLOY_PRODUCTION_APPROVED=1 \
 
 流程顺序为：candidate route/automation readiness -> Nginx `nginx -t` -> runtime upstream 原子替换 -> graceful reload -> `/automation/production/health` -> 旧 route/automation drain 360 秒并 stop。脚本使用与 `deploy_ec2.sh` 相同的 `.deploy_ec2.lock`，不会和普通部署并发运行；旧 candidate 的 Compose override 会保存在 `.deployments/automation-production-blue-green/`，以便 rollback 重新启动。
 
-如果切换后的 through-Nginx health 失败，脚本会自动恢复旧 upstream 并 stop candidate。手工回滚时：
+如果切换后的 through-Nginx health 失败，脚本会自动恢复旧 upstream 并 stop candidate。Nginx graceful reload 本身失败时也会恢复旧指针并尝试重新加载旧配置；恢复失败会以非零退出并要求立即检查入口层。手工回滚时，脚本会从旧 candidate 的 Compose override 反推出 release，重新加载对应 manifest 的 route image 和生产资源身份，因此可在新的 shell 进程中可靠启动 drain 后已停止的旧 candidate：
 
 ```bash
 DEPLOY_PRODUCTION_APPROVED=1 \

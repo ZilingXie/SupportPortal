@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "deployment/deploy_automation_production_blue_green.sh"
+IMAGE_ID = "sha256:" + ("a" * 64)
+
+
+class ProductionBlueGreenBehaviorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.project = Path(self.tempdir.name) / "repo"
+        (self.project / "deployment").mkdir(parents=True)
+        (self.project / "deployment" / "nginx" / "runtime").mkdir(parents=True)
+        (self.project / ".deployments" / "releases").mkdir(parents=True)
+        shutil.copy2(SCRIPT, self.project / "deployment" / SCRIPT.name)
+        (self.project / "deployment" / "docker-compose.single-host.yml").write_text("services: {}\n")
+        (self.project / ".env").write_text(
+            "TICKET_DB_DSN=postgresql://ticket\n"
+            "PRODUCTION_TICKET_DB_DSN=postgresql://production\n"
+            "NGINX_HOST_PORT=18080\n"
+        )
+        (self.project / "deployment" / "nginx" / "runtime" / "automation_production_active.conf").write_text(
+            "set $automation_production_active automation_production:8000;\n"
+        )
+        self.bin = Path(self.tempdir.name) / "bin"
+        self.bin.mkdir()
+        self.docker_log = Path(self.tempdir.name) / "docker.log"
+        self.reload_marker = Path(self.tempdir.name) / "reload.once"
+        self.reload_count = Path(self.tempdir.name) / "reload.count"
+        self._write_fake_commands()
+        self._write_manifest("release-test-1")
+        self._write_manifest("release-test-2")
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def _write_manifest(self, release: str) -> None:
+        (self.project / ".deployments" / "releases" / f"{release}.env").write_text(
+            f"release_id={release}\n"
+            "commit=test-commit\n"
+            "build_time=2026-08-24T00:00:00Z\n"
+            f"ROUTE_PRODUCTION_IMAGE=localhost/supportportal-route:{release}\n"
+            f"ROUTE_PRODUCTION_IMAGE_ID={IMAGE_ID}\n"
+            f"AUTOMATION_PRODUCTION_IMAGE=localhost/supportportal-automation-production:{release}\n"
+            f"AUTOMATION_PRODUCTION_IMAGE_ID={IMAGE_ID}\n"
+        )
+
+    def _write_fake_commands(self) -> None:
+        docker = self.bin / "docker"
+        docker.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_LOG\"\n"
+            "if [[ \"$1 $2\" == \"image inspect\" ]]; then printf '%s\\n' \"$FAKE_IMAGE_ID\"; exit 0; fi\n"
+            "if [[ \"$1\" == inspect ]]; then printf 'mounted\\n'; exit 0; fi\n"
+            "if [[ \"$1\" == compose ]]; then\n"
+            "  [[ \"$*\" == *'ps -q nginx'* ]] && printf 'nginx\\n'\n"
+            "  [[ \"$*\" == *'ps -q automation_redis_production'* ]] && printf 'redis\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            "if [[ \"$1\" == exec && \"$*\" == *'nginx -s reload'* ]]; then\n"
+            "  count=0; [[ -f \"$FAKE_RELOAD_COUNT\" ]] && count=$(<\"$FAKE_RELOAD_COUNT\"); count=$((count + 1)); printf '%s' \"$count\" > \"$FAKE_RELOAD_COUNT\"\n"
+            "  [[ \"${FAKE_RELOAD_FAILURE_ON:-0}\" == \"$count\" ]] && exit 1\n"
+            "fi\n"
+            "exit 0\n"
+        )
+        curl = self.bin / "curl"
+        curl.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' \"$*\" >> \"$FAKE_CURL_LOG\"\n"
+            "exit \"${FAKE_CURL_STATUS:-0}\"\n"
+        )
+        for command in (docker, curl):
+            command.chmod(command.stat().st_mode | stat.S_IXUSR)
+
+    def _run(self, *args: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{self.bin}:{environment['PATH']}",
+                "DEPLOY_PRODUCTION_APPROVED": "1",
+                "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
+                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "0",
+                "FAKE_DOCKER_LOG": str(self.docker_log),
+                "FAKE_CURL_LOG": str(Path(self.tempdir.name) / "curl.log"),
+                "FAKE_RELOAD_MARKER": str(self.reload_marker),
+                "FAKE_RELOAD_COUNT": str(self.reload_count),
+                "FAKE_IMAGE_ID": IMAGE_ID,
+            }
+        )
+        environment.update(extra_env)
+        return subprocess.run(
+            [str(self.project / "deployment" / SCRIPT.name), *args],
+            cwd=self.project,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    def _active_pointer(self) -> str:
+        return (self.project / "deployment" / "nginx" / "runtime" / "automation_production_active.conf").read_text()
+
+    def test_reload_failure_restores_pointer_and_stops_candidate(self) -> None:
+        result = self._run("--release", "release-test-1", "--drain-seconds", "0", "--skip-health", FAKE_RELOAD_FAILURE_ON="1")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("nginx reload failed; restoring the previous upstream pointer", result.stdout)
+        self.assertIn("set $automation_production_active automation_production:8000;", self._active_pointer())
+        self.assertIn("stop route_production_candidate_release-test-1 automation_production_candidate_release-test-1", self.docker_log.read_text())
+
+    def test_through_nginx_health_failure_restores_pointer(self) -> None:
+        result = self._run("--release", "release-test-1", "--drain-seconds", "0", FAKE_CURL_STATUS="22")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("previous upstream was restored", result.stdout + result.stderr)
+        self.assertIn("set $automation_production_active automation_production:8000;", self._active_pointer())
+
+    def test_health_failure_keeps_candidate_if_restore_reload_fails(self) -> None:
+        result = self._run(
+            "--release",
+            "release-test-1",
+            "--drain-seconds",
+            "0",
+            FAKE_CURL_STATUS="22",
+            FAKE_RELOAD_FAILURE_ON="2",
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("candidate was left running for immediate inspection", result.stdout + result.stderr)
+        self.assertNotIn("stop route_production_candidate_release-test-1 automation_production_candidate_release-test-1", self.docker_log.read_text())
+        self.assertIn("set $automation_production_active automation_production_candidate_release-test-1:8000;", self._active_pointer())
+
+    def test_invalid_nginx_port_fails_before_candidate_start(self) -> None:
+        result = self._run("--release", "release-test-1", NGINX_HOST_PORT="not-a-port")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NGINX_HOST_PORT must be numeric", result.stdout + result.stderr)
+        self.assertNotIn("Starting candidate project", result.stdout)
+
+    def test_new_process_rollback_reloads_previous_release_manifest(self) -> None:
+        first = self._run("--release", "release-test-1", "--drain-seconds", "0", "--skip-health")
+        second = self._run("--release", "release-test-2", "--drain-seconds", "0", "--skip-health")
+        rollback = self._run("--rollback", "--skip-health")
+
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual(rollback.returncode, 0, rollback.stdout + rollback.stderr)
+        self.assertIn("Loaded release manifest", rollback.stdout)
+        self.assertIn("release-test-1.env", rollback.stdout)
+        self.assertIn("supportportal-automation-production-bg-release-test-1", self.docker_log.read_text())
+        self.assertIn("set $automation_production_active automation_production_candidate_release-test-1:8000;", self._active_pointer())
+        state = (self.project / ".deployments" / "automation-production-blue-green.manifest").read_text()
+        self.assertIn("release=release-test-1", state)
+        self.assertIn("previous_release=release-test-2", state)

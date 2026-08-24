@@ -80,6 +80,16 @@ validate_image_id() {
   [[ "$1" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Invalid image id in release manifest: $1"
 }
 
+release_from_override() {
+  local override="$1" filename release_id
+  [[ "$override" == "$OVERRIDE_DIR/"* ]] || fail "Rollback override is outside the managed directory: $override"
+  filename="${override##*/}"
+  [[ "$filename" == *.yml ]] || fail "Rollback override has an unexpected filename: $override"
+  release_id="${filename%.yml}"
+  validate_release_id "$release_id"
+  printf '%s' "$release_id"
+}
+
 load_release_manifest() {
   local manifest="$RELEASE_DIR/${RELEASE}.env" key image image_id actual manifest_release
   [[ -f "$manifest" ]] || fail "Release manifest not found: $manifest"
@@ -154,18 +164,49 @@ write_upstream_file() {
 switch_upstream() {
   local target="$1" project="$2" tmp backup nginx
   validate_service_name "$target"
+  [[ -f "$ACTIVE_FILE" ]] || { log 'ERROR: active upstream pointer is missing'; return 1; }
   tmp="$(mktemp "${RUNTIME_DIR}/.automation-production-active.XXXXXX")"
   backup="$(mktemp "${RUNTIME_DIR}/.automation-production-active-backup.XXXXXX")"
-  cp "$ACTIVE_FILE" "$backup"
+  if ! cp "$ACTIVE_FILE" "$backup"; then
+    rm -f "$tmp" "$backup"
+    log 'ERROR: could not back up the active upstream pointer'
+    return 1
+  fi
   write_upstream_file "$target" "$tmp"
-  nginx="$(nginx_container)"; [[ -n "$nginx" ]] || fail 'official nginx container is not running'
-  mv -f "$tmp" "$ACTIVE_FILE"
+  nginx="$(nginx_container)" || {
+    rm -f "$tmp" "$backup"
+    log 'ERROR: official nginx container is not running'
+    return 1
+  }
+  if [[ -z "$nginx" ]]; then
+    rm -f "$tmp" "$backup"
+    log 'ERROR: official nginx container is not running'
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ACTIVE_FILE"; then
+    rm -f "$tmp" "$backup"
+    log 'ERROR: could not install the new active upstream pointer'
+    return 1
+  fi
   if ! docker exec "$nginx" nginx -t >/dev/null; then
     mv -f "$backup" "$ACTIVE_FILE"
-    fail 'nginx -t rejected active config; previous pointer was restored'
+    log 'ERROR: nginx -t rejected active config; previous pointer was restored'
+    return 1
   fi
-  rm -f "$backup"
-  docker exec "$nginx" nginx -s reload >/dev/null
+  if docker exec "$nginx" nginx -s reload >/dev/null; then
+    rm -f "$backup"
+    return 0
+  fi
+
+  log 'ERROR: nginx reload failed; restoring the previous upstream pointer'
+  if mv -f "$backup" "$ACTIVE_FILE" \
+    && docker exec "$nginx" nginx -t >/dev/null \
+    && docker exec "$nginx" nginx -s reload >/dev/null; then
+    log 'Previous upstream pointer was restored and Nginx reloaded.'
+  else
+    log 'WARNING: Nginx may still serve the candidate; inspect Nginx immediately'
+  fi
+  return 1
 }
 
 wait_for_service() {
@@ -193,18 +234,36 @@ if [[ "$ACTION" == rollback ]]; then
   current_target="$(awk -F= '$1=="target"{print $2}' "$STATE_FILE")"
   current_project="$(awk -F= '$1=="project"{print $2}' "$STATE_FILE")"
   current_override="$(awk -F= '$1=="override"{print $2}' "$STATE_FILE")"
+  current_release="$(awk -F= '$1=="release"{print $2}' "$STATE_FILE")"
+  previous_release="$(awk -F= '$1=="previous_release"{print $2}' "$STATE_FILE")"
   [[ -n "$previous_target" && -n "$previous_project" && -n "$previous_route" && -n "$previous_automation" ]] || fail 'rollback pointer is incomplete'
   [[ -z "$previous_override" || -f "$previous_override" ]] || fail "rollback compose override is missing: $previous_override"
+  if [[ -n "$previous_override" ]]; then
+    derived_previous_release="$(release_from_override "$previous_override")"
+    [[ -z "$previous_release" || "$previous_release" == "$derived_previous_release" ]] || fail 'rollback release does not match its compose override'
+    previous_release="$derived_previous_release"
+    RELEASE="$previous_release"
+    load_release_manifest
+  else
+    previous_release="${previous_release:-baseline}"
+    log 'Rollback uses the baseline production Compose services from .env.'
+  fi
+  if [[ -z "$current_release" && -n "$current_override" ]]; then
+    current_release="$(release_from_override "$current_override")"
+  fi
+  load_production_resource_identity
   ensure_nginx_runtime_mount
   compose "$previous_project" "${previous_override:-${COMPOSE_FILE}}" up -d --no-build "$previous_route" "$previous_automation"
   wait_for_service "$previous_project" "${previous_override:-${COMPOSE_FILE}}" "$previous_route" 8100 || fail 'rollback route readiness failed'
   wait_for_service "$previous_project" "${previous_override:-${COMPOSE_FILE}}" "$previous_automation" 8000 || fail 'rollback automation readiness failed'
-  switch_upstream "$previous_target" "$previous_project"
-  printf 'target=%s\nproject=%s\noverride=%s\nroute=%s\nautomation=%s\nprevious_target=%s\nprevious_project=%s\nprevious_override=%s\nprevious_route=%s\nprevious_automation=%s\nrelease=%s\ntime=%s\n' \
+  if ! switch_upstream "$previous_target" "$previous_project"; then
+    fail 'rollback upstream switch failed; active state was preserved when possible'
+  fi
+  printf 'target=%s\nproject=%s\noverride=%s\nroute=%s\nautomation=%s\nprevious_target=%s\nprevious_project=%s\nprevious_override=%s\nprevious_route=%s\nprevious_automation=%s\nrelease=%s\nprevious_release=%s\ntime=%s\n' \
     "$previous_target" "$previous_project" "$previous_override" "$previous_route" "$previous_automation" \
     "$current_target" "$current_project" "$current_override" \
     "$(awk -F= '$1=="route"{print $2}' "$STATE_FILE")" "$(awk -F= '$1=="automation"{print $2}' "$STATE_FILE")" \
-    "$(awk -F= '$1=="release"{print $2}' "$STATE_FILE")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
+    "$previous_release" "${current_release:-baseline}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
   log "Rolled back upstream to $previous_target; no request was replayed."
   exit 0
 fi
@@ -213,6 +272,11 @@ validate_release_id "$RELEASE"
 load_release_manifest
 load_production_resource_identity
 ensure_nginx_runtime_mount
+if [[ "$SKIP_HEALTH" == 0 ]]; then
+  nginx_host_port="$(resolve_env_value NGINX_HOST_PORT)"
+  nginx_host_port="${nginx_host_port:-8080}"
+  [[ "$nginx_host_port" =~ ^[0-9]+$ ]] || fail "NGINX_HOST_PORT must be numeric: $nginx_host_port"
+fi
 redis_container="$(docker compose --project-name supportportal-automation-production --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q automation_redis_production | sed -n '1p')"
 [[ -n "$redis_container" ]] || fail 'existing production Redis is not running; refusing to create a second Redis'
 
@@ -276,6 +340,11 @@ old_project="$(awk -F= '$1=="project"{print $2}' "$STATE_FILE" 2>/dev/null || tr
 old_override="$(awk -F= '$1=="override"{print $2}' "$STATE_FILE" 2>/dev/null || true)"
 old_route="$(awk -F= '$1=="route"{print $2}' "$STATE_FILE" 2>/dev/null || true)"
 old_automation="$(awk -F= '$1=="automation"{print $2}' "$STATE_FILE" 2>/dev/null || true)"
+if [[ -n "$old_override" ]]; then
+  old_release="$(release_from_override "$old_override")"
+else
+  old_release=baseline
+fi
 if [[ -z "$old_project" && "$old_target" == "automation_production" ]]; then
   old_project="supportportal-automation-production"
   old_route="route_production"
@@ -286,19 +355,23 @@ if [[ -z "$old_route" && "$old_target" == automation_production_candidate_* ]]; 
   old_route="route_production_candidate_${old_suffix}"
   old_automation="$old_target"
 fi
-[[ -n "$old_project" && -n "$old_route" && -n "$old_automation" ]] || fail 'active upstream state is incomplete'
-switch_upstream "$automation" "$project"
+[[ -n "$old_target" && -n "$old_project" && -n "$old_route" && -n "$old_automation" ]] || fail 'active upstream state is incomplete'
+if ! switch_upstream "$automation" "$project"; then
+  stop_candidate "$project" "$override" "$route" "$automation"
+  fail 'candidate upstream switch failed; candidate was stopped'
+fi
 if [[ "$SKIP_HEALTH" == 0 ]]; then
-  port="${NGINX_HOST_PORT:-8080}"
-  if ! curl --fail --silent --show-error "http://127.0.0.1:${port}/automation/production/health" >/dev/null; then
+  if ! curl --fail --silent --show-error "http://127.0.0.1:${nginx_host_port}/automation/production/health" >/dev/null; then
     log 'Candidate failed through-nginx health check; restoring the previous upstream.'
-    switch_upstream "$old_target" "$old_project" || log 'WARNING: automatic upstream restore failed; inspect Nginx immediately'
-    stop_candidate "$project" "$override" "$route" "$automation"
-    fail 'candidate is not reachable through nginx; previous upstream was restored when possible'
+    if switch_upstream "$old_target" "$old_project"; then
+      stop_candidate "$project" "$override" "$route" "$automation"
+      fail 'candidate is not reachable through nginx; previous upstream was restored'
+    fi
+    fail 'candidate health failed and previous upstream restoration failed; candidate was left running for immediate inspection'
   fi
 fi
-printf 'target=%s\nproject=%s\noverride=%s\nroute=%s\nautomation=%s\nprevious_target=%s\nprevious_project=%s\nprevious_override=%s\nprevious_route=%s\nprevious_automation=%s\nrelease=%s\ntime=%s\n' \
-  "$automation" "$project" "$override" "$route" "$automation" "$old_target" "$old_project" "$old_override" "$old_route" "$old_automation" "$RELEASE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
+printf 'target=%s\nproject=%s\noverride=%s\nroute=%s\nautomation=%s\nprevious_target=%s\nprevious_project=%s\nprevious_override=%s\nprevious_route=%s\nprevious_automation=%s\nrelease=%s\nprevious_release=%s\ntime=%s\n' \
+  "$automation" "$project" "$override" "$route" "$automation" "$old_target" "$old_project" "$old_override" "$old_route" "$old_automation" "$RELEASE" "$old_release" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
 if [[ -n "$old_project" && "$old_project" != "$project" ]]; then
   log "Draining old project $old_project for ${DRAIN_SECONDS}s"
   sleep "$DRAIN_SECONDS"
