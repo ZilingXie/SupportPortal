@@ -686,6 +686,123 @@ class WorkerResilienceTests(unittest.TestCase):
             reply_intent=None,
         )
 
+    def test_engineer_delivery_rejects_stale_comments_revision_without_zendesk_write(self) -> None:
+        repository = Mock()
+        delivery = {
+            "source": "engineer",
+            "account_case_id": "AC-ENG-STALE",
+            "message_id": "approval-1",
+            "engineer_case_id": "EC-ENG-STALE",
+            "investigation_id": "EC-ENG-STALE-round-1",
+            "draft_version": 1,
+            "comments_revision": "old-revision",
+            "immutable_content": "Approved reply",
+            "zendesk_ticket_id": "12890",
+            "status": "queued",
+        }
+        repository.list_account_zendesk_comment_deliveries.return_value = [delivery]
+        repository.get_account_case.return_value = {"client_ticket_id": "TK-ENG-STALE"}
+        repository.get_account_case_comment_sync.return_value = {"comments_revision": "new-revision"}
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "add_ticket_comment"
+        ) as add_comment, patch.object(
+            worker, "_record_engineer_delivery_slack_event"
+        ) as slack_event:
+            worker._drain_production_zendesk_comment_deliveries(limit=20)
+
+        add_comment.assert_not_called()
+        repository.claim_account_zendesk_comment_delivery.assert_not_called()
+        repository.complete_account_zendesk_comment_delivery.assert_called_once_with(
+            account_case_id="AC-ENG-STALE",
+            message_id="approval-1",
+            status="failed",
+            zendesk_comment_id=None,
+            failure_code="stale_comments_revision",
+            completed_at="2026-03-22T00:00:00+00:00",
+        )
+        slack_event.assert_called_once()
+
+    def test_engineer_delivery_success_keeps_case_active_and_does_not_solve(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket = {
+            "ticket_id": "TK-ENG-DELIVER",
+            "customer_id": "C-1",
+            "requester": "Customer",
+            "subject": "Token callback",
+            "status": "investigating",
+            "messages": [{"role": "customer", "content": "Callback fails", "created_at": "2026-08-24T00:00:00Z"}],
+            "created_at": "2026-08-24T00:00:00Z",
+            "updated_at": "2026-08-24T00:00:00Z",
+        }
+        repository.save_ticket(ticket)
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-ENG-DELIVER",
+                "billing_ticket_id": "AC-ENG-DELIVER",
+                "client_ticket_id": "TK-ENG-DELIVER",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12891",
+                "title": "Token callback",
+                "question": "Callback fails",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-24T00:00:00Z",
+            }
+        )
+        engineer_case = worker.build_new_engineer_case(
+            ticket,
+            engineer_case_id="EC-ENG-DELIVER",
+            case_sequence=1,
+            title="Token callback",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00Z",
+        )
+        engineer_case.update(
+            thread_id="EC-ENG-DELIVER-round-1",
+            draft_customer_reply="Please upgrade and retry.",
+            engineer_agent_state={"round_number": 1, "round_state": "publishing", "draft_version": 1},
+        )
+        repository.save_engineer_case(engineer_case)
+        repository._account_case_comment_sync["TK-ENG-DELIVER"] = {"comments_revision": "rev-1"}
+        repository.create_account_zendesk_comment_delivery(
+            account_case_id="AC-ENG-DELIVER",
+            message_id="approval-1",
+            zendesk_ticket_id="12891",
+            idempotency_key="engineer-zendesk-comment:1",
+            created_at="2026-08-24T00:01:00Z",
+            is_public=True,
+            source="engineer",
+            engineer_case_id="EC-ENG-DELIVER",
+            investigation_id="EC-ENG-DELIVER-round-1",
+            draft_version=1,
+            comments_revision="rev-1",
+            immutable_content="Please upgrade and retry.",
+        )
+        result = types.SimpleNamespace(comment_id="comment-1")
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "add_ticket_comment", return_value=result
+        ) as add_comment:
+            worker._drain_production_zendesk_comment_deliveries(limit=20)
+
+        add_comment.assert_called_once_with(
+            ticket_id="12891",
+            body="Please upgrade and retry.",
+            public=True,
+            solve=False,
+        )
+        stored_case = repository.get_engineer_case("EC-ENG-DELIVER")
+        assert stored_case is not None
+        self.assertEqual(stored_case["status"], "communicating")
+        self.assertIsNotNone(stored_case["active_investigation"])
+        self.assertEqual(stored_case["assignment_status"], "pending")
+        stored_ticket = repository.get_ticket("TK-ENG-DELIVER")
+        assert stored_ticket is not None
+        self.assertEqual(stored_ticket["status"], "communicating")
+        self.assertEqual(stored_ticket["messages"][-1]["content"], "Please upgrade and retry.")
+
     def test_delivery_is_not_put_twice_after_first_completion(self) -> None:
         repository = Mock()
         repository.get_account_case_by_ticket_id.return_value = {

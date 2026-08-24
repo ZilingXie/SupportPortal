@@ -172,7 +172,8 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
         self.assertEqual(account_case["automation_status"], "automation")
 
     def test_status_flows_to_summary_and_detail_payloads(self) -> None:
-        self.push_status("pending", updated_at="2026-08-21T09:00:00Z")
+        synced = self.push_status("pending", updated_at="2026-08-21T09:00:00Z")
+        self.assertEqual(synced.status_code, 200, synced.text)
         list_response = self.client.get(
             "/api/account/cases?processing_profile=production",
             headers={"Authorization": f"Bearer {self.admin_access_token}"},
@@ -180,7 +181,7 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
         self.assertEqual(list_response.status_code, 200, list_response.text)
         cases = list_response.json()["cases"]
         self.assertEqual(cases[0]["zendesk_ticket_status"], "pending")
-        self.assertTrue(str(cases[0]["zendesk_status_synced_at"] or "").startswith("2026-08-21"))
+        self.assertEqual(cases[0]["zendesk_status_synced_at"], synced.json()["synced_at"])
 
         detail_response = self.client.get(
             f"/api/account/cases/{self.case_id}",

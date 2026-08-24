@@ -734,6 +734,8 @@ def append_engineer_investigation_message(
     engineer_message: str,
     now_value: str,
     ai_turn_builder: Callable[..., dict[str, Any]] = default_investigation_prompt,
+    message_role: str = "engineer",
+    message_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_ticket_investigation_defaults(ticket)
     active_investigation = ticket.get("active_investigation")
@@ -744,10 +746,11 @@ def append_engineer_investigation_message(
     sequence = len(active_investigation.get("messages", [])) + 1
     engineer_entry = build_internal_message(
         str(active_investigation.get("id") or ""),
-        "engineer",
+        message_role,
         engineer_message,
         now_value,
         sequence=sequence,
+        meta=message_meta,
     )
     active_investigation.setdefault("messages", []).append(engineer_entry)
     new_internal_messages.append(engineer_entry)

@@ -123,6 +123,12 @@ CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
     failure_code TEXT,
     confirmed_at TIMESTAMPTZ,
     target_status TEXT CHECK (target_status IS NULL OR target_status = 'solved'),
+    source TEXT NOT NULL DEFAULT 'account' CHECK (source IN ('account', 'engineer')),
+    engineer_case_id TEXT,
+    investigation_id TEXT,
+    draft_version INTEGER,
+    comments_revision TEXT,
+    immutable_content TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (account_case_id, message_id)
@@ -460,6 +466,21 @@ WHERE assignment_version = 0;
 
 CREATE INDEX IF NOT EXISTS idx_support_engineer_cases_assignment_queue
     ON support_engineer_cases (assignment_status, sla_due_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS support_engineer_slack_events (
+    event_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')),
+    failure_code TEXT,
+    confirmed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_slack_events_delivery
+    ON support_engineer_slack_events (status, created_at, event_id);
 
 CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     account_id TEXT PRIMARY KEY,

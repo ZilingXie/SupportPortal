@@ -2,15 +2,33 @@
   "schema_version": 2,
   "task_id": "p2-69",
   "title": "从 10% Engineer Case 试运行逐步切换到全量派单",
-  "status": "planned",
+  "status": "active",
   "owner": "unassigned",
-  "summary": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
-  "next_action": "P1：用 Account Not automated 每第 10 单创建 Engineer Case 进行试运行，问题修复后在 9/1 前切到 100%。",
+  "summary": "将新的 Production not_automated Account Case 全量创建为 Engineer Case 并进行 Round Robin 派单；human_review_required 与手动 route-back 保持原流程。",
+  "next_action": "完成 Production 测试工单的 intake readback，确认 Engineer Case、assignment 和 root Slack event 在重放下各只产生一次；随后与 p2-68 一起进行 live thread 验收。",
   "acceptance_criteria": [
-    "完成 Rollout 维度的交付和验证。"
+    "每个新的 Production not_automated Account Case 创建且仅创建一个 active Engineer Case。",
+    "重复 intake 不重复创建、派单或 Slack root event。",
+    "staging、human_review_required 和手动 route-back 不创建本流程的 Slack event。"
   ],
   "blockers": [],
-  "evidence": [],
+  "evidence": [
+    {
+      "type": "test",
+      "summary": "Production not_automated intake creates one active Engineer shell, one round-robin dispatch and one root outbox event; staging and excluded routes remain unchanged.",
+      "ref": "backend/tests/test_account_intake.py"
+    },
+    {
+      "type": "test",
+      "summary": "Intake, Engineer flow, repository, comment-sync, worker and runtime contract regressions passed; multi-agent cases require ENGINEER_MULTI_AGENT_ENABLED=true.",
+      "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_worker.py"
+    },
+    {
+      "type": "decision",
+      "summary": "External production Zendesk test ticket and n8n Slack configuration are not available in this workspace, so live delivery/readback remains pending.",
+      "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+    }
+  ],
   "source_refs": [
     "docs/roadmap.html#lanes"
   ],
@@ -31,6 +49,11 @@
       "at": "2026-08-17",
       "event": "reclassified",
       "summary": "Task ID 从 p3-23 迁移为 p2-69；迁移到 phase-2 / engineer-workspace / engineer-case-delivery；状态从 active 调整为 planned（未开始）。"
+    },
+    {
+      "at": "2026-08-24",
+      "event": "started",
+      "summary": "按批准范围从已移除的 10% 占位切换到 Production not_automated 全量 Engineer Case 创建，明确排除 human_review_required。"
     }
   ],
   "legacy_refs": [
