@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:01:14Z",
-  "source_base_commit": "eeb636c8fb59b31a619312149dbd5ba5677e9733",
-  "registry_digest": "b22a61b5c01d0db69e8b78513f68d39820b9f5e77b7bf2216682fd5912eced62",
+  "generated_at": "2026-08-24T12:25:23Z",
+  "source_base_commit": "1117d2634fa378c82105e6b4caa21ee05a053c9d",
+  "registry_digest": "26f1d180f5c42523a2ef00c7bc949ece75f9d3d39973ade6758443253e9377bd",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -601,6 +601,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "New + affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_persona.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py backend/tests/test_account_ai_execution.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "515 passed。新增用例：skill 侧 core_content_only 提示词+capture 内 entries 落 stage=ragflow_docs_answer+场景默认值/env 覆盖；persona 侧 rag_fallback 转述策略进 system prompt+user_prompt 携带 provided_answer+缺字段报错；worker 侧 prepare 走 persona 渲染（persona_v8_scheduled）+publish 时 References 确定性追加；intake 侧 job 以 facts 入队。既有断言按新契约更新（references 拆分、facts 入队、verbatim 测试重写为 persona+References）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -700,7 +706,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 15,
+      "task_count": 16,
       "done_count": 8,
       "blocked_count": 1
     },
@@ -6019,6 +6025,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-110",
+      "title": "RAGFlow 兜底答案改由 gpt-5.6-luna 生成并经 Persona 渲染后回复",
+      "status": "active",
+      "owner": "zac",
+      "summary": "production case 意外回复兜底链路的两项行为变更（p2-93 后续）：(A) 生成侧——新场景 RAGFLOW_ANSWER（llm_profiles.py，默认 openai/gpt-5.6-luna/xhigh/120s/pinned 无 fallback，独立 env 旋钮 RAGFLOW_ANSWER_MODEL/RAGFLOW_ANSWER_REASONING_EFFORT，不动全仓共享的 RAG_ANSWER 场景）；ragflow_docs_search_skill 生成提示词新增 core_content_only（answer=核心技术内容，无问候/签名，Persona 负责口吻；JSON 契约 answer/key_steps/citations/insufficient_evidence 不变）；生成后 record_llm_invocation(stage=ragflow_docs_answer) 补上 p2-107 发现的 token 采集缺口。(B) 回复侧——RagFallbackOutcome 拆分 references；main.py 入队改为 reply_facts（behavior/reply_intent=rag_fallback_answer、provided_answer、references、customer_first_name）走 persona 管线；worker prepare 短路分支与 publish 的 rag 特判改为仅 legacy draft-only job 保真发布，新 job 经 render_automation_reply 渲染；persona 提示词 v12→v13 新增 rag_fallback_answer 转述策略（第一人称转述 provided_answer，不增删技术事实，不编造链接，References 由系统追加）；发布前把 facts.references 确定性追加到 persona 正文后（链接零丢失）。fail-closed 语义全保留（检索/证据/引用/生成/persona 任一失败→人工）。单次兜底成本 = luna(xhigh) 生成 + mini persona 渲染两次调用，token 两侧均采集。",
+      "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+provenance matched，纯后端改动无资产 marker）；p2-110 翻 done；用户侧 EC2 仅部署 main stack（--skip-split）；可选经 /automation/test 触发一条带意外回复的剧本做 E2E 复验。",
+      "acceptance_criteria": [
+        "RAGFLOW_ANSWER 场景默认 gpt-5.6-luna/xhigh/pinned，env 可覆盖；RAG_ANSWER 场景（本地 RAG 管线/dashboard 客户端流）行为不变。",
+        "ragflow 生成 token 落 support_account_case_llm_usage（stage=ragflow_docs_answer），在 worker/main 采集作用域内生效。",
+        "rag_fallback job 以 provided_answer facts 进 persona 管线：render_automation_reply 转述生成最终回复，缺 provided_answer 报 automation_persona_missing_provided_answer；legacy draft-only rag job 保持 verbatim 发布不进渲染。",
+        "References 在 persona 正文校验（签名门/契约）通过后确定性追加，链接零丢失、不被 persona 改写。",
+        "fail-closed 链不变：RAGFlow 检索失败/证据不足/引用无效/luna 生成失败/persona 不可用或渲染失败→全部升级人工。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "New + affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_persona.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py backend/tests/test_account_ai_execution.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "515 passed。新增用例：skill 侧 core_content_only 提示词+capture 内 entries 落 stage=ragflow_docs_answer+场景默认值/env 覆盖；persona 侧 rag_fallback 转述策略进 system prompt+user_prompt 携带 provided_answer+缺字段报错；worker 侧 prepare 走 persona 渲染（persona_v8_scheduled）+publish 时 References 确定性追加；intake 侧 job 以 facts 入队。既有断言按新契约更新（references 拆分、facts 入队、verbatim 测试重写为 persona+References）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_profiles.py",
+        "backend/services/ragflow_docs_search_skill.py",
+        "backend/services/prompts/rag_answer.py",
+        "backend/services/account_reply_rag_fallback.py",
+        "backend/services/account_reply_jobs.py",
+        "backend/services/automation_persona.py",
+        "backend/main.py",
+        "backend/worker.py",
+        ".env.example",
+        "docs/prompt_change_log.md",
+        "docs/rag_change_log.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "用户需求：RAGFlow 检索后生成模型换 gpt-5.6-luna（复用路由 luna 配置，问答定独立场景旋钮）；生成只需核心技术内容，最终回复经 persona 组装；References 渲染后确定性追加。任务号 p2-110（p2-108/109 已被 split-env 并行链占用）。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-93",
+        "p2-107"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,

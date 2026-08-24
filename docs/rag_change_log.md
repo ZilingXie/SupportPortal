@@ -5044,3 +5044,18 @@ For each new entry, record:
   - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or query behavior changes; `support_rag_query_runs.usage_ledger` JSONB only gains previously-zero keys. Historical rows keep cached/reasoning at 0 (cannot be backfilled).
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_factory.py backend/tests/test_rag_api.py backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_query_understanding.py backend/tests/test_rag_context_budget.py -q` (green; ledger detail case asserts rag_answer/expansion entries and token_by_model buckets carry the new values)
+
+## 2026-08-24 - RAGFlow fallback answer generation moves to luna with persona rendering (p2-110)
+
+- Summary:
+  - The production-case unexpected-reply fallback now generates its answer with the new pinned `ragflow_answer` scenario (default `gpt-5.6-luna`, xhigh) instead of the shared `rag_answer` profile (gpt-5.4); retrieval still runs against the external RAGFlow ticket-agent KB with the unchanged trusted-host citation validation.
+  - Generation emits core technical content only (`core_content_only` prompt mode) and its usage is recorded into the per-case LLM ledger (`stage=ragflow_docs_answer`), closing the token-capture gap found in p2-107.
+  - The final customer reply is now rendered by the automation persona (prompt v13) from `provided_answer` facts; reference links are appended deterministically after the persona body.
+- Reason:
+  - Per-case answers should reuse the account-route luna model quality bar while the persona owns customer voice; token cost accounting for this path was previously invisible on both recording sides.
+- Affected files/config:
+  - `backend/services/llm_profiles.py`, `backend/services/ragflow_docs_search_skill.py`, `backend/services/prompts/rag_answer.py`, `backend/services/account_reply_rag_fallback.py`, `backend/services/account_reply_jobs.py`, `backend/services/automation_persona.py`, `backend/main.py`, `backend/worker.py`, `.env.example`
+- Data impact:
+  - No SupportPortal schema, ingestion, chunking, embedding, vector-table, or local RAG pipeline changes; `support_account_case_llm_usage` gains rows under the new stage name when fallback answers run.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py -q` (green)

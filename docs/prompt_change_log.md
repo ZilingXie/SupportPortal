@@ -3932,3 +3932,16 @@ For each new entry, record:
   - The existing RAG answer model selection, reasoning effort, signature removal, reply job, Production public-delivery, and route-back behavior remain unchanged.
 - Verification:
   - Skill/fallback plus Account intake/worker regression passed `295` tests, including default-client selection, command/env contract, grounded answer mapping, untrusted-source rejection, hard total-timeout enforcement, missing-key/timeout reasons, and existing Production/staging escalation behavior.
+
+## 2026-08-24 - RAGFlow fallback answers: luna generation + persona v13 rendering (p2-110)
+
+- Model changes:
+  - New pinned scenario `ragflow_answer` (default `openai:gpt-5.6-luna`, reasoning `xhigh`, 120s, no model/provider fallback; env overrides `RAGFLOW_ANSWER_MODEL` / `RAGFLOW_ANSWER_REASONING_EFFORT`). The shared `rag_answer` scenario (gpt-5.4) is unchanged for the local RAG pipeline and client flows.
+  - Automation Persona prompt version `automation-persona-v12` → `automation-persona-v13`.
+- Prompt changes:
+  - `build_rag_answer_system_prompt(core_content_only=True)`: the ragflow fallback generation now asks for the core technical explanation only (no greeting/name/signing); a downstream persona voices the final customer reply. The JSON contract (answer/key_steps/citations/insufficient_evidence) is unchanged.
+  - Persona v13 adds the `rag_fallback_answer` policy: restate `provided_answer` technical content in a natural first-person voice, never add/drop/reinterpret technical facts, never invent links (the application appends reference links), no signature.
+- Behavior impact:
+  - Unexpected-reply fallback replies are now persona-rendered (mini model) instead of published verbatim; reference links are appended deterministically after the persona body passes the existing publication gates. Fail-closed escalation semantics are unchanged.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py backend/tests/test_llm_profiles.py -q`

@@ -14,6 +14,7 @@ from backend.services.account_reply_rag_fallback import (  # noqa: E402
     INTERNAL_NOTE_HEADLINE,
     RagFallbackOutcome,
     escalate_unexpected_reply_to_human,
+    format_rag_fallback_references,
     rag_fallback_enabled,
     rag_fallback_timeout_seconds,
     should_run_reply_rag_fallback,
@@ -119,7 +120,7 @@ class RagFallbackAnswerTest(unittest.TestCase):
 
         skill_client.assert_called_once_with()
         self.assertEqual(outcome.kind, "answer")
-        self.assertIn("docs.agora.io", outcome.answer)
+        self.assertIn("docs.agora.io", "".join(outcome.references))
 
     def test_answer_decision_returns_the_answer(self) -> None:
         client = _FakeRagClient(
@@ -205,16 +206,21 @@ class RagFallbackAnswerTest(unittest.TestCase):
             }
         )
         outcome = try_rag_fallback_answer(question="what is appid", request_id="req-c", client=client)
-        self.assertIn("References:", outcome.answer)
-        self.assertEqual(outcome.answer.count("get-started-sdk"), 1)  # dedup by URL
+        self.assertEqual(outcome.answer, "App ID is the application identifier.")
+        self.assertEqual(
+            outcome.references.count("get-started-sdk"), 1
+        )  # dedup by URL
         self.assertIn(
             "Quickstart > Initialize the engine — https://docs.agora.io/en/voice-calling/get-started/get-started-sdk",
-            outcome.answer,
+            outcome.references,
         )
         self.assertIn(
-            "- https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk",
-            outcome.answer,
+            "https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk",
+            outcome.references,
         )
+        rendered = format_rag_fallback_references(outcome.references)
+        self.assertIn("References:", rendered)
+        self.assertIn("- https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk", rendered)
 
     def test_escalate_decision_and_rag_errors_map_to_escalate(self) -> None:
         escalate = try_rag_fallback_answer(

@@ -11,6 +11,7 @@ def build_rag_answer_system_prompt(
     insufficient_reply: str,
     product_role: str | None = None,
     product_scope: str | None = None,
+    core_content_only: bool = False,
 ) -> str:
     parts = [
         "## Role",
@@ -34,6 +35,19 @@ def build_rag_answer_system_prompt(
             f'If evidence is insufficient, return the exact fallback answer: "{insufficient_reply}"',
         ]
     )
+    if core_content_only:
+        # Downstream wrapping (e.g. the automation persona) owns greeting,
+        # tone, and signoff; the generated answer only carries the technical
+        # explanation.
+        parts.extend(
+            [
+                "",
+                "## Content Scope",
+                "The answer field carries the core technical explanation only: no greeting,",
+                "no customer name, no closing pleasantries, no signature.",
+                "A downstream assistant persona will voice the final customer reply.",
+            ]
+        )
     return "\n".join(parts).strip()
 
 

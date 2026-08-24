@@ -7295,7 +7295,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             with patch.dict(os.environ, {"ACCOUNT_REPLY_RAG_FALLBACK_ENABLED": "true"}), patch(
                 "backend.main.try_rag_fallback_answer",
                 return_value=RagFallbackOutcome(
-                    kind="answer", answer="An App ID identifies your Agora project."
+                    kind="answer",
+                    answer="An App ID identifies your Agora project.",
+                    references=("https://docs.agora.io/en/get-started",),
                 ),
             ) as fallback:
                 response = self.client.post(
@@ -7307,15 +7309,16 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIn("what is appid?", fallback.call_args.kwargs["question"])
         job = self.repository.get_latest_account_reply_job(created["ticket_id"])
         assert job is not None
-        self.assertEqual(
-            job["payload"]["draft_content"],
-            "An App ID identifies your Agora project.",
-        )
-        # The RAG answer must stay out of the persona pipeline state machine.
+        # The RAG answer enters the persona pipeline as provided_answer facts;
+        # the persona render voices the customer reply and the worker appends
+        # the reference links deterministically before publication.
+        facts = job["payload"]["reply_facts"]
+        self.assertEqual(facts["provided_answer"], "An App ID identifies your Agora project.")
+        self.assertEqual(facts["reply_intent"], "rag_fallback_answer")
+        self.assertEqual(facts["behavior"], "rag_fallback_answer")
+        self.assertEqual(facts["references"], ["https://docs.agora.io/en/get-started"])
         self.assertEqual(job["payload"]["reply_intent"], "rag_fallback_answer")
-        self.assertNotIn("reply_facts", job["payload"])
-        self.assertNotIn("reply_pipeline", job["payload"])
-        self.assertEqual(job["status"], "scheduled")
+        self.assertEqual(job["payload"]["reply_pipeline"], "automation_persona_v8")
 
     def test_unexpected_reply_escalates_to_human_when_rag_cannot_answer(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()), patch(

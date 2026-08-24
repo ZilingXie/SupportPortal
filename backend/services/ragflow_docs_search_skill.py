@@ -11,7 +11,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import RAG_ANSWER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import RAGFLOW_ANSWER_SCENARIO, resolve_model_profile
+from backend.services.llm_usage_capture import record_llm_invocation
 from backend.services.prompts.rag_answer import (
     INSUFFICIENT_EVIDENCE_REPLY,
     build_rag_answer_system_prompt,
@@ -219,7 +220,7 @@ class RagflowDocsSearchSkillClient:
         remaining_seconds = timeout - (time.monotonic() - started_at)
         if remaining_seconds <= 0:
             raise RagflowDocsSearchError("timeout")
-        profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
+        profile = resolve_model_profile(RAGFLOW_ANSWER_SCENARIO)
         profile = replace(
             profile,
             timeout_seconds=min(profile.timeout_seconds, remaining_seconds),
@@ -232,6 +233,7 @@ class RagflowDocsSearchSkillClient:
                 profile=profile,
                 system_prompt=build_rag_answer_system_prompt(
                     insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+                    core_content_only=True,
                 ),
                 user_prompt=build_rag_answer_user_prompt(
                     question=_question_with_ticket_context(normalized_question, ticket_context),
@@ -242,6 +244,7 @@ class RagflowDocsSearchSkillClient:
             )
         except (LlmInvocationError, ValueError) as exc:
             raise RagflowDocsSearchError("generation") from exc
+        record_llm_invocation(response, stage="ragflow_docs_answer")
         try:
             payload = json.loads(str(response.text or "").strip())
         except json.JSONDecodeError as exc:
