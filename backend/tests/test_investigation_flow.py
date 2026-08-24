@@ -4395,6 +4395,284 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["active_investigation"]["messages"][-1]["role"], "engineer_ai")
         self.assertEqual(payload["active_investigation"]["messages"][-1]["content"], "I have enough information now. Please confirm this draft before I reply to the customer.")
 
+    def test_slack_message_is_idempotent_audited_and_enqueues_ai_response(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-SLACK-INV-1",
+            status="investigating",
+            active_investigation={
+                "id": "TK-SLACK-INV-1-1-round-1",
+                "state": "active",
+                "trigger_reason": "not_automated",
+                "trigger_source": "account_not_automated",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-08-24T00:00:00+00:00",
+                "updated_at": "2026-08-24T00:00:00+00:00",
+                "messages": [],
+            },
+        )
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-INV-1-1",
+            case_sequence=1,
+            title="Token callback missing",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        engineer_case["thread_id"] = "TK-SLACK-INV-1-1-round-1"
+        engineer_case["engineer_agent_state"] = {
+            "conversation_version": 0,
+            "draft_version": 0,
+            "round_number": 1,
+            "round_state": "active",
+        }
+        self.repository.save_engineer_case(engineer_case)
+        ai_turn = Mock(
+            return_value={
+                "state": "awaiting_confirmation",
+                "message": "The evidence supports a customer reply.",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                "engineer_agent_state": {
+                    "phase": "awaiting_confirmation",
+                    "ready_to_reply": True,
+                    "reply_readiness": _reply_readiness(),
+                },
+            }
+        )
+        body = {
+            "schema_version": 1,
+            "event_id": "Ev-Slack-1",
+            "engineer_case_id": "TK-SLACK-INV-1-1",
+            "slack_user_id": "U123",
+            "text": "The issue reproduces only on SDK 4.2.1.",
+            "occurred_at": "2026-08-24T00:01:00Z",
+        }
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
+            main, "generate_investigation_ai_turn", ai_turn
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            first = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json=body,
+            )
+            second = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json=body,
+            )
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(first.json()["conversation_version"], 1)
+        self.assertEqual(first.json()["draft_version"], 1)
+        self.assertTrue(second.json()["idempotent_replay"])
+        self.assertEqual(ai_turn.call_count, 1)
+        case = self.repository.get_engineer_case("TK-SLACK-INV-1-1")
+        assert case is not None
+        slack_message = case["active_investigation"]["messages"][-2]
+        self.assertEqual(slack_message["meta"]["slack_user_id"], "U123")
+        events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["event_type"], "engineer_ai_response")
+
+    def test_slack_message_rejects_destination_fields_and_bad_token(self) -> None:
+        body = {
+            "schema_version": 1,
+            "event_id": "Ev-Slack-Bad",
+            "engineer_case_id": "EC-1",
+            "slack_user_id": "U123",
+            "text": "Investigate this.",
+            "occurred_at": "2026-08-24T00:01:00Z",
+            "channel_id": "C-MUST-NOT-BE-ACCEPTED",
+        }
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False):
+            extra = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json=body,
+            )
+            bad_token = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "wrong"},
+                json={key: value for key, value in body.items() if key != "channel_id"},
+            )
+        self.assertEqual(extra.status_code, 422, extra.text)
+        self.assertEqual(bad_token.status_code, 401, bad_token.text)
+
+    def test_slack_message_invalidates_old_buttons_when_draft_text_is_unchanged(self) -> None:
+        ticket = self._seed_ticket(ticket_id="TK-SLACK-SAME-DRAFT", status="investigating")
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-SAME-DRAFT-1",
+            case_sequence=1,
+            title="Same draft",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        engineer_case.update(
+            thread_id="TK-SLACK-SAME-DRAFT-1-round-1",
+            draft_customer_reply="Please upgrade and retry.",
+            engineer_agent_state={
+                "conversation_version": 1,
+                "draft_version": 4,
+                "round_number": 1,
+                "round_state": "active",
+            },
+        )
+        self.repository.save_engineer_case(engineer_case)
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "awaiting_confirmation",
+                "message": "The recommendation is unchanged.",
+                "draft_customer_reply": "Please upgrade and retry.",
+                "engineer_agent_state": {
+                    "phase": "awaiting_confirmation",
+                    "ready_to_reply": True,
+                    "reply_readiness": _reply_readiness(),
+                },
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json={
+                    "schema_version": 1,
+                    "event_id": "Ev-Slack-Same-Draft",
+                    "engineer_case_id": "TK-SLACK-SAME-DRAFT-1",
+                    "slack_user_id": "U123",
+                    "text": "I confirmed the same evidence.",
+                    "occurred_at": "2026-08-24T00:01:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["conversation_version"], 2)
+        self.assertEqual(response.json()["draft_version"], 5)
+
+    def test_slack_actions_guardrail_then_queue_public_engineer_delivery(self) -> None:
+        ticket = self._seed_ticket(ticket_id="TK-SLACK-ACTION-1", status="investigating")
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-ACTION-1-1",
+            case_sequence=1,
+            title="Token callback missing",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        engineer_case.update(
+            thread_id="TK-SLACK-ACTION-1-1-round-1",
+            draft_customer_reply="Please upgrade to SDK 4.2.2 and retry token renewal.",
+            engineer_agent_state={
+                "conversation_version": 2,
+                "draft_version": 1,
+                "round_number": 1,
+                "round_state": "active",
+                "reply_readiness": _reply_readiness(),
+            },
+        )
+        self.repository.save_engineer_case(engineer_case)
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-SLACK-ACTION-1",
+                "billing_ticket_id": "AC-SLACK-ACTION-1",
+                "client_ticket_id": "TK-SLACK-ACTION-1",
+                "title": "Token callback missing",
+                "question": "Token callback never fires.",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12888",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-24T00:00:00+00:00",
+            }
+        )
+        self.repository._account_case_comment_sync["TK-SLACK-ACTION-1"] = {
+            "comments_revision": "comments-rev-1",
+            "comment_count": 1,
+            "synced_at": "2026-08-24T00:00:30+00:00",
+        }
+        guardrail_packet = {
+            "guardrail_id": "GRD-SLACK-1",
+            "guardrail_version": "engineer-guardrail-final-v1",
+            "decision": "approved_for_final_engineer_review",
+            "customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            "blockers": [],
+        }
+        headers = {"X-N8n-Request-Token": "slack-token"}
+        guardrail_body = {
+            "interaction_id": "Ix-Slack-Guardrail-1",
+            "engineer_case_id": "TK-SLACK-ACTION-1-1",
+            "slack_user_id": "U123",
+            "action": "guardrail",
+            "investigation_id": "TK-SLACK-ACTION-1-1-round-1",
+            "draft_version": 1,
+            "guardrail_id": None,
+            "guardrail_version": None,
+        }
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
+            main, "run_engineer_guardrail_final", return_value=guardrail_packet
+        ):
+            stale = self.client.post(
+                "/api/integrations/slack/engineer-cases/actions",
+                headers=headers,
+                json={**guardrail_body, "interaction_id": "Ix-Slack-Stale-1", "draft_version": 2},
+            )
+            guardrail = self.client.post(
+                "/api/integrations/slack/engineer-cases/actions",
+                headers=headers,
+                json=guardrail_body,
+            )
+            final = self.client.post(
+                "/api/integrations/slack/engineer-cases/actions",
+                headers=headers,
+                json={
+                    **guardrail_body,
+                    "interaction_id": "Ix-Slack-Final-1",
+                    "action": "final_approve",
+                    "guardrail_id": "GRD-SLACK-1",
+                    "guardrail_version": "engineer-guardrail-final-v1",
+                },
+            )
+            duplicate_final = self.client.post(
+                "/api/integrations/slack/engineer-cases/actions",
+                headers=headers,
+                json={
+                    **guardrail_body,
+                    "interaction_id": "Ix-Slack-Final-2",
+                    "action": "final_approve",
+                    "guardrail_id": "GRD-SLACK-1",
+                    "guardrail_version": "engineer-guardrail-final-v1",
+                },
+            )
+
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(guardrail.status_code, 200, guardrail.text)
+        self.assertEqual(guardrail.json()["status"], "guardrail_passed")
+        self.assertEqual(final.status_code, 200, final.text)
+        self.assertEqual(final.json()["status"], "delivery_queued")
+        self.assertEqual(duplicate_final.status_code, 409, duplicate_final.text)
+        stored_case = self.repository.get_engineer_case("TK-SLACK-ACTION-1-1")
+        assert stored_case is not None
+        self.assertIsNotNone(stored_case["active_investigation"])
+        self.assertEqual(stored_case["assignment_status"], "pending")
+        deliveries = self.repository.list_account_zendesk_comment_deliveries(
+            statuses=("queued",)
+        )
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0]["source"], "engineer")
+        self.assertTrue(deliveries[0]["is_public"])
+        self.assertIsNone(deliveries[0]["target_status"])
+        self.assertEqual(deliveries[0]["comments_revision"], "comments-rev-1")
+        self.assertEqual(deliveries[0]["draft_version"], 1)
+        self.assertIn("Please upgrade", deliveries[0]["immutable_content"])
+
     def test_engineer_internal_message_uses_investigation_reply_model_and_records_metadata(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-LLM-102",

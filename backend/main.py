@@ -79,6 +79,11 @@ from backend.services.llm_profiles import ACCOUNT_ROUTE_SCENARIO
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_slack_n8n import account_slack_n8n_configured
+from backend.services.engineer_slack_n8n import (
+    build_engineer_case_opened_event,
+    build_engineer_case_thread_event,
+    engineer_slack_n8n_configured,
+)
 from backend.services.account_billing_handlers import (
     account_billing_handler,
     account_billing_metadata,
@@ -1656,6 +1661,30 @@ class InvestigationMessageRequest(BaseModel):
     multi_agent_enabled: bool = False
 
 
+class SlackEngineerCaseMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = Field(ge=1, le=1)
+    event_id: str = Field(min_length=1, max_length=256)
+    engineer_case_id: str = Field(min_length=1, max_length=128)
+    slack_user_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=4000)
+    occurred_at: str = Field(min_length=1, max_length=64)
+
+
+class SlackEngineerCaseActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    interaction_id: str = Field(min_length=1, max_length=256)
+    engineer_case_id: str = Field(min_length=1, max_length=128)
+    slack_user_id: str = Field(min_length=1, max_length=128)
+    action: str = Field(pattern="^(guardrail|final_approve)$")
+    investigation_id: str = Field(min_length=1, max_length=128)
+    draft_version: int = Field(ge=1)
+    guardrail_id: str | None = Field(default=None, max_length=256)
+    guardrail_version: str | None = Field(default=None, max_length=128)
+
+
 class EngineerMultiAgentRunRequest(BaseModel):
     engineer_id: str = Field(default="Jack")
 
@@ -2282,6 +2311,7 @@ def _engineer_case_payload_to_record(engineer_case: dict[str, Any]) -> dict[str,
         "assigned_engineer_id": str(engineer_case.get("assigned_engineer_id") or "").strip() or None,
         "trigger_source": str(investigation.get("trigger_source") or engineer_case.get("trigger_source") or "").strip(),
         "trigger_reason": str(investigation.get("trigger_reason") or engineer_case.get("trigger_reason") or "").strip(),
+        "thread_id": str(investigation.get("id") or engineer_case.get("thread_id") or "").strip(),
         "draft_customer_reply": str(investigation.get("draft_customer_reply") or "").strip(),
         "final_confirmation_requested_at": investigation.get("final_confirmation_requested_at"),
         "engineer_handoff_packet": (
@@ -4169,6 +4199,12 @@ def _health_config_warnings() -> list[str]:
         and not account_slack_n8n_configured()
     ):
         warnings.add("account_slack_n8n_config_incomplete")
+    if (
+        str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower()
+        == "production"
+        and not engineer_slack_n8n_configured()
+    ):
+        warnings.add("engineer_slack_n8n_config_incomplete")
     return sorted(warnings)
 
 
@@ -5719,6 +5755,45 @@ async def _create_account_intake_impl(
     rollout_selected = False
     engineer_case_id: str | None = None
 
+    if processing_profile == "production" and response_status == "not_automated":
+        engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
+            ticket,
+            case_status=INVESTIGATING_STATUS,
+            trigger_source="account_not_automated",
+            trigger_reason=str(
+                decision.not_automated_reason
+                or decision.reason
+                or route_classification.get("route_reason_code")
+                or "not_automated"
+            ).strip(),
+            now_value=timestamp,
+        )
+        engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip() or None
+        rollout_selected = bool(engineer_case_id)
+        if engineer_case_created and engineer_case_id:
+            engineer_case["thread_id"] = f"{engineer_case_id}-round-1"
+            engineer_case["engineer_agent_state"] = {
+                "conversation_version": 0,
+                "draft_version": 0,
+                "round_number": 1,
+                "round_state": "active",
+            }
+            root_event = build_engineer_case_opened_event(
+                account_case=billing_ticket,
+                engineer_case=engineer_case,
+            )
+            await async_to_thread(
+                ticket_repository.save_engineer_case,
+                engineer_case,
+                new_messages=[],
+                slack_events=[root_event],
+            )
+            await async_to_thread(
+                _engineer_assignment_service().dispatch_case,
+                engineer_case_id,
+                reason="round_robin",
+            )
+
     if billing_email_attempt and billing_email_attempt.get("internal_email_to_send"):
         delivery_result, billing_ticket = await _run_account_internal_email_delivery(
             account_case=billing_ticket,
@@ -6559,6 +6634,45 @@ async def sync_zendesk_account_ticket_status(
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Account Case not found") from exc
+    engineer_case_closed = False
+    normalized_zendesk_status = str(request.zendesk_status or "").strip().lower()
+    if normalized_zendesk_status in {"solved", "closed"}:
+        client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+        active_case_payload = (
+            ticket_repository.get_active_engineer_case(client_ticket_id, include_client_messages=True)
+            if client_ticket_id
+            else None
+        )
+        ticket = ticket_repository.get_ticket(client_ticket_id) if client_ticket_id else None
+        if isinstance(active_case_payload, dict) and isinstance(ticket, dict):
+            engineer_case = _engineer_case_payload_to_record(active_case_payload)
+            engineer_case, closed_messages = _close_active_engineer_case_for_customer_resolution(
+                ticket,
+                engineer_case,
+                now_value=now_iso(),
+            )
+            engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip()
+            thread_closed_event = build_engineer_case_thread_event(
+                event_id=f"engineer-slack:{engineer_case_id}:closed:{normalized_zendesk_status}",
+                event_type="engineer_case_closed",
+                engineer_case_id=engineer_case_id,
+                message_text=f"Zendesk ticket is {normalized_zendesk_status}. This Case thread is closed.",
+                investigation_id=str(engineer_case.get("thread_id") or "") or None,
+            )
+            ticket["status"] = RESOLVED_STATUS
+            ticket["closed_at"] = now_iso()
+            ticket["updated_at"] = ticket["closed_at"]
+            ticket_repository.save_ticket(ticket, new_messages=[])
+            ticket_repository.save_engineer_case(
+                engineer_case,
+                new_messages=closed_messages,
+                slack_events=[thread_closed_event],
+            )
+            _engineer_assignment_service().resolve_case(
+                engineer_case_id,
+                actor="zendesk_status_sync",
+            )
+            engineer_case_closed = True
     return {
         "status": str(result.get("status") or "updated"),
         "is_account_case": True,
@@ -6569,6 +6683,7 @@ async def sync_zendesk_account_ticket_status(
         "local_ticket_closed": bool(result.get("local_ticket_closed")),
         "restored_automation_status": result.get("restored_automation_status"),
         "synced_at": result.get("zendesk_status_synced_at"),
+        "engineer_case_closed": engineer_case_closed,
     }
 
 
@@ -6658,6 +6773,70 @@ async def _process_zendesk_comment_trigger(
 
     if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
         return await _complete(_ignored("ignored_non_production_case"))
+    client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    active_engineer_case = (
+        ticket_repository.get_active_engineer_case(client_ticket_id, include_client_messages=True)
+        if client_ticket_id
+        else None
+    )
+    if (
+        isinstance(active_engineer_case, dict)
+        and str(automation_status or "").strip().lower() == "not_automated"
+        and isinstance(active_engineer_case.get("active_investigation"), dict)
+    ):
+        engineer_case_id = str(active_engineer_case.get("engineer_case_id") or "").strip()
+        investigation_id = str(
+            (active_engineer_case.get("active_investigation") or {}).get("id") or ""
+        ).strip()
+        customer_text = str(trigger_comment.body or "").strip()
+        customer_event = build_engineer_case_thread_event(
+            event_id=f"zendesk-comment:{account_case_id}:{trigger_comment_id}:customer",
+            event_type="zendesk_customer_comment",
+            engineer_case_id=engineer_case_id,
+            message_text=f"Customer comment:\n{customer_text}",
+            investigation_id=investigation_id or None,
+        )
+        engineer_case_record = _engineer_case_payload_to_record(active_engineer_case)
+        ticket_repository.save_engineer_case(
+            engineer_case_record,
+            new_messages=[],
+            slack_events=[customer_event],
+        )
+        try:
+            processed = await _process_engineer_investigation_message(
+                engineer_case_id,
+                engineer_id="zendesk:customer",
+                message=customer_text,
+                multi_agent_enabled=False,
+                message_role="customer",
+                message_meta={
+                    "source": "zendesk_comment",
+                    "zendesk_comment_id": trigger_comment_id,
+                    "occurred_at": str(trigger_comment.created_at or ""),
+                },
+                slack_event_id=f"zendesk-comment:{account_case_id}:{trigger_comment_id}:ai-response",
+            )
+        except HTTPException as exc:
+            return await _complete(
+                {
+                    "trigger_status": "failed",
+                    "trigger_comment_id": trigger_comment_id,
+                    "error": str(exc.detail),
+                }
+            )
+        return await _complete(
+            {
+                "trigger_status": "processed_engineer_case",
+                "trigger_comment_id": trigger_comment_id,
+                "engineer_case_id": engineer_case_id,
+                "conversation_version": int(
+                    (processed.get("engineer_agent_state") or {}).get("conversation_version") or 0
+                ),
+                "draft_version": int(
+                    (processed.get("engineer_agent_state") or {}).get("draft_version") or 0
+                ),
+            }
+        )
     if (
         not is_registered_automation(
             route_family=account_case.get("route_family"),
@@ -13401,10 +13580,15 @@ async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequ
     }
 
 
-@app.post("/api/engineer/tickets/{ticket_id}/investigation/messages")
-async def post_investigation_message(
+async def _process_engineer_investigation_message(
     ticket_id: str,
-    request: InvestigationMessageRequest,
+    *,
+    engineer_id: str,
+    message: str,
+    multi_agent_enabled: bool,
+    message_role: str = "engineer",
+    message_meta: dict[str, Any] | None = None,
+    slack_event_id: str | None = None,
 ) -> dict[str, Any]:
     engineer_case_payload = _resolve_engineer_case_payload(ticket_id)
     if engineer_case_payload is None:
@@ -13422,7 +13606,7 @@ async def post_investigation_message(
     engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
     case_context = build_engineer_case_context(ticket, engineer_case)
     timestamp = now_iso()
-    if request.multi_agent_enabled and ENGINEER_MULTI_AGENT_ENABLED:
+    if multi_agent_enabled and ENGINEER_MULTI_AGENT_ENABLED:
         # Multi-agent workspace is active for this ticket: refresh the
         # Plan/Execute/Review state from the engineer note BEFORE the Engineer
         # AI turn so it reasons over the updated multi-agent state. The refresh
@@ -13431,7 +13615,7 @@ async def post_investigation_message(
             engineer_case,
             now_value=timestamp,
             reason="engineer_message",
-            engineer_note=request.message.strip(),
+            engineer_note=message.strip(),
             force=True,
         )
     else:
@@ -13448,13 +13632,32 @@ async def post_investigation_message(
         if isinstance(engineer_case.get("engineer_agent_state"), dict)
         else {}
     )
+    conversation_version = int(preserved_multi_agent_state.get("conversation_version") or 0) + 1
+    previous_draft_version = int(preserved_multi_agent_state.get("draft_version") or 0)
+    for guardrail_key in (
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+        "final_approved_at",
+    ):
+        preserved_multi_agent_state.pop(guardrail_key, None)
+    preserved_multi_agent_state["conversation_version"] = conversation_version
+    preserved_multi_agent_state["round_state"] = "active"
+    active_investigation = case_context.get("active_investigation")
+    if isinstance(active_investigation, dict):
+        active_investigation["state"] = "active"
+        active_investigation["final_confirmation_requested_at"] = None
     if isinstance(preserved_multi_agent_state, dict) and preserved_multi_agent_state:
         case_context["engineer_agent_state"] = copy.deepcopy(preserved_multi_agent_state)
     result = append_engineer_investigation_message(
         case_context,
-        engineer_message=request.message.strip(),
+        engineer_message=message.strip(),
         now_value=timestamp,
         ai_turn_builder=generate_investigation_ai_turn,
+        message_role=message_role,
+        message_meta=message_meta,
     )
     engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
     # Re-apply the preserved multi-agent state so the panel stays populated
@@ -13489,17 +13692,70 @@ async def post_investigation_message(
                 merged_state[key] = preserved_multi_agent_state[key]
         engineer_case["engineer_agent_state"] = merged_state
         case_context["engineer_agent_state"] = copy.deepcopy(merged_state)
+    current_state = dict(
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+    for guardrail_key in (
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+        "final_approved_at",
+    ):
+        current_state.pop(guardrail_key, None)
+    current_draft = str(
+        (result.get("active_investigation") or {}).get("draft_customer_reply") or ""
+    ).strip()
+    # Every new customer/engineer input invalidates every previously rendered
+    # draft action, even when the model happens to reproduce identical text.
+    draft_version = previous_draft_version + 1 if current_draft else previous_draft_version
+    current_state.update(
+        conversation_version=conversation_version,
+        draft_version=draft_version,
+        round_state="active",
+    )
+    engineer_case["engineer_agent_state"] = current_state
+    case_context["engineer_agent_state"] = copy.deepcopy(current_state)
     ticket["updated_at"] = timestamp
     ticket["last_engineer_action"] = {
         "action": "investigation_message",
-        "engineer_id": request.engineer_id,
-        "note": request.message.strip(),
+        "engineer_id": engineer_id,
+        "note": message.strip(),
         "created_at": timestamp,
     }
+    slack_events: list[dict[str, Any]] = []
+    if slack_event_id:
+        ai_messages = [
+            str(item.get("content") or "").strip()
+            for item in result.get("new_internal_messages") or []
+            if str(item.get("role") or "").strip().lower() in {"engineer_ai", "assistant", "ai"}
+            and str(item.get("content") or "").strip()
+        ]
+        analysis = ai_messages[-1] if ai_messages else "Engineer AI updated the investigation."
+        message_text = analysis
+        if current_draft:
+            message_text = f"{analysis}\n\nCustomer draft:\n{current_draft}"
+        slack_events.append(
+            build_engineer_case_thread_event(
+                event_id=slack_event_id,
+                event_type="engineer_ai_response",
+                engineer_case_id=str(engineer_case.get("engineer_case_id") or ticket_id),
+                message_text=message_text,
+                investigation_id=str((result.get("active_investigation") or {}).get("id") or "") or None,
+                conversation_version=conversation_version,
+                draft_version=draft_version,
+                customer_draft=current_draft or None,
+                action="guardrail" if current_draft else None,
+            )
+        )
     ticket_repository.save_ticket(ticket, new_messages=[])
     ticket_repository.save_engineer_case(
         engineer_case,
         new_messages=result.get("new_internal_messages"),
+        slack_events=slack_events,
     )
     await _record_and_dispatch_investigation_event(ticket, engineer_case)
 
@@ -13514,6 +13770,367 @@ async def post_investigation_message(
         ),
         "updated_at": ticket["updated_at"],
     }
+
+
+@app.post("/api/engineer/tickets/{ticket_id}/investigation/messages")
+async def post_investigation_message(
+    ticket_id: str,
+    request: InvestigationMessageRequest,
+) -> dict[str, Any]:
+    return await _process_engineer_investigation_message(
+        ticket_id,
+        engineer_id=request.engineer_id,
+        message=request.message,
+        multi_agent_enabled=request.multi_agent_enabled,
+    )
+
+
+_SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE = "slack_engineer_case_message"
+_SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE = "slack_engineer_case_action"
+
+
+@app.post(
+    "/api/integrations/slack/engineer-cases/messages",
+    dependencies=[Depends(require_n8n_request_token)],
+)
+async def post_slack_engineer_case_message(
+    request: SlackEngineerCaseMessageRequest,
+) -> dict[str, Any]:
+    claim = await async_to_thread(
+        ticket_repository.begin_idempotent_request,
+        _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+        request.event_id,
+        created_at=now_iso(),
+        retry_failed=True,
+    )
+    if not bool(claim.get("created")):
+        existing = claim.get("response_payload")
+        if str(claim.get("state") or "").strip().lower() == "completed" and isinstance(existing, dict):
+            return {**existing, "idempotent_replay": True}
+        raise HTTPException(status_code=409, detail="Slack message event is already processing")
+
+    engineer_case_payload = _resolve_engineer_case_payload(request.engineer_case_id)
+    if engineer_case_payload is None:
+        await async_to_thread(
+            ticket_repository.fail_idempotent_request,
+            _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+            request.event_id,
+            response_payload={"status": "error", "code": "engineer_case_not_found"},
+            updated_at=now_iso(),
+        )
+        raise HTTPException(status_code=404, detail="Engineer Case not found")
+    if not isinstance(engineer_case_payload.get("active_investigation"), dict):
+        ignored = {
+            "status": "ignored_closed_case",
+            "event_id": request.event_id,
+            "engineer_case_id": request.engineer_case_id,
+        }
+        await async_to_thread(
+            ticket_repository.complete_idempotent_request,
+            _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+            request.event_id,
+            response_payload=ignored,
+            updated_at=now_iso(),
+        )
+        return ignored
+
+    try:
+        result = await _process_engineer_investigation_message(
+            request.engineer_case_id,
+            engineer_id=f"slack:{request.slack_user_id}",
+            message=request.text.strip(),
+            multi_agent_enabled=False,
+            message_meta={
+                "source": "slack",
+                "slack_user_id": request.slack_user_id,
+                "slack_event_id": request.event_id,
+                "occurred_at": request.occurred_at,
+            },
+            slack_event_id=f"{request.event_id}:ai-response",
+        )
+    except Exception as exc:
+        await async_to_thread(
+            ticket_repository.fail_idempotent_request,
+            _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+            request.event_id,
+            response_payload={"status": "failed", "code": type(exc).__name__},
+            updated_at=now_iso(),
+        )
+        raise
+
+    response = {
+        "status": "processed",
+        "event_id": request.event_id,
+        "engineer_case_id": request.engineer_case_id,
+        "conversation_version": int((result.get("engineer_agent_state") or {}).get("conversation_version") or 0),
+        "draft_version": int((result.get("engineer_agent_state") or {}).get("draft_version") or 0),
+    }
+    await async_to_thread(
+        ticket_repository.complete_idempotent_request,
+        _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+        request.event_id,
+        response_payload=response,
+        updated_at=now_iso(),
+    )
+    return response
+
+
+@app.post(
+    "/api/integrations/slack/engineer-cases/actions",
+    dependencies=[Depends(require_n8n_request_token)],
+)
+async def post_slack_engineer_case_action(
+    request: SlackEngineerCaseActionRequest,
+) -> dict[str, Any]:
+    claim = await async_to_thread(
+        ticket_repository.begin_idempotent_request,
+        _SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE,
+        request.interaction_id,
+        created_at=now_iso(),
+        retry_failed=True,
+    )
+    if not bool(claim.get("created")):
+        existing = claim.get("response_payload")
+        if str(claim.get("state") or "").strip().lower() == "completed" and isinstance(existing, dict):
+            return {**existing, "idempotent_replay": True}
+        raise HTTPException(status_code=409, detail="Slack action is already processing")
+
+    async def _complete(payload: dict[str, Any]) -> dict[str, Any]:
+        await async_to_thread(
+            ticket_repository.complete_idempotent_request,
+            _SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE,
+            request.interaction_id,
+            response_payload=payload,
+            updated_at=now_iso(),
+        )
+        return payload
+
+    try:
+        engineer_case_payload = _resolve_engineer_case_payload(request.engineer_case_id)
+        if engineer_case_payload is None:
+            raise HTTPException(status_code=404, detail="Engineer Case not found")
+        active_payload = engineer_case_payload.get("active_investigation")
+        if not isinstance(active_payload, dict):
+            return await _complete(
+                {
+                    "status": "ignored_closed_case",
+                    "interaction_id": request.interaction_id,
+                    "engineer_case_id": request.engineer_case_id,
+                }
+            )
+        if str(active_payload.get("id") or "").strip() != request.investigation_id:
+            raise HTTPException(status_code=409, detail="stale investigation")
+
+        ticket = ticket_repository.get_ticket(
+            str((engineer_case_payload.get("client_ticket_ref") or {}).get("ticket_id") or "")
+        )
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Client ticket not found")
+        engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
+        case_context = build_engineer_case_context(ticket, engineer_case)
+        active = case_context.get("active_investigation")
+        if not isinstance(active, dict):
+            raise HTTPException(status_code=409, detail="stale investigation")
+        agent_state = dict(
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else {}
+        )
+        current_draft_version = int(agent_state.get("draft_version") or 0)
+        conversation_version = int(agent_state.get("conversation_version") or 0)
+        if current_draft_version != request.draft_version:
+            raise HTTPException(status_code=409, detail="stale draft version")
+        timestamp = now_iso()
+        draft_reply = str(active.get("draft_customer_reply") or "").strip()
+        if not draft_reply:
+            raise HTTPException(status_code=400, detail="A draft customer reply is required")
+
+        if request.action == "guardrail":
+            reply_readiness = (
+                agent_state.get("reply_readiness")
+                if isinstance(agent_state.get("reply_readiness"), dict)
+                else None
+            )
+            if not (isinstance(reply_readiness, dict) and reply_readiness.get("ready_for_customer_reply")):
+                raise HTTPException(status_code=400, detail="A backend-validated customer reply is required")
+            active_review = agent_state.get("active_review") if isinstance(agent_state.get("active_review"), dict) else None
+            evidence_packet = agent_state.get("evidence_packet") if isinstance(agent_state.get("evidence_packet"), dict) else None
+            task_results = agent_state.get("task_results") if isinstance(agent_state.get("task_results"), list) else None
+            handoff_packet = ticket.get("engineer_handoff_packet") if isinstance(ticket.get("engineer_handoff_packet"), dict) else None
+            guardrail_packet = run_engineer_guardrail_final(
+                draft_customer_reply=draft_reply,
+                reply_readiness=reply_readiness,
+                active_review=active_review,
+                evidence_packet=evidence_packet,
+                task_results=task_results,
+                engineer_handoff_packet=handoff_packet,
+                requester=str(ticket.get("requester") or "").strip() or None,
+                customer_id=str(ticket.get("customer_id") or "").strip() or None,
+                language_hint=detect_customer_reply_language(
+                    (handoff_packet or {}).get("latest_customer_message", "") if isinstance(handoff_packet, dict) else "",
+                    draft_reply,
+                ),
+            )
+            guardrail_packet.update(
+                created_at=timestamp,
+                conversation_version=conversation_version,
+                draft_version=current_draft_version,
+            )
+            decision = str(guardrail_packet.get("decision") or "blocked")
+            approved = decision == "approved_for_final_engineer_review"
+            blockers = [str(item).strip() for item in guardrail_packet.get("blockers") or [] if str(item).strip()]
+            summary = (
+                "Guardrail passed. Approve and publish this draft."
+                if approved
+                else "Guardrail blocked: " + ("; ".join(blockers) or "unknown reason")
+            )
+            guardrail_message = build_internal_message(
+                request.investigation_id,
+                "engineer_ai",
+                summary,
+                timestamp,
+                sequence=len(active.get("messages") or []) + 1,
+                meta={"source": "slack", "slack_user_id": request.slack_user_id, "interaction_id": request.interaction_id},
+            )
+            active.setdefault("messages", []).append(guardrail_message)
+            active["state"] = INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL if approved else "active"
+            active["updated_at"] = timestamp
+            agent_state.update(
+                phase="awaiting_final_approval" if approved else "guardrail_blocked",
+                active_guardrail_final=guardrail_packet,
+                guardrail_final_id=str(guardrail_packet.get("guardrail_id") or ""),
+                guardrail_final_version=str(guardrail_packet.get("guardrail_version") or ""),
+                guardrail_final_decision=decision,
+                final_approval_required=approved,
+            )
+            case_context["engineer_agent_state"] = agent_state
+            engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+            slack_event = build_engineer_case_thread_event(
+                event_id=f"{request.interaction_id}:guardrail-result",
+                event_type="engineer_guardrail_result",
+                engineer_case_id=request.engineer_case_id,
+                message_text=summary,
+                investigation_id=request.investigation_id,
+                conversation_version=conversation_version,
+                draft_version=current_draft_version,
+                customer_draft=str(guardrail_packet.get("customer_reply") or draft_reply),
+                guardrail_id=str(guardrail_packet.get("guardrail_id") or ""),
+                guardrail_version=str(guardrail_packet.get("guardrail_version") or ""),
+                action="final_approve" if approved else None,
+                blockers=blockers,
+            )
+            ticket_repository.save_engineer_case(
+                engineer_case,
+                new_messages=[guardrail_message],
+                slack_events=[slack_event],
+            )
+            return await _complete(
+                {
+                    "status": "guardrail_passed" if approved else "guardrail_blocked",
+                    "interaction_id": request.interaction_id,
+                    "engineer_case_id": request.engineer_case_id,
+                    "guardrail_id": str(guardrail_packet.get("guardrail_id") or ""),
+                    "guardrail_version": str(guardrail_packet.get("guardrail_version") or ""),
+                    "draft_version": current_draft_version,
+                }
+            )
+
+        guardrail = agent_state.get("active_guardrail_final")
+        if not isinstance(guardrail, dict):
+            raise HTTPException(status_code=409, detail="Guardrail approval is missing or stale")
+        if (
+            str(agent_state.get("round_state") or "").strip().lower() == "publishing"
+            or bool(agent_state.get("final_approved_at"))
+        ):
+            raise HTTPException(status_code=409, detail="Zendesk delivery is already queued")
+        if str(active.get("state") or "").strip().lower() != INVESTIGATION_STATE_AWAITING_FINAL_APPROVAL:
+            raise HTTPException(status_code=409, detail="Guardrail approval is missing or stale")
+        if (
+            str(guardrail.get("guardrail_id") or "") != str(request.guardrail_id or "")
+            or str(guardrail.get("guardrail_version") or "") != str(request.guardrail_version or "")
+            or int(guardrail.get("draft_version") or 0) != current_draft_version
+            or int(guardrail.get("conversation_version") or 0) != conversation_version
+            or str(guardrail.get("decision") or "") != "approved_for_final_engineer_review"
+        ):
+            raise HTTPException(status_code=409, detail="Guardrail approval is missing or stale")
+        approved_content = str(guardrail.get("customer_reply") or "").strip()
+        account_case = ticket_repository.get_account_case_by_ticket_id(str(ticket.get("ticket_id") or ""))
+        if not isinstance(account_case, dict) or str(account_case.get("processing_profile") or "").lower() != "production":
+            raise HTTPException(status_code=409, detail="Production Account Case is required")
+        sync_state = ticket_repository.get_account_case_comment_sync(str(ticket.get("ticket_id") or ""))
+        comments_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        if not comments_revision:
+            raise HTTPException(status_code=409, detail="Zendesk comments snapshot is required before approval")
+        account_case_id = str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
+        zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
+        if not account_case_id or not zendesk_ticket_id or not approved_content:
+            raise HTTPException(status_code=409, detail="Zendesk delivery target is incomplete")
+
+        approval_message = build_internal_message(
+            request.investigation_id,
+            "engineer",
+            "Approved for Zendesk public comment delivery.",
+            timestamp,
+            sequence=len(active.get("messages") or []) + 1,
+            meta={"source": "slack", "slack_user_id": request.slack_user_id, "interaction_id": request.interaction_id, "action": "final_approve"},
+        )
+        active.setdefault("messages", []).append(approval_message)
+        active["updated_at"] = timestamp
+        agent_state.update(
+            phase="delivery_pending",
+            round_state="publishing",
+            final_approved_at=timestamp,
+            approved_message_id=str(approval_message.get("id") or ""),
+        )
+        case_context["engineer_agent_state"] = agent_state
+        engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+        slack_event = build_engineer_case_thread_event(
+            event_id=f"{request.interaction_id}:publish-queued",
+            event_type="zendesk_publish_queued",
+            engineer_case_id=request.engineer_case_id,
+            message_text="Approved. Zendesk public comment delivery is queued.",
+            investigation_id=request.investigation_id,
+            conversation_version=conversation_version,
+            draft_version=current_draft_version,
+        )
+        delivery = {
+            "account_case_id": account_case_id,
+            "message_id": str(approval_message.get("id") or ""),
+            "zendesk_ticket_id": zendesk_ticket_id,
+            "idempotency_key": f"engineer-zendesk-comment:{request.engineer_case_id}:{request.investigation_id}:{current_draft_version}",
+            "created_at": timestamp,
+            "is_public": True,
+            "target_status": None,
+            "source": "engineer",
+            "engineer_case_id": request.engineer_case_id,
+            "investigation_id": request.investigation_id,
+            "draft_version": current_draft_version,
+            "comments_revision": comments_revision,
+            "immutable_content": approved_content,
+        }
+        ticket_repository.save_engineer_case(
+            engineer_case,
+            new_messages=[approval_message],
+            slack_events=[slack_event],
+            zendesk_delivery=delivery,
+        )
+        return await _complete(
+            {
+                "status": "delivery_queued",
+                "interaction_id": request.interaction_id,
+                "engineer_case_id": request.engineer_case_id,
+                "draft_version": current_draft_version,
+            }
+        )
+    except Exception as exc:
+        await async_to_thread(
+            ticket_repository.fail_idempotent_request,
+            _SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE,
+            request.interaction_id,
+            response_payload={"status": "failed", "code": type(exc).__name__},
+            updated_at=now_iso(),
+        )
+        raise
 
 
 def ensure_engineer_multi_agent_run(

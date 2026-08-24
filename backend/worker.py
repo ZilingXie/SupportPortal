@@ -82,7 +82,11 @@ from backend.services.account_automation_delivery import (
 )
 from backend.services.automation_routing import is_registered_automation
 from backend.services.account_automation_ownership import ensure_production_automation_ownership
-from backend.services.zendesk_comments import ZendeskCommentError
+from backend.services.zendesk_comments import (
+    ZendeskCommentError,
+    add_ticket_comment,
+    read_ticket_comment_audit,
+)
 from backend.services.zendesk_ticket_assignment import (
     ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV,
     assign_ticket_to_reviewer,
@@ -97,6 +101,13 @@ from backend.services.account_slack_n8n import (
     account_slack_n8n_configured,
     get_account_slack_event_status,
     post_account_slack_event,
+)
+from backend.services.engineer_slack_n8n import (
+    EngineerSlackN8nError,
+    build_engineer_case_thread_event,
+    engineer_slack_n8n_configured,
+    get_engineer_slack_event_status,
+    post_engineer_slack_event,
 )
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
@@ -172,6 +183,35 @@ from backend.services.ticket_message_sentiment import (
 LOGGER = logging.getLogger(__name__)
 SHUTTING_DOWN = False
 TICKET_LOOKUP_RETRY_MAX = 6
+
+
+def _engineer_case_record_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    active = payload.get("active_investigation")
+    investigation = active if isinstance(active, dict) else {}
+    return {
+        "engineer_case_id": str(payload.get("engineer_case_id") or payload.get("ticket_id") or "").strip(),
+        "client_ticket_id": str(
+            payload.get("client_ticket_id")
+            or ((payload.get("client_ticket_ref") or {}).get("ticket_id"))
+            or ""
+        ).strip(),
+        "case_sequence": payload.get("case_sequence"),
+        "title": str(payload.get("title") or payload.get("subject") or "Engineer case").strip(),
+        "status": normalize_ticket_status(payload.get("status")),
+        "assigned_engineer_id": str(payload.get("assigned_engineer_id") or "").strip() or None,
+        "trigger_source": str(investigation.get("trigger_source") or payload.get("trigger_source") or "").strip(),
+        "trigger_reason": str(investigation.get("trigger_reason") or payload.get("trigger_reason") or "").strip(),
+        "thread_id": str(investigation.get("id") or payload.get("thread_id") or "").strip(),
+        "draft_customer_reply": str(investigation.get("draft_customer_reply") or "").strip(),
+        "final_confirmation_requested_at": investigation.get("final_confirmation_requested_at"),
+        "engineer_handoff_packet": payload.get("engineer_handoff_packet") if isinstance(payload.get("engineer_handoff_packet"), dict) else None,
+        "engineer_agent_state": payload.get("engineer_agent_state") if isinstance(payload.get("engineer_agent_state"), dict) else None,
+        "opened_at": investigation.get("opened_at") or payload.get("opened_at"),
+        "updated_at": investigation.get("updated_at") or payload.get("updated_at"),
+        "closed_at": investigation.get("closed_at") or payload.get("closed_at"),
+        "investigation_state": str(investigation.get("state") or "active").strip().lower(),
+        "messages": investigation.get("messages") if isinstance(investigation.get("messages"), list) else [],
+    }
 TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
@@ -1459,6 +1499,9 @@ def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
         limit=limit,
     )
     for delivery in deliveries:
+        if str(delivery.get("source") or "account").strip().lower() == "engineer":
+            _deliver_engineer_approved_zendesk_comment(delivery)
+            continue
         account_case_id = str(delivery.get("account_case_id") or "").strip()
         message_id = str(delivery.get("message_id") or "").strip()
         delivery_status = str(delivery.get("status") or "").strip().lower()
@@ -1499,6 +1542,220 @@ def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
             job_id=str(meta.get("account_reply_job_id") or "").strip() or message_id,
             reply_intent=str(meta.get("reply_intent") or "").strip() or None,
         )
+
+
+def _record_engineer_delivery_slack_event(
+    delivery: dict[str, Any],
+    *,
+    event_type: str,
+    message_text: str,
+    failure_code: str | None = None,
+) -> None:
+    engineer_case_id = str(delivery.get("engineer_case_id") or "").strip()
+    case_payload = ticket_repository.get_engineer_case(
+        engineer_case_id,
+        include_client_messages=False,
+    )
+    if not isinstance(case_payload, dict):
+        return
+    engineer_case = _engineer_case_record_from_payload(case_payload)
+    event = build_engineer_case_thread_event(
+        event_id=(
+            f"engineer-zendesk:{engineer_case_id}:"
+            f"{delivery.get('investigation_id')}:{delivery.get('draft_version')}:{event_type}"
+        ),
+        event_type=event_type,
+        engineer_case_id=engineer_case_id,
+        message_text=message_text,
+        investigation_id=str(delivery.get("investigation_id") or "") or None,
+        draft_version=int(delivery.get("draft_version") or 0) or None,
+        failure_code=failure_code,
+    )
+    ticket_repository.save_engineer_case(engineer_case, new_messages=[], slack_events=[event])
+
+
+def _complete_engineer_delivery_round(delivery: dict[str, Any], *, comment_id: str | None) -> None:
+    engineer_case_id = str(delivery.get("engineer_case_id") or "").strip()
+    case_payload = ticket_repository.get_engineer_case(engineer_case_id, include_client_messages=True)
+    if not isinstance(case_payload, dict):
+        return
+    client_ticket_id = str((case_payload.get("client_ticket_ref") or {}).get("ticket_id") or "").strip()
+    ticket = ticket_repository.get_ticket(client_ticket_id)
+    if not isinstance(ticket, dict):
+        return
+    engineer_case = _engineer_case_record_from_payload(case_payload)
+    case_context = build_engineer_case_context(ticket, engineer_case)
+    active = case_context.get("active_investigation")
+    if not isinstance(active, dict):
+        return
+    if str(active.get("id") or "").strip() != str(delivery.get("investigation_id") or "").strip():
+        return
+    timestamp = now_iso()
+    sequence = len(active.get("messages") or []) + 1
+    delivery_message = {
+        "id": f"{active.get('id')}-m-{sequence}",
+        "role": "system",
+        "content": "Zendesk public comment delivered. This investigation round is complete.",
+        "created_at": timestamp,
+        "meta": {
+            "source": "zendesk_delivery",
+            "zendesk_comment_id": str(comment_id or "").strip() or None,
+            "draft_version": int(delivery.get("draft_version") or 0),
+        },
+    }
+    active.setdefault("messages", []).append(delivery_message)
+    active["state"] = "active"
+    active["draft_customer_reply"] = ""
+    active["final_confirmation_requested_at"] = None
+    active["updated_at"] = timestamp
+    agent_state = dict(
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+    for key in (
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+    ):
+        agent_state.pop(key, None)
+    agent_state.update(
+        phase="communicating",
+        round_state="delivered",
+        round_number=int(agent_state.get("round_number") or 1) + 1,
+        delivered_draft_version=int(delivery.get("draft_version") or 0),
+        delivered_at=timestamp,
+    )
+    case_context["engineer_agent_state"] = agent_state
+    engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+    engineer_case["status"] = "communicating"
+    ticket["status"] = "communicating"
+    ticket["updated_at"] = timestamp
+    ticket.setdefault("messages", []).append(
+        {
+            "role": "assistant",
+            "content": str(delivery.get("immutable_content") or "").strip(),
+            "created_at": timestamp,
+            "meta": {
+                "source": "engineer_guidance",
+                "zendesk_comment_id": str(comment_id or "").strip() or None,
+                "engineer_case_id": engineer_case_id,
+            },
+        }
+    )
+    slack_event = build_engineer_case_thread_event(
+        event_id=(
+            f"engineer-zendesk:{engineer_case_id}:"
+            f"{delivery.get('investigation_id')}:{delivery.get('draft_version')}:delivered"
+        ),
+        event_type="zendesk_publish_delivered",
+        engineer_case_id=engineer_case_id,
+        message_text="Zendesk public comment delivered. The Case remains active for follow-up.",
+        investigation_id=str(delivery.get("investigation_id") or "") or None,
+        draft_version=int(delivery.get("draft_version") or 0) or None,
+    )
+    ticket_repository.save_ticket(ticket, new_messages=[ticket["messages"][-1]])
+    ticket_repository.save_engineer_case(
+        engineer_case,
+        new_messages=[delivery_message],
+        slack_events=[slack_event],
+    )
+
+
+def _deliver_engineer_approved_zendesk_comment(delivery: dict[str, Any]) -> None:
+    account_case_id = str(delivery.get("account_case_id") or "").strip()
+    message_id = str(delivery.get("message_id") or "").strip()
+    status = str(delivery.get("status") or "").strip().lower()
+    content = str(delivery.get("immutable_content") or "").strip()
+    zendesk_ticket_id = str(delivery.get("zendesk_ticket_id") or "").strip()
+    if not all((account_case_id, message_id, content, zendesk_ticket_id)):
+        return
+
+    if status == "queued":
+        sync_state = ticket_repository.get_account_case_comment_sync(
+            str((ticket_repository.get_account_case(account_case_id) or {}).get("client_ticket_id") or "")
+        )
+        current_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        if current_revision != str(delivery.get("comments_revision") or "").strip():
+            ticket_repository.complete_account_zendesk_comment_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                status="failed",
+                zendesk_comment_id=None,
+                failure_code="stale_comments_revision",
+                completed_at=now_iso(),
+            )
+            _record_engineer_delivery_slack_event(
+                delivery,
+                event_type="zendesk_publish_failed",
+                message_text="Zendesk delivery canceled because a newer customer comment arrived.",
+                failure_code="stale_comments_revision",
+            )
+            return
+        claimed = ticket_repository.claim_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            claimed_at=now_iso(),
+        )
+        if not bool(claimed.get("claimed")):
+            return
+        try:
+            result = add_ticket_comment(
+                ticket_id=zendesk_ticket_id,
+                body=content,
+                public=True,
+                solve=False,
+            )
+        except ZendeskCommentError as exc:
+            next_status = "outcome_unknown" if exc.category == "outcome_unknown" else "failed"
+            ticket_repository.complete_account_zendesk_comment_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                status=next_status,
+                zendesk_comment_id=None,
+                failure_code=exc.error_code,
+                completed_at=now_iso(),
+            )
+            if next_status == "failed":
+                _record_engineer_delivery_slack_event(
+                    delivery,
+                    event_type="zendesk_publish_failed",
+                    message_text="Zendesk public comment delivery failed.",
+                    failure_code=exc.error_code,
+                )
+            return
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            status="delivered",
+            zendesk_comment_id=result.comment_id,
+            failure_code=None,
+            completed_at=now_iso(),
+        )
+        _complete_engineer_delivery_round(delivery, comment_id=result.comment_id)
+        return
+
+    try:
+        result, _solved_seen = read_ticket_comment_audit(
+            ticket_id=zendesk_ticket_id,
+            body=content,
+            public=True,
+        )
+    except ZendeskCommentError:
+        return
+    if result is None:
+        return
+    ticket_repository.complete_account_zendesk_comment_delivery(
+        account_case_id=account_case_id,
+        message_id=message_id,
+        status="delivered",
+        zendesk_comment_id=result.comment_id,
+        failure_code=None,
+        completed_at=now_iso(),
+    )
+    _complete_engineer_delivery_round(delivery, comment_id=result.comment_id)
 
 
 def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
@@ -1571,6 +1828,82 @@ def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
         )
         LOGGER.info(
             "account_slack_delivery_recorded event_id=%s status=%s failure_code=%s",
+            event_id,
+            remote_status,
+            result.get("failure_code") or "none",
+        )
+
+
+def _drain_engineer_slack_events(*, limit: int = 20) -> None:
+    if str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower() != "production":
+        return
+    if not engineer_slack_n8n_configured():
+        LOGGER.warning("engineer_slack_delivery_paused failure_code=engineer_slack_n8n_config_incomplete")
+        return
+    events = ticket_repository.list_engineer_slack_events(
+        statuses=("queued", "pending", "outcome_unknown"),
+        limit=limit,
+    )
+    for event_record in events:
+        event_id = str(event_record.get("event_id") or "").strip()
+        status = str(event_record.get("status") or "").strip().lower()
+        if not event_id:
+            continue
+        if status == "queued":
+            claimed = ticket_repository.claim_engineer_slack_event(
+                event_id=event_id,
+                claimed_at=now_iso(),
+            )
+            if not isinstance(claimed, dict) or not claimed.get("claimed"):
+                continue
+            event = claimed.get("payload") if isinstance(claimed.get("payload"), dict) else {}
+            try:
+                result = post_engineer_slack_event(event)
+            except EngineerSlackN8nError as exc:
+                ticket_repository.complete_engineer_slack_event(
+                    event_id=event_id,
+                    status="outcome_unknown" if exc.outcome_unknown else "failed",
+                    failure_code=exc.code,
+                    completed_at=now_iso(),
+                )
+                LOGGER.warning(
+                    "engineer_slack_delivery_failed event_id=%s status=%s failure_code=%s",
+                    event_id,
+                    "outcome_unknown" if exc.outcome_unknown else "failed",
+                    exc.code,
+                )
+                continue
+        else:
+            try:
+                result = get_engineer_slack_event_status(event_id)
+            except EngineerSlackN8nError as exc:
+                LOGGER.warning(
+                    "engineer_slack_reconciliation_failed event_id=%s status=%s failure_code=%s",
+                    event_id,
+                    status,
+                    exc.code,
+                )
+                continue
+
+        remote_status = str(result.get("status") or "").strip().lower()
+        if remote_status == "missing":
+            ticket_repository.requeue_engineer_slack_event(
+                event_id=event_id,
+                requeued_at=now_iso(),
+            )
+            LOGGER.warning(
+                "engineer_slack_delivery_requeued event_id=%s failure_code=remote_event_missing",
+                event_id,
+            )
+            continue
+        ticket_repository.complete_engineer_slack_event(
+            event_id=event_id,
+            status=remote_status,
+            failure_code=result.get("failure_code"),
+            completed_at=now_iso(),
+        )
+        LOGGER.info(
+            "engineer_slack_delivery_recorded event_id=%s status=%s failure_code=%s",
             event_id,
             remote_status,
             result.get("failure_code") or "none",
@@ -1939,6 +2272,7 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                 )
             _drain_production_zendesk_comment_deliveries(limit=20)
             _drain_account_slack_deliveries(limit=20)
+            _drain_engineer_slack_events(limit=20)
         except Exception:
             LOGGER.exception("Account reply poller failed")
         sleep_until = time.time() + max(interval_seconds, 1.0)
