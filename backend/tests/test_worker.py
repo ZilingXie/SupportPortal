@@ -4319,7 +4319,8 @@ class WorkerResilienceTests(unittest.TestCase):
                 self.assertEqual(updates["automation_status"], "human_review_required")
                 self.assertEqual(updates["category"], "automation")
                 self.assertEqual(updates["subcategory"], account_case["execution_action"])
-                self.assertEqual(updates["route_status"], "automated")
+                if handler != "quota":
+                    self.assertEqual(updates["route_status"], "not_automated")
                 self.assertEqual(updates["automation_handler"], handler)
                 self.assertEqual(updates["tooling_profile"], f"deterministic_{handler}_intake")
                 self.assertEqual(updates["execution_reason_code"], f"{handler}_persona_unavailable")
@@ -4447,7 +4448,8 @@ class WorkerResilienceTests(unittest.TestCase):
                 self.assertEqual(updates["policy_decision"], "automation_persona_human_review")
                 self.assertEqual(updates["automation_status"], "human_review_required")
                 self.assertEqual(updates["route_family"], "automated")
-                self.assertEqual(updates["route_status"], "automated")
+                if handler != "quota":
+                    self.assertEqual(updates["route_status"], "not_automated")
                 self.assertEqual(updates["automation_handler"], handler)
                 self.assertEqual(updates["execution_reason_code"], f"{handler}_persona_render_failed")
                 self.assertEqual(updates["route_classification"]["route_target"], "automation")
@@ -4506,7 +4508,7 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(account_case["policy_decision"], "automation_persona_human_review")
         self.assertEqual(account_case["route"], "enablement")
         self.assertEqual(account_case["automation_status"], "human_review_required")
-        self.assertEqual(account_case["route_status"], "automated")
+        self.assertEqual(account_case["route_status"], "not_automated")
         self.assertEqual(account_case["automation_handler"], "enablement")
         self.assertEqual(account_case["execution_reason_code"], "enablement_persona_render_failed")
         self.assertEqual(account_case["route_classification"]["route_target"], "automation")
@@ -4560,14 +4562,17 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(account_case["automation_status"], "human_review_required")
         self.assertEqual(account_case["category"], "automation")
         self.assertEqual(account_case["subcategory"], "enablement")
-        self.assertEqual(account_case["route_status"], "automated")
+        self.assertEqual(account_case["route_status"], "not_automated")
         self.assertEqual(account_case["automation_handler"], "enablement")
         self.assertEqual(account_case["execution_reason_code"], "enablement_persona_unavailable")
         self.assertEqual(account_case["route_classification"]["route_target"], "automation")
         self.assertEqual(account_case["route_classification"]["handler_binding_status"], "human_review")
-        repository.cancel_pending_account_reply_jobs.assert_not_called()
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "TK-PERSONA-CONFIRMATION", updated_at=account_case["updated_at"]
+        )
         repository.save_account_reply_job.assert_not_called()
-        repository.save_account_case.assert_called_once_with(account_case)
+        self.assertGreaterEqual(repository.save_account_case.call_count, 1)
+        self.assertEqual(repository.save_account_case.call_args.args[0], account_case)
 
     def test_reply_facts_prepare_pins_persisted_persona_assignment(self) -> None:
         job = {

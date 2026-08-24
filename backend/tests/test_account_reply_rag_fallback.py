@@ -28,6 +28,7 @@ class _FakeRepository:
         self.saved_cases: list[dict[str, Any]] = []
         self.cancelled: list[tuple[str, str]] = []
         self.audit_events: list[dict[str, Any]] = []
+        self.idempotency: dict[tuple[str, str], dict[str, Any]] = {}
 
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.saved_cases.append(dict(account_case))
@@ -38,6 +39,20 @@ class _FakeRepository:
 
     def record_workspace_audit_event(self, event_type: str, **kwargs: Any) -> None:
         self.audit_events.append({"event_type": event_type, **kwargs})
+
+    def begin_idempotent_request(self, scope: str, key: str, *, created_at: str, retry_failed: bool = False) -> dict[str, Any]:
+        record = self.idempotency.get((scope, key))
+        if record is not None:
+            return {**record, "created": False}
+        record = {"state": "processing", "response_payload": None, "created_at": created_at}
+        self.idempotency[(scope, key)] = record
+        return {**record, "created": True}
+
+    def complete_idempotent_request(self, scope: str, key: str, *, response_payload: dict[str, Any], updated_at: str) -> None:
+        self.idempotency[(scope, key)].update({"state": "completed", "response_payload": response_payload, "updated_at": updated_at})
+
+    def fail_idempotent_request(self, scope: str, key: str, *, response_payload: dict[str, Any], updated_at: str) -> None:
+        self.idempotency[(scope, key)].update({"state": "failed", "response_payload": response_payload, "updated_at": updated_at})
 
 
 class _FakeRagClient:
@@ -252,8 +267,8 @@ class RagFallbackEscalationTest(unittest.TestCase):
             "automation_status": "not_automated",
             "automation_context": {},
         }
-        with patch("backend.services.account_reply_rag_fallback.add_ticket_comment") as note, patch(
-            "backend.services.account_reply_rag_fallback.route_ticket_back_to_queue"
+        with patch("backend.services.account_human_review_escalation.add_ticket_comment") as note, patch(
+            "backend.services.account_human_review_escalation.route_ticket_back_to_queue"
         ) as route_back:
             result = escalate_unexpected_reply_to_human(
                 account_case=account_case,
@@ -270,15 +285,15 @@ class RagFallbackEscalationTest(unittest.TestCase):
         self.assertEqual(account_case["automation_status"], "human_review_required")
         self.assertIn("reply_rag_fallback_escalation", account_case["not_automated_reason"])
         self.assertEqual(repository.cancelled, [("T-2", "2026-08-23T00:00:00+00:00")])
-        self.assertEqual(repository.audit_events[0]["event_type"], "account_reply_rag_fallback_escalation")
+        self.assertEqual(repository.audit_events[0]["event_type"], "account_human_review_escalation")
 
     def test_production_case_notes_and_routes_back_to_queue(self) -> None:
         repository = _FakeRepository()
         account_case = self._production_case()
         with patch(
-            "backend.services.account_reply_rag_fallback.add_ticket_comment"
+            "backend.services.account_human_review_escalation.add_ticket_comment"
         ) as note, patch(
-            "backend.services.account_reply_rag_fallback.route_ticket_back_to_queue",
+            "backend.services.account_human_review_escalation.route_ticket_back_to_queue",
             return_value=type("Result", (), {"status": "queued"})(),
         ) as route_back:
             result = escalate_unexpected_reply_to_human(
@@ -311,9 +326,9 @@ class RagFallbackEscalationTest(unittest.TestCase):
         failure.category = "permanent"
         failure.error_code = "zendesk_ticket_closed"
         with patch(
-            "backend.services.account_reply_rag_fallback.add_ticket_comment"
+            "backend.services.account_human_review_escalation.add_ticket_comment"
         ), patch(
-            "backend.services.account_reply_rag_fallback.route_ticket_back_to_queue",
+            "backend.services.account_human_review_escalation.route_ticket_back_to_queue",
             side_effect=failure,
         ):
             result = escalate_unexpected_reply_to_human(

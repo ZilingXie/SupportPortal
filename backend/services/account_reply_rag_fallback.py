@@ -21,13 +21,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from backend.services.account_automation_ownership import mark_production_ownership_released
+from backend.services.account_human_review_escalation import (
+    escalate_account_case_to_human_review,
+)
 from backend.services.ragflow_docs_search_skill import (
     RagflowDocsSearchError,
     RagflowDocsSearchSkillClient,
 )
-from backend.services.zendesk_comments import ZendeskCommentError, add_ticket_comment
-from backend.services.zendesk_ticket_assignment import route_ticket_back_to_queue
 
 LOGGER = logging.getLogger("supportportal.account_reply_rag_fallback")
 
@@ -211,109 +211,23 @@ def escalate_unexpected_reply_to_human(
     repository: Any,
     timestamp: str,
 ) -> dict[str, Any]:
-    """Hand an unexpected-reply case back to humans.
-
-    Production cases with a numeric Zendesk ticket get an internal note and a
-    queue route-back (reusing the manual route-back contract); everything else
-    is marked for human review locally. Never raises: the escalation chain is
-    best-effort on top of an already-silent path.
-    """
+    """Hand an unexpected-reply case back to humans through the shared contract."""
     timestamp = timestamp or datetime.now(timezone.utc).isoformat()
-    context = account_case.get("automation_context")
-    context = context if isinstance(context, dict) else {}
-    prior_ownership = context.get("zendesk_ownership")
-    prior_ownership = prior_ownership if isinstance(prior_ownership, dict) else {}
-    source_group_id = str(prior_ownership.get("source_group_id") or "").strip() or None
-    processing_profile = str(account_case.get("processing_profile") or "staging").strip().lower()
-    normalized_zendesk_ticket = str(zendesk_ticket_id or "").strip()
-
-    account_case.update(
-        {
-            "automation_status": "human_review_required",
-            "not_automated_reason": f"reply_rag_fallback_escalation:{reason}",
-            "updated_at": timestamp,
-        }
+    escalation = escalate_account_case_to_human_review(
+        account_case=account_case,
+        ticket_id=ticket_id,
+        handler=str(account_case.get("automation_handler") or account_case.get("execution_action") or "automation"),
+        failure_stage="reply_rag_fallback",
+        failure_code="reply_rag_fallback_escalation",
+        reason=reason,
+        customer_context=customer_reply_text,
+        repository=repository,
+        timestamp=timestamp,
     )
-
-    internal_note_status = "skipped_not_production"
-    route_back_status = "skipped_not_production"
-    handoff_status = ""
-    if processing_profile == "production" and normalized_zendesk_ticket.isdigit():
-        try:
-            add_ticket_comment(
-                ticket_id=normalized_zendesk_ticket,
-                body=_internal_note_body(reason=reason, customer_reply_text=customer_reply_text),
-                public=False,
-            )
-            internal_note_status = "sent"
-        except Exception as exc:
-            internal_note_status = f"failed:{type(exc).__name__}"
-            LOGGER.warning(
-                "reply RAG fallback internal note failed for ticket %s: %s",
-                normalized_zendesk_ticket,
-                exc,
-            )
-
-        mark_production_ownership_released(
-            account_case,
-            updated_at=timestamp,
-            handoff_status="pending",
-            assignee_id=str(prior_ownership.get("assignee_id") or "").strip() or None,
-            group_id=str(prior_ownership.get("group_id") or "").strip() or None,
-        )
-        repository.save_account_case(account_case)
-        try:
-            result = route_ticket_back_to_queue(
-                ticket_id=normalized_zendesk_ticket,
-                source_group_id=source_group_id,
-            )
-            route_back_status = str(result.status or "").strip()
-            handoff_status = route_back_status or "done"
-        except ZendeskCommentError as exc:
-            handoff_status = "outcome_unknown" if exc.category == "outcome_unknown" else "failed"
-            route_back_status = f"failed:{exc.error_code}"
-            LOGGER.warning(
-                "reply RAG fallback route-back failed for ticket %s: %s (%s)",
-                normalized_zendesk_ticket,
-                exc.error_code,
-                exc.category,
-            )
-        completed_at = datetime.now(timezone.utc).isoformat()
-        account_case["updated_at"] = completed_at
-        mark_production_ownership_released(
-            account_case,
-            updated_at=completed_at,
-            handoff_status=handoff_status or "failed",
-            assignee_id=str(prior_ownership.get("assignee_id") or "").strip() or None,
-            group_id=str(prior_ownership.get("group_id") or "").strip() or None,
-            failure_code=None if route_back_status in {"queued", "already_human_owned"} else route_back_status or "unknown",
-        )
-    else:
-        repository.save_account_case(account_case)
-
-    cancelled_jobs = repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
-    try:
-        repository.record_workspace_audit_event(
-            "account_reply_rag_fallback_escalation",
-            actor_id=ESCALATION_ACTOR_ID,
-            target_id=str(account_case.get("account_case_id") or ticket_id or ""),
-            payload={
-                "reason": reason,
-                "processing_profile": processing_profile,
-                "zendesk_ticket_id": normalized_zendesk_ticket or None,
-                "internal_note_status": internal_note_status,
-                "route_back_status": route_back_status,
-                "handoff_status": handoff_status or None,
-                "reply_jobs_cancelled": cancelled_jobs,
-            },
-            created_at=timestamp,
-        )
-    except Exception as exc:  # audit must never break the escalation chain
-        LOGGER.warning("reply RAG fallback audit event failed: %s", exc)
-
+    processing_profile = str(account_case.get("processing_profile") or "staging").strip().lower()
     return {
         "mode": "production" if processing_profile == "production" else "staging",
-        "internal_note_status": internal_note_status,
-        "route_back_status": route_back_status,
-        "handoff_status": handoff_status or None,
+        "internal_note_status": escalation.internal_note_status,
+        "route_back_status": escalation.route_back_status,
+        "handoff_status": escalation.handoff_status,
     }
