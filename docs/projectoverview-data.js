@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:40:45Z",
-  "source_base_commit": "1e844e380f1bbd262fb38386a9eb53d2f1a4d3bb",
-  "registry_digest": "d60ff9b555b44b3d220d2554d4e6d9a5a923bb8d5d9f2388e7b5829bba2b6e45",
+  "generated_at": "2026-08-24T12:42:05Z",
+  "source_base_commit": "9b0cebe0d4a1f9ffac3ec3ce847ab833bdf7783e",
+  "registry_digest": "da8e0594e2a6e040e0a16dfc45da36b3d0341cef6faeda89cfd9f5e3caa5c54e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -588,6 +588,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "227 项测试通过、24 个子测试通过、4 个既有 FastAPI deprecation warnings；结构测试解析 managed Prompt 的 Output JSON，确保七个 canonical keys 存在且旧四字段及 contact_information 不存在。"
         },
         {
+          "type": "deployment",
+          "label": "Fraud Account Prompt v4 official runtime readback",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c 'from backend.services.account_verification_field_extractor import ACCOUNT_VERIFICATION_REQUIRED_GROUPS; from backend.services.prompts.account_routing import build_account_verification_field_system_prompt, ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION; p=build_account_verification_field_system_prompt(); print({\"version\":ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,\"canonical\":all((chr(34)+k+chr(34)) in p for k in ACCOUNT_VERIFICATION_REQUIRED_GROUPS),\"legacy_exact\":{k:(chr(34)+k+chr(34)) in p for k in (\"company_information\",\"contact_information\",\"use_case\",\"payment_information\")}})'",
+          "details": "官方单机 local_lightweight 栈于 root_main_ref=23c19e3bd7d4 构建并通过 health=200；official_image_tag、health build ref、runtime build ref 均匹配；prompt_runtime release_id=code-8a779db0373b、status=loaded、prompt_count=28；api、rag_api、rag_worker、worker_query、worker_aux 日志均加载同一 code snapshot。容器内 Prompt 版本为 fraud-account-fields-v4，七个 canonical keys 全部存在，旧四字段均不存在。"
+        },
+        {
           "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
@@ -743,7 +749,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 16,
-      "done_count": 9,
+      "done_count": 10,
       "blocked_count": 1
     },
     {
@@ -5523,10 +5529,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-101",
       "title": "Fraud Account 字段改为 7 项 + Slack/邮件显示字段",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "合并后完成 Prompt Release、官方单机栈和 runtime provenance 验证，再关闭本 follow-up。",
+      "next_action": "无（fraud-account-fields-v4 已合并并完成定向回归、官方单机栈和 Prompt runtime 验证）。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -5564,6 +5570,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Fraud Account Prompt schema contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_agent_config.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py",
           "details": "227 项测试通过、24 个子测试通过、4 个既有 FastAPI deprecation warnings；结构测试解析 managed Prompt 的 Output JSON，确保七个 canonical keys 存在且旧四字段及 contact_information 不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "Fraud Account Prompt v4 official runtime readback",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c 'from backend.services.account_verification_field_extractor import ACCOUNT_VERIFICATION_REQUIRED_GROUPS; from backend.services.prompts.account_routing import build_account_verification_field_system_prompt, ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION; p=build_account_verification_field_system_prompt(); print({\"version\":ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,\"canonical\":all((chr(34)+k+chr(34)) in p for k in ACCOUNT_VERIFICATION_REQUIRED_GROUPS),\"legacy_exact\":{k:(chr(34)+k+chr(34)) in p for k in (\"company_information\",\"contact_information\",\"use_case\",\"payment_information\")}})'",
+          "details": "官方单机 local_lightweight 栈于 root_main_ref=23c19e3bd7d4 构建并通过 health=200；official_image_tag、health build ref、runtime build ref 均匹配；prompt_runtime release_id=code-8a779db0373b、status=loaded、prompt_count=28；api、rag_api、rag_worker、worker_query、worker_aux 日志均加载同一 code snapshot。容器内 Prompt 版本为 fraud-account-fields-v4，七个 canonical keys 全部存在，旧四字段均不存在。"
         }
       ],
       "source_refs": [
@@ -5606,6 +5618,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "fraud_account_prompt_schema_contract",
           "summary": "发现并修复 Fraud Account extractor required groups 与 managed Prompt Output 示例漂移；Prompt 升级为 fraud-account-fields-v4，增加结构一致性回归。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "fraud_account_prompt_schema_contract_verified",
+          "summary": "合并后完成 227 项定向回归、Project Overview 校验、官方单机栈 build provenance 和 Prompt runtime readback；七字段 Prompt v4 已加载，未执行 AC-12974 重跑或 Zendesk 副作用。"
         }
       ],
       "legacy_refs": [],
