@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T11:29:07Z",
-  "source_base_commit": "dcf39de5d10bdbd2093dc8d5b5766596ae92f84d",
-  "registry_digest": "2c12472f2fa7205fc6229f5ffcccaa4645c4fa2fe434b476fa82bd4ed723aae7",
+  "generated_at": "2026-08-24T11:33:38Z",
+  "source_base_commit": "f15df1c8684f495317cdfc9c5cd897a6ae1fe8b6",
+  "registry_digest": "7099fd0d7fdb3f97c6a9eee78ea2b84166c63d18b22ad5993c144b6b47519f6c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5933,6 +5933,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "created",
           "summary": "用户决策改为 /automation/production 直接替代 /production 并逐项确认功能差距处置（quota→human_review 预期、human review 跳过、detailed_invoice 回复闭环与运维工具跳过、执行内容/回复链/状态同步/Slack 按旧栈、n8n 摄入由用户转发）。按七阶段计划创建 Phase A 任务；采纳当日新合入的 #916 human queue escalation（失败分支语义）与 #918 直发 Engineer Slack（worker env 按直发三件套）。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "preexisting_test_debt_found",
+          "summary": "合并 origin/main（含 #920 蓝绿回滚加固）时发现其新增 backend/tests/test_production_blue_green_behavior.py 5 项在本机 macOS 全部失败于 'Missing command: flock'（脚本 flock 依赖在参数校验阶段即触发，macOS 无原生 flock），与本次改动无关（同版本干净 main 上同样失败），按协调规则不顺手修，留待 flock shim 或 Linux 环境执行；本任务验证命令暂不含该套件。"
         }
       ],
       "legacy_refs": [
