@@ -203,3 +203,96 @@ class CommentTriggerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusSyncEndpointTest(unittest.TestCase):
+    def _repo(self):
+        repository = _FakeRepository()
+        repository.updated: list[dict] = []
+        repository.tickets = {"123": {"ticket_id": "123", "status": "open", "messages": []}}
+        repository.active_engineer_case = {
+            "engineer_case_id": "123-1",
+            "active_investigation": {"id": "123-1-round-1", "state": "active"},
+        }
+
+        def update_status(**kwargs):
+            repository.updated.append(kwargs)
+            return {"status": "updated", "synced_at": "2026-08-24T00:00:00Z"}
+
+        repository.update_account_case_zendesk_status = update_status
+        repository.get_ticket = lambda ticket_id: repository.tickets.get(ticket_id)
+        repository.get_active_engineer_case = lambda ticket_id, include_client_messages=True: (
+            repository.active_engineer_case
+        )
+        saved_engineer: list[dict] = []
+        repository.save_engineer_case = (
+            lambda engineer_case, new_messages=None, slack_events=None: saved_engineer.append(
+                {"case": engineer_case, "messages": new_messages, "events": slack_events}
+            )
+        )
+        saved_tickets: list[dict] = []
+        repository.save_ticket = lambda ticket, new_messages=None: saved_tickets.append(dict(ticket))
+        repository.saved_engineer = saved_engineer
+        repository.saved_tickets = saved_tickets
+        return repository
+
+    def test_status_endpoint_requires_token_and_validates_payload(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                self.assertEqual(
+                    client.put("/api/integrations/zendesk/account-cases/123/status", json={"zendesk_status": "solved"}).status_code,
+                    401,
+                )
+                repository = self._repo()
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ):
+                    invalid = client.put(
+                        "/api/integrations/zendesk/account-cases/123/status",
+                        json={"zendesk_status": "bogus"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                    self.assertEqual(invalid.status_code, 422)
+
+    def test_solved_status_closes_engineer_case_and_resolves_ticket(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                repository = self._repo()
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ), patch(
+                    "backend.services.automation_account_reply_sync.EngineerAssignmentService"
+                ) as assignment:
+                    response = client.put(
+                        "/api/integrations/zendesk/account-cases/123/status",
+                        json={"zendesk_status": "solved", "updated_at": "2026-08-24T02:00:00Z"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                self.assertEqual(response.status_code, 200, response.text)
+                body = response.json()
+                self.assertTrue(body["is_account_case"])
+                self.assertTrue(body["engineer_case_closed"])
+                self.assertEqual(repository.updated[0]["zendesk_status"], "solved")
+                self.assertEqual(repository.saved_engineer[0]["events"][0]["event_type"], "engineer_case_closed")
+                self.assertEqual(repository.saved_tickets[0]["status"], "resolved")
+                assignment.assert_called_once()
+                assignment.return_value.resolve_case.assert_called_once_with("123-1", actor="zendesk_status_sync")
+
+    def test_open_status_leaves_engineer_case_open(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                repository = self._repo()
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ):
+                    response = client.put(
+                        "/api/integrations/zendesk/account-cases/123/status",
+                        json={"zendesk_status": "open"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(response.json()["engineer_case_closed"])
+                self.assertEqual(repository.saved_engineer, [])
