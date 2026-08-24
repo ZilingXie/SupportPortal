@@ -5431,3 +5431,104 @@ p {
     animation: none;
   }
 }
+
+/* Token usage column and expandable detail (p2-105). */
+.admin-token-toggle {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-token-toggle:hover,
+.admin-token-toggle:focus-visible {
+  text-decoration: underline;
+}
+
+.admin-token-embedding {
+  color: var(--admin-muted-ink, #6b7280);
+  font-size: 0.92em;
+}
+
+.admin-token-unavailable {
+  color: var(--admin-muted-ink, #6b7280);
+  cursor: help;
+}
+
+.admin-token-detail-row > td {
+  padding: 0 !important;
+  background: var(--admin-surface-muted, rgba(15, 23, 42, 0.03));
+}
+
+.admin-token-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  padding: 12px 16px 16px;
+}
+
+.admin-token-detail > section > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+.admin-token-source {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.admin-token-source-rag {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.admin-token-source-automation {
+  background: rgba(5, 150, 105, 0.12);
+  color: #047857;
+}
+
+.admin-token-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.admin-token-table th,
+.admin-token-table td {
+  padding: 4px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--admin-border-soft, rgba(15, 23, 42, 0.08));
+}
+
+.admin-token-table th:first-child,
+.admin-token-table td:first-child {
+  text-align: left;
+}
+
+.admin-token-table thead th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--admin-muted-ink, #6b7280);
+}
+
+.admin-token-empty-cell {
+  color: var(--admin-muted-ink, #6b7280);
+  text-align: left !important;
+}

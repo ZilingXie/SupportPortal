@@ -4973,3 +4973,19 @@ For each new entry, record:
   - Changed-scope secret scan confirmed no disallowed real-secret patterns in `.gitignore`, changelogs, or `vendor/cusmem/`.
   - Private-address scan confirmed `103.151.172.84` and `neo4j@openspg` are absent from `vendor/cusmem/`.
   - `python3 -m compileall -q vendor/cusmem`
+
+## 2026-08-24 - Batch ticket-family token usage internal endpoint (p2-105)
+
+- Summary:
+  - Added `POST /internal/rag/ticket-families/token-usage/batch` next to the existing single-family endpoint. It accepts up to 200 `{ticket_id, client_ticket_id}` families per request, reuses `rag_ticket_family_token_summary` per family, and returns compact summaries (totals + `token_by_model` + new `stage_totals`; no `entries`/`related_ticket_ids`) plus an `errors` list of families that failed individually.
+  - Added the matching client method `RagServiceClient.get_ticket_family_token_summaries(families)`.
+- Reason:
+  - The workspace admin Automated Cases view needs per-production-case token usage for a whole page of cases; calling the single-family endpoint per case would be N+1 HTTP round trips.
+- Affected files/config:
+  - `backend/rag_api.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_rag_api.py`
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, BM25 index, or query behavior changes; read-only telemetry aggregation over `support_rag_query_runs`.
+- Verification:
+  - `rtk python3.12 -m pytest backend/tests/test_rag_api.py -q` (90 tests green across the affected suites, including the new batch endpoint case)

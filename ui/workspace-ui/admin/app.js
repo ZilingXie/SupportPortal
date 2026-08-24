@@ -46,6 +46,7 @@ let agentConfigData = null;
 let agentConfigLoading = false;
 let agentConfigLoadError = "";
 let expandedAgentKeys = new Set();
+let expandedTokenCaseKeys = new Set();
 let selectedAgentViews = {};
 let selectedAgentPrompts = {};
 let selectedPromptVersions = {};
@@ -820,16 +821,76 @@ function renderAutomationSubcategoryCards() {
   `;
 }
 
+function formatTokenCount(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return "0";
+  return num.toLocaleString("en-US");
+}
+
+function tokenCaseKey(item) {
+  return String(item.billing_ticket_id || item.account_case_id || item.client_ticket_id || "");
+}
+
+function renderTokenUsageCell(item) {
+  const usage = item.token_usage;
+  if (!usage || !usage.available) {
+    const reason = (usage && usage.error_reason) || "token usage unavailable";
+    return `<span class="admin-token-unavailable" title="${escapeHtml(reason)}">—</span>`;
+  }
+  const embedding = Number(usage.total_embedding_tokens || 0);
+  const label = `${formatTokenCount(usage.total_input_tokens)} in / ${formatTokenCount(usage.total_output_tokens)} out`;
+  const caseKey = tokenCaseKey(item);
+  const expanded = expandedTokenCaseKeys.has(caseKey);
+  return `<button type="button" class="admin-token-toggle" data-action="toggle-token-detail" data-case-key="${escapeHtml(caseKey)}" aria-expanded="${expanded ? "true" : "false"}" title="Toggle token usage detail">${escapeHtml(label)}${embedding ? `<span class="admin-token-embedding"> · ${escapeHtml(formatTokenCount(embedding))} emb</span>` : ""}</button>`;
+}
+
+function renderTokenStageRows(stageTotals) {
+  const stages = Object.entries(stageTotals || {});
+  if (!stages.length) return `<tr><td colspan="4" class="admin-token-empty-cell">No recorded calls.</td></tr>`;
+  return stages.map(([stage, totals]) => `<tr><td>${escapeHtml(stage)}</td><td>${formatTokenCount(totals.input_tokens)}</td><td>${formatTokenCount(totals.output_tokens)}</td><td>${Number(totals.calls || 0)}</td></tr>`).join("");
+}
+
+function renderTokenModelRows(models) {
+  const list = Array.isArray(models) ? models : [];
+  if (!list.length) return `<tr><td colspan="4" class="admin-token-empty-cell">No recorded models.</td></tr>`;
+  return list.map((model) => `<tr><td>${escapeHtml(`${model.provider}:${model.model}`)}</td><td>${formatTokenCount(model.input_tokens)}</td><td>${formatTokenCount(model.output_tokens)}</td><td>${formatTokenCount(model.embedding_tokens)}</td></tr>`).join("");
+}
+
+function renderTokenDetailRow(item) {
+  const usage = item.token_usage;
+  if (!usage || !usage.available || !expandedTokenCaseKeys.has(tokenCaseKey(item))) return "";
+  const rag = (usage.sources && usage.sources.rag) || {};
+  const automation = (usage.sources && usage.sources.automation) || {};
+  return `<tr class="admin-token-detail-row"><td colspan="9">
+    <div class="admin-token-detail">
+      <section aria-label="RAG pipeline token usage">
+        <header><span class="admin-token-source admin-token-source-rag">RAG</span> ${escapeHtml(formatTokenCount(rag.total_input_tokens))} in / ${escapeHtml(formatTokenCount(rag.total_output_tokens))} out / ${escapeHtml(formatTokenCount(rag.total_embedding_tokens))} emb</header>
+        <table class="admin-token-table"><thead><tr><th>Stage</th><th>In</th><th>Out</th><th>Calls</th></tr></thead><tbody>${renderTokenStageRows(rag.stage_totals)}</tbody></table>
+      </section>
+      <section aria-label="Automation chain token usage">
+        <header><span class="admin-token-source admin-token-source-automation">Automation</span> ${escapeHtml(formatTokenCount(automation.total_input_tokens))} in / ${escapeHtml(formatTokenCount(automation.total_output_tokens))} out · ${Number(automation.call_count || 0)} calls</header>
+        <table class="admin-token-table"><thead><tr><th>Stage</th><th>In</th><th>Out</th><th>Calls</th></tr></thead><tbody>${renderTokenStageRows(automation.stage_totals)}</tbody></table>
+      </section>
+      <section aria-label="Token usage by model">
+        <header>By model</header>
+        <table class="admin-token-table"><thead><tr><th>Model</th><th>In</th><th>Out</th><th>Embedding</th></tr></thead><tbody>${renderTokenModelRows(usage.token_by_model)}</tbody></table>
+      </section>
+    </div>
+  </td></tr>`;
+}
+
 function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
   const cases = Array.isArray(automationData.cases) ? automationData.cases : [];
+  const pageTokens = automationData.token_usage_page_total || {};
   return `
     <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT AUTOMATION</p><p>All /account cases. Automated means the final route was Automated, not that the case was resolved.</p></div></header>
     <section class="admin-metric-strip" aria-label="Account automation metrics">
       <div><span>Total account cases</span><strong>${Number(metric.total_account_cases || 0)}</strong></div>
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
+      <div><span>Page tokens</span><strong>${escapeHtml(formatTokenCount(pageTokens.total_input_tokens))} in / ${escapeHtml(formatTokenCount(pageTokens.total_output_tokens))} out</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
     </section>
     ${renderAutomationSubcategoryCards()}
@@ -850,7 +911,7 @@ function renderAutomatedCases() {
       <input name="created_to" type="date" aria-label="Created to" />
       <button class="btn btn-ghost" type="submit">Apply filters</button>
     </form>
-    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Source</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${renderAdminSourceValue(item)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>`).join("") : `<tr><td colspan="8">No /account cases.</td></tr>`}</tbody></table></section>`;
+    <section class="admin-ops-surface"><table class="admin-work-table admin-automation-case-table"><thead><tr><th>Source</th><th>Subject</th><th>Category</th><th>Subcategory</th><th>Handler</th><th>Route status</th><th>Automation status</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${cases.length ? cases.map(item => `<tr><td>${renderAdminSourceValue(item)}</td><td>${escapeHtml(item.title || "Untitled")}</td><td>${escapeHtml(automationCaseCategoryLabel(item))}</td><td>${escapeHtml(automationCaseSubcategoryLabel(item))}</td><td>${escapeHtml(item.automation_handler || "Human Review")}</td><td>${statusPill(item.route_status || "not_automated")}</td><td>${escapeHtml(statusLabel(item.automation_status || item.status || "not_automated"))}</td><td>${renderTokenUsageCell(item)}</td><td>${escapeHtml(formatDateTime(item.created_at))}</td></tr>${renderTokenDetailRow(item)}`).join("") : `<tr><td colspan="9">No /account cases.</td></tr>`}</tbody></table></section>`;
 }
 
 function agentStatusLabel(status) {
@@ -1565,6 +1626,7 @@ function signOut(options = {}) {
   agentConfigLoading = false;
   agentConfigLoadError = "";
   expandedAgentKeys = new Set();
+  expandedTokenCaseKeys = new Set();
   selectedAutomationBehaviorKey = "";
   selectedAgentViews = {};
   selectedAgentPrompts = {};
@@ -1735,6 +1797,13 @@ root.addEventListener("click", (event) => {
     const behaviorKey = event.target.closest("[data-behavior-key]").dataset.behaviorKey;
     selectedAutomationBehaviorKey = selectedAutomationBehaviorKey === behaviorKey ? "" : behaviorKey;
     renderAdmin();
+  } else if (action === "toggle-token-detail") {
+    const caseKey = event.target.closest("[data-case-key]")?.dataset.caseKey || "";
+    if (caseKey) {
+      if (expandedTokenCaseKeys.has(caseKey)) expandedTokenCaseKeys.delete(caseKey);
+      else expandedTokenCaseKeys.add(caseKey);
+      renderAdmin();
+    }
   } else if (action === "select-agent-view") {
     const button = event.target.closest("[data-agent-key]");
     selectedAgentViews[button.dataset.agentKey] = button.dataset.agentView;

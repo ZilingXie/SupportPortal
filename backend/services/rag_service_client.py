@@ -812,6 +812,31 @@ class RagServiceClient:
         quoted = urllib.parse.quote(normalized_ticket_id, safe="")
         return self._request("GET", f"/internal/rag/ticket-families/{quoted}/token-usage", query=query)
 
+    def get_ticket_family_token_summaries(
+        self,
+        families: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_families: list[dict[str, Any]] = []
+        for family in families or []:
+            ticket_id = str((family or {}).get("ticket_id") or "").strip()
+            if not ticket_id:
+                continue
+            normalized_families.append(
+                {
+                    "ticket_id": ticket_id,
+                    "client_ticket_id": str((family or {}).get("client_ticket_id") or "").strip() or None,
+                }
+            )
+        if not normalized_families:
+            return {"summaries": {}, "errors": []}
+        if len(normalized_families) > 200:
+            raise RagServiceError("at most 200 ticket families per batch token usage request")
+        return self._request(
+            "POST",
+            "/internal/rag/ticket-families/token-usage/batch",
+            json_body={"families": normalized_families},
+        )
+
     def rag_dashboard_page(
         self,
         page: str,

@@ -1447,6 +1447,65 @@ def internal_rag_ticket_family_token_usage(
     )
 
 
+class TicketFamilyTokenUsageRequest(BaseModel):
+    ticket_id: str = Field(min_length=1, max_length=256)
+    client_ticket_id: str | None = Field(default=None, max_length=256)
+
+
+class TicketFamilyTokenUsageBatchRequest(BaseModel):
+    families: list[TicketFamilyTokenUsageRequest] = Field(min_length=1, max_length=200)
+
+
+def _compact_ticket_family_token_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    stage_totals: dict[str, dict[str, int]] = {}
+    for entry in summary.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        stage = str(entry.get("stage") or "")
+        bucket = stage_totals.setdefault(
+            stage,
+            {"input_tokens": 0, "output_tokens": 0, "calls": 0},
+        )
+        bucket["input_tokens"] += int(entry.get("input_tokens") or 0)
+        bucket["output_tokens"] += int(entry.get("output_tokens") or 0)
+        bucket["calls"] += 1
+    compact = {
+        key: value
+        for key, value in summary.items()
+        if key not in {"entries", "related_ticket_ids"}
+    }
+    compact["stage_totals"] = stage_totals
+    return compact
+
+
+@app.post("/internal/rag/ticket-families/token-usage/batch")
+def internal_rag_ticket_family_token_usage_batch(
+    request: TicketFamilyTokenUsageBatchRequest,
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    summaries: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for family in request.families:
+        normalized_ticket_id = str(family.ticket_id or "").strip()
+        if not normalized_ticket_id:
+            continue
+        try:
+            summary = repository.rag_ticket_family_token_summary(
+                ticket_id=normalized_ticket_id,
+                client_ticket_id=family.client_ticket_id,
+            )
+        except Exception:
+            LOGGER.exception(
+                "batch token usage summary failed for ticket family %s",
+                normalized_ticket_id,
+            )
+            errors.append(normalized_ticket_id)
+            continue
+        summaries[normalized_ticket_id] = _compact_ticket_family_token_summary(summary)
+    return {"summaries": summaries, "errors": errors}
+
+
 @app.get("/internal/dashboard/rag/{page}")
 def internal_rag_dashboard_page(
     page: str,

@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from backend.services.llm_factory import LlmInvocationError, LlmTextResult, invoke_responses_text
 from backend.services.llm_profiles import ModelProfile
+from backend.services.llm_usage_capture import record_llm_invocation
 
 
 LOGGER = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ def invoke_account_responses_text(
                 user_prompt=user_prompt,
                 extra_payload=extra_payload,
             )
+            record_llm_invocation(response, stage=stage)
             if validate_response is not None:
                 validate_response(response)
             return response
@@ -145,6 +147,7 @@ def invoke_account_json_payload(
                 user_prompt=user_prompt,
                 extra_payload=extra_payload,
             )
+            record_llm_invocation(response, stage=stage)
             payload = json.loads(str(response.text or ""))
             if not isinstance(payload, dict):
                 raise ValueError("Account model returned a non-object JSON payload")

@@ -327,6 +327,12 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_usage_capture import (
+    CaseUsageCapture,
+    begin_case_usage_capture,
+    end_case_usage_capture,
+    flush_case_usage_capture,
+)
 from backend.services.llm_profiles import (
     CLIENT_ACK_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
@@ -9674,6 +9680,7 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
     zendesk_ticket_id = (
         _account_intake_zendesk_ticket_id(request) if processing_profile == "production" else None
     )
+    usage_capture, usage_token = begin_case_usage_capture()
     try:
         return await _create_account_intake_impl(
             request,
@@ -9769,6 +9776,24 @@ async def create_account_intake(request: AccountIntakeRequest, http_request: Req
             failure=failure,
             idempotency_key=_account_intake_idempotency_key(request),
         )
+    finally:
+        end_case_usage_capture(usage_token)
+        if usage_capture.entries:
+            await _flush_account_intake_usage(request, usage_capture)
+
+
+async def _flush_account_intake_usage(request: AccountIntakeRequest, usage_capture: Any) -> None:
+    ticket_id = str(_resolve_account_ticket_id(request) or "").strip()
+    usage_capture.bind_case(client_ticket_id=ticket_id or None)
+    if ticket_id:
+        billing_ticket = await async_to_thread(
+            ticket_repository.get_billing_ticket_by_client_ticket_id,
+            ticket_id,
+        )
+        usage_capture.bind_case(
+            billing_ticket_id=str((billing_ticket or {}).get("billing_ticket_id") or "").strip() or None
+        )
+    await async_to_thread(flush_case_usage_capture, ticket_repository, usage_capture)
 
 
 async def _reply_to_billing_ticket_impl(
@@ -9805,6 +9830,27 @@ def _reply_rag_fallback_zendesk_ticket_id(billing_ticket: dict[str, Any], client
 
 
 async def _process_account_customer_reply(
+    *,
+    billing_ticket_id: str,
+    message: str,
+    source: str,
+    message_source_id: str | None = None,
+) -> dict[str, Any]:
+    usage_capture, usage_token = begin_case_usage_capture(billing_ticket_id=billing_ticket_id)
+    try:
+        return await _process_account_customer_reply_impl(
+            billing_ticket_id=billing_ticket_id,
+            message=message,
+            source=source,
+            message_source_id=message_source_id,
+        )
+    finally:
+        end_case_usage_capture(usage_token)
+        if usage_capture.entries:
+            await async_to_thread(flush_case_usage_capture, ticket_repository, usage_capture)
+
+
+async def _process_account_customer_reply_impl(
     *,
     billing_ticket_id: str,
     message: str,
@@ -12303,6 +12349,119 @@ def get_workspace_admin_metrics(
     }
 
 
+def _merge_account_case_token_by_model(
+    rag_summary: dict[str, Any] | None,
+    automation_summary: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for summary in (rag_summary, automation_summary):
+        for entry in (summary or {}).get("token_by_model") or []:
+            if not isinstance(entry, dict):
+                continue
+            provider = str(entry.get("provider") or "")
+            model = str(entry.get("model") or "")
+            bucket = merged.setdefault(
+                (provider, model),
+                {
+                    "provider": provider,
+                    "model": model,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "embedding_tokens": 0,
+                },
+            )
+            bucket["input_tokens"] += int(entry.get("input_tokens") or 0)
+            bucket["output_tokens"] += int(entry.get("output_tokens") or 0)
+            bucket["embedding_tokens"] += int(entry.get("embedding_tokens") or 0)
+    return list(merged.values())
+
+
+def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge per-case RAG and automation token usage onto admin case records."""
+    page_total = {
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_embedding_tokens": 0,
+    }
+    if not cases:
+        return page_total
+    production_repository = _account_production_repository()
+    billing_ids = [
+        str(record.get("billing_ticket_id") or "").strip()
+        for record in cases
+        if str(record.get("billing_ticket_id") or "").strip()
+    ]
+    try:
+        automation_summaries = production_repository.account_case_llm_usage_summaries(billing_ids)
+    except Exception:
+        LOGGER.exception("account case automation token usage lookup failed")
+        automation_summaries = {}
+    families = [
+        {
+            "ticket_id": str(record.get("client_ticket_id") or "").strip(),
+            "client_ticket_id": str(record.get("client_ticket_id") or "").strip(),
+        }
+        for record in cases
+        if str(record.get("client_ticket_id") or "").strip()
+    ]
+    rag_summaries: dict[str, dict[str, Any]] = {}
+    rag_error: str | None = None
+    if families:
+        try:
+            rag_summaries = dict(
+                rag_service_client.get_ticket_family_token_summaries(families).get("summaries") or {}
+            )
+        except RagServiceError as exc:
+            rag_error = f"rag token usage unavailable: {exc}"
+            LOGGER.warning("admin account automation RAG token usage failed: %s", exc)
+    for record in cases:
+        client_ticket_id = str(record.get("client_ticket_id") or "").strip()
+        billing_ticket_id = str(record.get("billing_ticket_id") or "").strip()
+        rag_summary = rag_summaries.get(client_ticket_id)
+        automation_summary = automation_summaries.get(billing_ticket_id)
+        rag_stage_totals = dict((rag_summary or {}).get("stage_totals") or {})
+        rag_source = {
+            "available": rag_summary is not None,
+            "total_input_tokens": int((rag_summary or {}).get("total_input_tokens") or 0),
+            "total_output_tokens": int((rag_summary or {}).get("total_output_tokens") or 0),
+            "total_embedding_tokens": int((rag_summary or {}).get("total_embedding_tokens") or 0),
+            "stage_totals": rag_stage_totals,
+        }
+        automation_source = {
+            "available": True,
+            "call_count": int((automation_summary or {}).get("call_count") or 0),
+            "total_input_tokens": int((automation_summary or {}).get("total_input_tokens") or 0),
+            "total_output_tokens": int((automation_summary or {}).get("total_output_tokens") or 0),
+            "stage_totals": dict((automation_summary or {}).get("stage_totals") or {}),
+        }
+        available = rag_summary is not None
+        error_reason = None if available else (
+            rag_error
+            if rag_error
+            else ("rag token usage summary failed" if client_ticket_id else "case has no linked client ticket")
+        )
+        total_input = rag_source["total_input_tokens"] + automation_source["total_input_tokens"]
+        total_output = rag_source["total_output_tokens"] + automation_source["total_output_tokens"]
+        total_embedding = rag_source["total_embedding_tokens"]
+        record["token_usage"] = {
+            "available": available,
+            "error_reason": error_reason,
+            "total_input_tokens": total_input if available else 0,
+            "total_output_tokens": total_output if available else 0,
+            "total_embedding_tokens": total_embedding if available else 0,
+            "token_by_model": _merge_account_case_token_by_model(
+                rag_summary if available else None,
+                automation_summary if available else None,
+            ),
+            "sources": {"rag": rag_source, "automation": automation_source},
+        }
+        if available:
+            page_total["total_input_tokens"] += total_input
+            page_total["total_output_tokens"] += total_output
+            page_total["total_embedding_tokens"] += total_embedding
+    return page_total
+
+
 @app.get("/api/workspace/admin/account-automation")
 def get_workspace_admin_account_automation(
     page: int = Query(default=1, ge=1),
@@ -12313,7 +12472,7 @@ def get_workspace_admin_account_automation(
     created_to: str | None = Query(default=None, max_length=64),
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return account_automation_payload(
+    payload = account_automation_payload(
         _account_production_repository(),
         page=page,
         page_size=page_size,
@@ -12323,6 +12482,10 @@ def get_workspace_admin_account_automation(
         created_to=created_to,
         processing_profile="production",
     )
+    payload["token_usage_page_total"] = _attach_account_case_token_usage(
+        list(payload.get("cases") or [])
+    )
+    return payload
 
 
 @app.get("/api/workspace/admin/account-routing/config")

@@ -456,6 +456,127 @@ class WorkspaceApiTests(unittest.TestCase):
             main._account_production_repository_instance = original_instance
             main._account_production_repository = lambda: self.repository
 
+    def _seed_token_usage_case(self) -> None:
+        self.repository.save_billing_ticket({
+            "billing_ticket_id": "BT-TK-TOKEN",
+            "client_ticket_id": "TK-TOKEN",
+            "title": "Token usage case",
+            "question": "Quota question.",
+            "scope_label": "billing",
+            "route_family": "automated",
+            "execution_action": "quota_increase",
+            "category": "automation",
+            "subcategory": "fraud_account",
+            "route_status": "automated",
+            "processing_profile": "production",
+            "created_at": "2026-08-24T00:00:00+00:00",
+        })
+        self.repository.record_account_case_llm_usage_entries(
+            billing_ticket_id="BT-TK-TOKEN",
+            client_ticket_id="TK-TOKEN",
+            entries=[
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "stage": "quota_field_extractor",
+                    "prompt_tokens": 100,
+                    "completion_tokens": 40,
+                },
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "stage": "account_route",
+                    "prompt_tokens": 60,
+                    "completion_tokens": 20,
+                },
+            ],
+        )
+
+    def test_account_admin_token_usage_merges_rag_and_automation(self) -> None:
+        self._seed_token_usage_case()
+        rag_summary = {
+            "canonical_ticket_id": "TK-TOKEN",
+            "total_input_tokens": 900,
+            "total_output_tokens": 300,
+            "total_prompt_tokens": 900,
+            "total_completion_tokens": 300,
+            "total_cached_input_tokens": 0,
+            "total_reasoning_tokens": 0,
+            "total_tool_tokens": 0,
+            "total_embedding_tokens": 50,
+            "token_by_model": [
+                {"provider": "openai", "model": "gpt-rag", "input_tokens": 900, "output_tokens": 300, "embedding_tokens": 50},
+            ],
+            "stage_totals": {
+                "rag_answer": {"input_tokens": 900, "output_tokens": 300, "calls": 1},
+            },
+        }
+        requested_families: list[dict] = []
+
+        def _fake_batch(families):
+            requested_families.extend(families)
+            return {"summaries": {"TK-TOKEN": rag_summary}, "errors": []}
+
+        with patch.object(main.rag_service_client, "get_ticket_family_token_summaries", side_effect=_fake_batch):
+            response = self.client.get(
+                "/api/workspace/admin/account-automation",
+                headers=self._admin_headers(),
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(
+            requested_families,
+            [{"ticket_id": "TK-TOKEN", "client_ticket_id": "TK-TOKEN"}],
+        )
+        case = next(
+            item for item in payload["cases"] if item["billing_ticket_id"] == "BT-TK-TOKEN"
+        )
+        usage = case["token_usage"]
+        self.assertTrue(usage["available"])
+        self.assertIsNone(usage["error_reason"])
+        self.assertEqual(usage["total_input_tokens"], 900 + 160)
+        self.assertEqual(usage["total_output_tokens"], 300 + 60)
+        self.assertEqual(usage["total_embedding_tokens"], 50)
+        self.assertEqual(usage["sources"]["rag"]["total_input_tokens"], 900)
+        self.assertEqual(usage["sources"]["automation"]["call_count"], 2)
+        self.assertEqual(
+            usage["sources"]["automation"]["stage_totals"]["quota_field_extractor"]["input_tokens"],
+            100,
+        )
+        by_model = {(row["provider"], row["model"]): row for row in usage["token_by_model"]}
+        self.assertEqual(by_model[("openai", "gpt-test")]["input_tokens"], 160)
+        self.assertEqual(by_model[("openai", "gpt-rag")]["input_tokens"], 900)
+        page_total = payload["token_usage_page_total"]
+        self.assertEqual(page_total["total_input_tokens"], 900 + 160)
+        self.assertEqual(page_total["total_output_tokens"], 300 + 60)
+        self.assertEqual(page_total["total_embedding_tokens"], 50)
+
+    def test_account_admin_token_usage_marks_unavailable_when_rag_fails(self) -> None:
+        self._seed_token_usage_case()
+        with patch.object(
+            main.rag_service_client,
+            "get_ticket_family_token_summaries",
+            side_effect=main.RagServiceError("RAG service is not configured"),
+        ):
+            response = self.client.get(
+                "/api/workspace/admin/account-automation",
+                headers=self._admin_headers(),
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        case = next(
+            item for item in payload["cases"] if item["billing_ticket_id"] == "BT-TK-TOKEN"
+        )
+        usage = case["token_usage"]
+        self.assertFalse(usage["available"])
+        self.assertIn("rag token usage unavailable", usage["error_reason"])
+        self.assertEqual(usage["total_input_tokens"], 0)
+        self.assertEqual(usage["total_output_tokens"], 0)
+        self.assertEqual(usage["token_by_model"], [])
+        # Automation-side numbers stay visible for diagnosis.
+        self.assertEqual(usage["sources"]["automation"]["call_count"], 2)
+        self.assertEqual(payload["token_usage_page_total"]["total_input_tokens"], 0)
+
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)
         self._seed_engineer()

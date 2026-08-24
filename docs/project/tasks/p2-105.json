@@ -1,0 +1,80 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-105",
+  "title": "/workspace/admin 统计 production 每 case 的 LLM token 用量",
+  "status": "active",
+  "owner": "zac",
+  "summary": "在 /workspace/admin 的 Automated Cases（本就是 production cases）表格新增 Tokens 列与可展开明细，统计口径=RAG 链路 + 自动化链路合并。RAG 侧复用既有 support_rag_query_runs 落库数据（含历史），新增 POST /internal/rag/ticket-families/token-usage/batch 批量端点（≤200 families/次，紧凑 summary 含 stage_totals）避免 N+1。自动化侧此前 usage 全部被丢弃：新增 backend/services/llm_usage_capture.py（ContextVar 作用域采集），在 account_ai_execution 两个封装的 LlmTextResult 返回处埋点（覆盖路由 decide_account_route、quota/billing/enablement/发票/验证/封禁字段抽取、persona、enablement 分类器——它们全部经这两个封装），采集作用域为 worker _prepare_account_reply_job、main create_account_intake、main _process_account_customer_reply 三处 per-case 边界，finally best-effort flush 进新表 support_account_case_llm_usage（migration 2026_08_24 + repository 幂等 ensure，软引用 billing_ticket_id）。admin endpoint 在 payload 后合并两来源为每 case token_usage{available,totals,token_by_model,sources.rag/automation(含 stage_totals)}，RagServiceError 时 available=false+reason（不伪造 0），另附 token_usage_page_total 本页合计。前端加 Tokens 列（in/out，不可用显示 —）、行展开明细（RAG/Automation 两来源 stage 表 + 按模型表）、metric strip 本页 tokens；版本号 bump 20260824-token-usage-1。",
+  "next_action": "本地栈验证 admin 页面展示后 finalize 到 main；合并后按流程重启官方栈并 live 验证 /workspace/admin Tokens 列（含 RAG 历史的 case 应非 0）；EC2 生产侧迁移由 repository ensure 或 migration DSN 生效，部署由用户执行。",
+  "acceptance_criteria": [
+    "自动化链路 LLM 调用（经 account_ai_execution 两封装）在采集作用域内的 tokens 落 support_account_case_llm_usage，失败重试的每次成功 attempt 各记一条。",
+    "采集与 flush 均为旁路 best-effort：失败仅 warning log，不影响自动化主链路；无 billing id 的 entries 丢弃并告警。",
+    "GET /api/workspace/admin/account-automation 每页仅一次 RAG batch 调用 + 一次 usage 汇总查询；token_usage 合并 RAG+automation，RAG 失败时 available=false 且带 reason、totals 归零不误导，automation 侧数字保留供诊断。",
+    "admin 前端 Tokens 列渲染 in/out（含 embedding 附注），行展开显示 RAG/Automation stage 明细与按模型明细；RAG 不可用显示 —（title 为原因）。",
+    "现有 API 响应只增不改；RAG 与 automation 两来源 stage 不重叠，无双重计数。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Affected unit suites",
+      "command": "rtk python3.12 -m pytest backend/tests/test_llm_usage_capture.py backend/tests/test_workspace_api.py backend/tests/test_rag_api.py backend/tests/test_account_ai_execution.py backend/tests/test_workspace_admin_ui_contract.py -q",
+      "details": "90 passed（新增 capture 15 例：作用域/no-op/flush/bind/两封装记录/JSON 失败仍记录（4 次重试各一条）；admin 合并与 RagServiceError 不可见路径 2 例；RAG batch 端点 1 例）。"
+    },
+    {
+      "type": "test",
+      "label": "Admin UI contract suite",
+      "command": "rtk python3.12 -m pytest backend/tests/test_workspace_admin_ui_contract.py -q",
+      "details": "28 passed；sandbox 内新增断言：Tokens 列头/本页 tokens 指标/不可用占位 —/1,234 in / 567 out 单元格/toggle-token-detail/展开明细含 rag_answer、quota_field_extractor、openai:gpt-test、calls；版本串断言更新为 20260824-token-usage-1。"
+    },
+    {
+      "type": "test",
+      "label": "Worker/intake wrapper regression suites",
+      "command": "rtk python3.12 -m pytest backend/tests/test_worker.py backend/tests/test_account_zendesk_comment_sync.py -q",
+      "details": "121 passed。注意：worktree 需先 scripts/workflow/link_worktree_env.sh 链接 root .env，否则 route 凭据缺失导致 ZendeskCommentTriggerTests 假失败；test_production_ui_contract 的 deploy 脚本断言失败在干净 main 同样失败（遗留问题，非本任务引入，与 p2-104 evidence 记录一致）。"
+    },
+    {
+      "type": "decision",
+      "label": "本地栈预验证跳过原因",
+      "command": "",
+      "details": "本地 podman 栈与 EC2 共用 RDS supportportal 库且 worker 会争抢 reply/rerun job（既有教训）；本次为纯展示改动，用 TestClient 端点测试 + Node sandbox 契约测试确定性覆盖渲染逻辑，避免未合并代码抢占真实生产 job。runtime live 验证按仓库规则留待合并后官方栈重启执行。"
+    },
+    {
+      "type": "decision",
+      "label": "已知边界（代码核实）",
+      "command": "",
+      "details": "①独立 route_service 容器（/v1/cases 控制台流的路由+准备，设计上无 ticket DB）的 tokens 不采集：production /v1/cases 走 call_route HTTP 到该容器；若需要可后续经 RouteResult 契约透传另开任务。②provider 报错的重试 attempt 无 usage 可记（错误响应不含 usage），只记成功 invocation。③自动化侧历史无法回补，只有上线后新数据；RAG 侧含全部历史。④本地栈 admin 的 RAG 数字取决于该栈 RAG 服务指向的知识库，权威视图为 EC2 production 栈。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/llm_usage_capture.py",
+    "backend/services/account_ai_execution.py",
+    "backend/repositories/ticket_repository.py",
+    "backend/sql/migrations/2026_08_24_account_case_llm_usage.sql",
+    "backend/worker.py",
+    "backend/main.py",
+    "backend/rag_api.py",
+    "backend/services/rag_service_client.py",
+    "ui/workspace-ui/admin/app.js",
+    "ui/workspace-ui/admin/styles.css",
+    "ui/workspace-ui/admin/index.html",
+    "docs/rag_change_log.md"
+  ],
+  "created_at": "2026-08-24",
+  "updated_at": "2026-08-24",
+  "history": [
+    {
+      "at": "2026-08-24",
+      "event": "created",
+      "summary": "用户需求：统计 /production 每个 case 的 token 用量并展示在 /workspace/admin。方案问答未获回复，按推荐口径（全链路合并）实施：RAG 复用既有落库，自动化链路新增采集表与埋点。"
+    }
+  ],
+  "legacy_refs": [
+    "p1-52",
+    "p2-93"
+  ],
+  "legacy_ids": [],
+  "phase_id": "phase-1",
+  "module_id": "admin-operations",
+  "function_id": "admin-case-operations"
+}

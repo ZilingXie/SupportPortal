@@ -159,6 +159,11 @@ from backend.services.rag_service_client import (
 from backend.services.sentiment_classifier import classify_sentiment
 from backend.services.support_router import decide_support_route
 from backend.services.task_queue import SyncRedisTaskQueue
+from backend.services.llm_usage_capture import (
+    begin_case_usage_capture,
+    end_case_usage_capture,
+    flush_case_usage_capture,
+)
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
     classify_customer_message_sentiment,
@@ -634,6 +639,29 @@ def _resolve_account_persona_for_claimed_reply(
 
 
 def _prepare_account_reply_job(job: dict[str, Any]) -> None:
+    ticket_id = str(job.get("ticket_id") or "").strip()
+    usage_capture, usage_token = begin_case_usage_capture(client_ticket_id=ticket_id or None)
+    try:
+        _prepare_account_reply_job_impl(job)
+    finally:
+        end_case_usage_capture(usage_token)
+        if usage_capture.entries:
+            billing_ticket = (
+                ticket_repository.get_billing_ticket_by_client_ticket_id(ticket_id)
+                if ticket_id
+                else None
+            )
+            usage_capture.bind_case(
+                billing_ticket_id=str(
+                    (billing_ticket or {}).get("billing_ticket_id") or ""
+                ).strip()
+                or None,
+                client_ticket_id=ticket_id or None,
+            )
+            flush_case_usage_capture(ticket_repository, usage_capture)
+
+
+def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
     claimed_status = str(job.get("status") or "")
