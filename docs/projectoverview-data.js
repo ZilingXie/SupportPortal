@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T08:24:45Z",
-  "source_base_commit": "2f34f8aa2d6b965529467116012e65b1b468e785",
-  "registry_digest": "55ee19589e25fdecb851d8321f7fe4de84638e9c9d2b1c239180c8a154a51269",
+  "generated_at": "2026-08-24T08:41:50Z",
+  "source_base_commit": "633c9fda1982b874ab6f5c8bf19c5300b85b0d66",
+  "registry_digest": "9987f476dd6a03d65d791d41fe1b8290057b4876ca8336425f0d7905c84405fa",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5360,6 +5360,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "created",
           "summary": "按用户需求将 fraud 字段从 4 组改为 7 项独立字段，同步更新提取 prompt、邮件标签、Slack 模板。"
+        },
+        {
+          "at": "2026-08-24",
+          "event": "persona_missing_format",
+          "summary": "persona 指令增加缺失信息格式规则（1-2 项入句、3+ 项编号列表），missing_information 在送 LLM 前转换为人类可读标签（Account type 而非 account_type）。"
         }
       ],
       "legacy_refs": [],
