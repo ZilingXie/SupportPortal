@@ -27,7 +27,7 @@
 | `new_case_2_supporportal_staging` | `HTTP Request` | `POST /account`，表单，无鉴权 | `POST /automation/staging/v1/cases`，**body 原样不用改**，加 `X-N8n-Request-Token` 头；**不得**传 `comment_visibility` |
 | （可选新增）`new_case_automation_preproduction` | 克隆自 prod 工作流 | — | `POST /automation/preproduction/v1/cases`，body 原样 + 头，受服务端 allowlist 门控 |
 | `commen_sync` | 2× membership GET + 2× PUT comments | 旧端点 `…/api/integrations/zendesk/account-cases/{id}/…`（staging + production 两栈） | 灰度迁移期可将 production origin 指向 `/automation/production/api/integrations/zendesk/account-cases/{id}/…`（p2-110 起同构可用：membership GET + PUT comments + 评论触发链）；未迁移工单保持旧端点。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
-| `case_status_sync` | 2× membership GET + 2× PUT status | 同上 | **不改 URL**。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
+| `case_status_sync` | 2× membership GET + 2× PUT status | 同上 | 灰度迁移期可将 production origin 指向 `/automation/production/api/integrations/zendesk/account-cases/{id}/status`（p2-112 起同构可用：状态投影 + solved/closed 关 case/Engineer Case）；未迁移工单保持旧端点。鉴权头按 §6 统一为 `X-N8n-Request-Token` |
 | `2_slack - SupportPortal Account Handoff -> Slack` | 入站 Webhook（SupportPortal→n8n） | 凭据 `2_SupportPortal`（`X-N8n-Request-Token`） | 结构不动。仅按 §6 把凭据值换成统一 token |
 
 Zendesk Trigger、取数/富化（Get_Case_Info、Get_Requester_Info、Prepare_Account_Data 等）与 Company ID 门控逻辑全部保留原样，不在本文改动范围。

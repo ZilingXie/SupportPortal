@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-24T12:33:35Z",
-  "source_base_commit": "1805f744f0d94d664de9f81b1db85175bf1ce2d1",
-  "registry_digest": "a32c0be8eb73c3e2499d4a37b6ce3405f7e990dace2d8feb9f237784e295d32a",
+  "generated_at": "2026-08-24T12:38:49Z",
+  "source_base_commit": "23c19e3bd7d4c73d69617215b926c26ff3dde458",
+  "registry_digest": "9c41c101cabdfd016d86bc7affe39d517c51075ff23fd099af859f7baa10229b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1726,6 +1726,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Status sync endpoint and full parity regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_status_sync",
+          "details": "94 项通过：status 端点鉴权/非法状态 422、solved 关 Engineer Case（线程事件+ticket resolved+派单 resolve 断言）、open 不触发收尾；既有评论/intake/runtime/contracts/compose 全回归绿。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -2062,7 +2068,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 17,
+      "task_count": 18,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -6219,6 +6225,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-112",
+      "title": "/automation/production 替代 /production：Phase D 状态同步端点（纯移植）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Phase D：把旧栈 Zendesk 工单状态同步搬进 /automation/production——automation_account_reply_sync.py 增 sync_account_case_ticket_status（main.py PUT .../status 语义移植：状态投影 update_account_case_zendesk_status + solved/closed 时关闭活跃 Engineer Case（build/close_case_context + engineer_case_closed 线程事件 + ticket resolved + EngineerAssignmentService.resolve_case））；runtime 新增 PUT /api/integrations/zendesk/account-cases/{id}/status 端点（token 鉴权、zendesk_status 白名单校验、updated_at ISO 规范化、404/409 语义复刻）。任务号 p2-111 已被并行链（#928 RAGFlow persona 渲染）占用，顺延为 p2-112。",
+      "next_action": "待用户 EC2 部署 + n8n case_status_sync 的 production origin 换 URL 后做真实工单状态同步验收（solved 关 case/Engineer Case）。随后 Phase E：Slack 协作收口（工程师 AI 调查回合 _process_engineer_investigation_message 移植 + Slack 入向双目标路由 + fraud 公开回复后 assignee 转人工）。",
+      "acceptance_criteria": [
+        "PUT .../status 在 /automation/production 下可用，鉴权与 422/404 语义与旧栈一致。",
+        "solved/closed 触发：本地 ticket 置 resolved+closed_at、活跃 Engineer Case 关闭（线程事件+investigation 收尾）、派单 resolve。",
+        "非终态状态只做投影不触发收尾；旧栈与 preprod/staging 零行为变化。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Status sync endpoint and full parity regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_status_sync",
+          "details": "94 项通过：status 端点鉴权/非法状态 422、solved 关 Engineer Case（线程事件+ticket resolved+派单 resolve 断言）、open 不触发收尾；既有评论/intake/runtime/contracts/compose 全回归绿。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_account_reply_sync.py",
+        "backend/automation_production_runtime.py",
+        "backend/main.py",
+        "backend/services/engineer_cases.py",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "Phase C（p2-110/PR#927）合并后开工 Phase D。payload_to_record/close_for_customer_resolution 两个 main.py 薄壳按 B 纯移植方案搬入 reply_sync 模块（依赖 engineer_cases 三个 service 函数均已在 production 镜像内）。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-108",
+        "p2-109",
+        "p2-110"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     },
     {
       "schema_version": 2,
