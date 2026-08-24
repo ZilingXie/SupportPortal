@@ -50,6 +50,19 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("ensure_nginx_automation_edge_network", deploy)
         self.assertIn('docker network connect "${network_name}" "${nginx_container_id}"', deploy)
 
+    def test_production_blue_green_contract(self):
+        nginx = (ROOT / "deployment/nginx/supportportal.conf").read_text()
+        script = (ROOT / "deployment/deploy_automation_production_blue_green.sh").read_text()
+        runtime = (ROOT / "deployment/nginx/runtime/automation_production_active.conf").read_text()
+        compose = (ROOT / "deployment/docker-compose.single-host.yml").read_text()
+        self.assertIn("include /etc/nginx/runtime/automation_production_active.conf", nginx)
+        self.assertIn("proxy_pass http://automation_production_active", nginx)
+        self.assertIn("proxy_next_upstream off", nginx)
+        self.assertIn("automation_production:8000", runtime)
+        self.assertIn("./nginx/runtime:/etc/nginx/runtime:ro", compose)
+        for marker in ("extends:", "route_production_candidate_", "automation_production_candidate_", "nginx -t", "nginx -s reload", "DRAIN_SECONDS", "--rollback", "no request was replayed"):
+            self.assertIn(marker, script)
+
     def test_production_bundle_has_no_rerun_ui_or_main_module(self):
         production_js = (ROOT / "ui/automation-production/app.js").read_text().lower()
         self.assertNotIn("rerun", production_js)
