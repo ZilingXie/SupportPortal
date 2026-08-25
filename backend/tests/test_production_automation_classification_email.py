@@ -51,6 +51,17 @@ class ProductionAutomationClassificationEmailTests(unittest.TestCase):
 
     def test_only_active_production_automation_is_eligible(self) -> None:
         self.assertTrue(is_production_automation_classification(_case()))
+        backend_operation_case = _case(category="backend_operation")
+        self.assertTrue(is_production_automation_classification(backend_operation_case))
+        backend_operation_payload = build_production_automation_classification_email(
+            backend_operation_case
+        )
+        self.assertIsNotNone(backend_operation_payload)
+        assert backend_operation_payload is not None
+        self.assertEqual(
+            backend_operation_payload["classification_path"],
+            "Agora / Backend Operation / Enablement",
+        )
         self.assertFalse(
             is_production_automation_classification(
                 _case(subcategory="detailed_invoice", execution_action="detailed_invoice")

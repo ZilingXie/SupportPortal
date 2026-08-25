@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T11:09:28Z",
-  "source_base_commit": "0de026ca8c2876fb7cf7b9d814a146d59ae83c2a",
-  "registry_digest": "a97d0bf5381b7d0b77dfcd36cdc321692121faae951c93213b0d860f45b49929",
+  "generated_at": "2026-08-25T11:12:28Z",
+  "source_base_commit": "421030437cd80a4f92329f754937023cc729c54b",
+  "registry_digest": "dcb6581ced75ba0a98e279d6982a8fdc3b89e1bf41e6f33b9041224bb7d84233",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1923,7 +1923,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Production Automation classification email regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
-          "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+          "details": "fresh suite 合计 459 项通过；覆盖 active Automation 与 Backend Operation/Enablement 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
         },
         {
           "type": "document",
@@ -7030,7 +7030,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Production Automation classification email regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
-          "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+          "details": "fresh suite 合计 459 项通过；覆盖 active Automation 与 Backend Operation/Enablement 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
         },
         {
           "type": "document",
@@ -7060,6 +7060,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "created",
           "summary": "实现 Production Automation 分类邮件通知的独立 outbox、Graph Mail worker 投递和幂等验证。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "backend_operation_enablement_route_fix",
+          "summary": "修复分类邮件 eligibility 只接受 category=automation 的错误；Production canonical Backend Operation/Enablement 路由使用 category=backend_operation，现按 active route identity 正确进入邮件 outbox。"
         }
       ],
       "legacy_refs": [],
