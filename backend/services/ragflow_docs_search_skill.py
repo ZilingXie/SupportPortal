@@ -37,7 +37,7 @@ class RagflowDocsSearchError(RuntimeError):
         self.failure_kind = str(failure_kind or "unknown").strip() or "unknown"
 
 
-def _trusted_source_url(value: Any) -> str:
+def trusted_docs_source_url(value: Any) -> str:
     url = str(value or "").strip()
     if not url:
         return ""
@@ -68,7 +68,7 @@ def _normalize_search_results(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         content = str(item.get("content") or "").strip()
-        source_url = _trusted_source_url(item.get("source_url"))
+        source_url = trusted_docs_source_url(item.get("source_url"))
         if not content or not source_url:
             continue
         try:

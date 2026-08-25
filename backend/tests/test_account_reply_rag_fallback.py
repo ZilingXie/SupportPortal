@@ -124,7 +124,11 @@ class RagFallbackAnswerTest(unittest.TestCase):
 
     def test_answer_decision_returns_the_answer(self) -> None:
         client = _FakeRagClient(
-            payload={"decision": "answer", "answer": "An App ID identifies your Agora project."}
+            payload={
+                "decision": "answer",
+                "answer": "An App ID identifies your Agora project.",
+                "citations": [{"source_url": "https://docs.agora.io/en/get-started"}],
+            }
         )
         outcome = try_rag_fallback_answer(
             question="what is appid?",
@@ -145,6 +149,7 @@ class RagFallbackAnswerTest(unittest.TestCase):
                     "1. Open the Agora Console Projects page.\n2. Click the copy icon.\n\n"
                     "Best Regards,\nSid"
                 ),
+                "citations": [{"source_url": "https://docs.agora.io/en/get-started"}],
             }
         )
         outcome = try_rag_fallback_answer(question="where is the app id?", request_id="req-s", client=client)
@@ -153,7 +158,11 @@ class RagFallbackAnswerTest(unittest.TestCase):
         self.assertTrue(outcome.answer.startswith("You can find it on the Agora Console Projects page."))
         # A closing sentence is not a signature and must be preserved.
         keep_client = _FakeRagClient(
-            payload={"decision": "answer", "answer": "Thanks for asking.\nThe App ID is on the Projects page."}
+            payload={
+                "decision": "answer",
+                "answer": "Thanks for asking.\nThe App ID is on the Projects page.",
+                "citations": [{"source_url": "https://docs.agora.io/en/get-started"}],
+            }
         )
         keep = try_rag_fallback_answer(question="q", request_id="req-k", client=keep_client)
         self.assertEqual(keep.answer, "Thanks for asking.\nThe App ID is on the Projects page.")
@@ -177,6 +186,7 @@ class RagFallbackAnswerTest(unittest.TestCase):
                     "—  https://www.agora.io/en/support-plans/!\n"
                     "Join our official Discord Developers Community —  https://discord.gg/uhkxjDpJsN"
                 ),
+                "citations": [{"source_url": "https://docs.agora.io/en/get-started"}],
             }
         )
         outcome = try_rag_fallback_answer(question="what is appid", request_id="req-m", client=client)
@@ -227,6 +237,34 @@ class RagFallbackAnswerTest(unittest.TestCase):
         self.assertIn("References:", rendered)
         self.assertIn("- https://docs.agora.io/en/interactive-whiteboard/reference/uikit-sdk", rendered)
 
+    def test_answer_without_a_trusted_official_citation_escalates(self) -> None:
+        invalid_citations = [
+            None,
+            [],
+            [{"source_url": "https://example.com/untrusted"}],
+            [{"source_url": "https://docs.agora.io.example.com/untrusted"}],
+            [{"source_url": "http://docs.agora.io/untrusted"}],
+            [{"source_url": "https://user@docs.agora.io/untrusted"}],
+            [{"source_url": "https://api-ref.agora.io:444/untrusted"}],
+        ]
+        for citations in invalid_citations:
+            with self.subTest(citations=citations):
+                payload = {
+                    "decision": "answer",
+                    "answer": "This answer must not be published.",
+                }
+                if citations is not None:
+                    payload["citations"] = citations
+                outcome = try_rag_fallback_answer(
+                    question="q",
+                    request_id="req-invalid-citation",
+                    client=_FakeRagClient(payload=payload),
+                )
+                self.assertEqual(outcome.kind, "escalate")
+                self.assertEqual(outcome.reason, "invalid_citations")
+                self.assertEqual(outcome.answer, "")
+                self.assertEqual(outcome.references, ())
+
     def test_escalate_decision_and_rag_errors_map_to_escalate(self) -> None:
         escalate = try_rag_fallback_answer(
             question="q",
@@ -236,13 +274,26 @@ class RagFallbackAnswerTest(unittest.TestCase):
         self.assertEqual(escalate.kind, "escalate")
         self.assertEqual(escalate.reason, "insufficient_evidence")
 
-        transport = try_rag_fallback_answer(
-            question="q",
-            request_id="req-3",
-            client=_FakeRagClient(error=RagflowDocsSearchError("transport")),
+        failure_kinds = (
+            "configuration",
+            "authentication",
+            "access",
+            "timeout",
+            "execution",
+            "search",
+            "invalid_search_response",
+            "generation",
+            "invalid_generation_response",
         )
-        self.assertEqual(transport.kind, "escalate")
-        self.assertEqual(transport.reason, "ragflow_skill_transport")
+        for failure_kind in failure_kinds:
+            with self.subTest(failure_kind=failure_kind):
+                failed = try_rag_fallback_answer(
+                    question="q",
+                    request_id=f"req-{failure_kind}",
+                    client=_FakeRagClient(error=RagflowDocsSearchError(failure_kind)),
+                )
+                self.assertEqual(failed.kind, "escalate")
+                self.assertEqual(failed.reason, f"ragflow_skill_{failure_kind}")
 
         unexpected = try_rag_fallback_answer(
             question="q",
@@ -260,6 +311,10 @@ class RagFallbackEscalationTest(unittest.TestCase):
             "processing_profile": "production",
             "automation_status": "not_automated",
             "zendesk_ticket_id": "12895",
+            "route": "rag",
+            "execution_action": "rag",
+            "automation_handler": None,
+            "route_classification": {"superseded_automation_handler": None},
             "automation_context": {
                 "zendesk_ownership": {
                     "state": "assigned",
@@ -329,6 +384,52 @@ class RagFallbackEscalationTest(unittest.TestCase):
         ownership = account_case["automation_context"]["zendesk_ownership"]
         self.assertEqual(ownership["state"], "released_to_queue")
         self.assertEqual(ownership["handoff_status"], "queued")
+        self.assertEqual(
+            account_case["automation_context"]["human_review_escalation"]["handler"],
+            "automation",
+        )
+
+    def test_all_rag_failure_reasons_route_rerouted_case_back_to_queue(self) -> None:
+        reasons = (
+            "insufficient_evidence",
+            "invalid_citations",
+            "ragflow_skill_configuration",
+            "ragflow_skill_authentication",
+            "ragflow_skill_access",
+            "ragflow_skill_timeout",
+            "ragflow_skill_execution",
+            "ragflow_skill_search",
+            "ragflow_skill_invalid_search_response",
+            "ragflow_skill_generation",
+            "ragflow_skill_invalid_generation_response",
+            "ragflow_skill_RuntimeError",
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                repository = _FakeRepository()
+                account_case = self._production_case()
+                with patch(
+                    "backend.services.account_human_review_escalation.add_ticket_comment"
+                ), patch(
+                    "backend.services.account_human_review_escalation.route_ticket_back_to_queue",
+                    return_value=type("Result", (), {"status": "queued"})(),
+                ) as route_back:
+                    result = escalate_unexpected_reply_to_human(
+                        account_case=account_case,
+                        ticket_id="T-1",
+                        zendesk_ticket_id="12895",
+                        customer_reply_text="unexpected question",
+                        reason=reason,
+                        repository=repository,
+                        timestamp="2026-08-23T00:00:00+00:00",
+                    )
+                self.assertEqual(result["route_back_status"], "queued")
+                self.assertEqual(account_case["automation_status"], "human_review_required")
+                self.assertEqual(repository.cancelled, [("T-1", "2026-08-23T00:00:00+00:00")])
+                route_back.assert_called_once_with(
+                    ticket_id="12895",
+                    source_group_id="3600123",
+                )
 
     def test_production_route_back_failure_is_recorded_without_raising(self) -> None:
         repository = _FakeRepository()

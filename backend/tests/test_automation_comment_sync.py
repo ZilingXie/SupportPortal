@@ -549,3 +549,99 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         end.assert_called_once()
         flush.assert_called_once()
         self.assertEqual(flushed, [("AC-123", 1)])
+
+    def test_split_reply_rag_failure_escalates_without_creating_reply_job(self):
+        import asyncio
+
+        repository = _FakeRepository()
+        repository.get_account_case = lambda case_id: {
+            "account_case_id": "AC-12992",
+            "billing_ticket_id": "AC-12992",
+            "client_ticket_id": "12992",
+            "zendesk_ticket_id": "12992",
+            "processing_profile": "production",
+            "automation_status": "not_automated",
+            "route": "rag",
+            "execution_action": "rag",
+            "automation_handler": None,
+            "route_classification": {"superseded_automation_handler": None},
+            "automation_context": {},
+            "created_at": "2026-08-23T00:00:00Z",
+        }
+        repository.get_ticket = lambda ticket_id: {
+            "ticket_id": "12992",
+            "status": "open",
+            "messages": [],
+            "customer_id": "customer@example.com",
+        }
+        repository.save_ticket = lambda ticket, new_messages=None: None
+        repository.save_account_case = lambda case: None
+        repository.save_account_route_execution = lambda execution: None
+        rag_route = NS(
+            decision=NS(
+                execution_action="rag",
+                route="rag",
+                route_family="rag_product_support",
+                scope_label="support",
+                reason="unexpected question",
+                confidence=0.9,
+                matched_signals=[],
+                semantic_intent=None,
+                automation_eligibility=None,
+                policy_decision=None,
+                not_automated_reason="unexpected question",
+                risk_flags=[],
+                evidence_spans=[],
+                router_source="mock",
+            ),
+            classification={},
+            prompt_snapshots={},
+            stage_attempts=None,
+        )
+        with patch(
+            "backend.services.automation_account_reply_sync.decide_account_route",
+            return_value=rag_route,
+        ), patch(
+            "backend.services.account_admin.route_execution_from_decision",
+            return_value={"ticket_id": "12992"},
+        ), patch(
+            "backend.services.automation_account_reply_sync._apply_ownership_gate",
+            return_value=True,
+        ), patch(
+            "backend.services.automation_account_reply_sync.should_run_reply_rag_fallback",
+            return_value=True,
+        ), patch(
+            "backend.services.automation_account_reply_sync.try_rag_fallback_answer",
+            return_value=NS(
+                kind="escalate",
+                reason="ragflow_skill_authentication",
+            ),
+        ), patch(
+            "backend.services.automation_account_reply_sync.escalate_unexpected_reply_to_human",
+            return_value={
+                "mode": "production",
+                "internal_note_status": "sent",
+                "route_back_status": "queued",
+                "handoff_status": "queued",
+            },
+        ) as escalate, patch(
+            "backend.services.automation_account_reply_sync._create_reply_job",
+        ) as create_reply_job:
+            outcome = asyncio.run(
+                reply_module._process_account_customer_reply_impl(
+                    repository=repository,
+                    billing_ticket_id="AC-12992",
+                    message="question outside the knowledge base",
+                    source="zendesk-comment",
+                    message_source_id="comment-12992",
+                )
+            )
+
+        self.assertEqual(outcome["execution_action"], "rag")
+        create_reply_job.assert_not_called()
+        escalate.assert_called_once()
+        escalation_call = escalate.call_args.kwargs
+        self.assertEqual(escalation_call["ticket_id"], "12992")
+        self.assertEqual(escalation_call["zendesk_ticket_id"], "12992")
+        self.assertEqual(escalation_call["reason"], "ragflow_skill_authentication")
+        self.assertEqual(escalation_call["account_case"]["automation_handler"], None)

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T07:46:18Z",
-  "source_base_commit": "91b72b2aaa7d4e3b2d547faf3a2db8070d9384c3",
-  "registry_digest": "a951c775ffed2a5e33cd57410b71f9ea3b7bf93eeeb353d61f19b180c8be2c72",
+  "generated_at": "2026-08-25T07:53:37Z",
+  "source_base_commit": "ecef3812368deeb1ad1aa2a4fd70bf75c5dad5a0",
+  "registry_digest": "5cc9c07dc444b9ac3bbaa2b198a2b69492f8266f9a78778d7076e9d5c649acde",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -709,6 +709,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "RAGFlow failure matrix and 12992-shaped queue handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_worker.py -q",
+          "details": "325 tests + 66 subtests passed。覆盖无结果/证据不足、无效或非官方引用、缺 key、401/403、timeout、执行/搜索/生成/JSON 异常；12992 同形态（execution_action=rag、automation_handler=None、无 superseded handler）不再 skipped_inactive_handler，所有失败原因均调用 private-note + route_ticket_back_to_queue、置 human_review_required、释放 ownership、取消 pending jobs；main.py 与 split automation_account_reply_sync caller 均有回归。"
+        },
+        {
+          "type": "test",
           "label": "Shared Account escalation handoff regression",
           "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py -q",
           "details": "RAG escalation 委托共享 Account Human Review service；覆盖 Production private note/queue route、staging 无 Zendesk side effect、独立失败和 outcome_unknown 门禁。"
@@ -786,7 +792,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 18,
       "done_count": 12,
-      "blocked_count": 1
+      "blocked_count": 0
     },
     {
       "schema_version": 2,
@@ -10279,10 +10285,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-93",
       "title": "意外客户回复的 RAG 兜底与人工升级",
-      "status": "blocked",
+      "status": "active",
       "owner": "zac",
       "summary": "自动化多轮对话中客户回复意料之外的内容（如反问 what is appid?）时不再静默：先用 RAG 尝试回答（能答则走标准 reply job 管线回复客户），RAG 无法回答（含服务故障）时把 case 交回人工——production 写 internal note 并复用 route_ticket_back_to_queue 放回 Zendesk queue、本地置 human review 并取消 pending reply jobs；staging 仅本地人工标记。行为通过共享 service 落地，/account 与 /production 立即生效，split 三环境在承接客户对话后同源继承。",
-      "next_action": "等待用户指定新的 Production Zendesk 测试工单；随后触发自动化意外回复，完成 RAGFlow answer -> rag_fallback_answer -> Zendesk public delivery/ledger/readback 闭环。",
+      "next_action": "完成 fail-closed queue handoff 修复的 review/finalize、本地官方栈与 EC2 main stack 部署；随后用专用 Production 工单分别验证 grounded answer public delivery 和 insufficient-evidence private-note/route-back/readback。",
       "acceptance_criteria": [
         "意外回复（重路由为非 automation 路由、或命中同一 handler 但无字段进展且追问已问尽）时先调用 RAG；RAG answer 经 reply job 直发客户（production 走 Zendesk 公开评论与既有延迟），RAG escalate 时执行人工升级链。",
         "人工升级链：production 写 internal note（AI agent unable to handle this request, require human review. + 原因与客户原文摘要）、route_ticket_back_to_queue 放回 queue、本地 human_review_required + ownership released + 取消 pending reply jobs + workspace audit event；staging 仅本地标记，不出站 Zendesk。",
@@ -10291,9 +10297,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "意外回复检索必须通过 backend/skills/ragflow-docs-search/scripts/search.py 的 ticket-agent read-only endpoint；仅带有效 docs.agora.io 或 api-ref.agora.io 引用的 grounded answer 可发布，skill/模型/JSON/citation 任一失败继续 fail-closed 转人工，不回退到旧本地 RAG。"
       ],
       "blockers": [
-        "新的 Production Zendesk 测试工单尚未由用户指定，因此新 RAGFlow 路径的客户公开评论、delivery ledger 与 Zendesk readback 尚未验收；credentialed retrieval、grounded answer 与 deployed fallback 边界已在官方本地栈和 EC2 api_production 容器验证。"
+        "修复尚未 merge/deploy；新的 Production Zendesk 测试工单尚未确定，因此 RAGFlow grounded answer 的公开投递以及 insufficient-evidence 的 private note、route-back 与 Zendesk readback 仍待验收。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "RAGFlow failure matrix and 12992-shaped queue handoff regression",
+          "command": "../../.venv/bin/python -m pytest backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_worker.py -q",
+          "details": "325 tests + 66 subtests passed。覆盖无结果/证据不足、无效或非官方引用、缺 key、401/403、timeout、执行/搜索/生成/JSON 异常；12992 同形态（execution_action=rag、automation_handler=None、无 superseded handler）不再 skipped_inactive_handler，所有失败原因均调用 private-note + route_ticket_back_to_queue、置 human_review_required、释放 ownership、取消 pending jobs；main.py 与 split automation_account_reply_sync caller 均有回归。"
+        },
         {
           "type": "test",
           "label": "Shared Account escalation handoff regression",
@@ -10357,6 +10369,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "source_refs": [
         "backend/main.py",
+        "backend/services/automation_account_reply_sync.py",
         "backend/services/account_reply_rag_fallback.py",
         "backend/services/ragflow_docs_search_skill.py",
         "backend/skills/ragflow-docs-search/SKILL.md",
@@ -10452,6 +10465,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "ragflow_production_deployed",
           "summary": "EC2 主栈部署到 52e9d3595a0e，api_production 已加载 ticket-agent endpoint 与非空 key，默认 RagflowDocsSearchSkillClient 的无客户数据 grounded-answer 探针返回 answer 和 2 条 docs.agora.io 引用；未触发真实工单，Production 公开评论、delivery ledger 与 Zendesk readback 仍待用户指定新测试工单。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "ragflow_failure_queue_handoff_fix_verified",
+          "summary": "定位 12992 同形态 case 的 escalation handler 被 execution_action=rag 污染，导致共享 Human Review active-handler 门禁返回 skipped_inactive_handler；修复 fallback handler origin，并在最终 answer 边界再次强制官方 citation。失败矩阵、12992 route-back 和 main/split 双 caller 共 325 tests + 66 subtests 通过，待 merge/deploy 与 Production readback。"
         }
       ],
       "legacy_refs": [],

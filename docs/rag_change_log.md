@@ -5059,3 +5059,24 @@ For each new entry, record:
   - No SupportPortal schema, ingestion, chunking, embedding, vector-table, or local RAG pipeline changes; `support_account_case_llm_usage` gains rows under the new stage name when fallback answers run.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py -q` (green)
+
+## 2026-08-25 - RAGFlow failures return rerouted automated cases to Zendesk queue (p2-93)
+
+- Summary:
+  - Stopped using the current `execution_action=rag` reroute destination as the fallback's automation handler, so cases without a persisted or superseded handler enter the shared Human Review contract through the `automation` fallback instead of being skipped as inactive.
+  - Reused the RAGFlow trusted-doc URL validator at the final unexpected-reply answer boundary. An answer without at least one valid `https://docs.agora.io` or `https://api-ref.agora.io` citation now escalates as `invalid_citations`.
+  - Kept the old local/container RAG fallback disabled; all retrieval, authorization, timeout, generation, JSON, and citation failures remain fail-closed.
+- Reason:
+  - Production case 12992 had `execution_action=rag`, `automation_handler=None`, and no superseded handler. The wrapper passed `rag` to the shared escalation service, whose active-handler gate correctly returned `skipped_inactive_handler`, preventing the private note and Zendesk queue handoff.
+- Affected files/config:
+  - `backend/services/account_reply_rag_fallback.py`
+  - `backend/services/ragflow_docs_search_skill.py`
+  - Focused adapter, fallback, and split comment-sync tests
+  - No environment or credential changes
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, index, or backfill changes.
+  - Failed unexpected-reply attempts now persist the existing `human_review_required`/ownership/audit state and attempt the existing idempotent private-note and source-queue route-back operations.
+- Verification:
+  - `rtk ../../.venv/bin/python -m pytest backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_worker.py -q` (`325 passed`, `66 subtests passed`).
+  - `rtk ../../.venv/bin/python -m py_compile backend/services/ragflow_docs_search_skill.py backend/services/account_reply_rag_fallback.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py` (exit 0).
+  - `rtk git diff --check` (exit 0).

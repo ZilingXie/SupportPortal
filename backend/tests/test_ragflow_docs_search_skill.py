@@ -242,6 +242,84 @@ class RagflowDocsSearchSkillClientTest(unittest.TestCase):
                     timeout_seconds=1.0,
                 )
 
+    def test_search_failures_have_stable_failure_kinds(self) -> None:
+        completed_failures = (
+            ("HTTP 401: unauthorized", "authentication"),
+            ("HTTP 403: forbidden", "access"),
+            ("HTTP 500: unavailable", "search"),
+        )
+        for stderr, expected_kind in completed_failures:
+            with self.subTest(expected_kind=expected_kind), patch(
+                "backend.services.ragflow_docs_search_skill.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, stdout="", stderr=stderr),
+            ):
+                with self.assertRaises(RagflowDocsSearchError) as caught:
+                    RagflowDocsSearchSkillClient().query(
+                        question="question",
+                        request_id=f"req-{expected_kind}",
+                    )
+                self.assertEqual(caught.exception.failure_kind, expected_kind)
+
+        with patch(
+            "backend.services.ragflow_docs_search_skill.subprocess.run",
+            side_effect=OSError("cannot execute"),
+        ):
+            with self.assertRaises(RagflowDocsSearchError) as caught:
+                RagflowDocsSearchSkillClient().query(
+                    question="question",
+                    request_id="req-execution",
+                )
+            self.assertEqual(caught.exception.failure_kind, "execution")
+
+        with patch(
+            "backend.services.ragflow_docs_search_skill.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="not-json", stderr=""),
+        ):
+            with self.assertRaises(RagflowDocsSearchError) as caught:
+                RagflowDocsSearchSkillClient().query(
+                    question="question",
+                    request_id="req-invalid-search-json",
+                )
+            self.assertEqual(caught.exception.failure_kind, "invalid_search_response")
+
+    def test_generation_failures_have_stable_failure_kinds(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, stdout=_search_result(), stderr="")
+        with patch(
+            "backend.services.ragflow_docs_search_skill.subprocess.run",
+            return_value=completed,
+        ), patch(
+            "backend.services.ragflow_docs_search_skill.resolve_model_profile",
+            return_value=_profile(),
+        ), patch(
+            "backend.services.ragflow_docs_search_skill.invoke_responses_text",
+            side_effect=ValueError("generation failed"),
+        ):
+            with self.assertRaises(RagflowDocsSearchError) as caught:
+                RagflowDocsSearchSkillClient().query(
+                    question="question",
+                    request_id="req-generation",
+                )
+            self.assertEqual(caught.exception.failure_kind, "generation")
+
+        invalid_outputs = ("not-json", "[]")
+        for output in invalid_outputs:
+            with self.subTest(output=output), patch(
+                "backend.services.ragflow_docs_search_skill.subprocess.run",
+                return_value=completed,
+            ), patch(
+                "backend.services.ragflow_docs_search_skill.resolve_model_profile",
+                return_value=_profile(),
+            ), patch(
+                "backend.services.ragflow_docs_search_skill.invoke_responses_text",
+                return_value=LlmTextResult(text=output, model_name="test-model"),
+            ):
+                with self.assertRaises(RagflowDocsSearchError) as caught:
+                    RagflowDocsSearchSkillClient().query(
+                        question="question",
+                        request_id="req-invalid-generation",
+                    )
+                self.assertEqual(caught.exception.failure_kind, "invalid_generation_response")
+
     def test_generation_uses_core_content_prompt_and_records_usage(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout=_search_result(), stderr="")
         generated = LlmTextResult(
