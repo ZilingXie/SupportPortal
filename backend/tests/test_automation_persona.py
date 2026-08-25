@@ -355,27 +355,25 @@ class AutomationPersonaTests(unittest.TestCase):
         with self.assertRaisesRegex(
             AutomationPersonaError,
             "automation_persona_missing_information_format_failed",
-        ):
+        ) as raised:
             validate_account_reply_contract(
-                "I am still missing the following details: 1. Account type 2. Name 3. Office address. "
+                "I am still missing the following details:\n1. Account type\n2. Name\n3. Office address\n"
                 "I will continue coordinating the review once you share them.",
                 bullet_facts,
             )
+        self.assertEqual(raised.exception.detail, "numbered_list_detected")
 
-    def test_missing_information_persona_prompt_requires_bullets_and_warm_wording(self) -> None:
+    def test_fraud_missing_information_is_assembled_deterministically(self) -> None:
         facts = build_account_automation_reply_facts(
             handler="fraud_account",
             action="fraud_account",
-            missing_fields=["account_type", "name", "office_address"],
+            missing_fields=["office_address", "contact_number", "console_configuration"],
             collected_fields={},
             customer_name="Taylor",
         )
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text=(
-                "I am still missing the following details:\n\n- Account type\n- Name\n- Office address\n\n"
-                "I will continue coordinating the review once you share them."
-            ),
+            text="Thank you for sharing the information you have so far.",
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -387,11 +385,101 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertTrue(result.content.startswith("Hi Taylor,"))
+        self.assertEqual(
+            result.content,
+            "Hi Taylor,\n\n"
+            "Thank you for sharing the information you have so far.\n\n"
+            "Could you please provide the following information?\n\n"
+            "- Office address\n"
+            "- Official contact number\n"
+            "- Last known console configuration\n\n"
+            "After you provide this information, I will continue coordinating the review.",
+        )
+        self.assertEqual(result.prompt_version, "automation-persona-v14")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
-        self.assertIn("Markdown-style bullet", system_prompt)
-        self.assertIn("Never use a numbered list", system_prompt)
-        self.assertIn("warm, direct first-person voice", system_prompt)
+        user_prompt = invoke.call_args.kwargs["user_prompt"]
+        self.assertIn("application will append the exact missing-information request", system_prompt)
+        self.assertIn('"missing_information_count": 3', user_prompt)
+        self.assertNotIn('"missing_information"', user_prompt)
+        self.assertNotIn("Office address", user_prompt)
+        self.assertNotIn("Official contact number", user_prompt)
+        self.assertNotIn("Last known console configuration", user_prompt)
+
+    def test_fraud_one_or_two_missing_fields_are_assembled_inline(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Thank you for the information you have already shared.",
+            model_name="persona-model",
+        )
+        cases = (
+            (
+                "fraud_account",
+                ["office_address"],
+                "Could you please provide your office address?",
+            ),
+            (
+                "account_verification",
+                ["office_address", "contact_number"],
+                "Could you please provide your office address and official contact number?",
+            ),
+        )
+        for behavior, missing_fields, expected_request in cases:
+            with self.subTest(behavior=behavior, missing_fields=missing_fields), patch(
+                "backend.services.automation_persona.resolve_model_profile", return_value=profile
+            ), patch(
+                "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+            ):
+                result = render_automation_reply(
+                    reply_facts=build_account_automation_reply_facts(
+                        handler=behavior,
+                        action=behavior,
+                        missing_fields=missing_fields,
+                        collected_fields={},
+                    ),
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+
+            self.assertIn(expected_request, result.content)
+            self.assertNotIn("\n- ", result.content)
+            self.assertIn(
+                "After you provide this information, I will continue coordinating the review.",
+                result.content,
+            )
+
+    def test_fraud_missing_information_retries_invalid_preambles(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        responses = [
+            SimpleNamespace(text="1. Thank you for the details.", model_name="persona-model"),
+            SimpleNamespace(text="We still need your Office address.", model_name="persona-model"),
+            SimpleNamespace(text="Could you also share your phone number?", model_name="persona-model"),
+            SimpleNamespace(
+                text="Thank you for sharing the information you have so far.",
+                model_name="persona-model",
+            ),
+        ]
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=build_account_automation_reply_facts(
+                    handler="fraud_account",
+                    action="fraud_account",
+                    missing_fields=["office_address", "contact_number", "console_configuration"],
+                    collected_fields={},
+                ),
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+
+        self.assertEqual(invoke.call_count, 4)
+        self.assertNotIn("1. Thank you", result.content)
+        self.assertNotIn("phone number", result.content)
+        self.assertEqual(result.content.count("Office address"), 1)
+        self.assertEqual(result.content.count("Official contact number"), 1)
+        self.assertEqual(result.content.count("Last known console configuration"), 1)
 
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")

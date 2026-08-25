@@ -34,11 +34,18 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v13"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v14"
 
 _HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
+_DETERMINISTIC_MISSING_INFORMATION_BEHAVIORS = frozenset(
+    {"fraud_account", "account_verification"}
+)
+_MISSING_INFORMATION_PREAMBLE_REQUEST_RE = re.compile(
+    r"(?i)(?:\bplease\b|\b(?:provide|share|send|confirm|supply)\b|"
+    r"\btell\s+(?:me|us)\b|\b(?:could|can|would)\s+you\b)"
+)
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
 _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _SUPPORT_ID_RE = re.compile(
@@ -447,6 +454,26 @@ def _facts_with_readable_missing(facts: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
+def _uses_deterministic_missing_information(facts: dict[str, Any]) -> bool:
+    return bool(
+        str(facts.get("reply_intent") or "").strip().lower()
+        == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION
+        and str(facts.get("behavior") or "").strip().lower()
+        in _DETERMINISTIC_MISSING_INFORMATION_BEHAVIORS
+        and isinstance(facts.get("missing_information"), list)
+        and facts.get("missing_information")
+    )
+
+
+def _facts_for_persona_prompt(facts: dict[str, Any]) -> dict[str, Any]:
+    if not _uses_deterministic_missing_information(facts):
+        return _facts_with_readable_missing(facts)
+    prompt_facts = dict(facts)
+    missing_information = prompt_facts.pop("missing_information", [])
+    prompt_facts["missing_information_count"] = len(missing_information)
+    return prompt_facts
+
+
 def _normalized_label_text(value: str) -> str:
     return " ".join(str(value or "").casefold().replace("-", " ").split())
 
@@ -474,7 +501,8 @@ def _assert_missing_information_format_contract(
     if len(labels) <= 2:
         if any(list_marker.match(line) for line in lines):
             raise AutomationPersonaError(
-                "automation_persona_missing_information_format_failed"
+                "automation_persona_missing_information_format_failed",
+                "list_marker_detected_for_inline_fields",
             )
         sentences = [
             sentence
@@ -483,12 +511,16 @@ def _assert_missing_information_format_contract(
         ]
         if not any(all(_contains_label(sentence, label) for label in labels) for sentence in sentences):
             raise AutomationPersonaError(
-                "automation_persona_missing_information_format_failed"
+                "automation_persona_missing_information_format_failed",
+                "inline_labels_not_in_one_sentence",
             )
         return
 
     if numbered_lines:
-        raise AutomationPersonaError("automation_persona_missing_information_format_failed")
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_format_failed",
+            "numbered_list_detected",
+        )
     bullet_lines = [line for line in lines if re.match(r"^[-*]\s+", line)]
     matching_bullet_indexes = {
         index
@@ -496,13 +528,69 @@ def _assert_missing_information_format_contract(
         for index, line in enumerate(bullet_lines)
         if _contains_label(line, label)
     }
-    if len(bullet_lines) < len(labels) or len(matching_bullet_indexes) < len(labels):
-        raise AutomationPersonaError("automation_persona_missing_information_format_failed")
+    if len(bullet_lines) < len(labels):
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_format_failed",
+            f"insufficient_bullet_lines expected={len(labels)} actual={len(bullet_lines)}",
+        )
+    if len(matching_bullet_indexes) < len(labels):
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_format_failed",
+            "missing_expected_label",
+        )
     if any(
         sum(_contains_label(line, label) for line in bullet_lines) != 1
         for label in labels
     ):
-        raise AutomationPersonaError("automation_persona_missing_information_format_failed")
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_format_failed",
+            "expected_label_occurrence_mismatch",
+        )
+
+
+def _inline_missing_information_labels(labels: list[str]) -> str:
+    inline_labels = [label[:1].lower() + label[1:] if label else label for label in labels]
+    if len(inline_labels) == 1:
+        return inline_labels[0]
+    return f"{inline_labels[0]} and {inline_labels[1]}"
+
+
+def _deterministic_missing_information_reply(
+    preamble: str,
+    missing_information: list[str] | tuple[str, ...],
+) -> str:
+    labels = _humanize_missing_fields(
+        [str(item).strip() for item in missing_information if str(item).strip()]
+    )
+    normalized_preamble = str(preamble or "").strip()
+    lines = [line.strip() for line in normalized_preamble.splitlines() if line.strip()]
+    if any(re.match(r"^(?:[-*]\s+|\d+[.)]\s+)", line) for line in lines):
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_preamble_failed",
+            "list_marker_detected",
+        )
+    if any(_contains_label(normalized_preamble, label) for label in labels):
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_preamble_failed",
+            "field_label_detected",
+        )
+    if "?" in normalized_preamble or _MISSING_INFORMATION_PREAMBLE_REQUEST_RE.search(
+        normalized_preamble
+    ):
+        raise AutomationPersonaError(
+            "automation_persona_missing_information_preamble_failed",
+            "field_request_detected",
+        )
+    if len(labels) <= 2:
+        request = (
+            "Could you please provide your "
+            f"{_inline_missing_information_labels(labels)}?"
+        )
+    else:
+        bullets = "\n".join(f"- {label}" for label in labels)
+        request = f"Could you please provide the following information?\n\n{bullets}"
+    closing = "After you provide this information, I will continue coordinating the review."
+    return f"{normalized_preamble}\n\n{request}\n\n{closing}"
 
 
 def _assert_suspension_contact_contract(reply: str) -> None:
@@ -600,6 +688,11 @@ def _validated_automation_reply_content(
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     assert_no_trailing_automation_signature(reply)
+    if account_scope and _uses_deterministic_missing_information(facts):
+        reply = _deterministic_missing_information_reply(
+            reply,
+            facts.get("missing_information") or [],
+        )
     if account_scope:
         validate_account_reply_contract(reply, facts)
     rendered_content = f"{greeting}\n\n{reply}"
@@ -702,20 +795,32 @@ def render_automation_reply(
         raise AutomationPersonaError("automation_persona_missing_provided_answer")
 
     greeting = f"Hi {customer_first_name(facts.get('customer_first_name'))},"
+    deterministic_missing_information = _uses_deterministic_missing_information(facts)
+    missing_information_policy = (
+        "For request_missing_information, write only one brief, warm acknowledgement paragraph. Do not name, "
+        "paraphrase, count, list, or ask for the missing fields, and do not write the next step. The application "
+        "will append the exact missing-information request and ownership sentence after your paragraph. Do not use "
+        "list markers or numbered lines. "
+        if deterministic_missing_information
+        else (
+            "For request_missing_information, do not imply that internal review has started; explain that you will "
+            "continue coordinating the review once the missing information is received. Do not promise a time or "
+            "outcome. Use a warm, direct first-person voice with natural phrasing rather than wording such as 'the "
+            "missing details below' or 'as soon as I have'. When listing missing information: if only one or two "
+            "items are missing, weave them naturally into one sentence (for example, 'we are still missing your "
+            "account type and name'). If three or more items are missing, use a brief lead-in sentence followed by "
+            "one Markdown-style bullet line starting with '- ' for each item, with each missing item on its own line "
+            "using the field label exactly as provided. Never use a numbered list or run multiple missing items "
+            "together into one unbroken line. "
+        )
+    )
     ownership_policy = (
         "For submission_confirmation, write a concise, natural customer message in first person. Thank the customer, "
         "say that we are reviewing the request with our internal team, and promise to keep the customer posted when "
         "there is an update. A short patience sentence is appropriate. The internal team is a collaborator, never "
         "the party responsible for contacting the customer. Do not use job-title narration such as 'The assigned "
         "Support Engineer', 'the case is in progress with them', or any wording that makes the customer wait for an "
-        "internal team to follow up. For request_missing_information, do not imply that internal review has started; "
-        "explain that you will continue coordinating the review once the missing information is received. Do not promise a "
-        "time or outcome. Use a warm, direct first-person voice with natural phrasing rather than wording such as "
-        "'the missing details below' or 'as soon as I have'. When listing missing information: if only one or two items "
-        "are missing, weave them naturally into one sentence (for example, 'we are still missing your account type and "
-        "name'). If three or more items are missing, use a brief lead-in sentence followed by one Markdown-style bullet "
-        "line starting with '- ' for each item, with each missing item on its own line using the field label exactly as "
-        "provided. Never use a numbered list or run multiple missing items together into one unbroken line. Semantic "
+        f"internal team to follow up. {missing_information_policy}Semantic "
         "fields such as ownership_state and customer_update_commitment "
         "are instructions, not customer-facing phrases; never repeat their raw values. "
         if account_scope
@@ -807,7 +912,7 @@ def render_automation_reply(
             ),
             user_prompt=(
                 "Automation facts (JSON):\n"
-                f"{json.dumps(_facts_with_readable_missing(facts), ensure_ascii=False, sort_keys=True, indent=2)}"
+                f"{json.dumps(_facts_for_persona_prompt(facts), ensure_ascii=False, sort_keys=True, indent=2)}"
             ),
             stage="automation_persona",
             validate_response=validate_response,
