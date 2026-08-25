@@ -16,7 +16,8 @@ PRODUCTION_AUTOMATION_CLASSIFICATION_EMAIL_STATUS_FAILED = "failed"
 def is_production_automation_classification(case: dict[str, Any]) -> bool:
     return (
         str(case.get("processing_profile") or "").strip().lower() == "production"
-        and str(case.get("category") or "").strip().lower() == "automation"
+        and str(case.get("category") or "").strip().lower()
+        in {"automation", "backend_operation"}
         and str(case.get("route_status") or "").strip().lower() == "automated"
         and str(case.get("subcategory") or case.get("execution_action") or "")
         .strip()
