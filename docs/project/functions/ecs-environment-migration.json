@@ -4,13 +4,19 @@
   "phase_id": "phase-1",
   "module_id": "platform-delivery",
   "title": "ECS 三环境迁移",
-  "goal": "以本地 Staging、ECS Preproduction 与 ECS Production 建立可验证、可晋升、可回滚且不影响旧 /production 的发布体系。",
+  "goal": "以 ECS Staging、Preproduction 与 Production 建立可验证、可晋升、可回滚且不影响旧 EC2 /production 的发布体系。",
   "acceptance_criteria": [
-    "Staging 只在本地运行并通过固定 ngrok endpoint 接收 n8n 测试 Case，rerun/reset 测试代码不进入 Preproduction 或 Production 镜像。",
-    "Preproduction 与 Production 从 ECR 使用同一组不可变 release digest，并以独立资源身份、队列、凭据和入口运行。",
+    "Staging、Preproduction 与 Production 均运行于 ECS，并使用独立资源身份、队列、凭据和入口；rerun/reset 测试代码不进入 Preproduction 或 Production 镜像。",
+    "三环境从 ECR 使用可追溯的不可变 release digest，Preproduction 与 Production 只晋升已验收的同一组 digest。",
     "ECS Production 支持预热、健康门禁、蓝绿发布、请求排空和不重放请求的回滚，迁移期间旧 EC2 /production 保持独立运行。"
   ],
-  "evidence": [],
+  "evidence": [
+    {
+      "type": "decision",
+      "label": "EC2 split environments retired",
+      "details": "2026-08-25 用户确认 Staging、Preproduction、Production 全部转为 ECS 承载；EC2 保留主栈与现有 /production，三条 /automation/* 路径下线。"
+    }
+  ],
   "source_refs": [
     "backend/Dockerfile.automation",
     "deployment/docker-compose.single-host.yml",

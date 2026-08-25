@@ -1,6 +1,6 @@
 # n8n 切流到三环境（/automation/*）设计（T4 · 方案先行）
 
-**日期：** 2026-08-23 　**基线：** `main`=`6fdca35`，EC2 `release-20260822-005` 　**状态：** 设计评审稿，未实施。production 切流的实施前置 = T3 真实工单写入验收完成 + 用户单独批准（见 `docs/split_environments_report.md` §3 T4、§5）。
+**日期：** 2026-08-23 　**基线：** `main`=`6fdca35`，EC2 `release-20260822-005` 　**状态：** 已被 ECS 三环境迁移方案取代。自 2026-08-25 起，EC2 上的 `/automation/staging`、`/automation/preproduction`、`/automation/production` 返回 410；本文中的 EC2 endpoint、发布和切流命令只保留为历史设计证据，不得继续执行。新的入口与 n8n publish 只以 ECS `p1-53` 实施结果为准；现有 EC2 `/production` 保持独立运行。
 
 本文回答两个问题：n8n 工作流切到新三环境时**最终发送端点怎么改、端点是否已存在**；以及 n8n→SupportPortal 各调用如何**统一用同一个 token 验证**。
 

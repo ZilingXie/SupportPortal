@@ -290,6 +290,8 @@ docker compose -f deployment/docker-compose.single-host.yml up -d api ws_gateway
 
 ### 4.3 EC2 一键部署脚本（推荐）
 
+EC2 只承载主栈（包括现有 `/production`）。`/automation/staging`、`/automation/preproduction`、`/automation/production` 已从 EC2 下线并由 ECS 管理；常规 EC2 部署不得创建 split 网络或启动 split Compose project。
+
 仓库内已提供脚本：
 
 ```bash
@@ -354,7 +356,7 @@ chmod +x deployment/deploy_ec2.sh
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
 2. 校验本地 `main` 等于或可 fast-forward 到 `origin/main`；分叉时停止并要求人工处理。
-3. 每次触发都调用 `scripts/ops/deploy_surfaces_ec2.sh --daily --approve-production`：每日模式始终运行主栈以处理 Prompt Release，仅构建部署落后的三环境，并在固定目标 commit 下完成全部阶段；即使 commit 未变化，也会生成并验证 deployment-bound Prompt Release。
+3. 每次触发都调用 `scripts/ops/deploy_surfaces_ec2.sh --daily --skip-split`：每日模式始终运行 EC2 主栈以处理 Prompt Release；`--skip-split` 是明确部署边界的兼容参数，三套 ECS 环境不由该脚本构建、验证或发布。
 4. 无论成功还是失败，都会尝试调用 Amazon SES 发一封日报。
 5. 日报会附带 `docker compose ps` 摘要、最近 docker 日志摘录，以及可选的 AI 日志分析。
 
@@ -554,24 +556,24 @@ journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
    - 可以扩容 EBS，或手动再次执行 `docker builder prune -af` / `docker image prune -af` 后重试。
    - 如果确实需要调整阈值，再修改 `DEPLOY_MIN_FREE_DISK_GB`，不要直接关闭预检查。
 
-### 4.5 一键全部署面对齐：`scripts/ops/deploy_surfaces_ec2.sh`
+### 4.5 EC2 主栈对齐：`scripts/ops/deploy_surfaces_ec2.sh`
 
-主栈部署（`deploy_ec2.sh --branch main`）**不会**更新 `/automation/*` 三环境的六个独立容器，反之亦然。该脚本是部署引擎：默认先做差距判断，只部署落后的面，适合人工"有更新要上公网"的场景；systemd 每日流程通过 `--daily` 复用它，并保留 SES 日报 wrapper：
+该脚本只对齐 EC2 主栈。三套 `/automation/*` 环境已迁出 EC2，报告固定显示 `retired from EC2 (ECS migration pending)`，不会执行 split build、deploy 或 verification。systemd 每日流程通过 `--daily` 复用该脚本，并保留 SES 日报 wrapper：
 
 ```bash
 cd ~/SupportPortal
 scripts/ops/deploy_surfaces_ec2.sh --dry-run              # 只打印差距与计划
-scripts/ops/deploy_surfaces_ec2.sh --approve-production   # 实际执行（production split 需显式批准）
-scripts/ops/deploy_surfaces_ec2.sh --daily --approve-production  # 每日流程的实际入口
+scripts/ops/deploy_surfaces_ec2.sh                         # 实际执行 EC2 主栈对齐
+scripts/ops/deploy_surfaces_ec2.sh --daily --skip-split   # 每日流程的实际入口
 ```
 
 行为要点：
 
 1. 同步 `origin/main`（要求干净的 `main`，拒绝在其他分支/脏树上运行）；
-2. 主栈差距 = 公网 `/health` 的 `app_build.ref` 是否等于目标 commit；三环境差距 = 运行中容器镜像（`release-*` 查 manifest `commit=`，本地 `local-<sha>` 直接比对）是否等于目标 commit；
-3. 三环境部署自动取当日下一个 release id，构建后校验 manifest `commit=` 与目标一致（stale 构建作废），按 staging → preproduction → production 顺序部署；production 必须带 `--approve-production` 或 `DEPLOY_PRODUCTION_APPROVED=1`，否则停在 preproduction 并在报告中标注 PENDING；
-4. `--daily` 始终运行主栈，以便没有 Git commit 时也能激活 Scheduled Prompt；它还会验证已对齐的三环境。默认人工模式只验证实际部署的面；三环境验证包括 `verify_split_environments.sh` 全绿 + 旧五字段 body 抽测 `/automation/staging/v1/cases` 期望 200；
-5. 部署锁由统一引擎持有，子部署全部使用 `--skip-pull`，因此 release 构建、主栈镜像和三环境 manifest 使用同一个目标 commit；
+2. 主栈差距 = 公网 `/health` 的 `app_build.ref` 是否等于目标 commit；脚本不读取 split container 或 release manifest；
+3. `--daily` 始终运行主栈，以便没有 Git commit 时也能激活 Scheduled Prompt；
+4. `--skip-split` 保留为无操作兼容参数，便于旧命令和定时 wrapper 明确表达 EC2 不管理三环境；
+5. 部署锁由统一引擎持有，子部署使用 `--skip-pull`，保证构建与运行目标 commit 一致；
 6. 每步日志落在 `/tmp/deploy-surfaces-<时间戳>/`，失败即停并给出对应 rollback 命令。
 
 主栈重启后，Prompt runtime 校验会在健康检查超时窗口内等待 `api`、`rag_api`、worker 和 Prompt Release 日志全部就绪；超时仍失败时保持非零退出并回滚旧镜像。

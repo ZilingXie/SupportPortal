@@ -1160,7 +1160,6 @@ main() {
 
   prepare_compose_env
   resolve_compose_profile_args
-  ensure_automation_networks
 
   local current_branch target_branch
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
