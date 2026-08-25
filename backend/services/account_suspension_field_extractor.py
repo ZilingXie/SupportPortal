@@ -8,7 +8,7 @@ from typing import Any, Callable
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.account_ai_execution import AccountProcessingFailure, invoke_account_json_payload
 from backend.services.llm_profiles import (
-    INTENT_ROUTER_SCENARIO,
+    ACCOUNT_EXTRACTOR_SCENARIO,
     profile_has_invocation_credentials,
     resolve_model_profile,
 )
@@ -89,7 +89,7 @@ def _invoke_extractor(*, system_prompt: str, user_prompt: str) -> dict[str, Any]
     return _invoke_extractor_for_scenario(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        scenario=INTENT_ROUTER_SCENARIO,
+        scenario=ACCOUNT_EXTRACTOR_SCENARIO,
     )
 
 
@@ -109,7 +109,7 @@ def extract_account_suspension_fields(
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
-    model_scenario: str = INTENT_ROUTER_SCENARIO,
+    model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
 ) -> AccountSuspensionFieldExtraction:
     trusted = {
         key: value
