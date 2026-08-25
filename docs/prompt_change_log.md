@@ -27,6 +27,7 @@ For each new entry, record:
 - Verification:
   - Startup contract covers the configured production service label in schema-check mode.
   - Prompt runtime, deployment-gate, and Compose service-label tests pass; Python compilation and `git diff --check` pass.
+  - EC2 deployment completed on build `76d22d5ae1a3`: all eight Prompt runtimes loaded active release `pr-c9b3a291ecf1`, production workers remained stable with `RestartCount=0`, and main/production database validation returned `loaded`.
 
 ## 2026-08-25 - Prompt Release target-local version remapping
 
