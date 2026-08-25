@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "将 Staging、Preproduction、Production 三环境全部迁移到 ECS Fargate：从干净 commit 构建可追溯的 route/API/worker 镜像并推送 ECR，按 Staging → Preproduction → Production 晋升受控 release；Production 使用相同 image digest 与 Prompt Release进行 ECS 蓝绿部署。EC2 直接下线三套 split runtime及公网路径，只保留主栈和独立的现有 /production；数据库与 Docker volumes 保留。正式 Case是否进入 ECS Production由 n8n workflow publish状态控制。",
-  "next_action": "完成 EC2 split runtime下线与 main-only部署门禁后，确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Route53 hosted zone、三环境域名和 GitHub Actions OIDC权限；随后实现 ECR/ECS/Terraform发布链并先部署 ECS Staging。",
+  "next_action": "EC2 split runtime下线与 main-only部署门禁已完成；下一步确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Route53 hosted zone、三环境域名和 GitHub Actions OIDC权限，随后实现 ECR/ECS/Terraform发布链并先部署 ECS Staging。",
   "acceptance_criteria": [
     "ECS Staging使用独立 Service、Redis、数据库身份、凭据和入口接收 n8n测试 Case；Staging保留 rerun/reset且 Zendesk副作用关闭。",
     "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
@@ -43,6 +43,12 @@
       "label": "Daily main-only branch argument hotfix",
       "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 && bash -n scripts/ops/deploy_surfaces_ec2.sh",
       "details": "7项全绿并直接执行 deploy_surfaces_ec2.sh --branch main --help 成功；修复 EC2 手动触发 daily service 暴露的 unknown option: --branch，split orchestration保持退役。"
+    },
+    {
+      "type": "deployment",
+      "label": "EC2 split runtime decommissioned",
+      "command": "EC2 main-only deploy + exact Compose project/container/network retirement + public readback",
+      "details": "EC2运行 fd345c92ac79：/health与/production为200，/automation/staging、preproduction、production为410，/automation/test保留301；五个split project共14个容器和四个split网络已删除，四个历史named volumes保留。主栈及production runtime共10个容器running且RestartCount=0，Nginx仅连接deployment_default；timer active/enabled，oneshot service inactive，近30分钟无split build/deploy/verify动作。"
     }
   ],
   "source_refs": [
@@ -71,6 +77,11 @@
       "at": "2026-08-25",
       "event": "progress",
       "summary": "EC2 split容器与网络下线后，首次手动触发 daily service发现 surface parser遗漏既有 --branch参数；已恢复该 main-only参数契约并增加真实 parser回归测试。"
+    },
+    {
+      "at": "2026-08-25",
+      "event": "progress",
+      "summary": "EC2 split下线完成：14个容器与四个网络删除，历史volumes保留；main与/production健康，三条旧路径410，定时部署收敛为main-only。p1-53继续active，后续工作转为ECS三环境基础设施与发布链。"
     }
   ],
   "legacy_refs": [
