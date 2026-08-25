@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T09:56:13Z",
-  "source_base_commit": "0013916c89ff1cb64921a1bad90a55dcada21da8",
-  "registry_digest": "d0dd4080e152be8e7bcc68780734a4572e8a393e663e856f8957bc27d796b196",
+  "generated_at": "2026-08-25T10:31:49Z",
+  "source_base_commit": "38a19699fe09900a07d44ea20a4e5345b616029a",
+  "registry_digest": "16507260f74f83397cadf8ac5fe507c3791fbff057d89403d1bedb69828b8b6b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1640,7 +1640,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 10,
+      "task_count": 11,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -6983,6 +6983,45 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-120",
+      "title": "Automated Cases 页显示 cached token 数量（p2-107/p2-117 后续）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户要求显示 cached token 数量（预期多轮 case 交流会出现前缀缓存命中）。p2-107 已采集 cached（DB 列 cached_input_tokens、aggregate_usage_ledger 分桶与 total_cached_input_tokens、RAG 批量端点透传），但 admin 展示层无任何 cached 输出。本任务补齐展示链路（数据两侧已就绪，纯透传+渲染）：main.py _merge_account_case_token_by_model 分桶加 cached_input_tokens 累加；_attach_account_case_token_usage 的 rag/automation sources、每 case token_usage、page_total 均加 total_cached_input_tokens；admin 前端 Tokens 单元格 cached>0 时显示 \"· N cached\" 小字（admin-token-cached 样式）、by-model 表加固定 Cached 列（In 之后）、Page tokens 页合计 cached>0 时追加；版本串 bump 20260825-cached-display-1。cached 参与成本计算自 p2-107 已有，本任务不改计价。当前实测 cached 全 0（OpenAI 自动前缀缓存未命中），显示为 0/隐藏属预期，多轮命中后自然出现。",
+      "next_action": "实现合并后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+资产 20260825-cached-display-1+端点 token_usage 含 total_cached_input_tokens 与 by-model cached）；p2-120 翻 done。EC2 随用户下次部署自动生效。",
+      "acceptance_criteria": [
+        "端点 token_usage 含 total_cached_input_tokens（case/两 source/page_total 四处），by_model 分桶含 cached_input_tokens（RAG+automation 合并累加）。",
+        "前端：单元格与页合计 cached>0 时显示 · N cached；by-model 表固定 Cached 列（0 也显示）。",
+        "既有字段只增不改；计价行为不变；相关测试全绿。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/main.py",
+        "ui/workspace-ui/admin/app.js",
+        "ui/workspace-ui/admin/styles.css",
+        "ui/workspace-ui/admin/index.html"
+      ],
+      "created_at": "2026-08-25",
+      "updated_at": "2026-08-25",
+      "history": [
+        {
+          "at": "2026-08-25",
+          "event": "created",
+          "summary": "用户问\"cached 的 token 数量呢\"并确认需要显示（多轮交流会有 cached）。任务号 p2-120（p2-119 已被并行链占用）。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-107",
+        "p2-117"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,
