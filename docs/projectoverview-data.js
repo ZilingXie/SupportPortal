@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T10:31:49Z",
-  "source_base_commit": "38a19699fe09900a07d44ea20a4e5345b616029a",
-  "registry_digest": "16507260f74f83397cadf8ac5fe507c3791fbff057d89403d1bedb69828b8b6b",
+  "generated_at": "2026-08-25T10:38:17Z",
+  "source_base_commit": "5d858c51e9362bdb0639aabaa7c6259ad040aee3",
+  "registry_digest": "629d69c9e5d89aad82091028210029507f7e08d13abf26e7d242b89ce62cb3d4",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1631,6 +1631,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Post-merge official stack live verification",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
           "details": "PR#940 合并后官方栈运行 root main 48ca775（built 2026-08-25T03:43:54Z）：official_health_status=ok、build_provenance_status=matched、official_health_build_ref=48ca775d09ad；/workspace/admin/ 实际服务 app.js?v=20260825-model-pricing-1；admin/admin 登录后 GET account-automation 实测 model_pricing：gpt-5.6-luna priced=true（0.2/0.02/1.2），其余五模型 priced=false；当前页 case 为 luna+mini 混合（EC2 旧代码仍在产 mini 条目），成本 $— 与 page cost_usd_available=false 符合全有或全无契约。"
+        },
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_workspace_api.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_llm_pricing.py -q",
+          "details": "67 passed + 4 subtests（合并前在任务 worktree 跑）。新增断言：usage/page_total/两 source 的 total_cached_input_tokens（RAG 400+automation 60）、by_model 分桶 cached（gpt-test 60/gpt-rag 400）；前端 210 cached 小字、by-model \u003cth>Cached\u003c/th> 列、admin-token-cached 样式；版本串断言 20260825-cached-display-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#953 合并后官方栈运行 root main 5d858c5（5d858c51e936）：build_provenance_status=matched；/workspace/admin/ 服务 app.js?v=20260825-cached-display-1；admin 登录后实测 account-automation：page_total 含 total_cached_input_tokens、case 两 source 均含、by_model 分桶含 cached_input_tokens（当前全 0——实测缓存未命中，符合预期）。"
         }
       ],
       "source_refs": [
@@ -1641,7 +1653,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 11,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -6988,17 +7000,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-120",
       "title": "Automated Cases 页显示 cached token 数量（p2-107/p2-117 后续）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "用户要求显示 cached token 数量（预期多轮 case 交流会出现前缀缓存命中）。p2-107 已采集 cached（DB 列 cached_input_tokens、aggregate_usage_ledger 分桶与 total_cached_input_tokens、RAG 批量端点透传），但 admin 展示层无任何 cached 输出。本任务补齐展示链路（数据两侧已就绪，纯透传+渲染）：main.py _merge_account_case_token_by_model 分桶加 cached_input_tokens 累加；_attach_account_case_token_usage 的 rag/automation sources、每 case token_usage、page_total 均加 total_cached_input_tokens；admin 前端 Tokens 单元格 cached>0 时显示 \"· N cached\" 小字（admin-token-cached 样式）、by-model 表加固定 Cached 列（In 之后）、Page tokens 页合计 cached>0 时追加；版本串 bump 20260825-cached-display-1。cached 参与成本计算自 p2-107 已有，本任务不改计价。当前实测 cached 全 0（OpenAI 自动前缀缓存未命中），显示为 0/隐藏属预期，多轮命中后自然出现。",
-      "next_action": "实现合并后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+资产 20260825-cached-display-1+端点 token_usage 含 total_cached_input_tokens 与 by-model cached）；p2-120 翻 done。EC2 随用户下次部署自动生效。",
+      "next_action": "已 done（官方栈 5d858c51e936 运行含本任务，live 验证通过）。用户侧：EC2 随下次部署自动生效；多轮 case 出现缓存命中后，单元格/页合计会出现 · N cached 小字，by-model 表 Cached 列始终可见。",
       "acceptance_criteria": [
         "端点 token_usage 含 total_cached_input_tokens（case/两 source/page_total 四处），by_model 分桶含 cached_input_tokens（RAG+automation 合并累加）。",
         "前端：单元格与页合计 cached>0 时显示 · N cached；by-model 表固定 Cached 列（0 也显示）。",
         "既有字段只增不改；计价行为不变；相关测试全绿。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_workspace_api.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_llm_pricing.py -q",
+          "details": "67 passed + 4 subtests（合并前在任务 worktree 跑）。新增断言：usage/page_total/两 source 的 total_cached_input_tokens（RAG 400+automation 60）、by_model 分桶 cached（gpt-test 60/gpt-rag 400）；前端 210 cached 小字、by-model \u003cth>Cached\u003c/th> 列、admin-token-cached 样式；版本串断言 20260825-cached-display-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#953 合并后官方栈运行 root main 5d858c5（5d858c51e936）：build_provenance_status=matched；/workspace/admin/ 服务 app.js?v=20260825-cached-display-1；admin 登录后实测 account-automation：page_total 含 total_cached_input_tokens、case 两 source 均含、by_model 分桶含 cached_input_tokens（当前全 0——实测缓存未命中，符合预期）。"
+        }
+      ],
       "source_refs": [
         "backend/main.py",
         "ui/workspace-ui/admin/app.js",
@@ -7012,6 +7037,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "created",
           "summary": "用户问\"cached 的 token 数量呢\"并确认需要显示（多轮交流会有 cached）。任务号 p2-120（p2-119 已被并行链占用）。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "updated",
+          "summary": "实现经 PR#953 合并（root 前进至 5d858c5）；官方栈重启后 live 验证全过（provenance matched、资产 20260825-cached-display-1、端点四处 cached 字段实测），finalize 尾接 cd 保住 shell。翻 done。"
         }
       ],
       "legacy_refs": [
