@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-114",
+  "title": "账号链路小任务模型全换 gpt-5.6-luna（extractor/persona/classifier/reply）",
+  "status": "active",
+  "owner": "zac",
+  "summary": "用户指令\"为什么还有5.4？全换成5.6\"，定案仅账号链路（客户端流/工程师流/本地 RAG 不动）、小任务 low 档（路由与 ragflow 兜底保持 xhigh）。改动：llm_profiles 新场景 ACCOUNT_EXTRACTOR（默认 openai/gpt-5.6-luna/low/timeout 30s/pinned 无 fallback，env ACCOUNT_EXTRACTOR_MODEL/REASONING_EFFORT/TIMEOUT_SECONDS）——七个 production case 字段 extractor（quota/detailed_invoice/verification/suspension/enablement_field + billing_automation 内部）从共享的 INTENT_ROUTER_SCENARIO（gpt-5.4-mini、3 秒紧超时、客户端流共享不可直改）整体迁到新场景；AUTOMATION_PERSONA / ENABLEMENT_COMPLETION_CLASSIFIER / BILLING_REPLY / ENABLEMENT_REPLY 四场景默认 model gpt-5.4-mini→gpt-5.6-luna（effort 保持 low；persona/billing/enablement_reply 超时 8s/6s→30s、classifier 8s→20s）；enablement_automation 无需改文件（走 ENABLEMENT_REPLY 场景默认）。INTENT_ROUTER（客户端流路由）模型与 3s 时延预算保持不变；root/EC2 .env 的 INTENT_ROUTER_MODEL 不动。换完后 production case 链路只剩 openai:gpt-5.6-luna 一个模型（token_by_model 单条目；价格表只需 luna 一套价，LLM_PRICING_USD_PER_1M 已有 key）。改动由预制幂等脚本 ~/Desktop/p2-113-apply.py 套用（任务号原定 p2-110→p2-113 均被并行占用，最终 p2-114）。",
+  "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+容器内实测 account_extractor/automation_persona 场景解析 gpt-5.6-luna/low）；p2-114 翻 done；用户侧 EC2 仅部署 main stack（--skip-split），若 EC2 .env 显式设了 AUTOMATION_PERSONA_MODEL/ENABLEMENT_COMPLETION_CLASSIFIER_MODEL/BILLING_REPLY_MODEL/ENABLEMENT_REPLY_MODEL 为 mini 需同步删除或改 luna（root .env 未设这些，走代码默认即生效）。",
+  "acceptance_criteria": [
+    "ACCOUNT_EXTRACTOR 场景默认 gpt-5.6-luna/low/30s/pinned，env 三旋钮可覆盖；INTENT_ROUTER 场景（客户端流）模型、effort、3s 超时与 deepseek 兜底行为全部不变。",
+    "七个 extractor 的场景引用全部从 INTENT_ROUTER_SCENARIO 迁到 ACCOUNT_EXTRACTOR_SCENARIO；enablement_automation 经 ENABLEMENT_REPLY 默认换 luna。",
+    "persona/classifier/billing_reply/enablement_reply 默认 luna/low，超时放宽（30/20/30/30s），温度与重试次数不变。",
+    "production case 链路 token_by_model 只剩 openai:gpt-5.6-luna。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Affected suites",
+      "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_quota_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_enablement_automation.py backend/tests/test_account_suspension_field_extractor.py backend/tests/test_enablement_field_extractor.py backend/tests/test_account_verification_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_ai_execution.py backend/tests/test_llm_usage_capture.py -q",
+      "details": "482 passed。新增用例：ACCOUNT_EXTRACTOR 默认值（luna/low/30s/pinned）+三 env 旋钮覆盖；billing/enablement_reply 默认断言更新为 luna/30s；classifier/persona 测试中的 mini 字符串仅为 mock 标签无需改。"
+    },
+    {
+      "type": "decision",
+      "label": "范围与档位定案",
+      "command": "",
+      "details": "问答未获答复按推荐执行：仅账号链路（客户端 ack/web 搜索/engineer/本地 RAG 管线保持原模型，避免客户端首响时延劣化）、小任务 low 档；extractor 拆独立场景解决共享 INTENT_ROUTER 的 3 秒紧超时与客户端流耦合。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/llm_profiles.py",
+    "backend/services/quota_field_extractor.py",
+    "backend/services/detailed_invoice_field_extractor.py",
+    "backend/services/account_verification_field_extractor.py",
+    "backend/services/account_suspension_field_extractor.py",
+    "backend/services/enablement_field_extractor.py",
+    "backend/services/billing_automation.py",
+    ".env.example",
+    "docs/prompt_change_log.md"
+  ],
+  "created_at": "2026-08-24",
+  "updated_at": "2026-08-24",
+  "history": [
+    {
+      "at": "2026-08-24",
+      "event": "created",
+      "summary": "用户\"为什么还有5.4？全换成5.6\"。任务号 p2-110→p2-113→p2-114（两次被并行链占用）。改动由预制幂等脚本套用；billing_reply 超时默认实为 6s（脚本锚 8s 未命中）已手工补正为 30s。"
+    }
+  ],
+  "legacy_refs": [
+    "p2-111",
+    "p2-107"
+  ],
+  "legacy_ids": [],
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop"
+}

@@ -13,7 +13,7 @@ from backend.services.account_ai_execution import (
     invoke_account_json_payload,
 )
 from backend.services.llm_profiles import (
-    INTENT_ROUTER_SCENARIO,
+    ACCOUNT_EXTRACTOR_SCENARIO,
     profile_has_invocation_credentials,
     resolve_model_profile,
 )
@@ -180,7 +180,7 @@ def _invoke_json(*, system_prompt: str, user_prompt: str) -> dict[str, Any]:
     return _invoke_json_for_scenario(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        scenario=INTENT_ROUTER_SCENARIO,
+        scenario=ACCOUNT_EXTRACTOR_SCENARIO,
     )
 
 
@@ -250,7 +250,7 @@ def extract_account_verification_fields(
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_json,
-    model_scenario: str = INTENT_ROUTER_SCENARIO,
+    model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
 ) -> AccountVerificationFieldExtraction:
     trusted_fields = _clean_existing_fields(existing_fields)
     messages = _customer_messages(customer_messages)
@@ -512,7 +512,7 @@ def compose_account_verification_follow_up(
     missing_fields: list[str],
     collected_fields: dict[str, str],
     invoke: Callable[..., dict[str, Any]] = _invoke_json,
-    model_scenario: str = INTENT_ROUTER_SCENARIO,
+    model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
 ) -> tuple[str, dict[str, str]]:
     missing = [field for field in ACCOUNT_VERIFICATION_REQUIRED_GROUPS if field in set(missing_fields)]
     if not missing:

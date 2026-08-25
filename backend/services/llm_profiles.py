@@ -22,6 +22,8 @@ ENABLEMENT_COMPLETION_CLASSIFIER_SCENARIO = "enablement_completion_classifier"
 AUTOMATION_PERSONA_SCENARIO = "automation_persona"
 RAG_ANSWER_SCENARIO = "rag_answer"
 RAGFLOW_ANSWER_SCENARIO = "ragflow_answer"
+ACCOUNT_EXTRACTOR_SCENARIO = "account_extractor"
+ACCOUNT_EXTRACTOR_SCENARIO = "account_extractor"
 RAG_SUFFICIENCY_SCENARIO = "rag_sufficiency_judge"
 QUERY_EXPANSION_SCENARIO = "query_expansion"
 RAG_AGENT_PLANNER_SCENARIO = "rag_agent_planner"
@@ -50,6 +52,7 @@ _PROVIDER_FALLBACK_EXCLUDED_SCENARIOS = {
     ACCOUNT_ROUTE_SCENARIO,
     AUTOMATION_PERSONA_SCENARIO,
     RAGFLOW_ANSWER_SCENARIO,
+    ACCOUNT_EXTRACTOR_SCENARIO,
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -386,12 +389,12 @@ def resolve_model_profile(
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("BILLING_REPLY_MODEL")) or "gpt-5.4-mini",
+            model=_clean_text(os.getenv("BILLING_REPLY_MODEL")) or "gpt-5.6-luna",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("BILLING_REPLY_REASONING_EFFORT")) or "low",
             temperature=_safe_float_env("BILLING_REPLY_TEMPERATURE", 0.5),
-            timeout_seconds=_safe_positive_float_env("BILLING_REPLY_TIMEOUT_SECONDS", 6.0),
+            timeout_seconds=_safe_positive_float_env("BILLING_REPLY_TIMEOUT_SECONDS", 30.0),
             max_retries=_safe_int_env("BILLING_REPLY_MAX_RETRIES", 1),
             fallback_models=(),
         ))
@@ -399,12 +402,12 @@ def resolve_model_profile(
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("ENABLEMENT_REPLY_MODEL")) or "gpt-5.4-mini",
+            model=_clean_text(os.getenv("ENABLEMENT_REPLY_MODEL")) or "gpt-5.6-luna",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("ENABLEMENT_REPLY_REASONING_EFFORT")) or "low",
             temperature=_safe_float_env("ENABLEMENT_REPLY_TEMPERATURE", 0.2),
-            timeout_seconds=_safe_positive_float_env("ENABLEMENT_REPLY_TIMEOUT_SECONDS", 8.0),
+            timeout_seconds=_safe_positive_float_env("ENABLEMENT_REPLY_TIMEOUT_SECONDS", 30.0),
             max_retries=_safe_int_env("ENABLEMENT_REPLY_MAX_RETRIES", 1),
             fallback_models=(),
         ))
@@ -412,12 +415,12 @@ def resolve_model_profile(
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_MODEL")) or "gpt-5.4-mini",
+            model=_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_MODEL")) or "gpt-5.6-luna",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_REASONING_EFFORT")) or "low",
             temperature=_safe_float_env("ENABLEMENT_COMPLETION_CLASSIFIER_TEMPERATURE", 0.0),
-            timeout_seconds=_safe_positive_float_env("ENABLEMENT_COMPLETION_CLASSIFIER_TIMEOUT_SECONDS", 8.0),
+            timeout_seconds=_safe_positive_float_env("ENABLEMENT_COMPLETION_CLASSIFIER_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("ENABLEMENT_COMPLETION_CLASSIFIER_MAX_RETRIES", 1),
             fallback_models=(),
         ))
@@ -425,12 +428,12 @@ def resolve_model_profile(
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("AUTOMATION_PERSONA_MODEL")) or "gpt-5.4-mini",
+            model=_clean_text(os.getenv("AUTOMATION_PERSONA_MODEL")) or "gpt-5.6-luna",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("AUTOMATION_PERSONA_REASONING_EFFORT")) or "low",
             temperature=_safe_float_env("AUTOMATION_PERSONA_TEMPERATURE", 0.4),
-            timeout_seconds=_safe_positive_float_env("AUTOMATION_PERSONA_TIMEOUT_SECONDS", 8.0),
+            timeout_seconds=_safe_positive_float_env("AUTOMATION_PERSONA_TIMEOUT_SECONDS", 30.0),
             max_retries=_safe_int_env("AUTOMATION_PERSONA_MAX_RETRIES", 1),
             fallback_models=(),
         ))
@@ -464,6 +467,21 @@ def resolve_model_profile(
             reasoning_effort=_clean_text(os.getenv("RAGFLOW_ANSWER_REASONING_EFFORT")) or "xhigh",
             temperature=None,
             timeout_seconds=_safe_positive_float_env("RAGFLOW_ANSWER_TIMEOUT_SECONDS", 120.0),
+            max_retries=1,
+        )
+    if scenario == ACCOUNT_EXTRACTOR_SCENARIO:
+        # Account-chain field extractors: pinned luna with a budget that fits
+        # JSON extraction on the larger model. The shared intent-router
+        # scenario keeps its tight client-flow latency budget untouched.
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("ACCOUNT_EXTRACTOR_MODEL")) or "gpt-5.6-luna",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("ACCOUNT_EXTRACTOR_REASONING_EFFORT")) or "low",
+            temperature=0.2,
+            timeout_seconds=_safe_positive_float_env("ACCOUNT_EXTRACTOR_TIMEOUT_SECONDS", 30.0),
             max_retries=1,
         )
     if scenario == RAG_SUFFICIENCY_SCENARIO:
