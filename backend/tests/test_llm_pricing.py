@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from backend.services.llm_pricing import LLM_PRICING_USD_PER_1M, estimate_token_usage_cost_usd
+from backend.services.llm_pricing import (
+    LLM_PRICING_USD_PER_1M,
+    estimate_token_usage_cost_usd,
+    model_pricing_payload,
+)
 
 
 def _usage(models: list[dict]) -> dict:
@@ -108,10 +112,53 @@ class LlmPricingTests(unittest.TestCase):
         self.assertEqual(estimate["total_usd"], 0.0)
         self.assertEqual(estimate["by_model"], [])
 
-    def test_default_table_ships_unpriced(self) -> None:
-        for prices in LLM_PRICING_USD_PER_1M.values():
+    def test_default_table_prices_luna_and_keeps_legacy_models_unpriced(self) -> None:
+        self.assertEqual(
+            LLM_PRICING_USD_PER_1M["openai:gpt-5.6-luna"],
+            {"input": 0.2, "output": 1.2, "cached_input": 0.02},
+        )
+        for key, prices in LLM_PRICING_USD_PER_1M.items():
+            if key == "openai:gpt-5.6-luna":
+                continue
             for price in prices.values():
-                self.assertIsNone(price)
+                self.assertIsNone(price, msg=key)
+
+    def test_luna_pricing_estimates_real_usage(self) -> None:
+        estimate = estimate_token_usage_cost_usd(
+            _usage(
+                [
+                    {
+                        "provider": "openai",
+                        "model": "gpt-5.6-luna",
+                        "input_tokens": 1_000_000,
+                        "cached_input_tokens": 200_000,
+                        "output_tokens": 50_000,
+                    }
+                ]
+            )
+        )
+        self.assertTrue(estimate["available"])
+        # (800k * 0.2 + 200k * 0.02 + 50k * 1.2) / 1M = 0.16 + 0.004 + 0.06
+        self.assertAlmostEqual(estimate["total_usd"], 0.224)
+
+    def test_model_pricing_payload_marks_priced_models(self) -> None:
+        entry_map = {
+            (row["provider"], row["model"]): row for row in model_pricing_payload()
+        }
+        self.assertEqual(
+            entry_map[("openai", "gpt-5.6-luna")],
+            {
+                "provider": "openai",
+                "model": "gpt-5.6-luna",
+                "input_usd_per_1m": 0.2,
+                "cached_input_usd_per_1m": 0.02,
+                "output_usd_per_1m": 1.2,
+                "embedding_usd_per_1m": None,
+                "priced": True,
+            },
+        )
+        self.assertFalse(entry_map[("openai", "gpt-5.4")]["priced"])
+        self.assertFalse(entry_map[("siliconflow", "BAAI/bge-m3")]["priced"])
 
 
 if __name__ == "__main__":

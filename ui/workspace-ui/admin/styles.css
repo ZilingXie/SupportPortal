@@ -4412,6 +4412,32 @@ p {
 .admin-metric-strip strong { margin-top: 8px; font-size: 26px; }
 .admin-metric-strip .is-emphasis { background: #d9eee4; color: #124c3b; }
 
+.admin-model-pricing {
+  margin-bottom: 24px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.admin-model-pricing header { color: #59676e; font-size: 12px; font-weight: 600; }
+
+.admin-model-pricing-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-model-pricing-item {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: #eef3f4;
+  color: #1d2b31;
+}
+
+.admin-model-pricing-item.is-unpriced { background: transparent; border: 1px dashed rgba(91, 106, 115, 0.4); color: #59676e; }
+
 .admin-ops-surface {
   min-width: 0;
   padding: 22px;

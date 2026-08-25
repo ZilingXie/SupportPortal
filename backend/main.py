@@ -335,7 +335,7 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_pricing import estimate_token_usage_cost_usd
+from backend.services.llm_pricing import estimate_token_usage_cost_usd, model_pricing_payload
 from backend.services.llm_usage_capture import (
     CaseUsageCapture,
     begin_case_usage_capture,
@@ -12727,6 +12727,7 @@ def get_workspace_admin_account_automation(
     payload["token_usage_page_total"] = _attach_account_case_token_usage(
         list(payload.get("cases") or [])
     )
+    payload["model_pricing"] = model_pricing_payload()
     return payload
 
 

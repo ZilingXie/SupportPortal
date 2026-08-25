@@ -599,6 +599,38 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertTrue(page_total["cost_usd_available"])
         self.assertAlmostEqual(page_total["cost_usd_total"], 1640 / 1_000_000)
 
+    def test_account_admin_model_pricing_exposes_configured_rates(self) -> None:
+        self._seed_token_usage_case()
+        with patch.object(
+            main.rag_service_client,
+            "get_ticket_family_token_summaries",
+            return_value={"summaries": {}, "errors": []},
+        ):
+            response = self.client.get(
+                "/api/workspace/admin/account-automation",
+                headers=self._admin_headers(),
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        pricing_map = {
+            (row["provider"], row["model"]): row
+            for row in response.json()["model_pricing"]
+        }
+        self.assertEqual(
+            pricing_map[("openai", "gpt-5.6-luna")],
+            {
+                "provider": "openai",
+                "model": "gpt-5.6-luna",
+                "input_usd_per_1m": 0.2,
+                "cached_input_usd_per_1m": 0.02,
+                "output_usd_per_1m": 1.2,
+                "embedding_usd_per_1m": None,
+                "priced": True,
+            },
+        )
+        legacy = pricing_map[("openai", "gpt-5.4")]
+        self.assertFalse(legacy["priced"])
+        self.assertIsNone(legacy["input_usd_per_1m"])
+
     def test_account_admin_token_usage_marks_unavailable_when_rag_fails(self) -> None:
         self._seed_token_usage_case()
         with patch.object(
