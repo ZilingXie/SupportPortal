@@ -29,7 +29,12 @@ class ProjectOverviewContractTests(unittest.TestCase):
         module_paths = sorted((PROJECT_DIR / "modules").glob("*.json"))
         function_paths = sorted((PROJECT_DIR / "functions").glob("*.json"))
         task_paths = sorted((PROJECT_DIR / "tasks").glob("*.json"))
-        phase_ids = {json.loads(path.read_text(encoding="utf-8"))["phase_id"] for path in phase_paths}
+        phases = {
+            phase["phase_id"]: phase
+            for path in phase_paths
+            for phase in [json.loads(path.read_text(encoding="utf-8"))]
+        }
+        phase_ids = set(phases)
         module_ids = {json.loads(path.read_text(encoding="utf-8"))["module_id"] for path in module_paths}
         functions = {json.loads(path.read_text(encoding="utf-8"))["function_id"]: json.loads(path.read_text(encoding="utf-8")) for path in function_paths}
         task_ids = [json.loads(path.read_text(encoding="utf-8"))["task_id"] for path in task_paths]
@@ -55,8 +60,11 @@ class ProjectOverviewContractTests(unittest.TestCase):
                 self.assertTrue(task["blockers"], str(path))
             if task["status"] != "done":
                 self.assertTrue(task["next_action"].strip(), str(path))
-        phase1_tasks = [json.loads(path.read_text(encoding="utf-8")) for path in task_paths if json.loads(path.read_text(encoding="utf-8"))["phase_id"] == "phase-1"]
-        self.assertTrue(all(task["status"] == "done" for task in phase1_tasks))
+        tasks = [json.loads(path.read_text(encoding="utf-8")) for path in task_paths]
+        for phase_id, phase in phases.items():
+            phase_tasks = [task for task in tasks if task["phase_id"] == phase_id]
+            if phase["status"] == "active":
+                self.assertTrue(any(task["status"] != "done" for task in phase_tasks), phase_id)
 
     def test_generated_page_is_file_url_safe_and_read_only(self) -> None:
         html = (ROOT / "docs/projectoverview.html").read_text(encoding="utf-8")
