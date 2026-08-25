@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p1-51",
   "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
-  "next_action": "修复 13001 暴露的 Suspension 启动污染：删除 ticket_repository.initialize() 两段把 automation_handler 回写成 billing 的兼容 SQL，新增双库 repair migration，并把 comment trigger 失败幂等记录改为 failed（可重放），部署后受控恢复 13001 并新建 Suspension 工单跨重启验收。",
+  "next_action": "",
   "acceptance_criteria": [
     "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
     "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
@@ -76,6 +76,12 @@
       "label": "Default-assignment and public-human-reply ownership regression",
       "command": ".venv/bin/pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_worker.py backend/tests/test_account_intake.py",
       "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
+    },
+    {
+      "type": "deployment",
+      "label": "EC2 deploy + dual-DB repair migration + live regression matrix",
+      "command": "curl /health（ref=e61a8490a6c8）；psql 双库复核；restart_single_host_stack.sh --mode local_lightweight --db remote；fix-verification-3cases run.py --create/--track",
+      "result": "EC2 build e61a8490a6c8 health ok；production 8/staging 6 suspension 行全部修复（fraud 16 行未动）；本地栈 e61a849 重启后 6 行零漂移；Zendesk 13009/13010/13011 首轮信号齐且实际=预期（交付 comment 52879513971220/52879489091476/52879563456788），13010 零 handoff 事件；测试工单已 solved、本地 case 已自动 closed。"
     }
   ],
   "source_refs": [
@@ -119,6 +125,11 @@
       "at": "2026-08-25",
       "event": "reopened",
       "summary": "13001 验收发现：ticket_repository.initialize() 的两段兼容回写 SQL 在每次容器重启时把 Account Suspension 的 automation_handler 强制改成 billing，客户追问触发 409（account case has no registered automation handler）；且失败被 complete_idempotent_request 写成 completed+failed，重放直接返回旧失败。Production 2 个 automation + 6 个 closed Suspension 案均被污染。重新打开修复：移除回写、repair migration、幂等失败态改 failed 可重放、恢复 13001。"
+    },
+    {
+      "at": "2026-08-25",
+      "event": "completed",
+      "summary": "PR#960 部署 EC2 主栈 e61a8490a6c8；双库 repair migration 完成（production 8 行、staging 6 行，复核零未修复零误伤，automation_status 原样保留）；本地官方栈重启后 staging suspension 行零漂移（根因实证）。三案回归全过：手册案 Zendesk 13009/13010/13011（fraud 追问回复交付后零 handoff 事件、lifecycle 未动；suspension 新案 handler=account_suspension；全部 delivered 且 20 分钟内）+ 用户复验 13005/13006/13007。13001 后被外部关闭（workflow 停在 awaiting_contact_confirmation），受控恢复计划经用户确认取消；migration 已顺带修复其 handler 保持历史一致。"
     }
   ],
   "phase_id": "phase-1",

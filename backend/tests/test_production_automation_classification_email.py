@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -9,6 +10,14 @@ from backend.services.production_automation_classification_email import (
     build_production_automation_classification_email,
     is_production_automation_classification,
 )
+
+
+ROUTING_ENV = {
+    "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL": "emmazhong@agora.io",
+    "BILLING_AUTOMATION_INTERNAL_EMAIL": "suhrid@agora.io",
+    "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL": "suspension-suhrid@agora.io",
+    "AUTOMATION_INTERNAL_EMAIL_CC": "xieziling@agora.io",
+}
 
 
 def _case(**overrides: object) -> dict[str, object]:
@@ -62,13 +71,67 @@ class ProductionAutomationClassificationEmailTests(unittest.TestCase):
             backend_operation_payload["classification_path"],
             "Agora / Backend Operation / Enablement",
         )
+        # Billing categories classify by contract: fraud and suspension cases
+        # persist category=account_billing from account_billing_metadata.
+        fraud_case = _case(
+            category="account_billing",
+            subcategory="fraud_account",
+            execution_action="fraud_account",
+        )
+        suspension_case = _case(
+            category="account_billing",
+            subcategory="account_suspension",
+            execution_action="account_suspension",
+        )
+        self.assertTrue(is_production_automation_classification(fraud_case))
+        self.assertTrue(is_production_automation_classification(suspension_case))
         self.assertFalse(
             is_production_automation_classification(
                 _case(subcategory="detailed_invoice", execution_action="detailed_invoice")
             )
         )
         self.assertFalse(is_production_automation_classification(_case(processing_profile="staging")))
-        self.assertFalse(is_production_automation_classification(_case(category="account_billing")))
+        # Non-active lifecycle must not enqueue a late notification when a
+        # closed or escalated case is re-saved.
+        self.assertFalse(
+            is_production_automation_classification(_case(automation_status="closed"))
+        )
+        self.assertFalse(
+            is_production_automation_classification(
+                _case(automation_status="human_review_required")
+            )
+        )
+
+    def test_recipient_routes_by_category_with_owner_cc(self) -> None:
+        with patch.dict(os.environ, ROUTING_ENV, clear=False):
+            enablement_payload = build_production_automation_classification_email(
+                _case(category="backend_operation")
+            )
+            fraud_payload = build_production_automation_classification_email(
+                _case(
+                    category="account_billing",
+                    subcategory="fraud_account",
+                    execution_action="fraud_account",
+                )
+            )
+            suspension_payload = build_production_automation_classification_email(
+                _case(
+                    category="account_billing",
+                    subcategory="account_suspension",
+                    execution_action="account_suspension",
+                )
+            )
+
+        assert enablement_payload is not None
+        self.assertEqual(enablement_payload["recipient"], "emmazhong@agora.io")
+        assert fraud_payload is not None
+        self.assertEqual(fraud_payload["recipient"], "suhrid@agora.io")
+        self.assertEqual(fraud_payload["classification_path"], "Agora / Account & Billing / Fraud Account")
+        assert suspension_payload is not None
+        self.assertEqual(suspension_payload["recipient"], "suspension-suhrid@agora.io")
+        self.assertEqual(
+            suspension_payload["classification_path"], "Agora / Automation / Account Suspension"
+        )
 
     def test_invalid_zendesk_source_is_a_visible_non_sendable_record(self) -> None:
         payload = build_production_automation_classification_email(
@@ -120,21 +183,27 @@ class ProductionAutomationClassificationEmailTests(unittest.TestCase):
 
         repository = InMemoryTicketRepository()
         repository.initialize()
-        repository.save_account_case(_case())
+        with patch.dict(os.environ, ROUTING_ENV, clear=False):
+            repository.save_account_case(_case())
 
-        with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "send_graph_mail"
-        ) as send_mail:
-            worker._drain_production_automation_classification_emails(limit=20)
+            with patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "send_graph_mail"
+            ) as send_mail:
+                worker._drain_production_automation_classification_emails(limit=20)
 
         send_mail.assert_called_once()
         delivered = repository.list_account_automation_classification_emails(
             statuses=("delivered",)
         )
         self.assertEqual(len(delivered), 1)
-        self.assertEqual(send_mail.call_args.kwargs["to_address"], "xieziling@agora.io")
+        self.assertEqual(send_mail.call_args.kwargs["to_address"], "emmazhong@agora.io")
+        self.assertEqual(
+            send_mail.call_args.kwargs["cc_addresses"], ["xieziling@agora.io"]
+        )
 
-        with patch.object(worker, "ticket_repository", repository), patch.object(
+        with patch.dict(os.environ, ROUTING_ENV, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
             worker, "send_graph_mail", side_effect=TimeoutError("timeout")
         ) as retry_sender:
             repository.save_account_case(_case(account_case_id="AC-13002", billing_ticket_id="AC-13002", client_ticket_id="13002", zendesk_ticket_id="13002", source=json.dumps({"Link": "https://agoraio.zendesk.com/agent/tickets/13002"})))
