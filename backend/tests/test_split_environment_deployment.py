@@ -150,8 +150,9 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertTrue(script_path.exists())
         script = script_path.read_text()
         # DDL runs through the migration role on the split production schema.
-        self.assertIn("TICKET_DB_MIGRATION_DSN is required", script)
+        self.assertIn("AUTOMATION_PRODUCTION_DB_MIGRATION_DSN is required", script)
         self.assertIn('schema="${schema:-supportportal_production}"', script)
+        self.assertIn("resolve_env_value AUTOMATION_PRODUCTION_DB_MIGRATION_DSN", script)
         self.assertIn("TICKET_DB_MIGRATION_DSN", script)
         self.assertIn("runtime_bootstrap", script)
         self.assertIn("--profile bootstrap", script)
@@ -162,8 +163,14 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         # Deploy integration: the production split deploy bootstraps before up.
         deploy = (ROOT / "deployment/deploy_ec2.sh").read_text()
         self.assertIn("bootstrap_automation_production_schema.sh", deploy)
+        self.assertIn(
+            'AUTOMATION_PRODUCTION_DB_MIGRATION_DSN="$(resolve_env_value AUTOMATION_PRODUCTION_DB_MIGRATION_DSN)"',
+            deploy,
+        )
         self.assertIn("APP_RUNTIME_IMAGE is required for automation_production_worker", deploy)
         self.assertIn("SPLIT_SERVICES=(route_production automation_production automation_production_worker)", deploy)
+        env_example = (ROOT / ".env.example").read_text()
+        self.assertIn("AUTOMATION_PRODUCTION_DB_MIGRATION_DSN=", env_example)
         # Workers have no HTTP health port; deploy readiness accepts a running
         # container for *_worker services.
         self.assertIn("*_worker", deploy)

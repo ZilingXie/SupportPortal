@@ -851,7 +851,7 @@ deploy_split_environment() {
     [[ -n "${app_runtime_image}" ]] || fail "APP_RUNTIME_IMAGE is required for automation_production_worker"
     AUTOMATION_PRODUCTION_DB_DSN="${db_value}" \
     AUTOMATION_PRODUCTION_DB_SCHEMA="${db_schema}" \
-    TICKET_DB_MIGRATION_DSN="$(resolve_env_value TICKET_DB_MIGRATION_DSN)" \
+    AUTOMATION_PRODUCTION_DB_MIGRATION_DSN="$(resolve_env_value AUTOMATION_PRODUCTION_DB_MIGRATION_DSN)" \
     PGVECTOR_DSN="$(resolve_env_value PGVECTOR_DSN)" \
     bash "${SCRIPT_DIR}/bootstrap_automation_production_schema.sh"
   fi

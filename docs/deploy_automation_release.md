@@ -54,7 +54,7 @@ Route token 仍由运维配置在 `.env`，每个环境使用不同值；例如�
 
 `/automation/production` 的新版本使用独立 candidate Compose project。candidate 必须从同一台 EC2 上已生成的 release manifest 启动；脚本会校验 route/automation image ID，复用现有 `supportportal-automation-production` project 的 production Redis、DB schema/table、queue 和 event channel，不会创建第二套 production Redis。
 
-执行前确认当前 `main` 已包含 runtime upstream mount，并设置 production 批准门：
+执行前确认当前 `main` 已包含 runtime upstream mount，在 `.env` 配置 `AUTOMATION_PRODUCTION_DB_MIGRATION_DSN`（具备 DDL 权限，且数据库名必须与 `AUTOMATION_PRODUCTION_DB_DSN` 或其 `PRODUCTION_TICKET_DB_DSN` fallback 一致），并设置 production 批准门。全局 `TICKET_DB_MIGRATION_DSN` 继续服务主数据库，不能代替这个 production 专用值：
 
 ```bash
 DEPLOY_PRODUCTION_APPROVED=1 \

@@ -39,20 +39,20 @@ command -v docker >/dev/null 2>&1 || fail 'Missing command: docker'
 
 dsn="$(resolve_env_value AUTOMATION_PRODUCTION_DB_DSN)"
 dsn="${dsn:-$(resolve_env_value PRODUCTION_TICKET_DB_DSN)}"
-migration_dsn="$(resolve_env_value TICKET_DB_MIGRATION_DSN)"
+migration_dsn="$(resolve_env_value AUTOMATION_PRODUCTION_DB_MIGRATION_DSN)"
 pgvector_dsn="$(resolve_env_value PGVECTOR_DSN)"
 schema="$(resolve_env_value AUTOMATION_PRODUCTION_DB_SCHEMA)"
 schema="${schema:-supportportal_production}"
 
 [[ -n "$dsn" ]] || fail 'AUTOMATION_PRODUCTION_DB_DSN or PRODUCTION_TICKET_DB_DSN is required'
-[[ -n "$migration_dsn" ]] || fail 'TICKET_DB_MIGRATION_DSN is required (the runtime role cannot create the split production schema)'
+[[ -n "$migration_dsn" ]] || fail 'AUTOMATION_PRODUCTION_DB_MIGRATION_DSN is required (the runtime role cannot create the split production schema)'
 [[ -n "$pgvector_dsn" ]] || fail 'PGVECTOR_DSN is required'
 
 if [[ -n "$(resolve_env_value TICKET_DB_DSN)" && "$dsn" == "$(resolve_env_value TICKET_DB_DSN)" ]]; then
   fail 'production DB DSN must differ from TICKET_DB_DSN (staging main database)'
 fi
 if [[ "$(database_name "$dsn")" != "$(database_name "$migration_dsn")" ]]; then
-  fail "TICKET_DB_MIGRATION_DSN must target the same database as the production DSN (got '$(database_name "$migration_dsn")' vs '$(database_name "$dsn")')"
+  fail "AUTOMATION_PRODUCTION_DB_MIGRATION_DSN must target the same database as the production DSN (got '$(database_name "$migration_dsn")' vs '$(database_name "$dsn")')"
 fi
 if [[ "$dsn" == "$migration_dsn" ]]; then
   log 'WARNING: migration DSN equals the runtime DSN; runtime-role grants will be skipped.'
