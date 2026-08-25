@@ -15,10 +15,24 @@
   ],
   "blockers": [],
   "evidence": [
-    "新增分类邮件服务、PostgreSQL/InMemory 独立 outbox、幂等 enqueue/claim/complete，以及 Production worker 投递状态机。",
-    "新增分类邮件测试 5 项；account intake 172 项；Production runtime contract 10 项；worker 105 项；repository configuration 119 项；automation routing/account route pipeline 47 项；fresh suite 合计 458 项通过。",
-    "python3 scripts/verify_feature_list.py 通过；python3 scripts/generate_project_overview.py --write 与 --check 通过；git diff --check 与 Python compile check 通过。",
-    "review-implemented-plan review 未发现需修复的功能性问题。"
+    {
+      "type": "test",
+      "label": "Production Automation classification email regression",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
+      "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+    },
+    {
+      "type": "document",
+      "label": "Project records and generated overview",
+      "command": "python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check; python3 -m compileall -q backend",
+      "details": "Feature list、Project Overview 生成与检查、差异空白检查和 Python compile check 均通过。"
+    },
+    {
+      "type": "document",
+      "label": "Implemented plan review",
+      "command": "review-implemented-plan skill",
+      "details": "review 未发现需修复的功能性问题。"
+    }
   ],
   "source_refs": [
     "backend/services/automation_routing.py",

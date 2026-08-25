@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T09:12:45Z",
-  "source_base_commit": "0608724fa491bb6f12030c12663369c0a55f417f",
-  "registry_digest": "68dc9be8ef2e1d301254d538fe74711b57b9542a8649d4555c217be0750067ae",
+  "generated_at": "2026-08-25T09:21:27Z",
+  "source_base_commit": "18ccab7f0f76eb6954ebb85999e501e65b40fc12",
+  "registry_digest": "ecea4e80ffdde04878cde4631f56ef5c50592f7a2f0e0e2152eadcc7c511a556",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1792,6 +1792,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Prompt Release target-local version remap",
+          "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
+          "details": "63 项通过：同号异内容分配目标本地新版本、已有同 hash 的不同本地版本直接复用、candidate 不改变目标 active release、激活后两库 release snapshot 内容一致、篡改 hash 继续 fail closed；EC2 PostgreSQL 随机 schema 验证待合并后执行。"
+        },
+        {
+          "type": "test",
           "label": "Parity intake and runtime contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_account_intake backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 backend.tests.test_build_automation_release",
           "details": "111 项全部通过：intake 六分支单测（fraud 缺/齐字段、suspension contact、抽取失败→#916 升级、not_automated→Engineer Case+派单、ownership fail-closed）；production runtime 契约（无 visibility 也进管线、pipeline 异常→failed+409 重放、legacy 五字段免 visibility、intake_outcome 落库）；契约矩阵（production visibility 可选，preprod forced internal 不变）；route_payload decision 字段；bundle/镜像清单（依赖模块留在 production 镜像）；compose/deploy/蓝绿假命令回归。"
@@ -1825,6 +1831,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Usage capture and prepare-flag regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_route_service_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_automation_account_intake backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose",
           "details": "94 项通过：新增 runtime 断言 route_request.prepare=False、回复链 begin/end/flush 调用与条目数断言；route 契约（含新字段默认行为）与既有全回归绿。"
+        },
+        {
+          "type": "test",
+          "label": "Production Automation classification email regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
+          "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+        },
+        {
+          "type": "document",
+          "label": "Project records and generated overview",
+          "command": "python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check; python3 -m compileall -q backend",
+          "details": "Feature list、Project Overview 生成与检查、差异空白检查和 Python compile check 均通过。"
+        },
+        {
+          "type": "document",
+          "label": "Implemented plan review",
+          "command": "review-implemented-plan skill",
+          "details": "review 未发现需修复的功能性问题。"
         },
         {
           "type": "test",
@@ -6143,11 +6167,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户 2026-08-24 决策（终态=三环境上线并完全替代旧 /account 与 /production，本轮先行 /automation/production 替代 /production）的分阶段搬迁计划 Phase A：为 split production 环境补齐承载旧栈管线的数据与运行地基。新增 automation_production_worker（完整 app 镜像跑 backend.worker，绑定 supportportal_production schema，队列/事件通道/内部邮件主题命名空间与旧 production 栈隔离，RUNTIME_SCHEMA_MODE=check fail-fast）、一次性幂等的 supportportal_production 全套 account-case 建表脚本（独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色，runtime 授权自动跟随）、deploy_ec2 production split 部署集成（worker 纳入服务清单、up 前自动 bootstrap、worker 用容器运行判定代替 HTTP 健康探测）与蓝绿脚本 worker 覆盖（APP_RUNTIME_IMAGE 本地存在性校验 + 切换后 recreate worker）。旧栈 /production 与 /account 零行为变化；worker 的 reply/job/Slack 消费为空转待后续 Phase（B-F）接线。",
-      "next_action": "合并 production deploy gates 后，在 EC2 不加外层 1800s timeout 执行 scripts/ops/deploy_surfaces_ec2.sh --skip-split；确认主栈五个 runtime 与 /production 三个 runtime 使用同一镜像/build/Prompt Release、workers 连续稳定且 RestartCount=0、Production active Fraud Prompt 为 v4 七字段并与代码 hash 一致，再使用获准的新测试 Ticket 做 readback。随后继续 p2-108 的 /automation/production 蓝绿上线验证；不重跑 AC-12993。",
+      "next_action": "完成 Prompt Release 跨库 target-local version remap 的 review/finalize 后，先在 EC2 随机隔离 schema 运行 PostgreSQL collision test，再不加外层 1800s timeout 执行 scripts/ops/deploy_surfaces_ec2.sh --skip-split；确认主栈五个 runtime 与 /production 三个 runtime 使用同一镜像/build/Prompt Release、workers 连续稳定且 RestartCount=0、Production active Fraud Prompt 为 v4 七字段并与代码 hash 一致。未获批新测试 Ticket 前不做客户链 readback；不重跑 AC-12993。",
       "acceptance_criteria": [
         "automation_production_worker 服务存在：automation profile、APP_RUNTIME_IMAGE 完整镜像、python -m backend.worker、TICKET_DB_DSN/SCHEMA 绑定 supportportal_production、队列/事件通道为 automation_production 专属（support.ticket_queries.automation_production 等，不与旧栈 support.ticket_queries.production 冲突）、INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]、reply poller 开启、邮箱回复消费默认关闭（AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED）。",
         "deployment/bootstrap_automation_production_schema.sh：以独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色对 supportportal_production 跑 runtime_bootstrap 全量 DDL（幂等），不得 fallback 到全局 TICKET_DB_MIGRATION_DSN；带同库校验与 staging 主库误指防护，deploy_ec2 production split 部署在 up 之前执行它。",
         "deploy_ec2 production：SPLIT_SERVICES 含 automation_production_worker、APP_RUNTIME_IMAGE 缺失 fail-closed、wait_for_split_service 对 *_worker 服务用容器运行状态判定；蓝绿脚本校验 APP_RUNTIME_IMAGE 本地存在并在切换后将 split worker 按当前 APP_RUNTIME_IMAGE recreate。",
+        "Prompt Release 跨独立数据库同步以 content_sha256 作为内容身份并映射到 target-local version；同号异内容不得覆盖目标历史，已有同 hash 内容不得重复插入，candidate 同步不得改变 production active release。",
         "旧栈 /production、/account 与 staging/preproduction split 环境不受影响；worker 在空 schema 上只空转（无 Zendesk/邮件/Slack 出站副作用）。"
       ],
       "blockers": [],
@@ -6169,6 +6194,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production runtime deployment gates",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_prompt_versioning backend.tests.test_account_verification_automation",
           "details": "长期运行的主栈五个服务与 /production 三个服务显式清空 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN，仅一次性 runtime_bootstrap 保留 DDL 凭据；deploy_ec2 在 activate 前校验八个 Prompt runtime 的容器状态、镜像 ID、build ref、release、当前容器日志与 health，并以稳定窗口拒绝 worker 重启。activate 后 production sync/readback 失败返回非零但不回滚已健康主栈。"
+        },
+        {
+          "type": "test",
+          "label": "Prompt Release target-local version remap",
+          "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
+          "details": "63 项通过：同号异内容分配目标本地新版本、已有同 hash 的不同本地版本直接复用、candidate 不改变目标 active release、激活后两库 release snapshot 内容一致、篡改 hash 继续 fail closed；EC2 PostgreSQL 随机 schema 验证待合并后执行。"
         }
       ],
       "source_refs": [
@@ -6185,6 +6216,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-24",
       "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "prompt_release_target_local_version_remap",
+          "summary": "EC2 production sync 暴露独立数据库同一 Prompt version 整数可对应不同历史内容；改为按 content_sha256 识别内容并将 release items 映射到目标本地版本，保留目标历史、candidate active 边界与 payload hash 防篡改门禁。"
+        },
         {
           "at": "2026-08-25",
           "event": "production_runtime_deploy_gates",
@@ -6771,7 +6807,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path；staging、非 active Automation 和 classification-only 路由不触发。",
-      "next_action": "实现完成后运行 targeted tests，finalize 到 main，重启官方栈并用受控 Production Case 完成 Graph 与邮箱 readback。",
+      "next_action": "finalize 到 main，重启官方栈并用受控 Production Case 完成 Graph 与邮箱 readback。",
       "acceptance_criteria": [
         "Production active Automation Case 只创建一条分类邮件通知，收件人为 xieziling@agora.io，内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
         "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
@@ -6780,7 +6816,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "邮件失败不回滚或重放已有 Zendesk side effect。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Production Automation classification email regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
+          "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+        },
+        {
+          "type": "document",
+          "label": "Project records and generated overview",
+          "command": "python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check; python3 -m compileall -q backend",
+          "details": "Feature list、Project Overview 生成与检查、差异空白检查和 Python compile check 均通过。"
+        },
+        {
+          "type": "document",
+          "label": "Implemented plan review",
+          "command": "review-implemented-plan skill",
+          "details": "review 未发现需修复的功能性问题。"
+        }
+      ],
       "source_refs": [
         "backend/services/automation_routing.py",
         "backend/services/account_route_pipeline.py",

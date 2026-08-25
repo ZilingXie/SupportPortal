@@ -12,6 +12,25 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-25 - Prompt Release target-local version remapping
+
+- Area or subsystem: managed Prompt Release cross-database sync and `/production` deployment
+- Prompt or model version: Prompt content, release ids, and model configuration unchanged
+- Summary: Cross-database sync now treats `content_sha256` as the portable Prompt identity and maps each source release item to the matching target-local version. When the same numeric version contains different target history, sync preserves that history and allocates the next target-local version; when the same content already exists under another local version, sync reuses it without duplication.
+- Reason: The staging and production databases maintain independent version sequences. Production deployment failed before stopping the old stack because `account-account-billing-router-system v1` had different legitimate content in each database and the prior sync incorrectly treated equal version numbers as a cross-database identity contract.
+- Affected files or config:
+  - `backend/repositories/ticket_repository.py`
+  - `backend/scripts/prompt_release.py`
+  - in-memory and PostgreSQL Prompt Release sync tests
+- Expected behavior change:
+  - Candidate sync preserves the target active release and stores remapped versions as drafts until explicit activation.
+  - Activation resolves the same release content in both databases even when their local version integers differ.
+  - Existing target history is never overwritten; exact content matches remain idempotent; tampered payload hashes still fail closed before deployment cutover.
+- Verification:
+  - `backend.tests.test_prompt_versioning` and `backend.tests.test_deploy_ec2`: 63 passed.
+  - Python compilation and `git diff --check` passed.
+  - PostgreSQL collision coverage is implemented with an isolated random schema and must run near the database on EC2 before production deployment.
+
 ## 2026-08-25 - Fraud Account v4 deployment validation gate
 
 - Area or subsystem: managed Prompt Release validation and `/production` deployment
