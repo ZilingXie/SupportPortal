@@ -4121,7 +4121,9 @@ def startup_event() -> None:
     global ticket_repository, asset_repository
     if runtime_schema_check_enabled():
         check_runtime_schema()
-        initialize_prompt_runtime_from_environment(service_name="api")
+        initialize_prompt_runtime_from_environment(
+            service_name=str(os.getenv("PROMPT_RUNTIME_SERVICE") or "api")
+        )
         _start_account_reroute_dispatcher()
         LOGGER.info("Runtime schema preflight passed; skipped startup DDL bootstrap.")
         return
@@ -4133,7 +4135,10 @@ def startup_event() -> None:
             ticket_repository.initialize()
             LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
             PromptVersionService(ticket_repository).sync_catalog()
-            initialize_prompt_runtime(ticket_repository, service_name="api")
+            initialize_prompt_runtime(
+                ticket_repository,
+                service_name=str(os.getenv("PROMPT_RUNTIME_SERVICE") or "api"),
+            )
             _bootstrap_workspace_admin()
             _initialize_asset_repository_with_fallback()
             _start_account_reroute_dispatcher()
