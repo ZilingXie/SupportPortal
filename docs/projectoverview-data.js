@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T09:47:32Z",
-  "source_base_commit": "beb07bc9ad71fac0264550620f88bb40f6f309c8",
-  "registry_digest": "4446e2f1fb1374f91d6df4d06c073c3930689fbae0a0e09c3ace02d0f5e02ce2",
+  "generated_at": "2026-08-25T09:52:43Z",
+  "source_base_commit": "1582840e3932d480f05019a17f71fae7d4aefab9",
+  "registry_digest": "ee012f3991320cc27fe25ce45572ac483293af21d3c50d2a171de52072bbcb60",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1828,7 +1828,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Prompt Release target-local version remap",
           "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
-          "details": "63 项通过：同号异内容分配目标本地新版本、已有同 hash 的不同本地版本直接复用、candidate 不改变目标 active release、激活后两库 release snapshot 内容一致、篡改 hash 继续 fail closed；EC2 PostgreSQL 随机 schema 验证待合并后执行。"
+          "details": "63 项通过：同号异内容分配目标本地新版本、已有同 hash 的不同本地版本直接复用、candidate 不改变目标 active release、激活后两库 release snapshot 内容一致、篡改 hash 继续 fail closed；EC2 近库随机双 schema collision test 1 项通过并自动清理。"
+        },
+        {
+          "type": "test",
+          "label": "Production API Prompt runtime service identity",
+          "command": ".venv/bin/python -m unittest backend.tests.test_startup_repository_fallbacks backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_retries_transient_startup_failure backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_image backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_build_or_release backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_restarting_worker backend.tests.test_single_host_compose.SingleHostComposeTests.test_prompt_runtime_release_is_shared_by_all_llm_services_only",
+          "details": "API schema-check startup honors PROMPT_RUNTIME_SERVICE=api-production while preserving api default；部署门禁继续拒绝 stale image/build/release 与 worker restart，Compose 八 runtime service labels 保持一致。"
         },
         {
           "type": "test",
@@ -6257,7 +6263,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户 2026-08-24 决策（终态=三环境上线并完全替代旧 /account 与 /production，本轮先行 /automation/production 替代 /production）的分阶段搬迁计划 Phase A：为 split production 环境补齐承载旧栈管线的数据与运行地基。新增 automation_production_worker（完整 app 镜像跑 backend.worker，绑定 supportportal_production schema，队列/事件通道/内部邮件主题命名空间与旧 production 栈隔离，RUNTIME_SCHEMA_MODE=check fail-fast）、一次性幂等的 supportportal_production 全套 account-case 建表脚本（独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色，runtime 授权自动跟随）、deploy_ec2 production split 部署集成（worker 纳入服务清单、up 前自动 bootstrap、worker 用容器运行判定代替 HTTP 健康探测）与蓝绿脚本 worker 覆盖（APP_RUNTIME_IMAGE 本地存在性校验 + 切换后 recreate worker）。旧栈 /production 与 /account 零行为变化；worker 的 reply/job/Slack 消费为空转待后续 Phase（B-F）接线。",
-      "next_action": "完成 Prompt Release 跨库 target-local version remap 的 review/finalize 后，先在 EC2 随机隔离 schema 运行 PostgreSQL collision test，再不加外层 1800s timeout 执行 scripts/ops/deploy_surfaces_ec2.sh --skip-split；确认主栈五个 runtime 与 /production 三个 runtime 使用同一镜像/build/Prompt Release、workers 连续稳定且 RestartCount=0、Production active Fraud Prompt 为 v4 七字段并与代码 hash 一致。未获批新测试 Ticket 前不做客户链 readback；不重跑 AC-12993。",
+      "next_action": "合并 production API Prompt runtime service label 修复后，不加外层 timeout 重跑 scripts/ops/deploy_surfaces_ec2.sh --skip-split；确认主栈五个 runtime 与 /production 三个 runtime 使用同一镜像/build/Prompt Release、workers 连续稳定且 RestartCount=0、Production active Fraud Prompt 为 v4 七字段并与代码 hash 一致。未获批新测试 Ticket 前不做客户链 readback；不重跑 AC-12993。",
       "acceptance_criteria": [
         "automation_production_worker 服务存在：automation profile、APP_RUNTIME_IMAGE 完整镜像、python -m backend.worker、TICKET_DB_DSN/SCHEMA 绑定 supportportal_production、队列/事件通道为 automation_production 专属（support.ticket_queries.automation_production 等，不与旧栈 support.ticket_queries.production 冲突）、INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]、reply poller 开启、邮箱回复消费默认关闭（AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED）。",
         "deployment/bootstrap_automation_production_schema.sh：以独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色对 supportportal_production 跑 runtime_bootstrap 全量 DDL（幂等），不得 fallback 到全局 TICKET_DB_MIGRATION_DSN；带同库校验与 staging 主库误指防护，deploy_ec2 production split 部署在 up 之前执行它。",
@@ -6289,13 +6295,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Prompt Release target-local version remap",
           "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
-          "details": "63 项通过：同号异内容分配目标本地新版本、已有同 hash 的不同本地版本直接复用、candidate 不改变目标 active release、激活后两库 release snapshot 内容一致、篡改 hash 继续 fail closed；EC2 PostgreSQL 随机 schema 验证待合并后执行。"
+          "details": "63 项通过：同号异内容分配目标本地新版本、已有同 hash 的不同本地版本直接复用、candidate 不改变目标 active release、激活后两库 release snapshot 内容一致、篡改 hash 继续 fail closed；EC2 近库随机双 schema collision test 1 项通过并自动清理。"
+        },
+        {
+          "type": "test",
+          "label": "Production API Prompt runtime service identity",
+          "command": ".venv/bin/python -m unittest backend.tests.test_startup_repository_fallbacks backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_retries_transient_startup_failure backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_image backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_build_or_release backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_restarting_worker backend.tests.test_single_host_compose.SingleHostComposeTests.test_prompt_runtime_release_is_shared_by_all_llm_services_only",
+          "details": "API schema-check startup honors PROMPT_RUNTIME_SERVICE=api-production while preserving api default；部署门禁继续拒绝 stale image/build/release 与 worker restart，Compose 八 runtime service labels 保持一致。"
         }
       ],
       "source_refs": [
         "deployment/docker-compose.single-host.yml",
         "deployment/bootstrap_automation_production_schema.sh",
         "deployment/deploy_ec2.sh",
+        "backend/main.py",
         "backend/services/prompt_versioning.py",
         "deployment/deploy_automation_production_blue_green.sh",
         "backend/scripts/runtime_bootstrap.py",
@@ -6306,6 +6319,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-24",
       "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "production_api_prompt_runtime_service_label",
+          "summary": "EC2 新栈已健康并成功加载跨库 candidate，但 api_production 的 Prompt runtime 日志被 backend.main 硬编码为 api，导致八 runtime 门禁查找 api-production 超时并回滚；API 改为读取 Compose 已配置的 PROMPT_RUNTIME_SERVICE，默认值仍为 api。"
+        },
         {
           "at": "2026-08-25",
           "event": "prompt_release_target_local_version_remap",
