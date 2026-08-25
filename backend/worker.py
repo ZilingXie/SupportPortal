@@ -148,7 +148,7 @@ from backend.services.internal_email_payload import (
     InternalEmailPayloadUpgradeError,
     upgrade_internal_email_payload,
 )
-from backend.services.graph_mail import send_graph_mail
+from backend.services.graph_mail import automation_internal_email_cc, send_graph_mail
 from backend.services.quota_automation import (
     QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
 )
@@ -2323,11 +2323,19 @@ def _drain_production_automation_classification_emails(*, limit: int = 20) -> No
         status = "delivered"
         failure_code: str | None = None
         try:
+            recipient = str(claimed.get("recipient") or "").strip()
+            # Classification emails follow the internal-email convention and
+            # cc the automation owner, except when the owner is the recipient.
+            cc_addresses = [
+                cc for cc in automation_internal_email_cc()
+                if cc.lower() != recipient.lower()
+            ] or None
             send_graph_mail(
-                to_address=str(claimed.get("recipient") or "").strip(),
+                to_address=recipient,
                 subject=str(claimed.get("subject") or "").strip(),
                 body=str(claimed.get("body") or ""),
                 content_type="Text",
+                cc_addresses=cc_addresses,
             )
         except urllib.error.HTTPError as exc:
             status = "outcome_unknown" if int(exc.code or 0) >= 500 else "failed"

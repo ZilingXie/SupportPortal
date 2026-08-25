@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-84",
   "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 xieziling@agora.io；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
-  "next_action": "修复 13004 暴露的 handoff 时序缺陷：handoff 目前对所有 public 交付触发而不看 reply_intent，导致 missing-information 追问回复也把工单过早指派给 reviewer。改为仅最终 fraud_handoff_confirmation 回复交付后指派，并在指派成功后把 Case lifecycle 置为 human_review_required（不触发升级链）。",
+  "next_action": "",
   "acceptance_criteria": [
     "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
     "assign_ticket_to_reviewer：按数字 user id 解析 reviewer（GET /users/{id}.json，必须 active agent），assign 到其 default group；已 assign 则 no-op；复用 safe_update 与 required-field autofill 语义。",
@@ -43,6 +43,12 @@
       "label": "Live permission + function verification",
       "command": "docker exec deployment-api_production-1 python -c \"assign_ticket_to_reviewer(ticket_id='12895', reviewer_user_id='31116634341396')\"",
       "details": "前置权限试探（12895 手动 PUT assignee=xieziling+group=Tier 2 CSE → 200，AI agent token 有 assign 权限，无需 Admin）；部署后函数级验证：GET /users/{id}.json 解析 + ticket 比对 → already_assigned（200）。注：AI agent token 无 users/search（403）与 show_many?emails（空）权限，故按 id 配置。完整自动链路（fraud public 回复发布 → 自动 handoff 事件）待下一个真实 fraud_account 工单自然验证。已知边界：已 solved 工单的任何 API 更新被声明式 checkbox 36379228408724 拦截（12893 实测 422，detail 明确）；fraud 回复后工单为 pending，不受影响。"
+    },
+    {
+      "type": "deployment",
+      "label": "Live handoff intent gating verification",
+      "command": "psql production events 表 + fix-verification-3cases run.py --track",
+      "result": "Zendesk 13010/13006 missing-info 公开回复 delivered 后 handoff 事件为零、内部邮件 not_ready、工单 pending；分配动作确认仅发生在最终 fraud_handoff_confirmation（p2-84 既有链路）。"
     }
   ],
   "source_refs": [
@@ -74,6 +80,11 @@
       "at": "2026-08-25",
       "event": "reopened",
       "summary": "13004 验收发现：handoff 对所有 public 交付触发（_hand_off_fraud_review_after_public_reply 未接收 reply_intent，仅判 execution_action=fraud_account），request_missing_information 追问回复也过早指派 reviewer，客户补充信息后被 ownership guard fail-closed。重新打开修复：handoff 仅在最终 fraud_handoff_confirmation 公开交付后触发；指派成功后 Case lifecycle 置 human_review_required（直接写，不走 escalate_account_case_to_human_review），后续客户评论 ignored_inactive_case 不产生告警。"
+    },
+    {
+      "at": "2026-08-25",
+      "event": "completed",
+      "summary": "handoff 改为仅 fraud_handoff_confirmation 公开交付触发并直写 lifecycle（PR#960，部署 e61a8490a6c8）。live 实证：13010 与 13006 追问回复公开交付后零 zendesk_fraud_review_handoff 事件、automation_status 保持 automation、未提前指派 reviewer；13005-13007 复验中 fraud 流程正常等待客户补信息，未再出现 13004 式过早接管。"
     }
   ],
   "legacy_refs": [],

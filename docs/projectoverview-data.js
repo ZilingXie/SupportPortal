@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T13:00:31Z",
-  "source_base_commit": "aefb864ff4b8d7e28f1ba0d1e2a6e4cca7a1a67f",
-  "registry_digest": "507616c7b60e65001472e2e9bd19b3ee2aa20f5477ed9fc8c9c3ff0d6414c2f2",
+  "generated_at": "2026-08-25T14:36:40Z",
+  "source_base_commit": "e61a8490a6c8b39f8a4149e03d151dc3e57195ff",
+  "registry_digest": "7a5e0ac4e05d95cc262678c703674e80403e8221fbbfbdd3f0d001acde2954bf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1310,6 +1310,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
         },
         {
+          "type": "deployment",
+          "label": "EC2 deploy + dual-DB repair migration + live regression matrix",
+          "command": "curl /health（ref=e61a8490a6c8）；psql 双库复核；restart_single_host_stack.sh --mode local_lightweight --db remote；fix-verification-3cases run.py --create/--track",
+          "result": "EC2 build e61a8490a6c8 health ok；production 8/staging 6 suspension 行全部修复（fraud 16 行未动）；本地栈 e61a849 重启后 6 行零漂移；Zendesk 13009/13010/13011 首轮信号齐且实际=预期（交付 comment 52879513971220/52879489091476/52879563456788），13010 零 handoff 事件；测试工单已 solved、本地 case 已自动 closed。"
+        },
+        {
           "type": "test",
           "label": "Ownership retry + detail persistence",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_automation_ownership backend.tests.test_zendesk_ticket_assignment",
@@ -1412,6 +1418,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "前置权限试探（12895 手动 PUT assignee=xieziling+group=Tier 2 CSE → 200，AI agent token 有 assign 权限，无需 Admin）；部署后函数级验证：GET /users/{id}.json 解析 + ticket 比对 → already_assigned（200）。注：AI agent token 无 users/search（403）与 show_many?emails（空）权限，故按 id 配置。完整自动链路（fraud public 回复发布 → 自动 handoff 事件）待下一个真实 fraud_account 工单自然验证。已知边界：已 solved 工单的任何 API 更新被声明式 checkbox 36379228408724 拦截（12893 实测 422，detail 明确）；fraud 回复后工单为 pending，不受影响。"
         },
         {
+          "type": "deployment",
+          "label": "Live handoff intent gating verification",
+          "command": "psql production events 表 + fix-verification-3cases run.py --track",
+          "result": "Zendesk 13010/13006 missing-info 公开回复 delivered 后 handoff 事件为零、内部邮件 not_ready、工单 pending；分配动作确认仅发生在最终 fraud_handoff_confirmation（p2-84 既有链路）。"
+        },
+        {
           "type": "test",
           "label": "Status sync endpoint + repository transition tests",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_account_zendesk_status_sync backend.tests.test_account_zendesk_status_sync_postgres",
@@ -1482,7 +1494,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 14,
-      "done_count": 11,
+      "done_count": 13,
       "blocked_count": 0
     },
     {
@@ -5525,10 +5537,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-51",
       "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
-      "next_action": "修复 13001 暴露的 Suspension 启动污染：删除 ticket_repository.initialize() 两段把 automation_handler 回写成 billing 的兼容 SQL，新增双库 repair migration，并把 comment trigger 失败幂等记录改为 failed（可重放），部署后受控恢复 13001 并新建 Suspension 工单跨重启验收。",
+      "next_action": "",
       "acceptance_criteria": [
         "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
         "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
@@ -5599,6 +5611,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Default-assignment and public-human-reply ownership regression",
           "command": ".venv/bin/pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_enablement_automation.py backend/tests/test_account_route_pipeline.py backend/tests/test_worker.py backend/tests/test_account_intake.py",
           "result": "340 passed with 51 subtests passed. Coverage includes default human assignment takeover before any public human reply, complete paginated comment history, customer and AI comment exclusions, unknown-author fail-closed behavior, AI group plus assignee transfer, safe-update conflict reconciliation including a concurrent human reply, post-takeover human reassignment, post-takeover public human reply, terminal worker delivery cancellation, and ownership event diagnostics."
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 deploy + dual-DB repair migration + live regression matrix",
+          "command": "curl /health（ref=e61a8490a6c8）；psql 双库复核；restart_single_host_stack.sh --mode local_lightweight --db remote；fix-verification-3cases run.py --create/--track",
+          "result": "EC2 build e61a8490a6c8 health ok；production 8/staging 6 suspension 行全部修复（fraud 16 行未动）；本地栈 e61a849 重启后 6 行零漂移；Zendesk 13009/13010/13011 首轮信号齐且实际=预期（交付 comment 52879513971220/52879489091476/52879563456788），13010 零 handoff 事件；测试工单已 solved、本地 case 已自动 closed。"
         }
       ],
       "source_refs": [
@@ -5642,6 +5660,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "reopened",
           "summary": "13001 验收发现：ticket_repository.initialize() 的两段兼容回写 SQL 在每次容器重启时把 Account Suspension 的 automation_handler 强制改成 billing，客户追问触发 409（account case has no registered automation handler）；且失败被 complete_idempotent_request 写成 completed+failed，重放直接返回旧失败。Production 2 个 automation + 6 个 closed Suspension 案均被污染。重新打开修复：移除回写、repair migration、幂等失败态改 failed 可重放、恢复 13001。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "completed",
+          "summary": "PR#960 部署 EC2 主栈 e61a8490a6c8；双库 repair migration 完成（production 8 行、staging 6 行，复核零未修复零误伤，automation_status 原样保留）；本地官方栈重启后 staging suspension 行零漂移（根因实证）。三案回归全过：手册案 Zendesk 13009/13010/13011（fraud 追问回复交付后零 handoff 事件、lifecycle 未动；suspension 新案 handler=account_suspension；全部 delivered 且 20 分钟内）+ 用户复验 13005/13006/13007。13001 后被外部关闭（workflow 停在 awaiting_contact_confirmation），受控恢复计划经用户确认取消；migration 已顺带修复其 handler 保持历史一致。"
         }
       ],
       "phase_id": "phase-1",
@@ -7067,10 +7090,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production Automation 分类邮件通知",
       "status": "active",
       "owner": "codex",
-      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path；staging、非 active Automation 和 classification-only 路由不触发。",
-      "next_action": "finalize 到 main，重启官方栈并用受控 Production Case 完成 Graph 与邮箱 readback。",
+      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，按分类路由收件人（fraud_account/account_suspension→suhrid、enablement→emmazhong，统一 cc xieziling），内容为可信 Zendesk Case 链接、客户问题和 canonical classification path；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
+      "next_action": "实现 account_billing eligibility 与按分类路由收件人（fraud/suspension→suhrid、enablement→emmazhong，统一 cc xieziling），finalize 部署后以三类受控工单完成邮箱回读。",
       "acceptance_criteria": [
-        "Production active Automation Case 只创建一条分类邮件通知，收件人为 xieziling@agora.io，内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
+        "Production active Automation Case 只创建一条分类邮件通知，收件人按分类路由：fraud_account/account_suspension→suhrid（BILLING_AUTOMATION_INTERNAL_EMAIL/ACCOUNT_SUSPENSION_EMAIL）、enablement→emmazhong（ENABLEMENT_AUTOMATION_INTERNAL_EMAIL），全部 cc xieziling（AUTOMATION_INTERNAL_EMAIL_CC）；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
         "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
         "staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不发送错误邮件，并保留可审计失败状态。",
         "Graph 200/202 标记 delivered；明确错误标记 failed；网络或 5xx 结果未知标记 outcome_unknown，禁止自动盲目重发。",
@@ -7117,6 +7140,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "backend_operation_enablement_route_fix",
           "summary": "修复分类邮件 eligibility 只接受 category=automation 的错误；Production canonical Backend Operation/Enablement 路由使用 category=backend_operation，现按 active route identity 正确进入邮件 outbox。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "reopened",
+          "summary": "13005-13007 复验发现分类邮件 eligibility 白名单缺 account_billing：fraud/suspension 新案契约 category=account_billing（PR#960 修复启动污染后不再被改写成 automation），outbox 从未创建（Fraud 0/2、Suspension 0/2 vs Enablement 3/3），与本任务'每个 active Automation Case 一封通知'验收冲突。用户同日裁定收件人改为按分类路由（fraud/suspension→suhrid、enablement→emmazhong，cc xieziling）并加 automation_status=automation 门槛防已关闭案重保存迟发。"
         }
       ],
       "legacy_refs": [],
@@ -9897,10 +9925,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-84",
       "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 xieziling@agora.io；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
-      "next_action": "修复 13004 暴露的 handoff 时序缺陷：handoff 目前对所有 public 交付触发而不看 reply_intent，导致 missing-information 追问回复也把工单过早指派给 reviewer。改为仅最终 fraud_handoff_confirmation 回复交付后指派，并在指派成功后把 Case lifecycle 置为 human_review_required（不触发升级链）。",
+      "next_action": "",
       "acceptance_criteria": [
         "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
         "assign_ticket_to_reviewer：按数字 user id 解析 reviewer（GET /users/{id}.json，必须 active agent），assign 到其 default group；已 assign 则 no-op；复用 safe_update 与 required-field autofill 语义。",
@@ -9938,6 +9966,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live permission + function verification",
           "command": "docker exec deployment-api_production-1 python -c \"assign_ticket_to_reviewer(ticket_id='12895', reviewer_user_id='31116634341396')\"",
           "details": "前置权限试探（12895 手动 PUT assignee=xieziling+group=Tier 2 CSE → 200，AI agent token 有 assign 权限，无需 Admin）；部署后函数级验证：GET /users/{id}.json 解析 + ticket 比对 → already_assigned（200）。注：AI agent token 无 users/search（403）与 show_many?emails（空）权限，故按 id 配置。完整自动链路（fraud public 回复发布 → 自动 handoff 事件）待下一个真实 fraud_account 工单自然验证。已知边界：已 solved 工单的任何 API 更新被声明式 checkbox 36379228408724 拦截（12893 实测 422，detail 明确）；fraud 回复后工单为 pending，不受影响。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live handoff intent gating verification",
+          "command": "psql production events 表 + fix-verification-3cases run.py --track",
+          "result": "Zendesk 13010/13006 missing-info 公开回复 delivered 后 handoff 事件为零、内部邮件 not_ready、工单 pending；分配动作确认仅发生在最终 fraud_handoff_confirmation（p2-84 既有链路）。"
         }
       ],
       "source_refs": [
@@ -9969,6 +10003,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "reopened",
           "summary": "13004 验收发现：handoff 对所有 public 交付触发（_hand_off_fraud_review_after_public_reply 未接收 reply_intent，仅判 execution_action=fraud_account），request_missing_information 追问回复也过早指派 reviewer，客户补充信息后被 ownership guard fail-closed。重新打开修复：handoff 仅在最终 fraud_handoff_confirmation 公开交付后触发；指派成功后 Case lifecycle 置 human_review_required（直接写，不走 escalate_account_case_to_human_review），后续客户评论 ignored_inactive_case 不产生告警。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "completed",
+          "summary": "handoff 改为仅 fraud_handoff_confirmation 公开交付触发并直写 lifecycle（PR#960，部署 e61a8490a6c8）。live 实证：13010 与 13006 追问回复公开交付后零 zendesk_fraud_review_handoff 事件、automation_status 保持 automation、未提前指派 reviewer；13005-13007 复验中 fraud 流程正常等待客户补信息，未再出现 13004 式过早接管。"
         }
       ],
       "legacy_refs": [],
