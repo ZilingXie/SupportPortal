@@ -6,6 +6,8 @@
 
 > **v2 刷新说明（2026-08-24）：** 按用户决策新增第 0 节总目标与路线；修正第 1 节过时内容（鉴权已统一为单一 `X-N8n-Request-Token`，preproduction allowlist 已支持 `*`）；T1–T6 状态改判（第 3 节）；新增任务包 T7（preproduction 配置统一）与 T8（production 最终切流与旧端点下线）。
 
+> **v3 刷新说明（2026-08-24）：** 路线改为直接用 `/automation/production` 替代 `/production`（七阶段搬迁，实现方式=纯移植、镜像物理排除契约保留）。Phase A–E 已全部合并（PR #921/#923/#927/#929/#933，任务 p2-108/109/110/112/113）；Phase F=EC2 开关启用邮箱闭环；Phase G=切流（本节路线第 2 步）。
+
 ---
 
 ## 0. 总目标与当前方向（2026-08-24 用户决策）
@@ -17,15 +19,20 @@
 1. **preproduction 与 production 配置做成一模一样**。只保留架构固有差异：独立 schema/表/队列/网络；production 镜像级物理排除 rerun/reset（preproduction 保留 rerun）。进入的 case 由 **n8n 控制**：production 环境收 production case；preproduction 收 n8n 筛选后的 case（服务端 allowlist 设 `*` 放行，过滤交给 n8n 侧 IF 门）。
 2. **production 最后切流上线**，避免与现有 `/production` 冲突：切流期间旧端点保持不动，按 Company ID 互斥名单灰度单向搬迁，全量并稳定后再下线旧端点。
 
-**路线顺序：**
+**路线顺序（v3，直接替代 /production）：**
 
 ```
-T7 preproduction 配置统一 + n8n 筛选流量影子验收
-  → T8 production 最终切流（Company ID 互斥灰度，最后上线）
-    → 观察期 → 旧端点（/account、/production）下线
+Phase A–E（已合并 #921/#923/#927/#929/#933）：parity worker+建表 → intake 旧栈语义
+  → 评论摄入+回复链 → 状态同步 → Slack 协作（调查回合+guardrail/final_approve）
+Phase F 邮箱闭环：EC2 .env 设 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED=1 并重启 worker
+  （fraud 裁决/enablement 完成自动闭环；[automation] 主题前缀与旧栈空前缀互不干扰）
+Phase G 切流：EC2 部署最新 release → n8n 四组换 URL（见下）→ Company ID 互斥灰度
+  → 观察期 → 旧端点（/account、/production）下线
 ```
 
-**当前状态（2026-08-24）：** 三环境基础设施已上线（release-005 起，release-011=`478b45d` 含 p2-94/95）；staging 已切公网 200；preproduction 待重测；production 有一笔执行 `exec-bf0c82e1` 待 reconcile 后重试；`/automation/test` 回归链路（p2-97–p2-101）已建并在 EC2 上线；PR #899（p2-104）待用户部署。旧 `/account`、`/production` 仍是主链路。
+**n8n 切流四组 URL（cutover 文档 §2 为准）：** ① intake：`new_case_2_supporportal_prod` → `/automation/production/v1/cases`（body 五字段不动，无需 `comment_visibility`）；② `commen_sync` production origin → `/automation/production/api/integrations/zendesk/account-cases/{id}/comments`（membership GET 同构）；③ `case_status_sync` production origin → `.../status`；④ Slack App Mention/Interaction → `/automation/production/api/integrations/slack/engineer-cases/messages|actions`（出站直发 Slack 无 n8n 改动）。全部带 `X-N8n-Request-Token` 头。
+
+**当前状态（2026-08-24 v3）：** 代码侧 A–E 全部合并待 EC2 部署；`verify_split_environments.sh` 已含 parity 端点鉴权负例探针；用户待办=部署（deploy_ec2 --environment production 或蓝绿）→ Phase F 开关 → 受控工单全链验收 → Phase G 灰度切流。
 
 ---
 
