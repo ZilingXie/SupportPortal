@@ -8,6 +8,7 @@ import signal
 import sys
 import threading
 import time
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -147,6 +148,7 @@ from backend.services.internal_email_payload import (
     InternalEmailPayloadUpgradeError,
     upgrade_internal_email_payload,
 )
+from backend.services.graph_mail import send_graph_mail
 from backend.services.quota_automation import (
     QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX,
 )
@@ -2285,6 +2287,60 @@ def _process_claimed_account_reply_jobs(
                 )
 
 
+def _drain_production_automation_classification_emails(*, limit: int = 20) -> None:
+    deliveries = ticket_repository.list_account_automation_classification_emails(
+        statuses=("queued",), limit=limit
+    )
+    for delivery in deliveries:
+        account_case_id = str(delivery.get("account_case_id") or "").strip()
+        claimed = ticket_repository.claim_account_automation_classification_email(
+            account_case_id=account_case_id,
+            claimed_at=now_iso(),
+        )
+        if not claimed or not claimed.get("claimed"):
+            continue
+        status = "delivered"
+        failure_code: str | None = None
+        try:
+            send_graph_mail(
+                to_address=str(claimed.get("recipient") or "").strip(),
+                subject=str(claimed.get("subject") or "").strip(),
+                body=str(claimed.get("body") or ""),
+                content_type="Text",
+            )
+        except urllib.error.HTTPError as exc:
+            status = "outcome_unknown" if int(exc.code or 0) >= 500 else "failed"
+            failure_code = f"graph_http_{exc.code}"
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            status = "outcome_unknown"
+            failure_code = f"graph_transport_{type(exc).__name__}"
+        except ValueError as exc:
+            status = "failed"
+            failure_code = f"graph_config_{type(exc).__name__}"
+        except Exception as exc:
+            status = "failed"
+            failure_code = f"graph_unexpected_{type(exc).__name__}"
+
+        ticket_repository.complete_account_automation_classification_email(
+            account_case_id=account_case_id,
+            status=status,
+            failure_code=failure_code,
+            completed_at=now_iso(),
+        )
+        if status == "delivered":
+            LOGGER.info(
+                "production_automation_classification_email_delivered account_case_id=%s",
+                account_case_id,
+            )
+        else:
+            LOGGER.error(
+                "production_automation_classification_email_%s account_case_id=%s failure_code=%s",
+                status,
+                account_case_id,
+                failure_code,
+            )
+
+
 def _run_account_reply_poller(interval_seconds: float) -> None:
     LOGGER.info("Account reply poller started with interval_seconds=%s.", interval_seconds)
     while not SHUTTING_DOWN:
@@ -2299,6 +2355,7 @@ def _run_account_reply_poller(interval_seconds: float) -> None:
                     limit=25,
                     timestamp=now_iso(),
                 )
+                _drain_production_automation_classification_emails(limit=20)
             _process_claimed_account_reply_jobs(
                 from_status=ACCOUNT_REPLY_PERSONA_V8_QUEUED,
                 to_status=ACCOUNT_REPLY_PERSONA_V8_PREPARING,

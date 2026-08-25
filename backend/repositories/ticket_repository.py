@@ -43,6 +43,9 @@ from backend.services.account_zendesk_comments import (
     build_conversation_revision,
 )
 from backend.services.account_slack_n8n import build_account_slack_event
+from backend.services.production_automation_classification_email import (
+    build_production_automation_classification_email,
+)
 from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
@@ -123,6 +126,32 @@ _ACCOUNT_SLACK_DELIVERY_FIELDS = (
     "created_at",
     "updated_at",
 )
+
+
+_ACCOUNT_AUTOMATION_CLASSIFICATION_EMAIL_FIELDS = (
+    "account_case_id",
+    "processing_profile",
+    "zendesk_ticket_id",
+    "zendesk_ticket_url",
+    "question",
+    "classification_path",
+    "recipient",
+    "subject",
+    "body",
+    "status",
+    "failure_code",
+    "confirmed_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _account_automation_classification_email_from_row(
+    row: tuple[Any, ...] | None,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return dict(zip(_ACCOUNT_AUTOMATION_CLASSIFICATION_EMAIL_FIELDS, row))
 
 
 def _account_slack_delivery_from_row(
@@ -2610,6 +2639,26 @@ class TicketRepository(Protocol):
     ) -> dict[str, Any] | None:
         ...
 
+    def list_account_automation_classification_emails(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def claim_account_automation_classification_email(
+        self, *, account_case_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def complete_account_automation_classification_email(
+        self,
+        *,
+        account_case_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        ...
+
     def get_account_case_details(
         self, identifiers: list[str]
     ) -> dict[str, dict[str, Any]]:
@@ -3123,6 +3172,57 @@ class InMemoryTicketRepository:
             raise ValueError("invalid Account Slack delivery status")
         with self._assignment_lock:
             delivery = self._account_slack_deliveries.get(str(event_id).strip())
+            if delivery is None:
+                return None
+            if str(delivery.get("status") or "").strip().lower() == "delivered":
+                return copy.deepcopy(delivery)
+            delivery.update(
+                status=normalized_status,
+                failure_code=str(failure_code or "").strip() or None,
+                confirmed_at=completed_at if normalized_status == "delivered" else None,
+                updated_at=completed_at,
+            )
+            return copy.deepcopy(delivery)
+
+    def list_account_automation_classification_emails(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        allowed = {str(status).strip().lower() for status in statuses if str(status).strip()}
+        with self._assignment_lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._account_automation_classification_emails.values()
+                if str(row.get("status") or "").strip().lower() in allowed
+            ]
+        rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("account_case_id") or "")))
+        return rows[: max(1, min(int(limit), 500))]
+
+    def claim_account_automation_classification_email(
+        self, *, account_case_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        normalized_id = str(account_case_id or "").strip()
+        with self._assignment_lock:
+            delivery = self._account_automation_classification_emails.get(normalized_id)
+            if delivery is None:
+                return None
+            claimed = str(delivery.get("status") or "").strip().lower() == "queued"
+            if claimed:
+                delivery.update(status="pending", updated_at=claimed_at)
+            return {**copy.deepcopy(delivery), "claimed": claimed}
+
+    def complete_account_automation_classification_email(
+        self,
+        *,
+        account_case_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Automation classification email status")
+        with self._assignment_lock:
+            delivery = self._account_automation_classification_emails.get(str(account_case_id).strip())
             if delivery is None:
                 return None
             if str(delivery.get("status") or "").strip().lower() == "delivered":
@@ -3672,6 +3772,7 @@ class InMemoryTicketRepository:
         self._account_reply_jobs: dict[str, dict[str, Any]] = {}
         self._account_zendesk_comment_deliveries: dict[tuple[str, str], dict[str, Any]] = {}
         self._account_slack_deliveries: dict[str, dict[str, Any]] = {}
+        self._account_automation_classification_emails: dict[str, dict[str, Any]] = {}
         self._engineer_slack_events: dict[str, dict[str, Any]] = {}
         self._account_case_comments: dict[str, dict[str, dict[str, Any]]] = {}
         self._account_case_comment_sync: dict[str, dict[str, Any]] = {}
@@ -6989,6 +7090,17 @@ class InMemoryTicketRepository:
         saved.setdefault("updated_at", saved["created_at"])
         with self._assignment_lock:
             self._billing_tickets[billing_ticket_id] = saved
+            notification = build_production_automation_classification_email(saved)
+            if notification is not None:
+                self._account_automation_classification_emails.setdefault(
+                    str(notification["account_case_id"]),
+                    {
+                        **copy.deepcopy(notification),
+                        "confirmed_at": None,
+                        "created_at": saved["updated_at"],
+                        "updated_at": saved["updated_at"],
+                    },
+                )
 
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ticket = self._billing_tickets.get(str(billing_ticket_id).strip())
@@ -7982,6 +8094,124 @@ class PostgresTicketRepository:
                 return _account_slack_delivery_from_row(row)
 
         return self._run_with_connection_retry("complete_account_slack_delivery", _operation)
+
+    def list_account_automation_classification_emails(
+        self, *, statuses: tuple[str, ...], limit: int = 100
+    ) -> list[dict[str, Any]]:
+        normalized_statuses = tuple(
+            dict.fromkeys(
+                str(status or "").strip().lower()
+                for status in statuses
+                if str(status or "").strip()
+            )
+        )
+        if not normalized_statuses:
+            return []
+        columns = ", ".join(_ACCOUNT_AUTOMATION_CLASSIFICATION_EMAIL_FIELDS)
+        safe_limit = max(1, min(int(limit), 500))
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + columns + " FROM {} "
+                        "WHERE status = ANY(%s::TEXT[]) "
+                        "ORDER BY created_at, account_case_id LIMIT %s"
+                    ).format(self._table("support_account_automation_classification_emails")),
+                    (list(normalized_statuses), safe_limit),
+                )
+                return [
+                    record
+                    for row in cur.fetchall()
+                    for record in [_account_automation_classification_email_from_row(row)]
+                    if record is not None
+                ]
+
+        return self._run_with_connection_retry(
+            "list_account_automation_classification_emails", _operation
+        )
+
+    def claim_account_automation_classification_email(
+        self, *, account_case_id: str, claimed_at: str
+    ) -> dict[str, Any] | None:
+        normalized_id = str(account_case_id or "").strip()
+        if not normalized_id:
+            return None
+        columns = ", ".join(_ACCOUNT_AUTOMATION_CLASSIFICATION_EMAIL_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='pending', updated_at=%s "
+                        "WHERE account_case_id=%s AND status='queued' RETURNING " + columns
+                    ).format(self._table("support_account_automation_classification_emails")),
+                    (claimed_at, normalized_id),
+                )
+                row = cur.fetchone()
+                claimed = row is not None
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE account_case_id=%s").format(
+                            self._table("support_account_automation_classification_emails")
+                        ),
+                        (normalized_id,),
+                    )
+                    row = cur.fetchone()
+                record = _account_automation_classification_email_from_row(row)
+                if record is not None:
+                    record["claimed"] = claimed
+                return record
+
+        return self._run_with_connection_retry(
+            "claim_account_automation_classification_email", _operation
+        )
+
+    def complete_account_automation_classification_email(
+        self,
+        *,
+        account_case_id: str,
+        status: str,
+        failure_code: str | None,
+        completed_at: str,
+    ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Automation classification email status")
+        columns = ", ".join(_ACCOUNT_AUTOMATION_CLASSIFICATION_EMAIL_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s, failure_code=%s, "
+                        "confirmed_at=CASE WHEN %s='delivered' THEN %s::timestamptz ELSE NULL END, "
+                        "updated_at=%s WHERE account_case_id=%s AND status<>'delivered' "
+                        "RETURNING " + columns
+                    ).format(self._table("support_account_automation_classification_emails")),
+                    (
+                        normalized_status,
+                        str(failure_code or "").strip() or None,
+                        normalized_status,
+                        completed_at,
+                        completed_at,
+                        str(account_case_id or "").strip(),
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        sql.SQL("SELECT " + columns + " FROM {} WHERE account_case_id=%s").format(
+                            self._table("support_account_automation_classification_emails")
+                        ),
+                        (str(account_case_id or "").strip(),),
+                    )
+                    row = cur.fetchone()
+                return _account_automation_classification_email_from_row(row)
+
+        return self._run_with_connection_retry(
+            "complete_account_automation_classification_email", _operation
+        )
 
     def requeue_account_slack_delivery(
         self, *, event_id: str, requeued_at: str
@@ -11268,6 +11498,31 @@ class PostgresTicketRepository:
                     ).format(
                         self._table("support_account_slack_deliveries"),
                         self._table("support_account_zendesk_comment_deliveries"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE TABLE IF NOT EXISTS {} ("
+                        "account_case_id TEXT PRIMARY KEY REFERENCES {}(account_case_id) ON DELETE CASCADE, "
+                        "processing_profile TEXT NOT NULL CHECK (processing_profile = 'production'), "
+                        "zendesk_ticket_id TEXT, zendesk_ticket_url TEXT, question TEXT NOT NULL, "
+                        "classification_path TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT NOT NULL, "
+                        "body TEXT NOT NULL, "
+                        "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')), "
+                        "failure_code TEXT, confirmed_at TIMESTAMPTZ, "
+                        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                        ")"
+                    ).format(
+                        self._table("support_account_automation_classification_emails"),
+                        self._table("support_account_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (status, created_at, account_case_id)"
+                    ).format(
+                        sql.Identifier("idx_support_account_automation_classification_emails_status"),
+                        self._table("support_account_automation_classification_emails"),
                     )
                 )
                 cur.execute(
@@ -15618,6 +15873,33 @@ class PostgresTicketRepository:
                         account_case_upsert_sql(self._table("support_account_cases")),
                         _account_case_persisted_values(billing_ticket, created_at=created_at, updated_at=updated_at),
                     )
+                    notification = build_production_automation_classification_email(billing_ticket)
+                    if notification is not None:
+                        cur.execute(
+                            sql.SQL(
+                                "INSERT INTO {} ("
+                                "account_case_id, processing_profile, zendesk_ticket_id, zendesk_ticket_url, "
+                                "question, classification_path, recipient, subject, body, status, failure_code, "
+                                "created_at, updated_at"
+                                ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                                "ON CONFLICT (account_case_id) DO NOTHING"
+                            ).format(self._table("support_account_automation_classification_emails")),
+                            (
+                                notification["account_case_id"],
+                                notification["processing_profile"],
+                                notification["zendesk_ticket_id"],
+                                notification["zendesk_ticket_url"],
+                                notification["question"],
+                                notification["classification_path"],
+                                notification["recipient"],
+                                notification["subject"],
+                                notification["body"],
+                                notification["status"],
+                                notification["failure_code"],
+                                updated_at,
+                                updated_at,
+                            ),
+                        )
 
         self._run_with_connection_retry("save_billing_ticket", _operation)
 
