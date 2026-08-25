@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T09:52:43Z",
-  "source_base_commit": "1582840e3932d480f05019a17f71fae7d4aefab9",
-  "registry_digest": "ee012f3991320cc27fe25ce45572ac483293af21d3c50d2a171de52072bbcb60",
+  "generated_at": "2026-08-25T09:56:13Z",
+  "source_base_commit": "0013916c89ff1cb64921a1bad90a55dcada21da8",
+  "registry_digest": "d0dd4080e152be8e7bcc68780734a4572e8a393e663e856f8957bc27d796b196",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1835,6 +1835,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production API Prompt runtime service identity",
           "command": ".venv/bin/python -m unittest backend.tests.test_startup_repository_fallbacks backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_retries_transient_startup_failure backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_image backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_build_or_release backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_restarting_worker backend.tests.test_single_host_compose.SingleHostComposeTests.test_prompt_runtime_release_is_shared_by_all_llm_services_only",
           "details": "API schema-check startup honors PROMPT_RUNTIME_SERVICE=api-production while preserving api default；部署门禁继续拒绝 stale image/build/release 与 worker restart，Compose 八 runtime service labels 保持一致。"
+        },
+        {
+          "type": "deployment",
+          "label": "/production fast deployment",
+          "command": "scripts/ops/deploy_surfaces_ec2.sh --skip-split",
+          "details": "EC2 无外层 timeout 部署成功：公网 /health build=76d22d5ae1a3、Prompt Release=pr-c9b3a291ecf1；/production/ 200；主栈五个与 production 三个 runtime 使用同一镜像/build/release，RestartCount=0，workers 稳定观察 10 秒；主库与 production DB active release 回读一致且 Fraud v4/code-hash validation=loaded。/automation/production/health 200 并按 --skip-split 保持原 build 48ca775d09ad；未执行客户 Ticket。日志 /tmp/deploy-surfaces-20260825-094728/main-stack.log。"
         },
         {
           "type": "test",
@@ -6263,7 +6269,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户 2026-08-24 决策（终态=三环境上线并完全替代旧 /account 与 /production，本轮先行 /automation/production 替代 /production）的分阶段搬迁计划 Phase A：为 split production 环境补齐承载旧栈管线的数据与运行地基。新增 automation_production_worker（完整 app 镜像跑 backend.worker，绑定 supportportal_production schema，队列/事件通道/内部邮件主题命名空间与旧 production 栈隔离，RUNTIME_SCHEMA_MODE=check fail-fast）、一次性幂等的 supportportal_production 全套 account-case 建表脚本（独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色，runtime 授权自动跟随）、deploy_ec2 production split 部署集成（worker 纳入服务清单、up 前自动 bootstrap、worker 用容器运行判定代替 HTTP 健康探测）与蓝绿脚本 worker 覆盖（APP_RUNTIME_IMAGE 本地存在性校验 + 切换后 recreate worker）。旧栈 /production 与 /account 零行为变化；worker 的 reply/job/Slack 消费为空转待后续 Phase（B-F）接线。",
-      "next_action": "合并 production API Prompt runtime service label 修复后，不加外层 timeout 重跑 scripts/ops/deploy_surfaces_ec2.sh --skip-split；确认主栈五个 runtime 与 /production 三个 runtime 使用同一镜像/build/Prompt Release、workers 连续稳定且 RestartCount=0、Production active Fraud Prompt 为 v4 七字段并与代码 hash 一致。未获批新测试 Ticket 前不做客户链 readback；不重跑 AC-12993。",
+      "next_action": "等待用户提供获批的新测试 Ticket 后，对已上线 /production 执行一次客户链 readback；不重跑 AC-12993。随后继续 p2-108 的 /automation/production 蓝绿上线验证，split production 当前保持 build 48ca775d09ad。",
       "acceptance_criteria": [
         "automation_production_worker 服务存在：automation profile、APP_RUNTIME_IMAGE 完整镜像、python -m backend.worker、TICKET_DB_DSN/SCHEMA 绑定 supportportal_production、队列/事件通道为 automation_production 专属（support.ticket_queries.automation_production 等，不与旧栈 support.ticket_queries.production 冲突）、INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]、reply poller 开启、邮箱回复消费默认关闭（AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED）。",
         "deployment/bootstrap_automation_production_schema.sh：以独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色对 supportportal_production 跑 runtime_bootstrap 全量 DDL（幂等），不得 fallback 到全局 TICKET_DB_MIGRATION_DSN；带同库校验与 staging 主库误指防护，deploy_ec2 production split 部署在 up 之前执行它。",
@@ -6302,6 +6308,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production API Prompt runtime service identity",
           "command": ".venv/bin/python -m unittest backend.tests.test_startup_repository_fallbacks backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_retries_transient_startup_failure backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_image backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_stale_build_or_release backend.tests.test_deploy_ec2.DeployEc2ScriptTests.test_prompt_runtime_verification_rejects_restarting_worker backend.tests.test_single_host_compose.SingleHostComposeTests.test_prompt_runtime_release_is_shared_by_all_llm_services_only",
           "details": "API schema-check startup honors PROMPT_RUNTIME_SERVICE=api-production while preserving api default；部署门禁继续拒绝 stale image/build/release 与 worker restart，Compose 八 runtime service labels 保持一致。"
+        },
+        {
+          "type": "deployment",
+          "label": "/production fast deployment",
+          "command": "scripts/ops/deploy_surfaces_ec2.sh --skip-split",
+          "details": "EC2 无外层 timeout 部署成功：公网 /health build=76d22d5ae1a3、Prompt Release=pr-c9b3a291ecf1；/production/ 200；主栈五个与 production 三个 runtime 使用同一镜像/build/release，RestartCount=0，workers 稳定观察 10 秒；主库与 production DB active release 回读一致且 Fraud v4/code-hash validation=loaded。/automation/production/health 200 并按 --skip-split 保持原 build 48ca775d09ad；未执行客户 Ticket。日志 /tmp/deploy-surfaces-20260825-094728/main-stack.log。"
         }
       ],
       "source_refs": [
@@ -6319,6 +6331,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-24",
       "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "production_fast_deploy_completed",
+          "summary": "合并跨库 version remap 与 api-production runtime label 修复后，/production 成功上线 build 76d22d5ae1a3 与 Prompt Release pr-c9b3a291ecf1；八 runtime provenance、worker 稳定性、双库 active release、Fraud v4 hash 和公网健康门禁通过，split /automation/production 未改动。"
+        },
         {
           "at": "2026-08-25",
           "event": "production_api_prompt_runtime_service_label",
