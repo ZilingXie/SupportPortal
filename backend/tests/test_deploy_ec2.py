@@ -135,10 +135,12 @@ class DeployEc2ScriptTests(unittest.TestCase):
                                 "automation_preproduction_queue": os.environ.get("AUTOMATION_PREPRODUCTION_QUEUE"),
                                 "automation_preproduction_event_channel": os.environ.get("AUTOMATION_PREPRODUCTION_EVENT_CHANNEL"),
                                 "automation_production_db_dsn": os.environ.get("AUTOMATION_PRODUCTION_DB_DSN"),
+                                "automation_production_db_migration_dsn": os.environ.get("AUTOMATION_PRODUCTION_DB_MIGRATION_DSN"),
                                 "automation_production_db_schema": os.environ.get("AUTOMATION_PRODUCTION_DB_SCHEMA"),
                                 "automation_production_db_table": os.environ.get("AUTOMATION_PRODUCTION_DB_TABLE"),
                                 "automation_production_queue": os.environ.get("AUTOMATION_PRODUCTION_QUEUE"),
                                 "automation_production_event_channel": os.environ.get("AUTOMATION_PRODUCTION_EVENT_CHANNEL"),
+                                "ticket_db_migration_dsn": os.environ.get("TICKET_DB_MIGRATION_DSN"),
                                 "prompt_release_id": os.environ.get("PROMPT_RELEASE_ID"),
                                 "prompt_release_required": os.environ.get("PROMPT_RELEASE_REQUIRED"),
                             }
@@ -1321,7 +1323,8 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 """\
                 TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
                 PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
-                TICKET_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets-production
+                TICKET_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets
+                AUTOMATION_PRODUCTION_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets-production
                 PGVECTOR_DSN=postgresql://rag:test@db.local/rag
                 APP_RUNTIME_IMAGE=registry.example/app@sha256:app-production
                 ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
@@ -1342,6 +1345,19 @@ class DeployEc2ScriptTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        bootstrap_call = next(
+            call
+            for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            if "runtime_bootstrap" in call["argv"]
+        )
+        self.assertEqual(
+            bootstrap_call["automation_production_db_migration_dsn"],
+            "postgresql://migration:test@db.local/tickets-production",
+        )
+        self.assertEqual(
+            bootstrap_call["ticket_db_migration_dsn"],
+            "postgresql://migration:test@db.local/tickets-production",
+        )
         up_call = next(
             call
             for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
@@ -1352,6 +1368,79 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(up_call["automation_production_db_table"], "automation_executions_production")
         self.assertEqual(up_call["automation_production_queue"], "automation.production")
         self.assertEqual(up_call["automation_production_event_channel"], "automation.events.production")
+
+    def test_production_requires_dedicated_migration_dsn_before_compose_up(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                TICKET_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets-production
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                APP_RUNTIME_IMAGE=registry.example/app@sha256:app-production
+                ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
+                AUTOMATION_PRODUCTION_IMAGE=registry.example/automation@sha256:automation-production
+                ROUTE_PRODUCTION_SERVICE_TOKEN=route-token
+                n8n_request_token=execution-token
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--environment",
+            "production",
+            "--skip-pull",
+            extra_env={"DEPLOY_PRODUCTION_APPROVED": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AUTOMATION_PRODUCTION_DB_MIGRATION_DSN is required", result.stdout + result.stderr)
+        self.assertFalse(
+            any(
+                "up" in call["argv"]
+                for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            )
+        )
+
+    def test_production_rejects_dedicated_migration_dsn_for_another_database(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                TICKET_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets-production
+                AUTOMATION_PRODUCTION_DB_MIGRATION_DSN=postgresql://migration:test@db.local/tickets
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                APP_RUNTIME_IMAGE=registry.example/app@sha256:app-production
+                ROUTE_PRODUCTION_IMAGE=registry.example/route@sha256:route-production
+                AUTOMATION_PRODUCTION_IMAGE=registry.example/automation@sha256:automation-production
+                ROUTE_PRODUCTION_SERVICE_TOKEN=route-token
+                n8n_request_token=execution-token
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--environment",
+            "production",
+            "--skip-pull",
+            extra_env={"DEPLOY_PRODUCTION_APPROVED": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("AUTOMATION_PRODUCTION_DB_MIGRATION_DSN must target the same database", output)
+        self.assertIn("'tickets' vs 'tickets-production'", output)
+        self.assertFalse(
+            any(
+                "up" in call["argv"]
+                for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+            )
+        )
 
     def test_split_deploy_honors_branch_pull_before_loading_images(self) -> None:
         remote = self.root / "remote.git"

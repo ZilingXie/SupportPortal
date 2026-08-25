@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T03:15:18Z",
-  "source_base_commit": "6168e5b46d37e01f874eff05fc8c5349dd284b7a",
-  "registry_digest": "a363efc18b9c575e8b76d7245a51bc33dbfc9cff7f3a939c8c646b50891efabe",
+  "generated_at": "2026-08-25T03:57:46Z",
+  "source_base_commit": "48ca775d09adb6024aa54634e539ec2bb6b0ce25",
+  "registry_digest": "a6c5a8ad7174273fcbd6707364fecddf69b1843c3c5e57cf7363a8417171b8ed",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1741,6 +1741,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Split deployment and compose contracts",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_split_environment_deployment backend.tests.test_build_automation_release",
           "details": "66 项通过：compose 七个 automation profile 服务与 worker 契约（镜像/DB 绑定/队列隔离/邮件命名空间/poller 门控/.msgraph 挂载/网络）、蓝绿契约（worker recreate+APP_RUNTIME_IMAGE 校验）、bootstrap 脚本契约（migration DSN 必填/同库校验/防误指 staging 主库/deploy 集成）、deploy_ec2 假命令回归（production 路径 bootstrap 前置+worker 服务清单+*_worker 健康判定）。"
+        },
+        {
+          "type": "test",
+          "label": "Production migration DSN isolation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2",
+          "details": "77 项通过：production bootstrap 只读取 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN；即使全局 TICKET_DB_MIGRATION_DSN 指向 supportportal，专用值仍映射到一次性 runtime_bootstrap 的 TICKET_DB_MIGRATION_DSN 并目标 supportportal_production；专用值缺失或指向其他数据库时在任何 Compose up 前 fail closed，蓝绿 candidate/worker/cutover 顺序与 Compose 契约保持通过。"
         },
         {
           "type": "test",
@@ -6083,11 +6089,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "/automation/production 替代 /production：Phase A 地基（schema bootstrap + parity worker + 部署覆盖）",
       "status": "active",
       "owner": "zac",
-      "summary": "按用户 2026-08-24 决策（终态=三环境上线并完全替代旧 /account 与 /production，本轮先行 /automation/production 替代 /production）的分阶段搬迁计划 Phase A：为 split production 环境补齐承载旧栈管线的数据与运行地基。新增 automation_production_worker（完整 app 镜像跑 backend.worker，绑定 supportportal_production schema，队列/事件通道/内部邮件主题命名空间与旧 production 栈隔离，RUNTIME_SCHEMA_MODE=check fail-fast）、一次性幂等的 supportportal_production 全套 account-case 建表脚本（migration DSN 角色，runtime 授权自动跟随）、deploy_ec2 production split 部署集成（worker 纳入服务清单、up 前自动 bootstrap、worker 用容器运行判定代替 HTTP 健康探测）与蓝绿脚本 worker 覆盖（APP_RUNTIME_IMAGE 本地存在性校验 + 切换后 recreate worker）。旧栈 /production 与 /account 零行为变化；worker 的 reply/job/Slack 消费为空转待后续 Phase（B-F）接线。",
-      "next_action": "Phase A 合并后待用户侧 EC2 部署验证（deploy_ec2 --environment production 或蓝绿脚本：bootstrap 建表、worker 容器运行、verify_split_environments 全绿、旧栈不受影响）。随后进入 Phase B：intake 执行语义按旧栈（编排模块复用 services 层：四类 active 字段抽取→追问 reply job/内部邮件+确认 reply job、ownership gate、失败分支走 #916 human queue escalation、quota→human_review+回人工队列、not_automated→Engineer Case），需同步调整 Dockerfile.automation production 角色的模块删除清单（现物理排除 worker.py/account_reply_jobs.py/automation_persona.py 等 Phase B 依赖）与 automation_contracts.py 的 comment_visibility 契约（production 废除即时 comment 副作用）。",
+      "summary": "按用户 2026-08-24 决策（终态=三环境上线并完全替代旧 /account 与 /production，本轮先行 /automation/production 替代 /production）的分阶段搬迁计划 Phase A：为 split production 环境补齐承载旧栈管线的数据与运行地基。新增 automation_production_worker（完整 app 镜像跑 backend.worker，绑定 supportportal_production schema，队列/事件通道/内部邮件主题命名空间与旧 production 栈隔离，RUNTIME_SCHEMA_MODE=check fail-fast）、一次性幂等的 supportportal_production 全套 account-case 建表脚本（独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色，runtime 授权自动跟随）、deploy_ec2 production split 部署集成（worker 纳入服务清单、up 前自动 bootstrap、worker 用容器运行判定代替 HTTP 健康探测）与蓝绿脚本 worker 覆盖（APP_RUNTIME_IMAGE 本地存在性校验 + 切换后 recreate worker）。旧栈 /production 与 /account 零行为变化；worker 的 reply/job/Slack 消费为空转待后续 Phase（B-F）接线。",
+      "next_action": "2026-08-25 EC2 蓝绿部署因全局 TICKET_DB_MIGRATION_DSN 指向 supportportal、production runtime 指向 supportportal_production 而在 bootstrap 同库校验处停止，未启动 candidate 或切流。待本修复合并后，在 EC2 .env 配置独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN（目标 supportportal_production）并重新执行 release-20260825-002 蓝绿部署；必须确认 ticket 10/10、knowledge 22/22、automation_production_worker 稳定、verify_split_environments 全绿及真实异步回复 readback，旧 /production 保持不受影响。",
       "acceptance_criteria": [
         "automation_production_worker 服务存在：automation profile、APP_RUNTIME_IMAGE 完整镜像、python -m backend.worker、TICKET_DB_DSN/SCHEMA 绑定 supportportal_production、队列/事件通道为 automation_production 专属（support.ticket_queries.automation_production 等，不与旧栈 support.ticket_queries.production 冲突）、INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]、reply poller 开启、邮箱回复消费默认关闭（AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED）。",
-        "deployment/bootstrap_automation_production_schema.sh：以 TICKET_DB_MIGRATION_DSN 角色对 supportportal_production 跑 runtime_bootstrap 全量 DDL（幂等），带同库校验与 staging 主库误指防护；deploy_ec2 production split 部署在 up 之前执行它。",
+        "deployment/bootstrap_automation_production_schema.sh：以独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色对 supportportal_production 跑 runtime_bootstrap 全量 DDL（幂等），不得 fallback 到全局 TICKET_DB_MIGRATION_DSN；带同库校验与 staging 主库误指防护，deploy_ec2 production split 部署在 up 之前执行它。",
         "deploy_ec2 production：SPLIT_SERVICES 含 automation_production_worker、APP_RUNTIME_IMAGE 缺失 fail-closed、wait_for_split_service 对 *_worker 服务用容器运行状态判定；蓝绿脚本校验 APP_RUNTIME_IMAGE 本地存在并在切换后将 split worker 按当前 APP_RUNTIME_IMAGE recreate。",
         "旧栈 /production、/account 与 staging/preproduction split 环境不受影响；worker 在空 schema 上只空转（无 Zendesk/邮件/Slack 出站副作用）。"
       ],
@@ -6098,6 +6104,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Split deployment and compose contracts",
           "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_split_environment_deployment backend.tests.test_build_automation_release",
           "details": "66 项通过：compose 七个 automation profile 服务与 worker 契约（镜像/DB 绑定/队列隔离/邮件命名空间/poller 门控/.msgraph 挂载/网络）、蓝绿契约（worker recreate+APP_RUNTIME_IMAGE 校验）、bootstrap 脚本契约（migration DSN 必填/同库校验/防误指 staging 主库/deploy 集成）、deploy_ec2 假命令回归（production 路径 bootstrap 前置+worker 服务清单+*_worker 健康判定）。"
+        },
+        {
+          "type": "test",
+          "label": "Production migration DSN isolation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2",
+          "details": "77 项通过：production bootstrap 只读取 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN；即使全局 TICKET_DB_MIGRATION_DSN 指向 supportportal，专用值仍映射到一次性 runtime_bootstrap 的 TICKET_DB_MIGRATION_DSN 并目标 supportportal_production；专用值缺失或指向其他数据库时在任何 Compose up 前 fail closed，蓝绿 candidate/worker/cutover 顺序与 Compose 契约保持通过。"
         }
       ],
       "source_refs": [
@@ -6111,8 +6123,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/deploy_automation_release.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-08-24",
+      "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "production_migration_dsn_isolation",
+          "summary": "EC2 release-20260825-002 蓝绿部署在 schema bootstrap 处暴露全局 TICKET_DB_MIGRATION_DSN 与 production runtime 分属 supportportal/supportportal_production；新增必填 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN，无全局 fallback，并保持同库校验、candidate 前失败边界和长期 runtime 无 DDL 凭据。"
+        },
         {
           "at": "2026-08-24",
           "event": "created",
