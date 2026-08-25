@@ -10,7 +10,7 @@ from backend.services.account_ai_execution import (
     account_profile_has_primary_credentials,
     invoke_account_json_payload,
 )
-from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import ACCOUNT_EXTRACTOR_SCENARIO, resolve_model_profile
 from backend.services.prompt_runtime import resolve_system_prompt
 from backend.services.prompts.account_routing import (
     ACCOUNT_DETAILED_INVOICE_FIELD_PROMPT_VERSION,
@@ -51,7 +51,7 @@ def extract_detailed_invoice_fields(
     message: str,
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., Any] | None = None,
-    scenario: str = INTENT_ROUTER_SCENARIO,
+    scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
 ) -> DetailedInvoiceFieldExtraction:
     system_prompt = resolve_system_prompt(
         ACCOUNT_DETAILED_INVOICE_FIELD_PROMPT_KEY,
