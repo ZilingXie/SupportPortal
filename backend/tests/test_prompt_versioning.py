@@ -13,6 +13,7 @@ from backend.services.prompt_runtime import (
     reset_prompt_runtime_for_tests,
     resolve_system_prompt,
 )
+from backend.services.prompt_versioning import PromptVersionService
 
 
 class PromptVersioningRepositoryTests(unittest.TestCase):
@@ -33,6 +34,70 @@ class PromptVersioningRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(release)
         self.assertEqual(set(release["items"]), {item["prompt_key"] for item in self.catalog})
         self.assertTrue(all(item["active_version"]["version"] == 1 for item in prompts))
+
+    def _candidate_with_fraud_prompt(self, content: str) -> dict[str, object]:
+        prompt_key = "account-verification-field-extractor-system"
+        active = self.repository.get_managed_prompt(prompt_key)["active_version"]
+        draft = self.repository.create_prompt_draft(
+            prompt_key,
+            content=content,
+            change_note="Test deployment contract",
+            based_on_version=active["version"],
+            actor_id="test",
+            created_at="2026-08-25T00:00:00+00:00",
+        )
+        self.repository.schedule_prompt_version(
+            prompt_key,
+            draft["version"],
+            actor_id="test",
+            scheduled_at="2026-08-25T00:01:00+00:00",
+        )
+        return self.repository.prepare_prompt_release(
+            build_ref="fraud-contract-test",
+            created_at="2026-08-25T00:02:00+00:00",
+        )
+
+    def test_validate_release_accepts_current_fraud_v4_contract(self) -> None:
+        release = self.repository.get_active_prompt_release()
+
+        result = PromptVersionService(self.repository).validate_release(release["release_id"])
+
+        self.assertEqual(result["release_id"], release["release_id"])
+
+    def test_validate_release_rejects_structurally_invalid_fraud_contract(self) -> None:
+        current = next(
+            item["content"]
+            for item in self.catalog
+            if item["prompt_key"] == "account-verification-field-extractor-system"
+        )
+        candidate = self._candidate_with_fraud_prompt(current.replace('"name": {', '"name_broken": {', 1))
+
+        with self.assertRaisesRegex(RuntimeError, "Fraud Account Prompt fields mismatch"):
+            PromptVersionService(self.repository).validate_release(candidate["release_id"])
+
+    def test_validate_release_rejects_legacy_fraud_fields(self) -> None:
+        current = next(
+            item["content"]
+            for item in self.catalog
+            if item["prompt_key"] == "account-verification-field-extractor-system"
+        )
+        candidate = self._candidate_with_fraud_prompt(
+            current.replace('"account_type": {', '"company_information": {', 1)
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Fraud Account Prompt contains legacy fields"):
+            PromptVersionService(self.repository).validate_release(candidate["release_id"])
+
+    def test_validate_release_rejects_fraud_content_that_differs_from_code(self) -> None:
+        current = next(
+            item["content"]
+            for item in self.catalog
+            if item["prompt_key"] == "account-verification-field-extractor-system"
+        )
+        candidate = self._candidate_with_fraud_prompt(current + "\nDeployment-only drift.")
+
+        with self.assertRaisesRegex(RuntimeError, "does not match current code"):
+            PromptVersionService(self.repository).validate_release(candidate["release_id"])
 
     def test_draft_schedule_prepare_and_activate_are_atomic(self) -> None:
         prompt = self.repository.get_managed_prompt("route-system")

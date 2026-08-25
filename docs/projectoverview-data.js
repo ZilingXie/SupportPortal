@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T07:50:37Z",
-  "source_base_commit": "91b72b2aaa7d4e3b2d547faf3a2db8070d9384c3",
-  "registry_digest": "2a29e8a7631c66994849ef53463ecbfa750b167ba57feb27074294b8379440f9",
+  "generated_at": "2026-08-25T07:53:37Z",
+  "source_base_commit": "ecef3812368deeb1ad1aa2a4fd70bf75c5dad5a0",
+  "registry_digest": "5cc9c07dc444b9ac3bbaa2b198a2b69492f8266f9a78778d7076e9d5c649acde",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -592,6 +592,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Fraud Account Prompt v4 official runtime readback",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c 'from backend.services.account_verification_field_extractor import ACCOUNT_VERIFICATION_REQUIRED_GROUPS; from backend.services.prompts.account_routing import build_account_verification_field_system_prompt, ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION; p=build_account_verification_field_system_prompt(); print({\"version\":ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,\"canonical\":all((chr(34)+k+chr(34)) in p for k in ACCOUNT_VERIFICATION_REQUIRED_GROUPS),\"legacy_exact\":{k:(chr(34)+k+chr(34)) in p for k in (\"company_information\",\"contact_information\",\"use_case\",\"payment_information\")}})'",
           "details": "官方单机 local_lightweight 栈于 root_main_ref=23c19e3bd7d4 构建并通过 health=200；official_image_tag、health build ref、runtime build ref 均匹配；prompt_runtime release_id=code-8a779db0373b、status=loaded、prompt_count=28；api、rag_api、rag_worker、worker_query、worker_aux 日志均加载同一 code snapshot。容器内 Prompt 版本为 fraud-account-fields-v4，七个 canonical keys 全部存在，旧四字段均不存在。"
+        },
+        {
+          "type": "test",
+          "label": "Fraud Account v4 deployment gate",
+          "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
+          "details": "Prompt Release validate 在停旧栈前检查 v4 版本常量、Output JSON 精确七字段、legacy fields 缺失及候选内容与代码 SHA-256 一致；production sync 复用同一 validator。部署契约同时覆盖八个 runtime 的同镜像/build/release 门禁和 production active-release 回读。"
         },
         {
           "type": "test",
@@ -1777,6 +1783,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production migration DSN isolation",
           "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2",
           "details": "77 项通过：production bootstrap 只读取 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN；即使全局 TICKET_DB_MIGRATION_DSN 指向 supportportal，专用值仍映射到一次性 runtime_bootstrap 的 TICKET_DB_MIGRATION_DSN 并目标 supportportal_production；专用值缺失或指向其他数据库时在任何 Compose up 前 fail closed，蓝绿 candidate/worker/cutover 顺序与 Compose 契约保持通过。"
+        },
+        {
+          "type": "test",
+          "label": "Production runtime deployment gates",
+          "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_prompt_versioning backend.tests.test_account_verification_automation",
+          "details": "长期运行的主栈五个服务与 /production 三个服务显式清空 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN，仅一次性 runtime_bootstrap 保留 DDL 凭据；deploy_ec2 在 activate 前校验八个 Prompt runtime 的容器状态、镜像 ID、build ref、release、当前容器日志与 health，并以稳定窗口拒绝 worker 重启。activate 后 production sync/readback 失败返回非零但不回滚已健康主栈。"
         },
         {
           "type": "test",
@@ -5654,6 +5666,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Fraud Account Prompt v4 official runtime readback",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c 'from backend.services.account_verification_field_extractor import ACCOUNT_VERIFICATION_REQUIRED_GROUPS; from backend.services.prompts.account_routing import build_account_verification_field_system_prompt, ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION; p=build_account_verification_field_system_prompt(); print({\"version\":ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,\"canonical\":all((chr(34)+k+chr(34)) in p for k in ACCOUNT_VERIFICATION_REQUIRED_GROUPS),\"legacy_exact\":{k:(chr(34)+k+chr(34)) in p for k in (\"company_information\",\"contact_information\",\"use_case\",\"payment_information\")}})'",
           "details": "官方单机 local_lightweight 栈于 root_main_ref=23c19e3bd7d4 构建并通过 health=200；official_image_tag、health build ref、runtime build ref 均匹配；prompt_runtime release_id=code-8a779db0373b、status=loaded、prompt_count=28；api、rag_api、rag_worker、worker_query、worker_aux 日志均加载同一 code snapshot。容器内 Prompt 版本为 fraud-account-fields-v4，七个 canonical keys 全部存在，旧四字段均不存在。"
+        },
+        {
+          "type": "test",
+          "label": "Fraud Account v4 deployment gate",
+          "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
+          "details": "Prompt Release validate 在停旧栈前检查 v4 版本常量、Output JSON 精确七字段、legacy fields 缺失及候选内容与代码 SHA-256 一致；production sync 复用同一 validator。部署契约同时覆盖八个 runtime 的同镜像/build/release 门禁和 production active-release 回读。"
         }
       ],
       "source_refs": [
@@ -5670,8 +5688,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/tests/test_automation_persona.py"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-08-24",
+      "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "fraud_v4_deployment_gate",
+          "summary": "Prompt Release validate 在旧栈停止前强制校验 fraud-account-fields-v4、Output JSON 精确七字段、旧四字段缺失，以及候选 Prompt 内容 hash 与当前代码一致；同一门禁复用于 production Prompt sync。"
+        },
         {
           "at": "2026-08-24",
           "event": "created",
@@ -6120,7 +6143,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户 2026-08-24 决策（终态=三环境上线并完全替代旧 /account 与 /production，本轮先行 /automation/production 替代 /production）的分阶段搬迁计划 Phase A：为 split production 环境补齐承载旧栈管线的数据与运行地基。新增 automation_production_worker（完整 app 镜像跑 backend.worker，绑定 supportportal_production schema，队列/事件通道/内部邮件主题命名空间与旧 production 栈隔离，RUNTIME_SCHEMA_MODE=check fail-fast）、一次性幂等的 supportportal_production 全套 account-case 建表脚本（独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色，runtime 授权自动跟随）、deploy_ec2 production split 部署集成（worker 纳入服务清单、up 前自动 bootstrap、worker 用容器运行判定代替 HTTP 健康探测）与蓝绿脚本 worker 覆盖（APP_RUNTIME_IMAGE 本地存在性校验 + 切换后 recreate worker）。旧栈 /production 与 /account 零行为变化；worker 的 reply/job/Slack 消费为空转待后续 Phase（B-F）接线。",
-      "next_action": "2026-08-25 EC2 蓝绿部署因全局 TICKET_DB_MIGRATION_DSN 指向 supportportal、production runtime 指向 supportportal_production 而在 bootstrap 同库校验处停止，未启动 candidate 或切流。待本修复合并后，在 EC2 .env 配置独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN（目标 supportportal_production）并重新执行 release-20260825-002 蓝绿部署；必须确认 ticket 10/10、knowledge 22/22、automation_production_worker 稳定、verify_split_environments 全绿及真实异步回复 readback，旧 /production 保持不受影响。",
+      "next_action": "合并 production deploy gates 后，在 EC2 不加外层 1800s timeout 执行 scripts/ops/deploy_surfaces_ec2.sh --skip-split；确认主栈五个 runtime 与 /production 三个 runtime 使用同一镜像/build/Prompt Release、workers 连续稳定且 RestartCount=0、Production active Fraud Prompt 为 v4 七字段并与代码 hash 一致，再使用获准的新测试 Ticket 做 readback。随后继续 p2-108 的 /automation/production 蓝绿上线验证；不重跑 AC-12993。",
       "acceptance_criteria": [
         "automation_production_worker 服务存在：automation profile、APP_RUNTIME_IMAGE 完整镜像、python -m backend.worker、TICKET_DB_DSN/SCHEMA 绑定 supportportal_production、队列/事件通道为 automation_production 专属（support.ticket_queries.automation_production 等，不与旧栈 support.ticket_queries.production 冲突）、INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]、reply poller 开启、邮箱回复消费默认关闭（AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED）。",
         "deployment/bootstrap_automation_production_schema.sh：以独立 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN 角色对 supportportal_production 跑 runtime_bootstrap 全量 DDL（幂等），不得 fallback 到全局 TICKET_DB_MIGRATION_DSN；带同库校验与 staging 主库误指防护，deploy_ec2 production split 部署在 up 之前执行它。",
@@ -6140,12 +6163,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Production migration DSN isolation",
           "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2",
           "details": "77 项通过：production bootstrap 只读取 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN；即使全局 TICKET_DB_MIGRATION_DSN 指向 supportportal，专用值仍映射到一次性 runtime_bootstrap 的 TICKET_DB_MIGRATION_DSN 并目标 supportportal_production；专用值缺失或指向其他数据库时在任何 Compose up 前 fail closed，蓝绿 candidate/worker/cutover 顺序与 Compose 契约保持通过。"
+        },
+        {
+          "type": "test",
+          "label": "Production runtime deployment gates",
+          "command": ".venv/bin/python -m unittest backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose backend.tests.test_prompt_versioning backend.tests.test_account_verification_automation",
+          "details": "长期运行的主栈五个服务与 /production 三个服务显式清空 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN，仅一次性 runtime_bootstrap 保留 DDL 凭据；deploy_ec2 在 activate 前校验八个 Prompt runtime 的容器状态、镜像 ID、build ref、release、当前容器日志与 health，并以稳定窗口拒绝 worker 重启。activate 后 production sync/readback 失败返回非零但不回滚已健康主栈。"
         }
       ],
       "source_refs": [
         "deployment/docker-compose.single-host.yml",
         "deployment/bootstrap_automation_production_schema.sh",
         "deployment/deploy_ec2.sh",
+        "backend/services/prompt_versioning.py",
         "deployment/deploy_automation_production_blue_green.sh",
         "backend/scripts/runtime_bootstrap.py",
         "backend/worker.py",
@@ -6155,6 +6185,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-24",
       "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "production_runtime_deploy_gates",
+          "summary": "修复 env_file 向八个长期 runtime 泄漏 AUTOMATION_PRODUCTION_DB_MIGRATION_DSN；扩展 deploy_ec2 对主栈与 /production runtime 的统一镜像/build/Prompt Release、日志、health、RestartCount 和 worker 稳定性门禁，并增加激活后 production active-release readback。"
+        },
         {
           "at": "2026-08-25",
           "event": "production_migration_dsn_isolation",

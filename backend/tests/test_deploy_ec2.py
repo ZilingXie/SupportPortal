@@ -172,7 +172,9 @@ class DeployEc2ScriptTests(unittest.TestCase):
                         sys.exit(1)
                     if "--format" in args:
                         image_ref = args[-1]
-                        if "supportportal-automation-production:" in image_ref:
+                        if "supportportal-app:" in image_ref:
+                            image_id = os.environ.get("FAKE_RUNTIME_IMAGE_ID", "sha256:" + "d" * 64)
+                        elif "supportportal-automation-production:" in image_ref:
                             image_id = os.environ.get("FAKE_PRODUCTION_IMAGE_ID", "sha256:" + "c" * 64)
                         elif "supportportal-automation:" in image_ref:
                             image_id = os.environ.get("FAKE_AUTOMATION_IMAGE_ID", "sha256:" + "b" * 64)
@@ -199,6 +201,19 @@ class DeployEc2ScriptTests(unittest.TestCase):
                         if target in networks:
                             print("attached")
                         sys.exit(0)
+                    container_id = args[-1]
+                    service = container_id.removesuffix("-container-id")
+                    stack_started = (state_dir / "stack_started.txt").exists()
+                    runtime_image_id = os.environ.get("FAKE_RUNTIME_IMAGE_ID", "sha256:" + "d" * 64)
+                    if service == os.environ.get("FAKE_RUNTIME_BAD_IMAGE_SERVICE"):
+                        runtime_image_id = "sha256:" + "e" * 64
+                    restart_count = "1" if service == os.environ.get("FAKE_RUNTIME_RESTART_SERVICE") else "0"
+                    if format_value == "{{.State.Running}} {{.State.Status}} {{.RestartCount}} {{.Image}}":
+                        print(f"true running {restart_count} {runtime_image_id}")
+                        sys.exit(0)
+                    if format_value == "{{.State.Running}} {{.State.Status}} {{.RestartCount}}":
+                        print(f"true running {restart_count}")
+                        sys.exit(0)
                     previous_image_id = os.environ.get(
                         "FAKE_PREVIOUS_IMAGE_ID",
                         "sha256:previous-image-id",
@@ -209,23 +224,37 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     )
                     previous_ref = os.environ.get("FAKE_PREVIOUS_BUILD_REF", "previous-ref")
                     if format_value == "{{.Image}}":
-                        print(previous_image_id)
+                        print(runtime_image_id if stack_started else previous_image_id)
                     elif format_value == "{{.Config.Image}}":
                         print(previous_image)
                     else:
-                        print(f"APP_BUILD_REF={previous_ref}")
-                        print("APP_BUILD_TIME=2026-07-20T00:00:00Z")
+                        build_ref = os.environ.get("APP_BUILD_REF") if stack_started else previous_ref
+                        if service == os.environ.get("FAKE_RUNTIME_BAD_BUILD_SERVICE"):
+                            build_ref = "stale-build"
+                        prompt_release_id = (
+                            os.environ.get("PROMPT_RELEASE_ID") if stack_started else "release-previous"
+                        )
+                        if service == os.environ.get("FAKE_RUNTIME_BAD_RELEASE_SERVICE"):
+                            prompt_release_id = "release-stale"
+                        print(f"APP_BUILD_REF={build_ref}")
+                        print(
+                            "APP_BUILD_TIME="
+                            + (os.environ.get("APP_BUILD_TIME") if stack_started else "2026-07-20T00:00:00Z")
+                        )
                         print(
                             "PROMPT_RELEASE_ID="
-                            + (os.environ.get("PROMPT_RELEASE_ID") or "release-previous")
+                            + (prompt_release_id or "")
                         )
                     sys.exit(0)
 
                 if args[:1] == ["logs"]:
                     container_id = args[-1]
                     service = container_id.removesuffix("-container-id")
+                    log_service = "api-production" if service == "api_production" else service
+                    if service == os.environ.get("FAKE_RUNTIME_BAD_LOG_SERVICE"):
+                        log_service = "stale-service"
                     print(
-                        f"prompt_runtime_loaded service={service} "
+                        f"prompt_runtime_loaded service={log_service} "
                         "release_id=release-candidate prompts=1 source=release"
                     )
                     sys.exit(0)
@@ -298,12 +327,19 @@ class DeployEc2ScriptTests(unittest.TestCase):
                             sys.exit(1)
                         print('{"ok":true}')
                     elif "current" in args:
-                        if os.environ.get("FAKE_PROMPT_ACTIVATE_COMMITTED") == "1":
+                        if any(item.startswith("TICKET_DB_DSN=") for item in args):
+                            print(os.environ.get("FAKE_PRODUCTION_ACTIVE_RELEASE_ID", "release-candidate"))
+                        elif os.environ.get("FAKE_PROMPT_ACTIVATE_COMMITTED") == "1":
                             print("release-candidate")
                         else:
                             print("release-previous")
                     elif "sync" in args:
-                        if os.environ.get("FAKE_PROMPT_SYNC_EXIT_CODE") == "1":
+                        sync_counter_path = state_dir / "prompt_sync_calls.txt"
+                        sync_calls = int(sync_counter_path.read_text(encoding="utf-8")) if sync_counter_path.exists() else 0
+                        sync_calls += 1
+                        sync_counter_path.write_text(str(sync_calls), encoding="utf-8")
+                        fail_on_call = int(os.environ.get("FAKE_PROMPT_SYNC_FAIL_ON_CALL", "0"))
+                        if os.environ.get("FAKE_PROMPT_SYNC_EXIT_CODE") == "1" or sync_calls == fail_on_call:
                             print("sync failed", file=sys.stderr)
                             sys.exit(1)
                         print('{"ok":true}')
@@ -315,6 +351,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     sys.exit(0)
 
                 if "down" in args:
+                    (state_dir / "stack_started.txt").unlink(missing_ok=True)
                     print("down ok")
                     sys.exit(0)
 
@@ -322,6 +359,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     if os.environ.get("FAKE_DOCKER_UP_EXIT_CODE") == "1" and "--no-build" not in args:
                         print("up failed", file=sys.stderr)
                         sys.exit(1)
+                    (state_dir / "stack_started.txt").write_text("1", encoding="utf-8")
                     print("up ok")
                     sys.exit(0)
 
@@ -433,6 +471,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
         env["PATH"] = f"{self.fake_bin}:{env['PATH']}"
         env["DEPLOY_LOCK_FILE"] = str(self.root / "deploy.lock")
         env["DEPLOY_TEST_STATE_DIR"] = str(self.state_dir)
+        env["DEPLOY_WORKER_STABILITY_SECONDS"] = "0"
         if extra_env:
             env.update(extra_env)
         return env
@@ -519,7 +558,7 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         verbs = self._compose_verbs()
         self.assertEqual(verbs[:5], ["ps", "build", "down", "up", "ps"])
-        self.assertEqual(verbs.count("ps"), 7)
+        self.assertGreaterEqual(verbs.count("ps"), 7)
         self.assertNotIn("builder-prune", self._docker_actions())
         self.assertNotIn("image-prune", self._docker_actions())
 
@@ -576,6 +615,58 @@ class DeployEc2ScriptTests(unittest.TestCase):
             )
         )
 
+    def test_prompt_runtime_verification_rejects_stale_image(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_RUNTIME_BAD_IMAGE_SERVICE": "worker_query",
+                "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
+                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Prompt Release verification failed", result.stdout + result.stderr)
+
+    def test_prompt_runtime_verification_rejects_stale_build_or_release(self) -> None:
+        for variable, service in (
+            ("FAKE_RUNTIME_BAD_BUILD_SERVICE", "worker_aux"),
+            ("FAKE_RUNTIME_BAD_RELEASE_SERVICE", "rag_worker"),
+        ):
+            with self.subTest(variable=variable):
+                result = self._run_script(
+                    "--skip-pull",
+                    "--branch",
+                    "main",
+                    extra_env={
+                        variable: service,
+                        "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
+                        "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
+                    },
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Prompt Release verification failed", result.stdout + result.stderr)
+                for path in self.state_dir.iterdir():
+                    if path.is_file():
+                        path.unlink()
+
+    def test_prompt_runtime_verification_rejects_restarting_worker(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={
+                "FAKE_RUNTIME_RESTART_SERVICE": "worker_query",
+                "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
+                "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "1",
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Prompt Release verification failed", result.stdout + result.stderr)
+
     def test_deploy_generates_dynamic_build_metadata(self) -> None:
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=self.repo).stdout.strip()
 
@@ -630,6 +721,85 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertLess(first_sync_index, down_index)
         self.assertLess(down_index, activate_index)
         self.assertLess(activate_index, second_sync_index)
+        self.assertIn("Verified /production active Prompt Release release-candidate.", result.stdout)
+
+        runtime_ps_services = {
+            call["argv"][-1]
+            for call in docker_calls
+            if "ps" in call["argv"] and "-q" in call["argv"]
+        }
+        self.assertTrue(
+            {
+                "api",
+                "rag_api",
+                "rag_worker",
+                "worker_query",
+                "worker_aux",
+                "api_production",
+                "worker_query_production",
+                "worker_aux_production",
+            }.issubset(runtime_ps_services)
+        )
+        exec_services = {
+            call["argv"][call["argv"].index("-T") + 1]
+            for call in docker_calls
+            if "exec" in call["argv"] and "-T" in call["argv"]
+        }
+        self.assertTrue({"api", "rag_api", "api_production"}.issubset(exec_services))
+
+    def test_post_activation_production_sync_failure_keeps_healthy_new_stack(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                NGINX_HOST_PORT=18080
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={"FAKE_PROMPT_SYNC_FAIL_ON_CALL": "2"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("healthy activated main stack remains running", result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertTrue(any("activate" in call["argv"] for call in docker_calls))
+        self.assertFalse(any("up" in call["argv"] and "--no-build" in call["argv"] for call in docker_calls))
+        self.assertTrue(any(call["argv"][:3] == ["image", "rm", "-f"] for call in docker_calls))
+
+    def test_production_active_release_readback_mismatch_is_partial_failure(self) -> None:
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                NGINX_HOST_PORT=18080
+                TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets
+                PGVECTOR_DSN=postgresql://rag:test@db.local/rag
+                PRODUCTION_TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets-production
+                """
+            ),
+        )
+
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            extra_env={"FAKE_PRODUCTION_ACTIVE_RELEASE_ID": "release-stale"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("/production Prompt Release readback failed", result.stdout + result.stderr)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(any("up" in call["argv"] and "--no-build" in call["argv"] for call in docker_calls))
 
     def test_production_sync_failure_fails_before_stopping_services(self) -> None:
         self._write(
