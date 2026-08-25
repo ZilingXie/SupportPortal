@@ -3964,3 +3964,13 @@ For each new entry, record:
   - Unexpected-reply fallback replies are now persona-rendered (mini model) instead of published verbatim; reference links are appended deterministically after the persona body passes the existing publication gates. Fail-closed escalation semantics are unchanged.
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py backend/tests/test_llm_profiles.py -q`
+
+## 2026-08-24 - Account chain small-task models move to gpt-5.6-luna (p2-114)
+
+- Model changes:
+  - New pinned scenario `account_extractor` (default `openai:gpt-5.6-luna`, reasoning `low`, 30s, env overrides `ACCOUNT_EXTRACTOR_MODEL` / `ACCOUNT_EXTRACTOR_REASONING_EFFORT` / `ACCOUNT_EXTRACTOR_TIMEOUT_SECONDS`). All seven production-case field extractors (quota, detailed invoice, verification, suspension, enablement, billing automation) move from the shared `intent_router` scenario (gpt-5.4-mini, 3s) to it; the client-flow intent router keeps its model and tight latency budget unchanged.
+  - `automation_persona`, `enablement_completion_classifier`, `billing_reply`, and `enablement_reply` scenario defaults move from `gpt-5.4-mini` to `gpt-5.6-luna` (effort stays low; persona/billing/enablement-reply timeouts ->30s, classifier ->20s).
+- Behavior impact:
+  - The production account case chain now runs a single model family (gpt-5.6-luna): route (xhigh), field extraction (low), persona render (low), completion classifier (low), RAGFlow fallback generation (xhigh). Per-case token stats should show only `openai:gpt-5.6-luna`.
+- Verification:
+  - See task p2-114 evidence (llm_profiles scenario defaults/env overrides + affected suites, 482 passed).
