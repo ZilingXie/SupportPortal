@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T03:15:18Z",
-  "source_base_commit": "6168e5b46d37e01f874eff05fc8c5349dd284b7a",
-  "registry_digest": "a363efc18b9c575e8b76d7245a51bc33dbfc9cff7f3a939c8c646b50891efabe",
+  "generated_at": "2026-08-25T03:52:17Z",
+  "source_base_commit": "48ca775d09adb6024aa54634e539ec2bb6b0ce25",
+  "registry_digest": "2014b0b6fb2dd8bcddab9921166fc84d84f43d3dfc82e6cfbd0deb1820c9ad23",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1595,6 +1595,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Post-merge official stack live verification",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
           "details": "PR#917 合并后官方栈运行 root main 4dc624f（含本任务，built 2026-08-24T11:06:13Z）：build_provenance_status=matched、official_health_build_ref=4dc624fbb1a7、auxiliary_stack_present=false；/workspace/admin/ 实际服务 app.js?v=20260824-token-cost-1；GET /api/workspace/admin/account-automation 未授权 401（守卫存活）；共享库 support_account_case_llm_usage 列序含 cached_input_tokens/reasoning_tokens（repository 幂等 ALTER 生效）。价格表未填时成本显示 $— 属预期。"
+        },
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_pricing.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_workspace_api.py -q",
+          "details": "67 passed + 4 subtests（合并前在任务 worktree 跑）。新增/更新：默认表 luna 三价精确断言+其余模型全 None、纯 luna 端到端计价（100 万 input 含 20 万 cached + 5 万 output=$0.224）、model_pricing_payload 形状、端点 model_pricing 契约、前端横条渲染/未定价标记/无数据不渲染、版本串断言 20260825-model-pricing-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#940 合并后官方栈运行 root main 48ca775（built 2026-08-25T03:43:54Z）：official_health_status=ok、build_provenance_status=matched、official_health_build_ref=48ca775d09ad；/workspace/admin/ 实际服务 app.js?v=20260825-model-pricing-1；admin/admin 登录后 GET account-automation 实测 model_pricing：gpt-5.6-luna priced=true（0.2/0.02/1.2），其余五模型 priced=false；当前页 case 为 luna+mini 混合（EC2 旧代码仍在产 mini 条目），成本 $— 与 page cost_usd_available=false 符合全有或全无契约。"
         }
       ],
       "source_refs": [
@@ -1605,7 +1617,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 10,
-      "done_count": 5,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -6572,10 +6584,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-117",
       "title": "填入 gpt-5.6-luna 官方单价 + /workspace/admin 展示模型价格（p2-107 后续）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "p2-107 的收口：用户提供官方价格页（developers.openai.com/api/docs/models/gpt-5.6-luna），两段：(A) 填价——LLM_PRICING_USD_PER_1M 的 openai:gpt-5.6-luna 填入 input $0.2 / cached_input $0.02 / output $1.2（USD 每 1M tokens；官方页另注 >272K 长上下文 2x/1.5x 与缓存写 1.25x 属请求级特殊计费，不进按 token 用量估算的表）；其余模型保持 None=未定价（unknown-cost 约定不变，历史混合 case 仍显示 $— 属预期）。纯 luna case（p2-114 后生产链路唯一模型）的成本从 $— 变为真实金额。(B) 展示——llm_pricing 新增 model_pricing_payload()（每模型 input/cached_input/output/embedding 单价 + priced 标记）；/api/workspace/admin/account-automation payload 增加 model_pricing 字段；admin 前端 Automated Cases 页 metric strip 下方新增 Model pricing 横条（priced 模型显示 in $X.XX / cached $X.XX / out $X.XX per 1M，未定价模型显示 pricing not configured）；版本串 bump 20260825-model-pricing-1。",
-      "next_action": "实现合并（PR 见 history）后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+资产 20260825-model-pricing-1+端点 model_pricing 含 luna 三价）；p2-117 翻 done。",
+      "next_action": "已 done（官方栈 48ca775d09ad 运行含本任务，live 验证通过）。用户侧剩余：EC2 仅部署 main stack（--skip-split）后，production 新 case 的 token_by_model 将只剩 luna、成本显示真实金额；如需 gpt-5.4-mini 等模型也计价，同样按官方数字填入 LLM_PRICING_USD_PER_1M 即生效（混合模型 case 遵循全有或全无：任一未定价→整 case $—）。",
       "acceptance_criteria": [
         "价格表 luna 三价精确为 0.2/0.02/1.2，其余模型仍全 None；纯 luna usage 计价端到端正确（100 万 input 含 20 万 cached + 5 万 output = $0.224）。",
         "account-automation 端点 payload 含 model_pricing（provider/model/四维单价/priced），不依赖 case 数据恒返回。",
@@ -6583,7 +6595,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "既有 API 响应字段只增不改；既有测试除价格表默认值断言（按新事实更新）外全绿。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_pricing.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_workspace_api.py -q",
+          "details": "67 passed + 4 subtests（合并前在任务 worktree 跑）。新增/更新：默认表 luna 三价精确断言+其余模型全 None、纯 luna 端到端计价（100 万 input 含 20 万 cached + 5 万 output=$0.224）、model_pricing_payload 形状、端点 model_pricing 契约、前端横条渲染/未定价标记/无数据不渲染、版本串断言 20260825-model-pricing-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#940 合并后官方栈运行 root main 48ca775（built 2026-08-25T03:43:54Z）：official_health_status=ok、build_provenance_status=matched、official_health_build_ref=48ca775d09ad；/workspace/admin/ 实际服务 app.js?v=20260825-model-pricing-1；admin/admin 登录后 GET account-automation 实测 model_pricing：gpt-5.6-luna priced=true（0.2/0.02/1.2），其余五模型 priced=false；当前页 case 为 luna+mini 混合（EC2 旧代码仍在产 mini 条目），成本 $— 与 page cost_usd_available=false 符合全有或全无契约。"
+        }
+      ],
       "source_refs": [
         "backend/services/llm_pricing.py",
         "backend/main.py",
@@ -6598,6 +6623,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "created",
           "summary": "用户提供 luna 官方价格页 URL 并要求把使用的模型与 input/cached/output 价格放到 /workspace/admin 的 Automated Cases 页。任务号 p2-117（p2-116 已被并行链 PR#939 占用）。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "updated",
+          "summary": "实现经 PR#940 合并（root 前进至 48ca775）；finalize 后会话 shell 第 10 次 ENOENT（未尾接 cd 回根），重启 ZCode 后完成官方栈重启与全部 live 验证（provenance matched、资产 20260825-model-pricing-1、端点 model_pricing 三价实测），翻 done。"
         }
       ],
       "legacy_refs": [
