@@ -453,7 +453,42 @@ class PromptReleaseSyncTests(unittest.TestCase):
 
         self.assertTrue(first["sync"]["created"])
         self.assertFalse(second["sync"]["created"])
+        self.assertEqual(second["sync"]["versions_remapped"], 0)
         self.assertEqual(self.target.get_active_prompt_release()["release_id"], active["release_id"])
+
+    def test_sync_reuses_existing_content_at_different_target_version(self) -> None:
+        collision_key = "account-account-billing-router-system"
+        source_content = self.source.get_managed_prompt(collision_key)["active_version"]["content"]
+        divergent_catalog = [
+            {**item, "content": "Target-local historical billing router prompt"}
+            if item["prompt_key"] == collision_key
+            else item
+            for item in build_managed_prompt_catalog()
+        ]
+        self.target.sync_prompt_catalog(
+            divergent_catalog,
+            actor_id="target-system",
+            created_at="2026-07-23T00:00:00+00:00",
+        )
+        existing = self.target.create_prompt_draft(
+            collision_key,
+            content=source_content,
+            change_note="target already stores the source content",
+            based_on_version=1,
+            actor_id="target-admin",
+            created_at="2026-07-23T00:30:00+00:00",
+        )
+
+        active = self.source.get_active_prompt_release()
+        payload = self._sync_via_cli(active["release_id"])
+        target_release = self.target.get_prompt_release(active["release_id"])
+        target_prompt = self.target.get_managed_prompt(collision_key)
+
+        self.assertEqual(payload["sync"]["versions_created"], 0)
+        self.assertGreater(payload["sync"]["versions_remapped"], 0)
+        self.assertEqual(target_release["items"][collision_key], existing["version"])
+        self.assertEqual(len(target_prompt["versions"]), 2)
+        self.assertEqual(target_prompt["active_version"]["content"], source_content)
 
     def test_sync_candidate_release_then_activation_harmonizes_target_status(self) -> None:
         prompt = self.source.get_managed_prompt("route-system")
@@ -493,6 +528,72 @@ class PromptReleaseSyncTests(unittest.TestCase):
         self.assertEqual(payload["sync"]["status"], "active")
         self.assertEqual(self.target.get_active_prompt_release()["release_id"], candidate["release_id"])
         self.assertEqual(self.target.get_managed_prompt("route-system")["active_version"]["version"], draft["version"])
+
+    def test_sync_remaps_conflicting_target_version_by_content_hash(self) -> None:
+        collision_key = "account-account-billing-router-system"
+        divergent_catalog = [
+            {**item, "content": "Target-local historical billing router prompt"}
+            if item["prompt_key"] == collision_key
+            else item
+            for item in build_managed_prompt_catalog()
+        ]
+        self.target.sync_prompt_catalog(
+            divergent_catalog,
+            actor_id="target-system",
+            created_at="2026-07-23T00:00:00+00:00",
+        )
+        previous_target_release = self.target.get_active_prompt_release()
+        previous_target_content = self.target.get_managed_prompt(collision_key)["active_version"]["content"]
+
+        route = self.source.get_managed_prompt("route-system")
+        draft = self.source.create_prompt_draft(
+            "route-system",
+            content="Candidate route prompt with a cross-database collision",
+            change_note="exercise target-local version mapping",
+            based_on_version=route["active_version"]["version"],
+            actor_id="admin-1",
+            created_at="2026-07-23T02:00:00+00:00",
+        )
+        self.source.schedule_prompt_version(
+            "route-system",
+            draft["version"],
+            actor_id="admin-1",
+            scheduled_at="2026-07-23T02:01:00+00:00",
+        )
+        candidate = self.source.prepare_prompt_release(
+            build_ref="collision-sync",
+            created_at="2026-07-23T02:02:00+00:00",
+        )
+
+        payload = self._sync_via_cli(candidate["release_id"])
+        target_candidate = self.target.get_prompt_release(candidate["release_id"])
+
+        self.assertGreater(payload["sync"]["versions_remapped"], 0)
+        self.assertNotEqual(target_candidate["items"][collision_key], candidate["items"][collision_key])
+        self.assertEqual(
+            load_prompt_release_snapshot(self.target, candidate["release_id"]).prompts,
+            load_prompt_release_snapshot(self.source, candidate["release_id"]).prompts,
+        )
+        self.assertEqual(self.target.get_active_prompt_release()["release_id"], previous_target_release["release_id"])
+        self.assertEqual(
+            self.target.get_managed_prompt(collision_key)["active_version"]["content"],
+            previous_target_content,
+        )
+        remapped = next(
+            item
+            for item in self.target.get_managed_prompt(collision_key)["versions"]
+            if item["version"] == target_candidate["items"][collision_key]
+        )
+        self.assertEqual(remapped["status"], "draft")
+
+        self.source.activate_prompt_release(candidate["release_id"], activated_at="2026-07-23T02:10:00+00:00")
+        self._sync_via_cli(candidate["release_id"])
+
+        self.assertEqual(self.target.get_active_prompt_release()["release_id"], candidate["release_id"])
+        self.assertEqual(
+            self.target.get_managed_prompt(collision_key)["active_version"]["content"],
+            self.source.get_managed_prompt(collision_key)["active_version"]["content"],
+        )
 
     def test_sync_rejects_content_hash_mismatch(self) -> None:
         active = self.source.get_active_prompt_release()

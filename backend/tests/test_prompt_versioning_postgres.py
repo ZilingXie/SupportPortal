@@ -273,6 +273,101 @@ class PromptVersioningPostgresTests(unittest.TestCase):
         )
         target.close()
 
+    def test_sync_release_remaps_conflicting_target_version(self) -> None:
+        target_schema = f"supportportal_prompt_sync_collision_{uuid4().hex}"
+        target = PostgresTicketRepository(
+            dsn=self.dsn,
+            migration_dsn=self.migration_dsn,
+            schema=target_schema,
+        )
+        self.addCleanup(self._drop_schema_by_name, target_schema)
+        target.initialize()
+        collision_key = "account-account-billing-router-system"
+        reuse_key = "account-account-billing-router-user"
+        source_reuse_content = self.service.get_prompt(reuse_key)["active_version"]["content"]
+        divergent_catalog = [
+            {**item, "content": "Target-local historical billing router prompt"}
+            if item["prompt_key"] == collision_key
+            else {**item, "content": "Target-local historical billing router user prompt"}
+            if item["prompt_key"] == reuse_key
+            else item
+            for item in build_managed_prompt_catalog()
+        ]
+        target.sync_prompt_catalog(
+            divergent_catalog,
+            actor_id="target-system",
+            created_at="2026-07-23T06:00:00+00:00",
+        )
+        reusable = target.create_prompt_draft(
+            reuse_key,
+            content=source_reuse_content,
+            change_note="target already stores the source content",
+            based_on_version=1,
+            actor_id="target-admin",
+            created_at="2026-07-23T06:00:30+00:00",
+        )
+        previous_target_release = target.get_active_prompt_release()
+
+        route = self.service.get_prompt("route-system")
+        draft = self.service.create_draft(
+            "route-system",
+            content="Postgres collision candidate",
+            change_note="exercise target-local version mapping",
+            based_on_version=route["active_version"]["version"],
+            actor_id="admin-1",
+            created_at="2026-07-23T06:01:00+00:00",
+        )
+        self.service.schedule(
+            "route-system",
+            draft["version"],
+            actor_id="admin-1",
+            scheduled_at="2026-07-23T06:02:00+00:00",
+        )
+        candidate = self.service.prepare_release(
+            build_ref="postgres-collision-sync",
+            created_at="2026-07-23T06:03:00+00:00",
+        )
+
+        from backend.scripts.prompt_release import run as run_prompt_release
+        from backend.services.prompt_runtime import load_prompt_release_snapshot
+
+        payload = run_prompt_release(
+            ["sync", "--release-id", candidate["release_id"], "--target-dsn", "unused-in-test"],
+            repository=self.repository,
+            target_repository=target,
+        )
+        target_candidate = target.get_prompt_release(candidate["release_id"])
+
+        self.assertGreater(payload["sync"]["versions_remapped"], 0)
+        self.assertNotEqual(target_candidate["items"][collision_key], candidate["items"][collision_key])
+        self.assertEqual(target_candidate["items"][reuse_key], reusable["version"])
+        self.assertEqual(len(target.get_managed_prompt(reuse_key)["versions"]), 2)
+        self.assertEqual(
+            load_prompt_release_snapshot(target, candidate["release_id"]).prompts,
+            load_prompt_release_snapshot(self.repository, candidate["release_id"]).prompts,
+        )
+        self.assertEqual(target.get_active_prompt_release()["release_id"], previous_target_release["release_id"])
+        remapped = next(
+            item
+            for item in target.get_managed_prompt(collision_key)["versions"]
+            if item["version"] == target_candidate["items"][collision_key]
+        )
+        self.assertEqual(remapped["status"], "draft")
+
+        self.service.activate_release(candidate["release_id"], activated_at="2026-07-23T06:10:00+00:00")
+        run_prompt_release(
+            ["sync", "--release-id", candidate["release_id"], "--target-dsn", "unused-in-test"],
+            repository=self.repository,
+            target_repository=target,
+        )
+
+        self.assertEqual(target.get_active_prompt_release()["release_id"], candidate["release_id"])
+        self.assertEqual(
+            PromptVersionService(target).get_prompt(collision_key)["active_version"]["content"],
+            self.service.get_prompt(collision_key)["active_version"]["content"],
+        )
+        target.close()
+
     def _drop_schema_by_name(self, schema: str) -> None:
         with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
             with connection.cursor() as cursor:
