@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T02:53:00Z",
-  "source_base_commit": "efad64b45ee9eab3f94ba9853f1212376ea5c00f",
-  "registry_digest": "a4de1ff56b19aafe1503a3ee60401b2ee685bfc20dbe69d62602f39f40d77671",
+  "generated_at": "2026-08-25T03:15:18Z",
+  "source_base_commit": "6168e5b46d37e01f874eff05fc8c5349dd284b7a",
+  "registry_digest": "a363efc18b9c575e8b76d7245a51bc33dbfc9cff7f3a939c8c646b50891efabe",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1604,7 +1604,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 9,
+      "task_count": 10,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -6567,6 +6567,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-117",
+      "title": "填入 gpt-5.6-luna 官方单价 + /workspace/admin 展示模型价格（p2-107 后续）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "p2-107 的收口：用户提供官方价格页（developers.openai.com/api/docs/models/gpt-5.6-luna），两段：(A) 填价——LLM_PRICING_USD_PER_1M 的 openai:gpt-5.6-luna 填入 input $0.2 / cached_input $0.02 / output $1.2（USD 每 1M tokens；官方页另注 >272K 长上下文 2x/1.5x 与缓存写 1.25x 属请求级特殊计费，不进按 token 用量估算的表）；其余模型保持 None=未定价（unknown-cost 约定不变，历史混合 case 仍显示 $— 属预期）。纯 luna case（p2-114 后生产链路唯一模型）的成本从 $— 变为真实金额。(B) 展示——llm_pricing 新增 model_pricing_payload()（每模型 input/cached_input/output/embedding 单价 + priced 标记）；/api/workspace/admin/account-automation payload 增加 model_pricing 字段；admin 前端 Automated Cases 页 metric strip 下方新增 Model pricing 横条（priced 模型显示 in $X.XX / cached $X.XX / out $X.XX per 1M，未定价模型显示 pricing not configured）；版本串 bump 20260825-model-pricing-1。",
+      "next_action": "实现合并（PR 见 history）后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+资产 20260825-model-pricing-1+端点 model_pricing 含 luna 三价）；p2-117 翻 done。",
+      "acceptance_criteria": [
+        "价格表 luna 三价精确为 0.2/0.02/1.2，其余模型仍全 None；纯 luna usage 计价端到端正确（100 万 input 含 20 万 cached + 5 万 output = $0.224）。",
+        "account-automation 端点 payload 含 model_pricing（provider/model/四维单价/priced），不依赖 case 数据恒返回。",
+        "admin 前端 Automated Cases 页展示 Model pricing 横条：priced 模型显示三档单价 per 1M，未定价模型显示 pricing not configured；无 model_pricing 数据时不渲染横条。",
+        "既有 API 响应字段只增不改；既有测试除价格表默认值断言（按新事实更新）外全绿。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/llm_pricing.py",
+        "backend/main.py",
+        "ui/workspace-ui/admin/app.js",
+        "ui/workspace-ui/admin/styles.css",
+        "ui/workspace-ui/admin/index.html"
+      ],
+      "created_at": "2026-08-25",
+      "updated_at": "2026-08-25",
+      "history": [
+        {
+          "at": "2026-08-25",
+          "event": "created",
+          "summary": "用户提供 luna 官方价格页 URL 并要求把使用的模型与 input/cached/output 价格放到 /workspace/admin 的 Automated Cases 页。任务号 p2-117（p2-116 已被并行链 PR#939 占用）。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-107",
+        "p2-105"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations"
     },
     {
       "schema_version": 2,

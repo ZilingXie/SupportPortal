@@ -11,13 +11,14 @@ from __future__ import annotations
 from typing import Any
 
 LLM_PRICING_USD_PER_1M: dict[str, dict[str, float | None]] = {
-    # Prices intentionally unset: fill in the real rates (USD per 1M tokens)
-    # and redeploy to activate cost display. cached_input is optional; when
-    # None it falls back to the input price.
+    # gpt-5.6-luna rates from the official pricing page
+    # (developers.openai.com/api/docs/models/gpt-5.6-luna). Legacy models stay
+    # unpriced rather than guessing rates; cached_input is optional; when None
+    # it falls back to the input price.
     "openai:gpt-5.4": {"input": None, "output": None, "cached_input": None},
     "openai:gpt-5.4-mini": {"input": None, "output": None, "cached_input": None},
     "openai:gpt-5.4-nano": {"input": None, "output": None, "cached_input": None},
-    "openai:gpt-5.6-luna": {"input": None, "output": None, "cached_input": None},
+    "openai:gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02},
     "deepseek:deepseek-v4-pro": {"input": None, "output": None, "cached_input": None},
     "siliconflow:BAAI/bge-m3": {"embedding": None},
 }
@@ -99,3 +100,26 @@ def estimate_token_usage_cost_usd(token_usage: dict[str, Any] | None) -> dict[st
         "total_usd": round(total, 6) if all_priced else None,
         "by_model": by_model,
     }
+
+
+def model_pricing_payload() -> list[dict[str, Any]]:
+    """Describe the pricing table for display, one entry per known model.
+
+    Each entry carries the per-1M USD rates it has; models without any rate
+    keep priced=False so the UI can show the explicit unpriced marker.
+    """
+    entries: list[dict[str, Any]] = []
+    for key, prices in LLM_PRICING_USD_PER_1M.items():
+        provider, _, model = key.partition(":")
+        entries.append(
+            {
+                "provider": provider,
+                "model": model,
+                "input_usd_per_1m": prices.get("input"),
+                "cached_input_usd_per_1m": prices.get("cached_input"),
+                "output_usd_per_1m": prices.get("output"),
+                "embedding_usd_per_1m": prices.get("embedding"),
+                "priced": any(value is not None for value in prices.values()),
+            }
+        )
+    return entries

@@ -906,6 +906,31 @@ function renderTokenDetailRow(item) {
   </td></tr>`;
 }
 
+function formatModelRateUsd(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return `$${num.toFixed(2)}`;
+}
+
+function renderModelPricingStrip() {
+  const entries = Array.isArray(automationData.model_pricing) ? automationData.model_pricing : [];
+  if (!entries.length) return "";
+  const items = entries.map((entry) => {
+    const label = `${entry.provider}:${entry.model}`;
+    const dimensions = [
+      entry.input_usd_per_1m != null ? `in ${formatModelRateUsd(entry.input_usd_per_1m)}` : "",
+      entry.cached_input_usd_per_1m != null ? `cached ${formatModelRateUsd(entry.cached_input_usd_per_1m)}` : "",
+      entry.output_usd_per_1m != null ? `out ${formatModelRateUsd(entry.output_usd_per_1m)}` : "",
+      entry.embedding_usd_per_1m != null ? `emb ${formatModelRateUsd(entry.embedding_usd_per_1m)}` : "",
+    ].filter(Boolean);
+    if (!entry.priced || !dimensions.length) {
+      return `<span class="admin-model-pricing-item is-unpriced">${escapeHtml(label)} · pricing not configured</span>`;
+    }
+    return `<span class="admin-model-pricing-item">${escapeHtml(label)} · ${escapeHtml(dimensions.join(" / "))} per 1M</span>`;
+  });
+  return `<section class="admin-model-pricing" aria-label="Model pricing"><header>Model pricing · USD per 1M tokens</header><div class="admin-model-pricing-list">${items.join("")}</div></section>`;
+}
+
 function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
@@ -920,6 +945,7 @@ function renderAutomatedCases() {
       <div><span>Page tokens</span><strong>${escapeHtml(formatTokenCount(pageTokens.total_input_tokens))} in / ${escapeHtml(formatTokenCount(pageTokens.total_output_tokens))} out${pageTokens.cost_usd_available ? ` · ${escapeHtml(formatTokenCostUsd(pageTokens.cost_usd_total))}` : ""}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
     </section>
+    ${renderModelPricingStrip()}
     ${renderAutomationSubcategoryCards()}
     <form class="admin-filter-bar" data-automation-filter-form>
       <select name="route_status" aria-label="Automation route status">

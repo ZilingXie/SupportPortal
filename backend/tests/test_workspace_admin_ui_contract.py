@@ -99,7 +99,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "description.toLowerCase()", "admin-config-description", "admin-config-copy",
         ):
             self.assertIn(marker, source)
-        for marker in (".admin-metric-strip", ".admin-agent-workspace", ".admin-agent-tree", ".admin-agent-prompt-layout", ".admin-persona-workspace", ".admin-config-list", ".admin-config-description", ".admin-config-copy"):
+        for marker in (".admin-metric-strip", ".admin-agent-workspace", ".admin-agent-tree", ".admin-agent-prompt-layout", ".admin-persona-workspace", ".admin-config-list", ".admin-config-description", ".admin-config-copy", ".admin-model-pricing"):
             self.assertIn(marker, css)
 
         self.run_admin_app_script(
@@ -159,6 +159,15 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             automationData.token_usage_page_total.cost_usd_total = 0.0123;
             const pricedMarkup = renderAutomatedCases();
             if (!pricedMarkup.includes('$0.0123')) throw new Error('priced cost badge missing');
+            automationData.model_pricing = [
+              { provider: 'openai', model: 'gpt-5.6-luna', input_usd_per_1m: 0.2, cached_input_usd_per_1m: 0.02, output_usd_per_1m: 1.2, embedding_usd_per_1m: null, priced: true },
+              { provider: 'openai', model: 'gpt-5.4', input_usd_per_1m: null, cached_input_usd_per_1m: null, output_usd_per_1m: null, embedding_usd_per_1m: null, priced: false }
+            ];
+            const pricingMarkup = renderAutomatedCases();
+            if (!pricingMarkup.includes('Model pricing') || !pricingMarkup.includes('openai:gpt-5.6-luna') || !pricingMarkup.includes('$0.20') || !pricingMarkup.includes('$0.02') || !pricingMarkup.includes('$1.20') || !pricingMarkup.includes('per 1M')) throw new Error('model pricing strip missing');
+            if (!pricingMarkup.includes('pricing not configured')) throw new Error('unpriced model pricing marker missing');
+            automationData.model_pricing = undefined;
+            if (renderAutomatedCases().includes('Model pricing')) throw new Error('model pricing strip rendered without data');
             automationData.cases[0].token_usage = undefined;
             automationData.token_usage_page_total = undefined;
             automationData.automation_subcategories = undefined;
@@ -244,7 +253,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260824-token-cost-1", index)
+        self.assertIn("20260825-model-pricing-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -606,7 +615,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260824-token-cost-1", html)
+        self.assertIn("20260825-model-pricing-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
