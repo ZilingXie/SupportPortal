@@ -30,7 +30,7 @@ from backend.services.account_ai_execution import (
     invoke_account_responses_text,
 )
 from backend.services.llm_factory import LlmInvocationError
-from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, INTENT_ROUTER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import BILLING_REPLY_SCENARIO, ACCOUNT_EXTRACTOR_SCENARIO, resolve_model_profile
 from backend.services.detailed_invoice_field_extractor import (
     DetailedInvoiceFieldExtraction,
     extract_detailed_invoice_fields,
@@ -225,7 +225,7 @@ def build_billing_automation_result(
     already_requested_fields: list[str] | tuple[str, ...] | set[str] | None = None,
     use_llm_field_extractor: bool = False,
     generate_customer_reply: bool = True,
-    model_scenario: str = INTENT_ROUTER_SCENARIO,
+    model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
 ) -> BillingAutomationResult:
     normalized_action = canonical_automation_subcategory(action)
     if normalized_action not in _FIELD_ALIASES:
@@ -264,7 +264,7 @@ def build_billing_automation_result(
                     requester=requester,
                     customer_id=customer_email,
                     persona_instruction=persona_instruction,
-                    strict_account_failure=model_scenario != INTENT_ROUTER_SCENARIO,
+                    strict_account_failure=model_scenario != ACCOUNT_EXTRACTOR_SCENARIO,
                 )
                 if generate_customer_reply
                 else ""

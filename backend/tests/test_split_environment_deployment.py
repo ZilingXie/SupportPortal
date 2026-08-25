@@ -92,8 +92,13 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
             "Resolved APP_RUNTIME_IMAGE from the official api container",
             "does not match release commit",
             "up -d --no-build --no-deps automation_production_worker",
+            "bootstrap_automation_production_schema.sh",
+            "wait_for_worker_stable",
+            ".RestartCount",
         ):
             self.assertIn(marker, script)
+        self.assertLess(script.index('bash "$BOOTSTRAP_SCRIPT"'), script.index('log "Starting candidate project'))
+        self.assertLess(script.index("if ! wait_for_worker_stable; then"), script.index("old_target=\"$(awk"))
 
     def test_automation_production_worker_contract(self):
         compose = (ROOT / "deployment/docker-compose.single-host.yml").read_text()
@@ -107,6 +112,7 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("TICKET_DB_DSN: ${AUTOMATION_PRODUCTION_DB_DSN:-${PRODUCTION_TICKET_DB_DSN:-}}", worker_block)
         self.assertIn("TICKET_DB_SCHEMA: ${AUTOMATION_PRODUCTION_DB_SCHEMA:-supportportal_production}", worker_block)
         self.assertIn("TICKET_DB_APPLICATION_NAME: supportportal-automation-production-worker", worker_block)
+        self.assertIn("PGVECTOR_DSN: ${PGVECTOR_DSN:?PGVECTOR_DSN is required}", worker_block)
         # Fail fast when the bootstrap script has not provisioned the schema.
         self.assertIn("RUNTIME_SCHEMA_MODE: check", worker_block)
         # Queue/event identity must be distinct from the legacy production
@@ -127,6 +133,17 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("- ../.msgraph:/app/.msgraph", worker_block)
         # Egress-capable split network only.
         self.assertIn("networks: [automation_internal_production]", worker_block)
+
+    def test_split_verifier_resolves_blue_green_candidate_and_worker(self):
+        verify = (ROOT / "deployment/verify_split_environments.sh").read_text()
+        self.assertIn("ACTIVE_PRODUCTION_FILE", verify)
+        self.assertIn('$automation_production_active', verify)
+        self.assertIn('label=com.docker.compose.service=${service_name}', verify)
+        self.assertIn("label=com.docker.compose.service=automation_production_worker", verify)
+        self.assertIn(".RestartCount", verify)
+        self.assertIn("VERIFY_WORKER_STABILITY_SECONDS", verify)
+        self.assertIn('worker_state_before" == "$worker_state_after', verify)
+        self.assertNotIn('grep "supportportal-automation-${1}-automation_${1}-1"', verify)
 
     def test_production_schema_bootstrap_script_contract(self):
         script_path = ROOT / "deployment/bootstrap_automation_production_schema.sh"

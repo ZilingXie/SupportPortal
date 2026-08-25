@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.services.llm_profiles import (
+    ACCOUNT_EXTRACTOR_SCENARIO,
     ACCOUNT_ROUTE_SCENARIO,
     AUTO_DEPLOY_REPORT_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
@@ -63,6 +64,30 @@ class LlmProfileTests(unittest.TestCase):
         self.assertIsNone(legacy.base_url)
     def tearDown(self) -> None:
         clear_config_warnings_for_testing()
+
+    def test_account_extractor_profile_uses_luna_low_without_fallbacks(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            profile = resolve_model_profile(ACCOUNT_EXTRACTOR_SCENARIO)
+        self.assertEqual(profile.provider, "openai")
+        self.assertEqual(profile.model, "gpt-5.6-luna")
+        self.assertEqual(profile.reasoning_effort, "low")
+        self.assertEqual(profile.timeout_seconds, 30.0)
+        self.assertEqual(profile.fallback_models, ())
+        self.assertEqual(profile.fallback_profiles, ())
+
+        with patch.dict(
+            os.environ,
+            {
+                "ACCOUNT_EXTRACTOR_MODEL": "gpt-test",
+                "ACCOUNT_EXTRACTOR_REASONING_EFFORT": "medium",
+                "ACCOUNT_EXTRACTOR_TIMEOUT_SECONDS": "45",
+            },
+            clear=True,
+        ):
+            overridden = resolve_model_profile(ACCOUNT_EXTRACTOR_SCENARIO)
+        self.assertEqual(overridden.model, "gpt-test")
+        self.assertEqual(overridden.reasoning_effort, "medium")
+        self.assertEqual(overridden.timeout_seconds, 45.0)
 
     def test_default_profiles_match_client_ai_model_strategy(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -148,17 +173,17 @@ class LlmProfileTests(unittest.TestCase):
 
         self.assertEqual(billing_reply.provider, "openai")
         self.assertEqual(billing_reply.api_mode, "openai_responses")
-        self.assertEqual(billing_reply.model, "gpt-5.4-mini")
+        self.assertEqual(billing_reply.model, "gpt-5.6-luna")
         self.assertEqual(billing_reply.reasoning_effort, "low")
         self.assertEqual(billing_reply.temperature, 0.5)
-        self.assertEqual(billing_reply.timeout_seconds, 6.0)
+        self.assertEqual(billing_reply.timeout_seconds, 30.0)
 
         self.assertEqual(enablement_reply.provider, "openai")
         self.assertEqual(enablement_reply.api_mode, "openai_responses")
-        self.assertEqual(enablement_reply.model, "gpt-5.4-mini")
+        self.assertEqual(enablement_reply.model, "gpt-5.6-luna")
         self.assertEqual(enablement_reply.reasoning_effort, "low")
         self.assertEqual(enablement_reply.temperature, 0.2)
-        self.assertEqual(enablement_reply.timeout_seconds, 8.0)
+        self.assertEqual(enablement_reply.timeout_seconds, 30.0)
 
         self.assertEqual(engineer.provider, "openai")
         self.assertEqual(engineer.api_mode, "openai_responses")

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T02:43:01Z",
-  "source_base_commit": "f7d22ab998ad5b8689f88b412d30cfb69f5e73ba",
-  "registry_digest": "e58a6ee2a564c575f64caf5a29279c6258a6d9b38235747eb69c7ee64e2184d4",
+  "generated_at": "2026-08-25T02:45:25Z",
+  "source_base_commit": "426994de3b7ff00702a98d3b68cf5270aa9f67c0",
+  "registry_digest": "82239617f4b8edeffae914c835de1ecb3a4d156c2913ff5193fe53fc7f822897",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -649,6 +649,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_quota_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_enablement_automation.py backend/tests/test_account_suspension_field_extractor.py backend/tests/test_enablement_field_extractor.py backend/tests/test_account_verification_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_ai_execution.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "482 passed。新增用例：ACCOUNT_EXTRACTOR 默认值（luna/low/30s/pinned）+三 env 旋钮覆盖；billing/enablement_reply 默认断言更新为 luna/30s；classifier/persona 测试中的 mini 字符串仅为 mock 标签无需改。"
+        },
+        {
+          "type": "decision",
+          "label": "范围与档位定案",
+          "command": "",
+          "details": "问答未获答复按推荐执行：仅账号链路（客户端 ack/web 搜索/engineer/本地 RAG 管线保持原模型，避免客户端首响时延劣化）、小任务 low 档；extractor 拆独立场景解决共享 INTENT_ROUTER 的 3 秒紧超时与客户端流耦合。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -748,7 +760,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 16,
+      "task_count": 17,
       "done_count": 10,
       "blocked_count": 1
     },
@@ -1993,6 +2005,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 review remediation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
+        },
+        {
+          "type": "test",
+          "label": "Blue-green schema and worker readiness remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 && bash -n deployment/{deploy_automation_production_blue_green,bootstrap_automation_production_schema,deploy_ec2,verify_split_environments}.sh",
+          "details": "75 项部署回归通过。蓝绿顺序收紧为 schema bootstrap -> candidate readiness -> parity worker recreate -> worker stability -> Nginx cutover -> state commit -> drain；worker 注入必填 PGVECTOR_DSN，重启/退出时在切流前失败并停止 candidate。verify_split_environments.sh 按 active upstream 的 Compose service label 识别 candidate，双采样同一 worker 的 running/status/RestartCount，移除硬编码容器名和 grep|head pipefail。EC2 数据库 bootstrap、容器重建和异步回复 readback 尚未执行。"
         },
         {
           "type": "test",
@@ -6373,6 +6391,64 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-114",
+      "title": "账号链路小任务模型全换 gpt-5.6-luna（extractor/persona/classifier/reply）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户指令\"为什么还有5.4？全换成5.6\"，定案仅账号链路（客户端流/工程师流/本地 RAG 不动）、小任务 low 档（路由与 ragflow 兜底保持 xhigh）。改动：llm_profiles 新场景 ACCOUNT_EXTRACTOR（默认 openai/gpt-5.6-luna/low/timeout 30s/pinned 无 fallback，env ACCOUNT_EXTRACTOR_MODEL/REASONING_EFFORT/TIMEOUT_SECONDS）——七个 production case 字段 extractor（quota/detailed_invoice/verification/suspension/enablement_field + billing_automation 内部）从共享的 INTENT_ROUTER_SCENARIO（gpt-5.4-mini、3 秒紧超时、客户端流共享不可直改）整体迁到新场景；AUTOMATION_PERSONA / ENABLEMENT_COMPLETION_CLASSIFIER / BILLING_REPLY / ENABLEMENT_REPLY 四场景默认 model gpt-5.4-mini→gpt-5.6-luna（effort 保持 low；persona/billing/enablement_reply 超时 8s/6s→30s、classifier 8s→20s）；enablement_automation 无需改文件（走 ENABLEMENT_REPLY 场景默认）。INTENT_ROUTER（客户端流路由）模型与 3s 时延预算保持不变；root/EC2 .env 的 INTENT_ROUTER_MODEL 不动。换完后 production case 链路只剩 openai:gpt-5.6-luna 一个模型（token_by_model 单条目；价格表只需 luna 一套价，LLM_PRICING_USD_PER_1M 已有 key）。改动由预制幂等脚本 ~/Desktop/p2-113-apply.py 套用（任务号原定 p2-110→p2-113 均被并行占用，最终 p2-114）。",
+      "next_action": "finalize 到 main 后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+容器内实测 account_extractor/automation_persona 场景解析 gpt-5.6-luna/low）；p2-114 翻 done；用户侧 EC2 仅部署 main stack（--skip-split），若 EC2 .env 显式设了 AUTOMATION_PERSONA_MODEL/ENABLEMENT_COMPLETION_CLASSIFIER_MODEL/BILLING_REPLY_MODEL/ENABLEMENT_REPLY_MODEL 为 mini 需同步删除或改 luna（root .env 未设这些，走代码默认即生效）。",
+      "acceptance_criteria": [
+        "ACCOUNT_EXTRACTOR 场景默认 gpt-5.6-luna/low/30s/pinned，env 三旋钮可覆盖；INTENT_ROUTER 场景（客户端流）模型、effort、3s 超时与 deepseek 兜底行为全部不变。",
+        "七个 extractor 的场景引用全部从 INTENT_ROUTER_SCENARIO 迁到 ACCOUNT_EXTRACTOR_SCENARIO；enablement_automation 经 ENABLEMENT_REPLY 默认换 luna。",
+        "persona/classifier/billing_reply/enablement_reply 默认 luna/low，超时放宽（30/20/30/30s），温度与重试次数不变。",
+        "production case 链路 token_by_model 只剩 openai:gpt-5.6-luna。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_quota_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_enablement_automation.py backend/tests/test_account_suspension_field_extractor.py backend/tests/test_enablement_field_extractor.py backend/tests/test_account_verification_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_account_route_pipeline.py backend/tests/test_account_ai_execution.py backend/tests/test_llm_usage_capture.py -q",
+          "details": "482 passed。新增用例：ACCOUNT_EXTRACTOR 默认值（luna/low/30s/pinned）+三 env 旋钮覆盖；billing/enablement_reply 默认断言更新为 luna/30s；classifier/persona 测试中的 mini 字符串仅为 mock 标签无需改。"
+        },
+        {
+          "type": "decision",
+          "label": "范围与档位定案",
+          "command": "",
+          "details": "问答未获答复按推荐执行：仅账号链路（客户端 ack/web 搜索/engineer/本地 RAG 管线保持原模型，避免客户端首响时延劣化）、小任务 low 档；extractor 拆独立场景解决共享 INTENT_ROUTER 的 3 秒紧超时与客户端流耦合。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_profiles.py",
+        "backend/services/quota_field_extractor.py",
+        "backend/services/detailed_invoice_field_extractor.py",
+        "backend/services/account_verification_field_extractor.py",
+        "backend/services/account_suspension_field_extractor.py",
+        "backend/services/enablement_field_extractor.py",
+        "backend/services/billing_automation.py",
+        ".env.example",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "用户\"为什么还有5.4？全换成5.6\"。任务号 p2-110→p2-113→p2-114（两次被并行链占用）。改动由预制幂等脚本套用；billing_reply 超时默认实为 6s（脚本锚 8s 未命中）已手工补正为 30s。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-111",
+        "p2-107"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-115",
       "title": "/automation/production 替代 /production：Phase F+G 收尾（邮箱闭环开关 + 切流准备，任务号因 p2-114 被并行链 #934 占用顺延）",
       "status": "active",
@@ -9420,7 +9496,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "蓝绿部署修复已完成，待在 Docker/EC2 上执行 release manifest 候选预热、共享 production Redis 检查、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
+      "next_action": "2026-08-25 蓝绿部署失败修复代码已完成，待 EC2 更新 main 后重新执行同一 release 的蓝绿部署：必须先由 bootstrap 补齐 supportportal_production ticket/knowledge schema，再确认 automation_production_worker 在稳定窗口内 running 且 RestartCount 不变，最后运行 candidate-aware verify_split_environments.sh 并验证异步回复链。当前公网 health 200 但 worker 持续重启，线上恢复尚未完成。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -9538,6 +9614,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 review remediation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
+        },
+        {
+          "type": "test",
+          "label": "Blue-green schema and worker readiness remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 && bash -n deployment/{deploy_automation_production_blue_green,bootstrap_automation_production_schema,deploy_ec2,verify_split_environments}.sh",
+          "details": "75 项部署回归通过。蓝绿顺序收紧为 schema bootstrap -> candidate readiness -> parity worker recreate -> worker stability -> Nginx cutover -> state commit -> drain；worker 注入必填 PGVECTOR_DSN，重启/退出时在切流前失败并停止 candidate。verify_split_environments.sh 按 active upstream 的 Compose service label 识别 candidate，双采样同一 worker 的 running/status/RestartCount，移除硬编码容器名和 grep|head pipefail。EC2 数据库 bootstrap、容器重建和异步回复 readback 尚未执行。"
         }
       ],
       "source_refs": [
@@ -9553,6 +9635,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "deployment/docker-compose.single-host.yml",
         "deployment/nginx/supportportal.conf",
         "deployment/deploy_ec2.sh",
+        "deployment/deploy_automation_production_blue_green.sh",
+        "deployment/bootstrap_automation_production_schema.sh",
+        "deployment/verify_split_environments.sh",
         "deployment/build_automation_release.sh",
         "docs/deploy_automation_release.md",
         "backend/Dockerfile",

@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env"
+ACTIVE_PRODUCTION_FILE="${PROJECT_ROOT}/deployment/nginx/runtime/automation_production_active.conf"
 NGINX_BASE="http://localhost:${NGINX_HOST_PORT:-8080}"
 ZENDESK_PREFLIGHT_TICKET="12895"
 
@@ -116,7 +117,22 @@ done
 echo "== Container and network invariants"
 
 automation_container() {
-  docker ps --format '{{.Names}}' | grep "supportportal-automation-${1}-automation_${1}-1" | head -1
+  local env_name="$1" service_name=""
+  case "$env_name" in
+    staging) service_name=automation_staging ;;
+    preproduction) service_name=automation_preproduction ;;
+    production)
+      service_name="$(awk '
+        $1 == "set" && $2 == "$automation_production_active" {
+          gsub(";", "", $3); sub(":8000$", "", $3); print $3; exit
+        }
+      ' "$ACTIVE_PRODUCTION_FILE" 2>/dev/null || true)"
+      ;;
+  esac
+  [[ -n "$service_name" ]] || return 0
+  docker ps \
+    --filter "label=com.docker.compose.service=${service_name}" \
+    --format '{{.Names}}' 2>/dev/null | sed -n '1p' || true
 }
 
 for env_name in staging preproduction production; do
@@ -141,6 +157,27 @@ for env_name in staging preproduction production; do
   fi
 done
 
+worker_container="$(docker ps -a \
+  --filter 'label=com.docker.compose.service=automation_production_worker' \
+  --format '{{.Names}}' 2>/dev/null | sed -n '1p' || true)"
+if [[ -z "$worker_container" ]]; then
+  fail "production parity worker container not found"
+else
+  worker_stability_seconds="${VERIFY_WORKER_STABILITY_SECONDS:-5}"
+  if [[ ! "$worker_stability_seconds" =~ ^[0-9]+$ ]]; then
+    fail "VERIFY_WORKER_STABILITY_SECONDS must be non-negative (${worker_stability_seconds})"
+  else
+    worker_state_before="$(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.RestartCount}}' "$worker_container" 2>/dev/null || true)"
+    sleep "$worker_stability_seconds"
+    worker_state_after="$(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.RestartCount}}' "$worker_container" 2>/dev/null || true)"
+    if [[ "$worker_state_before" == "$worker_state_after" && "$worker_state_after" == "true running "* ]]; then
+      pass "production parity worker stable for ${worker_stability_seconds}s (${worker_container}, state=${worker_state_after})"
+    else
+      fail "production parity worker is not stable (${worker_container}, before=${worker_state_before:-unknown}, after=${worker_state_after:-unknown})"
+    fi
+  fi
+fi
+
 for network_name in \
   "${AUTOMATION_STAGING_INTERNAL_NETWORK_NAME:-supportportal_automation_internal_staging}" \
   "${AUTOMATION_PREPRODUCTION_INTERNAL_NETWORK_NAME:-supportportal_automation_internal_preproduction}" \
@@ -151,7 +188,9 @@ done
 
 echo "== Route outbound and Zendesk credential preflight"
 
-route_container="$(docker ps --format '{{.Names}}' | grep 'supportportal-automation-staging-route_staging-1' | head -1)"
+route_container="$(docker ps \
+  --filter 'label=com.docker.compose.service=route_staging' \
+  --format '{{.Names}}' 2>/dev/null | sed -n '1p' || true)"
 if [[ -n "${route_container}" ]]; then
   if docker exec "${route_container}" python -c 'import socket; socket.getaddrinfo("api.openai.com", 443)' >/dev/null 2>&1; then
     pass "route container resolves api.openai.com (outbound DNS)"
