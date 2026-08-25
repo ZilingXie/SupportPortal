@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T02:45:32Z",
-  "source_base_commit": "ab13e4c876b8362ab75a887de4b4a1d118fe62f7",
-  "registry_digest": "3d5384fec48a35a741dbc3b5aa6da1650cd523c89e3c1f146b71787b31352dff",
+  "generated_at": "2026-08-25T02:46:03Z",
+  "source_base_commit": "22f70b59ba04404361c0c598f737f509bfce511e",
+  "registry_digest": "2f3e79a16187e53848c08b201a03e36a25c44aff84ca53d6fb685a299b921dbc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1768,6 +1768,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Static verification and parity regression",
+          "command": "bash -n deployment/verify_split_environments.sh && .venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract",
+          "details": "verify 脚本语法通过；split 部署/评论/intake/runtime 契约回归绿。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -2110,7 +2116,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 19,
+      "task_count": 20,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -6457,6 +6463,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-115",
+      "title": "/automation/production 替代 /production：Phase F+G 收尾（邮箱闭环开关 + 切流准备，任务号因 p2-114 被并行链 #934 占用顺延）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "七阶段搬迁收尾。Phase F（邮箱闭环）经核实为零代码缺口：worker 邮箱 poller 由 AUTOMATION_REPLY_POLL_ENABLED 门控（split worker 映射 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，默认 false），[automation] 主题前缀过滤（internal_email_subject_matches 锚定前缀）与跨栈 dismissal 机制均为既有代码，启用=EC2 .env 开关+重启。Phase G（切流准备）落地：verify_split_environments.sh 新增六个 parity 端点鉴权负例探针（comment-sync-target/comments/status/slack messages/actions/thread-bindings）；split_environments_report.md 刷新 v3（A-E 合并记录、Phase F 开关步骤、n8n 四组 URL 切流清单、路线更新为直接替代）。",
+      "next_action": "用户侧执行：① EC2 部署最新 release（A-E 代码）；② Phase F 开关（.env AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED=1 + recreate worker）；③ 跑 verify_split_environments.sh（含新探针）全绿；④ 受控工单全链验收（intake→邮件/追问→延迟 public 回复→评论回复→guardrail/final_approve→状态同步关闭→邮箱完成闭环）；⑤ Phase G：n8n 四组换 URL + Company ID 互斥灰度切流（cutover 文档 §2/§4），观察期后旧端点下线。",
+      "acceptance_criteria": [
+        "verify 脚本六个 parity 端点探针（401 负例）在 EC2 全绿。",
+        "报告 v3 准确反映 A-E 合并状态与切流清单；邮箱闭环开关路径文档化。",
+        "无运行时代码变更（纯探针+文档+登记）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Static verification and parity regression",
+          "command": "bash -n deployment/verify_split_environments.sh && .venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract",
+          "details": "verify 脚本语法通过；split 部署/评论/intake/runtime 契约回归绿。"
+        }
+      ],
+      "source_refs": [
+        "deployment/verify_split_environments.sh",
+        "docs/split_environments_report.md",
+        "deployment/docker-compose.single-host.yml",
+        "backend/worker.py",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-24",
+      "updated_at": "2026-08-24",
+      "history": [
+        {
+          "at": "2026-08-24",
+          "event": "created",
+          "summary": "Phase E（p2-113/PR#933）合并后收尾 F+G。核实邮箱 poller 门控链（AUTOMATION_REPLY_POLL_ENABLED→AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED 映射已在 Phase A compose）确认 F 无代码缺口；G 落地探针与报告 v3。另发现根仓库存在他人未提交改动（quota_field_extractor.py/prompt_change_log.md），未触碰。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-108",
+        "p2-109",
+        "p2-110",
+        "p2-112",
+        "p2-113"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     },
     {
       "schema_version": 2,
