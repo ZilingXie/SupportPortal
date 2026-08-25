@@ -283,7 +283,7 @@ class PromptVersioningPostgresTests(unittest.TestCase):
         self.addCleanup(self._drop_schema_by_name, target_schema)
         target.initialize()
         collision_key = "account-account-billing-router-system"
-        reuse_key = "account-account-billing-router-user"
+        reuse_key = "account-intent-classifier-system"
         source_reuse_content = self.service.get_prompt(reuse_key)["active_version"]["content"]
         divergent_catalog = [
             {**item, "content": "Target-local historical billing router prompt"}
