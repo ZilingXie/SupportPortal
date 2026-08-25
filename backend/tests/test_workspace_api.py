@@ -481,6 +481,7 @@ class WorkspaceApiTests(unittest.TestCase):
                     "stage": "quota_field_extractor",
                     "prompt_tokens": 100,
                     "completion_tokens": 40,
+                    "cached_input_tokens": 40,
                 },
                 {
                     "provider": "openai",
@@ -488,6 +489,7 @@ class WorkspaceApiTests(unittest.TestCase):
                     "stage": "account_route",
                     "prompt_tokens": 60,
                     "completion_tokens": 20,
+                    "cached_input_tokens": 20,
                 },
             ],
         )
@@ -500,12 +502,12 @@ class WorkspaceApiTests(unittest.TestCase):
             "total_output_tokens": 300,
             "total_prompt_tokens": 900,
             "total_completion_tokens": 300,
-            "total_cached_input_tokens": 0,
+            "total_cached_input_tokens": 400,
             "total_reasoning_tokens": 0,
             "total_tool_tokens": 0,
             "total_embedding_tokens": 50,
             "token_by_model": [
-                {"provider": "openai", "model": "gpt-rag", "input_tokens": 900, "output_tokens": 300, "embedding_tokens": 50},
+                {"provider": "openai", "model": "gpt-rag", "input_tokens": 900, "cached_input_tokens": 400, "output_tokens": 300, "embedding_tokens": 50},
             ],
             "stage_totals": {
                 "rag_answer": {"input_tokens": 900, "output_tokens": 300, "calls": 1},
@@ -535,19 +537,25 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertTrue(usage["available"])
         self.assertIsNone(usage["error_reason"])
         self.assertEqual(usage["total_input_tokens"], 900 + 160)
+        self.assertEqual(usage["total_cached_input_tokens"], 400 + 60)
         self.assertEqual(usage["total_output_tokens"], 300 + 60)
         self.assertEqual(usage["total_embedding_tokens"], 50)
         self.assertEqual(usage["sources"]["rag"]["total_input_tokens"], 900)
+        self.assertEqual(usage["sources"]["rag"]["total_cached_input_tokens"], 400)
         self.assertEqual(usage["sources"]["automation"]["call_count"], 2)
+        self.assertEqual(usage["sources"]["automation"]["total_cached_input_tokens"], 60)
         self.assertEqual(
             usage["sources"]["automation"]["stage_totals"]["quota_field_extractor"]["input_tokens"],
             100,
         )
         by_model = {(row["provider"], row["model"]): row for row in usage["token_by_model"]}
         self.assertEqual(by_model[("openai", "gpt-test")]["input_tokens"], 160)
+        self.assertEqual(by_model[("openai", "gpt-test")]["cached_input_tokens"], 60)
         self.assertEqual(by_model[("openai", "gpt-rag")]["input_tokens"], 900)
+        self.assertEqual(by_model[("openai", "gpt-rag")]["cached_input_tokens"], 400)
         page_total = payload["token_usage_page_total"]
         self.assertEqual(page_total["total_input_tokens"], 900 + 160)
+        self.assertEqual(page_total["total_cached_input_tokens"], 400 + 60)
         self.assertEqual(page_total["total_output_tokens"], 300 + 60)
         self.assertEqual(page_total["total_embedding_tokens"], 50)
         cost = usage["cost_usd"]

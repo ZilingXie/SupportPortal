@@ -12601,11 +12601,13 @@ def _merge_account_case_token_by_model(
                     "provider": provider,
                     "model": model,
                     "input_tokens": 0,
+                    "cached_input_tokens": 0,
                     "output_tokens": 0,
                     "embedding_tokens": 0,
                 },
             )
             bucket["input_tokens"] += int(entry.get("input_tokens") or 0)
+            bucket["cached_input_tokens"] += int(entry.get("cached_input_tokens") or 0)
             bucket["output_tokens"] += int(entry.get("output_tokens") or 0)
             bucket["embedding_tokens"] += int(entry.get("embedding_tokens") or 0)
     return list(merged.values())
@@ -12615,6 +12617,7 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
     """Merge per-case RAG and automation token usage onto admin case records."""
     page_total = {
         "total_input_tokens": 0,
+        "total_cached_input_tokens": 0,
         "total_output_tokens": 0,
         "total_embedding_tokens": 0,
         "cost_usd_total": 0.0,
@@ -12660,6 +12663,7 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
         rag_source = {
             "available": rag_summary is not None,
             "total_input_tokens": int((rag_summary or {}).get("total_input_tokens") or 0),
+            "total_cached_input_tokens": int((rag_summary or {}).get("total_cached_input_tokens") or 0),
             "total_output_tokens": int((rag_summary or {}).get("total_output_tokens") or 0),
             "total_embedding_tokens": int((rag_summary or {}).get("total_embedding_tokens") or 0),
             "stage_totals": rag_stage_totals,
@@ -12668,6 +12672,7 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
             "available": True,
             "call_count": int((automation_summary or {}).get("call_count") or 0),
             "total_input_tokens": int((automation_summary or {}).get("total_input_tokens") or 0),
+            "total_cached_input_tokens": int((automation_summary or {}).get("total_cached_input_tokens") or 0),
             "total_output_tokens": int((automation_summary or {}).get("total_output_tokens") or 0),
             "stage_totals": dict((automation_summary or {}).get("stage_totals") or {}),
         }
@@ -12678,12 +12683,14 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
             else ("rag token usage summary failed" if client_ticket_id else "case has no linked client ticket")
         )
         total_input = rag_source["total_input_tokens"] + automation_source["total_input_tokens"]
+        total_cached = rag_source["total_cached_input_tokens"] + automation_source["total_cached_input_tokens"]
         total_output = rag_source["total_output_tokens"] + automation_source["total_output_tokens"]
         total_embedding = rag_source["total_embedding_tokens"]
         record["token_usage"] = {
             "available": available,
             "error_reason": error_reason,
             "total_input_tokens": total_input if available else 0,
+            "total_cached_input_tokens": total_cached if available else 0,
             "total_output_tokens": total_output if available else 0,
             "total_embedding_tokens": total_embedding if available else 0,
             "token_by_model": _merge_account_case_token_by_model(
@@ -12704,6 +12711,7 @@ def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, A
             page_total["cost_usd_available"] = False
         if available:
             page_total["total_input_tokens"] += total_input
+            page_total["total_cached_input_tokens"] += total_cached
             page_total["total_output_tokens"] += total_output
             page_total["total_embedding_tokens"] += total_embedding
     return page_total
