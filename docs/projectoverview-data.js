@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T09:11:47Z",
-  "source_base_commit": "0608724fa491bb6f12030c12663369c0a55f417f",
-  "registry_digest": "78180fc9cac224393a11ab2d9d1b7d120e1414da09de39d6ee290e13ee5f13d0",
+  "generated_at": "2026-08-25T09:21:27Z",
+  "source_base_commit": "18ccab7f0f76eb6954ebb85999e501e65b40fc12",
+  "registry_digest": "ecea4e80ffdde04878cde4631f56ef5c50592f7a2f0e0e2152eadcc7c511a556",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1834,6 +1834,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Production Automation classification email regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
+          "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+        },
+        {
+          "type": "document",
+          "label": "Project records and generated overview",
+          "command": "python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check; python3 -m compileall -q backend",
+          "details": "Feature list、Project Overview 生成与检查、差异空白检查和 Python compile check 均通过。"
+        },
+        {
+          "type": "document",
+          "label": "Implemented plan review",
+          "command": "review-implemented-plan skill",
+          "details": "review 未发现需修复的功能性问题。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -2176,7 +2194,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 21,
+      "task_count": 22,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -6781,6 +6799,65 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-119",
+      "title": "Production Automation 分类邮件通知",
+      "status": "active",
+      "owner": "codex",
+      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path；staging、非 active Automation 和 classification-only 路由不触发。",
+      "next_action": "finalize 到 main，重启官方栈并用受控 Production Case 完成 Graph 与邮箱 readback。",
+      "acceptance_criteria": [
+        "Production active Automation Case 只创建一条分类邮件通知，收件人为 xieziling@agora.io，内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
+        "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
+        "staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不发送错误邮件，并保留可审计失败状态。",
+        "Graph 200/202 标记 delivered；明确错误标记 failed；网络或 5xx 结果未知标记 outcome_unknown，禁止自动盲目重发。",
+        "邮件失败不回滚或重放已有 Zendesk side effect。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Production Automation classification email regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_production_automation_classification_email.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py backend/tests/test_repository_configuration.py backend/tests/test_automation_routing.py backend/tests/test_account_route_pipeline.py",
+          "details": "fresh suite 合计 458 项通过；覆盖 active Automation 匹配、分类路径与客户问题、可信 Case 链接、幂等 outbox、Graph 成功/失败/未知状态和既有 Account/worker/repository/routing 回归。"
+        },
+        {
+          "type": "document",
+          "label": "Project records and generated overview",
+          "command": "python3 scripts/verify_feature_list.py; python3 scripts/generate_project_overview.py --write; python3 scripts/generate_project_overview.py --check; git diff --check; python3 -m compileall -q backend",
+          "details": "Feature list、Project Overview 生成与检查、差异空白检查和 Python compile check 均通过。"
+        },
+        {
+          "type": "document",
+          "label": "Implemented plan review",
+          "command": "review-implemented-plan skill",
+          "details": "review 未发现需修复的功能性问题。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_routing.py",
+        "backend/services/account_route_pipeline.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/worker.py",
+        "backend/sql/migrations/2026_08_25_production_automation_classification_emails.sql",
+        "backend/tests/test_production_automation_classification_email.py"
+      ],
+      "created_at": "2026-08-25",
+      "updated_at": "2026-08-25",
+      "history": [
+        {
+          "at": "2026-08-25",
+          "event": "created",
+          "summary": "实现 Production Automation 分类邮件通知的独立 outbox、Graph Mail worker 投递和幂等验证。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment"
     },
     {
       "schema_version": 2,
@@ -12032,7 +12109,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
         "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。AI 草稿、两阶段批准、Zendesk public comment 和后续客户评论都回到同一 thread；发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
-        "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。"
+        "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
+        "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
         "对话支持上传图片和 txt/log/md 文件。",
