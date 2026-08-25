@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Align every EC2 deployment surface with the target commit and report.
+# Align the EC2 main stack with the target commit and report.
 #
-# Surfaces:
-#   main stack  - api/api_production/workers/nginx behind the / paths
-#   split stack - the three /automation/* compose projects (route + automation)
-#
-# The script deploys ONLY surfaces whose live build ref lags behind the target
-# commit, so reruns are cheap and partial deployments are safe. Production
-# split deploy still requires explicit approval (--approve-production or
-# DEPLOY_PRODUCTION_APPROVED=1), matching deployment/deploy_ec2.sh convention.
+# The three /automation/* environments are retired from EC2 and targeted for ECS.
+# --skip-split remains accepted so older operators and the daily wrapper can
+# state that boundary explicitly.
 #
 # Usage:
-#   scripts/ops/deploy_surfaces_ec2.sh [--dry-run] [--daily] [--approve-production]
+#   scripts/ops/deploy_surfaces_ec2.sh [--dry-run] [--daily]
 #        [--skip-main] [--skip-split] [--health-url <url>] [--domain <domain>]
 #
-# Environment overrides: DOCKER_CMD (default docker), DEPLOY_DOMAIN,
-# DEPLOY_SURFACES_HEALTH_URL.
+# Environment overrides: DEPLOY_DOMAIN, DEPLOY_SURFACES_HEALTH_URL.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${DEPLOY_SURFACES_REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/../.." && pwd)}"
@@ -26,12 +20,9 @@ cd "${PROJECT_ROOT}"
 BRANCH="main"
 DOMAIN="${DEPLOY_DOMAIN:-support.stellarix.space}"
 HEALTH_URL="${DEPLOY_SURFACES_HEALTH_URL:-https://${DOMAIN}/health}"
-DOCKER_CMD="${DOCKER_CMD:-docker}"
 DRY_RUN=0
 DAILY_MODE=0
-APPROVE_PRODUCTION=0
 SKIP_MAIN=0
-SKIP_SPLIT=0
 LOCK_FILE="${DEPLOY_SURFACES_LOCK_FILE:-${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}}"
 DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
 LOG_DIR="/tmp/deploy-surfaces-$(date +%Y%m%d-%H%M%S)"
@@ -45,9 +36,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --daily) DAILY_MODE=1 ;;
-    --approve-production) APPROVE_PRODUCTION=1 ;;
     --skip-main) SKIP_MAIN=1 ;;
-    --skip-split) SKIP_SPLIT=1 ;;
+    --skip-split) ;;
     --health-url) HEALTH_URL="${2:?}"; shift ;;
     --domain) DOMAIN="${2:?}"; shift ;;
     -h|--help) usage ;;
@@ -101,62 +91,8 @@ else
   need_main=1; main_reason="live app_build.ref=${main_ref} != ${SHA12}"
 fi
 
-split_image_tag() {
-  local env="$1"
-  "${DOCKER_CMD}" ps --format '{{.Names}}\t{{.Image}}' 2>/dev/null \
-    | awk -v s="automation_${env}" -F'\t' '$1 ~ s && $1 !~ /redis/ && $1 !~ /route/ {print $2; exit}' \
-    | sed 's/.*://'
-}
-
-split_tag_commit() {
-  local tag="$1" manifest
-  if [[ "${tag}" =~ ^release-[0-9]{8}-[0-9]{3}$ ]]; then
-    manifest=".deployments/releases/${tag}.env"
-    if [[ -f "${manifest}" ]]; then
-      grep '^commit=' "${manifest}" | head -1 | cut -d= -f2
-      return
-    fi
-    echo ""
-    return
-  fi
-  if [[ "${tag}" =~ local-([0-9a-f]{7,12}) ]]; then
-    echo "${BASH_REMATCH[1]}"
-    return
-  fi
-  echo ""
-}
-
-need_split=0
-split_reasons=""
-production_pending=0
-for env in staging preproduction production; do
-  tag="$(split_image_tag "${env}")"
-  if [[ -z "${tag}" ]]; then
-    [[ "${SKIP_SPLIT}" == 1 ]] || need_split=1
-    split_reasons+="${env}: no running automation container; "
-    continue
-  fi
-  commit="$(split_tag_commit "${tag}")"
-  if [[ "${SKIP_SPLIT}" == 1 ]]; then
-    split_reasons+="${env}: skipped by --skip-split; "
-  elif [[ -z "${commit}" ]]; then
-    need_split=1
-    split_reasons+="${env}: image ${tag} has unresolvable commit; "
-  elif [[ "${SHA12}" != "${commit}"* ]]; then
-    need_split=1
-    split_reasons+="${env}: image ${tag} commit=${commit} != ${SHA12}; "
-  else
-    split_reasons+="${env}: ${tag} at target; "
-  fi
-done
-
 log "main stack : $([[ ${need_main} == 1 ]] && echo NEEDS-DEPLOY || echo aligned) (${main_reason})"
-log "split stack: $([[ ${need_split} == 1 ]] && echo NEEDS-DEPLOY || echo aligned) (${split_reasons})"
-
-verify_split=0
-if [[ "${SKIP_SPLIT}" == 0 ]] && ([[ "${DAILY_MODE}" == 1 ]] || [[ "${need_split}" == 1 ]]); then
-  verify_split=1
-fi
+log "split stack: retired from EC2 (ECS migration pending)"
 
 if [[ "${DRY_RUN}" == 1 ]]; then
   log "dry-run: plan above; no changes made"
@@ -167,7 +103,7 @@ deploy_step() {
   local name="$1"; shift
   log "▶ ${name} (log: ${LOG_DIR}/${name}.log)"
   if ! "$@" 2>&1 | tee "${LOG_DIR}/${name}.log"; then
-    fail "step '${name}' failed; see ${LOG_DIR}/${name}.log — rollback: main='deployment/deploy_ec2.sh --rollback', split='deployment/deploy_ec2.sh --environment <env> --rollback'"
+    fail "step '${name}' failed; see ${LOG_DIR}/${name}.log — rollback: main='deployment/deploy_ec2.sh --rollback'"
   fi
 }
 
@@ -175,36 +111,6 @@ deploy_step() {
 
 if [[ "${need_main}" == 1 ]]; then
   deploy_step main-stack ./deployment/deploy_ec2.sh --branch "${BRANCH}" --skip-pull
-fi
-
-# --- split release build + deploy ---------------------------------------------
-
-if [[ "${need_split}" == 1 ]]; then
-  today="$(date +%Y%m%d)"
-  last=0
-  for manifest in .deployments/releases/release-"${today}"-*.env; do
-    [[ -f "${manifest}" ]] || continue
-    number="${manifest%.env}"
-    number="${number##*-}"
-    [[ "${number}" =~ ^[0-9]+$ ]] || continue
-    if (( 10#${number} > 10#${last} )); then
-      last="${number}"
-    fi
-  done
-  next="$((10#${last} + 1))"
-  NEW_ID="$(printf 'release-%s-%03d' "${today}" "${next}")"
-  log "building split release ${NEW_ID}"
-  deploy_step build-split ./deployment/build_automation_release.sh --release-id "${NEW_ID}"
-  manifest_commit="$(grep '^commit=' ".deployments/releases/${NEW_ID}.env" | head -1 | cut -d= -f2)"
-  [[ "${manifest_commit}" == "${SHA12}" ]] || fail "manifest commit=${manifest_commit} != ${SHA12}: stale build, aborting before any split deploy"
-  deploy_step split-staging ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment staging --release "${NEW_ID}" --skip-pull
-  deploy_step split-preproduction ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment preproduction --release "${NEW_ID}" --skip-pull
-  if [[ "${APPROVE_PRODUCTION}" == 1 || "${DEPLOY_PRODUCTION_APPROVED:-0}" == 1 ]]; then
-    deploy_step split-production env DEPLOY_PRODUCTION_APPROVED=1 ./deployment/deploy_ec2.sh --branch "${BRANCH}" --environment production --release "${NEW_ID}" --skip-pull
-  else
-    production_pending=1
-    log "production split deploy NOT executed: rerun with --approve-production (or DEPLOY_PRODUCTION_APPROVED=1); staging/preproduction are live on ${NEW_ID}"
-  fi
 fi
 
 # --- verification --------------------------------------------------------------
@@ -220,38 +126,13 @@ if [[ "${need_main}" == 1 ]]; then
   verify_summary+=("main: health ref=${live_ref}; /production/ 200; /account preserved")
 fi
 
-if [[ "${verify_split}" == 1 ]]; then
-  if ./deployment/verify_split_environments.sh >"${LOG_DIR}/verify-split.log" 2>&1; then
-    verify_summary+=("split: verify_split_environments all green")
-  else
-    tail -20 "${LOG_DIR}/verify-split.log"
-    fail "verify_split_environments failed; see ${LOG_DIR}/verify-split.log"
-  fi
-  token="$(grep '^n8n_request_token=' .env | head -1 | cut -d= -f2)"
-  spot="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' \
-    -H "X-N8n-Request-Token: ${token}" \
-    -d '{"title":"t","question":"deploy probe","source":"https://agoraio.zendesk.com/agent/tickets/1.json"}' \
-    "https://${DOMAIN}/automation/staging/v1/cases")"
-  if [[ "${spot}" == 200 ]]; then
-    verify_summary+=("split: legacy-body staging probe 200")
-  elif [[ "${spot}" == 401 ]]; then
-    fail "staging probe 401: n8n_request_token mismatch between .env and running container"
-  else
-    body="$(curl -s --max-time 30 -X POST -H 'Content-Type: application/json' -H "X-N8n-Request-Token: ${token}" -d '{"title":"t","question":"deploy probe","source":"https://agoraio.zendesk.com/agent/tickets/1.json"}' "https://${DOMAIN}/automation/staging/v1/cases" | head -c 200)"
-    fail "staging probe HTTP ${spot}: ${body}"
-  fi
-fi
-
 # --- final report ----------------------------------------------------------------
 
 echo
 echo "================ deploy-surfaces report ================"
 echo "target commit : ${SHA12}"
 echo "main stack    : $([[ ${need_main} == 1 ]] && echo "deployed (live ref now at target)" || echo "already aligned / skipped (${main_reason})")"
-echo "split stack   : $([[ ${need_split} == 1 ]] && echo "deployed (${NEW_ID:-n/a})" || echo "already aligned / skipped")"
-if [[ "${production_pending}" == 1 ]]; then
-  echo "PRODUCTION    : PENDING APPROVAL — rerun with --approve-production"
-fi
+echo "split stack   : retired from EC2 (ECS migration pending)"
 for line in "${verify_summary[@]:-}"; do
   [[ -n "${line}" ]] && echo "verify        : ${line}"
 done

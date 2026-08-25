@@ -11,7 +11,6 @@ services:
       - ./nginx/runtime:/etc/nginx/runtime:ro
     networks:
       - default
-      - automation_edge
     restart: unless-stopped
 
   route_staging:

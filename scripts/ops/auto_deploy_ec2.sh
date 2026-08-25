@@ -462,7 +462,7 @@ main() {
     --branch "${DEPLOY_BRANCH}" \
     --domain "${DEPLOY_DOMAIN}" \
     --daily \
-    --approve-production
+    --skip-split
   LOCAL_COMMIT="$(git rev-parse --short HEAD)"
   INTERNAL_HEALTH_STATUS="ok"
   INTERNAL_HEALTH_DETAIL="Validated by deploy_surfaces_ec2.sh"
