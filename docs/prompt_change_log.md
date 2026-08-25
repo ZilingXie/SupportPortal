@@ -12,6 +12,22 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-25 - Production API Prompt runtime service label
+
+- Area or subsystem: `/production` API startup and deployment Prompt runtime verification
+- Prompt or model version: Prompt content, release ids, and model configuration unchanged
+- Summary: API startup now uses `PROMPT_RUNTIME_SERVICE` for the `prompt_runtime_loaded` service label, with the existing `api` default preserved. This aligns `api_production` logs with its configured `api-production` identity and the eight-runtime deployment gate.
+- Reason: EC2 build `beb07bc9ad71` loaded candidate `pr-192a51684adc` successfully in both databases and served healthy `/health` and `/production/`, but the gate searched for `service=api-production` while `backend.main` hard-coded `service=api`; verification timed out after 90 seconds and correctly rolled back to build `48ca775d09ad`.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_startup_repository_fallbacks.py`
+- Expected behavior change:
+  - The main API continues logging `service=api` by default.
+  - The production API logs `service=api-production`, so deployment can distinguish and verify its loaded Prompt Release without weakening any image, build, release, health, or restart gate.
+- Verification:
+  - Startup contract covers the configured production service label in schema-check mode.
+  - Prompt runtime, deployment-gate, and Compose service-label tests pass; Python compilation and `git diff --check` pass.
+
 ## 2026-08-25 - Prompt Release target-local version remapping
 
 - Area or subsystem: managed Prompt Release cross-database sync and `/production` deployment

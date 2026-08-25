@@ -68,7 +68,7 @@ class StartupRepositoryFallbackTests(unittest.TestCase):
         self.prompt_runtime_patcher = patch.object(main, "initialize_prompt_runtime")
         self.workspace_admin_patcher = patch.object(main, "_bootstrap_workspace_admin")
         self.prompt_catalog_patcher.start()
-        self.prompt_runtime_patcher.start()
+        self.prompt_runtime_mock = self.prompt_runtime_patcher.start()
         self.workspace_admin_patcher.start()
 
     def tearDown(self) -> None:
@@ -96,6 +96,38 @@ class StartupRepositoryFallbackTests(unittest.TestCase):
         self.assertEqual(main.ticket_repository.storage_mode(), "memory")
         self.assertIsInstance(main.asset_repository, InMemoryAssetRepository)
         self.assertEqual(main.asset_repository.storage_mode(), "memory")
+        start_dispatcher.assert_called_once_with()
+
+    def test_main_schema_check_startup_uses_configured_prompt_runtime_service(self) -> None:
+        with (
+            patch.dict(os.environ, {"PROMPT_RUNTIME_SERVICE": "api-production"}, clear=False),
+            patch.object(main, "runtime_schema_check_enabled", return_value=True),
+            patch.object(main, "check_runtime_schema") as check_schema,
+            patch.object(main, "initialize_prompt_runtime_from_environment") as initialize_runtime,
+            patch.object(main, "_start_account_reroute_dispatcher") as start_dispatcher,
+        ):
+            main.startup_event()
+
+        check_schema.assert_called_once_with()
+        initialize_runtime.assert_called_once_with(service_name="api-production")
+        start_dispatcher.assert_called_once_with()
+
+    def test_main_bootstrap_startup_uses_configured_prompt_runtime_service(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+        main.ticket_repository = repository
+        main.asset_repository = InMemoryAssetRepository()
+
+        with (
+            patch.dict(os.environ, {"PROMPT_RUNTIME_SERVICE": "api-production"}, clear=False),
+            patch.object(main, "runtime_schema_check_enabled", return_value=False),
+            patch.object(main, "_start_account_reroute_dispatcher") as start_dispatcher,
+        ):
+            main.startup_event()
+
+        self.prompt_runtime_mock.assert_called_once_with(
+            repository,
+            service_name="api-production",
+        )
         start_dispatcher.assert_called_once_with()
 
     def test_main_startup_falls_back_to_in_memory_asset_repository_when_asset_db_init_fails(self) -> None:
