@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T10:51:31Z",
-  "source_base_commit": "96402aec9e04a0c309f428e3f5ae5de1b8e88482",
-  "registry_digest": "f0432b7b31665f849d1f777a3962fca5cf10c9b9b50d5820afe118521c4f23cb",
+  "generated_at": "2026-08-25T10:54:38Z",
+  "source_base_commit": "304298fb4bac5e2d9cb89a4522c17afde5023e64",
+  "registry_digest": "0b23360ab2aa7f2bae2690ab42be581c72eddfa3796fa714e97548a1b8045271",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -601,6 +601,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Persona v14 deterministic Fraud missing-information regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_intake.py backend/tests/test_account_verification_automation.py",
+          "details": "345 项测试通过、45 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖 AC-13000 三字段组合、Fraud/account_verification 别名、1/2/3+ 阈值、字段名不进入 Persona Prompt、无效 preamble 重试、v14 metadata、Worker prepare 持久化和版本 fence。"
+        },
+        {
+          "type": "test",
           "label": "Changed-area unit suites",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_routing backend.tests.test_account_route_pipeline backend.tests.test_worker backend.tests.test_account_reply_version_fence backend.tests.test_zendesk_comments backend.tests.test_account_zendesk_internal_comment_service backend.tests.test_account_zendesk_comment_sync backend.tests.test_account_intake backend.tests.test_automation_persona",
           "details": "全绿（新增 detailed_invoice 完成 job / Zendesk upload / 投递附件集成 / intent 契约用例；翻转 routing 断言）。test_agent_config、quota reroute、route_correction suspension、roadmap、filter-select 的失败在干净 main 上同样失败，为遗留问题非本任务引入。"
@@ -791,7 +797,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 18,
-      "done_count": 12,
+      "done_count": 11,
       "blocked_count": 0
     },
     {
@@ -5792,10 +5798,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-101",
       "title": "Fraud Account 字段改为 7 项 + Slack/邮件显示字段",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "无（fraud-account-fields-v4 已合并并完成定向回归、官方单机栈和 Prompt runtime 验证）。",
+      "next_action": "修复 AC-13000 暴露的 Persona 格式回归：Fraud 缺失字段由应用确定性装配，完成定向回归、官方栈、EC2 /production 和新获批 Case readback 后关闭任务。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -5845,6 +5851,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Fraud Account v4 deployment gate",
           "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
           "details": "Prompt Release validate 在停旧栈前检查 v4 版本常量、Output JSON 精确七字段、legacy fields 缺失及候选内容与代码 SHA-256 一致；production sync 复用同一 validator。部署契约同时覆盖八个 runtime 的同镜像/build/release 门禁和 production active-release 回读。"
+        },
+        {
+          "type": "test",
+          "label": "Persona v14 deterministic Fraud missing-information regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_intake.py backend/tests/test_account_verification_automation.py",
+          "details": "345 项测试通过、45 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖 AC-13000 三字段组合、Fraud/account_verification 别名、1/2/3+ 阈值、字段名不进入 Persona Prompt、无效 preamble 重试、v14 metadata、Worker prepare 持久化和版本 fence。"
         }
       ],
       "source_refs": [
@@ -5854,15 +5866,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/prompts/account_routing.py",
         "backend/services/account_slack_n8n.py",
         "backend/services/automation_persona.py",
+        "backend/worker.py",
         "backend/tests/test_account_verification_automation.py",
         "backend/tests/test_agent_config.py",
         "backend/tests/test_account_slack_n8n.py",
         "backend/tests/test_account_intake.py",
-        "backend/tests/test_automation_persona.py"
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_worker.py",
+        "backend/tests/test_account_reply_version_fence.py"
       ],
       "created_at": "2026-08-24",
       "updated_at": "2026-08-25",
       "history": [
+        {
+          "at": "2026-08-25",
+          "event": "persona_deterministic_missing_information_reopened",
+          "summary": "AC-13000 已验证 extractor v4 正常，但 automation-persona-v13 连续四次未满足三项缺失字段的精确 bullet 合同并转 Human Review；重开 p2-101，将字段布局从模型输出移至应用确定性装配。"
+        },
         {
           "at": "2026-08-25",
           "event": "fraud_v4_deployment_gate",

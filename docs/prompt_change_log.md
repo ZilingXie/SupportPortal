@@ -12,6 +12,26 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-25 - Fraud missing-information deterministic rendering v14
+
+- Area or subsystem: `/production` Fraud Account missing-information customer reply and shared Automation Persona renderer
+- Prompt or model version: `automation-persona-v13` -> `automation-persona-v14`; model configuration unchanged
+- Summary: Fraud Account and its `account_verification` compatibility alias now ask the Persona model only for a warm acknowledgement paragraph. The model input carries the missing-field count but omits the field names; the application deterministically appends the 1-2 inline request or 3+ Markdown bullet list and the first-person ownership sentence before the existing publication contract runs.
+- Reason: Production Case AC-13000 loaded the correct seven-field extractor Prompt and identified exactly three missing fields, but all four Persona candidates failed the exact-label bullet contract and the Case entered Human Review without a customer reply. Exact field labels and layout are application-owned data and must not depend on stochastic model formatting.
+- Affected files or config:
+  - `backend/services/automation_persona.py`
+  - `backend/tests/test_automation_persona.py`
+  - `backend/tests/test_worker.py`
+  - `docs/project/tasks/p2-101.json`
+- Expected behavior change:
+  - Fraud replies with one or two missing fields place every expected label in one application-rendered sentence; three or more fields use one application-rendered `- ` bullet per label in source order.
+  - The Persona preserves its warm voice in the acknowledgement but cannot omit, rename, merge, reorder, or renumber the required fields because their names are absent from its prompt.
+  - The final assembled reply still passes the existing missing-information, ownership, grounding, signature, and publication fences. Other Account intents and behaviors keep their existing Persona rendering.
+  - Rejected legacy or malformed layouts retain the stable failure code and now include a content-free structural detail such as `numbered_list_detected` or `missing_expected_label`; failed customer-facing candidates are not persisted.
+- Verification:
+  - Persona and Account AI tests cover the AC-13000 field set, Fraud/account_verification aliases, 1/2/3+ thresholds, hidden prompt labels, invalid preamble retries, v14 metadata, and sanitized failure details.
+  - Worker and version-fence tests cover deterministic content persistence, `persona_v8_scheduled`, current-version publication, and v13-to-v14 re-render behavior.
+
 ## 2026-08-25 - Production API Prompt runtime service label
 
 - Area or subsystem: `/production` API startup and deployment Prompt runtime verification

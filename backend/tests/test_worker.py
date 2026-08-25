@@ -3936,7 +3936,7 @@ class WorkerResilienceTests(unittest.TestCase):
         rendered = Mock(
             content="Hi Customer,\n\nAn App ID identifies your Agora project.",
             model="gpt-5.4-mini",
-            prompt_version="automation-persona-v13",
+            prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -3973,7 +3973,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "reply_pipeline": "automation_persona_v8",
                 "generated_content": "Hi Customer,\n\nYou can find the App ID on the Projects page in Agora Console.",
                 "persona_render_status": "generated",
-                "persona_prompt_version": "automation-persona-v13",
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
                 "reply_facts": {
                     "behavior": "rag_fallback_answer",
                     "reply_intent": "rag_fallback_answer",
@@ -4662,6 +4662,90 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_account_reply_job.assert_not_called()
         self.assertGreaterEqual(repository.save_account_case.call_count, 1)
         self.assertEqual(repository.save_account_case.call_args.args[0], account_case)
+
+    def test_fraud_missing_information_prepare_persists_deterministic_bullets(self) -> None:
+        job = {
+            "job_id": "account-reply-fraud-deterministic-missing",
+            "ticket_id": "TK-FRAUD-DETERMINISTIC-MISSING",
+            "trigger_message_created_at": "2026-08-25T10:20:14+00:00",
+            "status": worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+            "claimed_at": "2026-08-25T10:22:05+00:00",
+            "attempt_count": 0,
+            "payload": {
+                "reply_pipeline": worker.ACCOUNT_REPLY_PERSONA_PIPELINE,
+                "reply_facts": worker.build_account_automation_reply_facts(
+                    handler="fraud_account",
+                    action="fraud_account",
+                    missing_fields=[
+                        "office_address",
+                        "contact_number",
+                        "console_configuration",
+                    ],
+                    collected_fields={
+                        "account_type": "Individual Developer",
+                        "name": "Test Customer",
+                        "contact_email": "customer@example.invalid",
+                        "use_case_description": "Independent developer evaluation",
+                    },
+                    customer_name="Taylor",
+                ),
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = {
+            "ticket_id": job["ticket_id"],
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "I need help with account verification.",
+                    "created_at": job["trigger_message_created_at"],
+                }
+            ],
+        }
+        repository.resolve_account_persona_for_claimed_reply.return_value = {
+            "persona_key": "sid-warm",
+            "version": 2,
+            "content": {"instruction": "Use a warm, concise support voice."},
+        }
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "AC-FRAUD-DETERMINISTIC-MISSING"
+        }
+        profile = types.SimpleNamespace(
+            has_invocation_credentials=lambda: True,
+            api_key="test-key",
+            model="persona-model",
+        )
+        response = types.SimpleNamespace(
+            text="Thank you for sharing the information you have so far.",
+            model_name="persona-model",
+            provider_name="openai",
+            prompt_tokens=10,
+            completion_tokens=8,
+            cached_input_tokens=0,
+            reasoning_tokens=0,
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.dict(
+            worker.render_automation_reply.__globals__,
+            {"resolve_model_profile": Mock(return_value=profile)},
+        ), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ):
+            worker._prepare_account_reply_job(job)
+
+        self.assertEqual(job["status"], worker.ACCOUNT_REPLY_PERSONA_V8_SCHEDULED)
+        self.assertEqual(
+            job["payload"]["persona_prompt_version"],
+            worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+        )
+        self.assertEqual(job["payload"]["persona_render_status"], "generated")
+        content = job["payload"]["generated_content"]
+        self.assertIn("- Office address", content)
+        self.assertIn("- Official contact number", content)
+        self.assertIn("- Last known console configuration", content)
+        self.assertNotIn("1. Office address", content)
+        repository.transition_claimed_account_reply_to_human_review.assert_not_called()
 
     def test_reply_facts_prepare_pins_persisted_persona_assignment(self) -> None:
         job = {
