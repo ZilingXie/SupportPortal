@@ -22,6 +22,13 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
         (self.project / "deployment" / "nginx" / "runtime").mkdir(parents=True)
         (self.project / ".deployments" / "releases").mkdir(parents=True)
         shutil.copy2(SCRIPT, self.project / "deployment" / SCRIPT.name)
+        bootstrap = self.project / "deployment" / "bootstrap_automation_production_schema.sh"
+        bootstrap.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf 'bootstrap schema\\n' >> \"$FAKE_DOCKER_LOG\"\n"
+            "exit \"${FAKE_BOOTSTRAP_STATUS:-0}\"\n"
+        )
+        bootstrap.chmod(bootstrap.stat().st_mode | stat.S_IXUSR)
         (self.project / "deployment" / "docker-compose.single-host.yml").write_text("services: {}\n")
         (self.project / ".env").write_text(
             "TICKET_DB_DSN=postgresql://ticket\n"
@@ -63,11 +70,13 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
             "if [[ \"$1 $2\" == \"image inspect\" ]]; then printf '%s\\n' \"$FAKE_IMAGE_ID\"; exit 0; fi\n"
             "if [[ \"$1\" == inspect && \"$*\" == *'{{.Config.Image}}'* ]]; then printf '%s\\n' \"$FAKE_APP_IMAGE\"; exit 0; fi\n"
             "if [[ \"$1\" == inspect && \"$*\" == *'.Config.Env'* ]]; then printf 'APP_BUILD_REF=%s\\n' \"$FAKE_APP_BUILD_REF\"; exit 0; fi\n"
+            "if [[ \"$1\" == inspect && \"$*\" == *'.State.Running'* ]]; then printf '%s\\n' \"${FAKE_WORKER_STATE:-true running 0}\"; exit 0; fi\n"
             "if [[ \"$1\" == inspect ]]; then printf 'mounted\\n'; exit 0; fi\n"
             "if [[ \"$1\" == compose ]]; then\n"
             "  [[ \"$*\" == *'ps -q nginx'* ]] && printf 'nginx\\n'\n"
             "  [[ \"$*\" == *'ps -q api'* ]] && printf 'api\\n'\n"
             "  [[ \"$*\" == *'ps -q automation_redis_production'* ]] && printf 'redis\\n'\n"
+            "  [[ \"$*\" == *'ps -q automation_production_worker'* ]] && printf 'worker\\n'\n"
             "  exit 0\n"
             "fi\n"
             "if [[ \"$1\" == exec && \"$*\" == *'nginx -s reload'* ]]; then\n"
@@ -82,7 +91,9 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
             "printf '%s\\n' \"$*\" >> \"$FAKE_CURL_LOG\"\n"
             "exit \"${FAKE_CURL_STATUS:-0}\"\n"
         )
-        for command in (docker, curl):
+        flock = self.bin / "flock"
+        flock.write_text("#!/usr/bin/env bash\nexit 0\n")
+        for command in (docker, curl, flock):
             command.chmod(command.stat().st_mode | stat.S_IXUSR)
 
     def _run(self, *args: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
@@ -93,6 +104,7 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
                 "DEPLOY_PRODUCTION_APPROVED": "1",
                 "DEPLOY_HEALTH_TIMEOUT_SECONDS": "1",
                 "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS": "0",
+                "DEPLOY_WORKER_STABILITY_SECONDS": "0",
                 "FAKE_DOCKER_LOG": str(self.docker_log),
                 "FAKE_CURL_LOG": str(Path(self.tempdir.name) / "curl.log"),
                 "FAKE_RELOAD_MARKER": str(self.reload_marker),
@@ -114,6 +126,41 @@ class ProductionBlueGreenBehaviorTest(unittest.TestCase):
 
     def _active_pointer(self) -> str:
         return (self.project / "deployment" / "nginx" / "runtime" / "automation_production_active.conf").read_text()
+
+    def test_bootstrap_and_worker_gate_precede_nginx_cutover(self) -> None:
+        result = self._run("--release", "release-test-1", "--drain-seconds", "0", "--skip-health")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.docker_log.read_text()
+        self.assertLess(calls.index("bootstrap schema"), calls.index("route_production_candidate_release-test-1"))
+        self.assertLess(calls.index("automation_production_worker"), calls.index("nginx -s reload"))
+        self.assertIn("Split production worker remained stable", result.stdout)
+
+    def test_bootstrap_failure_stops_before_candidate_and_cutover(self) -> None:
+        result = self._run("--release", "release-test-1", "--skip-health", FAKE_BOOTSTRAP_STATUS="1")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.docker_log.read_text()
+        self.assertIn("bootstrap schema", calls)
+        self.assertNotIn("route_production_candidate_release-test-1", calls)
+        self.assertNotIn("nginx -s reload", calls)
+        self.assertFalse((self.project / ".deployments" / "automation-production-blue-green.manifest").exists())
+
+    def test_restarting_worker_fails_before_cutover_and_stops_candidate(self) -> None:
+        result = self._run(
+            "--release",
+            "release-test-1",
+            "--skip-health",
+            FAKE_WORKER_STATE="false restarting 3",
+            DEPLOY_HEALTH_TIMEOUT_SECONDS="0",
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.docker_log.read_text()
+        self.assertIn("worker did not remain stable", result.stdout + result.stderr)
+        self.assertIn("stop route_production_candidate_release-test-1 automation_production_candidate_release-test-1", calls)
+        self.assertNotIn("nginx -s reload", calls)
+        self.assertIn("set $automation_production_active automation_production:8000;", self._active_pointer())
 
     def test_reload_failure_restores_pointer_and_stops_candidate(self) -> None:
         result = self._run("--release", "release-test-1", "--drain-seconds", "0", "--skip-health", FAKE_RELOAD_FAILURE_ON="1")
