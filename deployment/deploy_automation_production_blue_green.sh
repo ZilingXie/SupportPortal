@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${PROJECT_ROOT}/deployment/docker-compose.single-host.yml"
+BOOTSTRAP_SCRIPT="${PROJECT_ROOT}/deployment/bootstrap_automation_production_schema.sh"
 ENV_FILE="${PROJECT_ROOT}/.env"
 RUNTIME_DIR="${PROJECT_ROOT}/deployment/nginx/runtime"
 ACTIVE_FILE="${RUNTIME_DIR}/automation_production_active.conf"
@@ -237,6 +238,50 @@ wait_for_service() {
   done
 }
 
+wait_for_worker_stable() {
+  local timeout_seconds stability_seconds retry_seconds start_ts stable_since current_ts
+  local container_id state running status restart_count observed_id="" observed_restart_count=""
+  timeout_seconds="${DEPLOY_HEALTH_TIMEOUT_SECONDS:-90}"
+  stability_seconds="${DEPLOY_WORKER_STABILITY_SECONDS:-10}"
+  retry_seconds="${DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS:-2}"
+  [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || fail "DEPLOY_HEALTH_TIMEOUT_SECONDS must be non-negative: $timeout_seconds"
+  [[ "$stability_seconds" =~ ^[0-9]+$ ]] || fail "DEPLOY_WORKER_STABILITY_SECONDS must be non-negative: $stability_seconds"
+  [[ "$retry_seconds" =~ ^[0-9]+$ ]] || fail "DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS must be non-negative: $retry_seconds"
+  start_ts="$(date +%s)"
+  stable_since="$start_ts"
+  while true; do
+    current_ts="$(date +%s)"
+    container_id="$(docker compose \
+      --project-name supportportal-automation-production \
+      --env-file "$ENV_FILE" \
+      -f "$COMPOSE_FILE" \
+      --profile automation \
+      ps -q automation_production_worker 2>/dev/null | sed -n '1p' || true)"
+    state=""
+    if [[ -n "$container_id" ]]; then
+      state="$(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.RestartCount}}' "$container_id" 2>/dev/null || true)"
+    fi
+    read -r running status restart_count <<< "$state"
+    if [[ "$running" == true && "$status" == running ]]; then
+      if [[ "$container_id" != "$observed_id" || "$restart_count" != "$observed_restart_count" ]]; then
+        observed_id="$container_id"
+        observed_restart_count="$restart_count"
+        stable_since="$current_ts"
+      fi
+      if (( current_ts - stable_since >= stability_seconds )); then
+        log "Split production worker remained stable for ${stability_seconds}s (container=${container_id}, restarts=${restart_count})."
+        return 0
+      fi
+    else
+      observed_id=""
+      observed_restart_count=""
+      stable_since="$current_ts"
+    fi
+    (( current_ts - start_ts >= timeout_seconds )) && return 1
+    sleep "$retry_seconds"
+  done
+}
+
 stop_candidate() {
   local project="$1" override="$2" route="$3" automation="$4"
   compose "$project" "$override" stop "$route" "$automation" >/dev/null 2>&1 || true
@@ -291,7 +336,6 @@ load_release_manifest
 load_production_resource_identity
 resolve_app_runtime_image
 app_runtime_image="$RESOLVED_APP_RUNTIME_IMAGE"
-ensure_nginx_runtime_mount
 if [[ "$SKIP_HEALTH" == 0 ]]; then
   nginx_host_port="$(resolve_env_value NGINX_HOST_PORT)"
   nginx_host_port="${nginx_host_port:-8080}"
@@ -299,6 +343,10 @@ if [[ "$SKIP_HEALTH" == 0 ]]; then
 fi
 redis_container="$(docker compose --project-name supportportal-automation-production --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q automation_redis_production | sed -n '1p')"
 [[ -n "$redis_container" ]] || fail 'existing production Redis is not running; refusing to create a second Redis'
+[[ -x "$BOOTSTRAP_SCRIPT" ]] || fail "Production schema bootstrap script is missing or not executable: $BOOTSTRAP_SCRIPT"
+log "Bootstrapping split production schema before candidate startup."
+APP_RUNTIME_IMAGE="$app_runtime_image" bash "$BOOTSTRAP_SCRIPT"
+ensure_nginx_runtime_mount
 
 suffix="$RELEASE"
 project="supportportal-automation-production-bg-${suffix}"
@@ -378,6 +426,22 @@ compose "$project" "$override" up -d --no-build "$route" "$automation"
 wait_for_service "$project" "$override" "$route" 8100 || { stop_candidate "$project" "$override" "$route" "$automation"; fail 'candidate route readiness failed'; }
 wait_for_service "$project" "$override" "$automation" 8000 || { stop_candidate "$project" "$override" "$route" "$automation"; fail 'candidate automation readiness failed'; }
 
+# The parity worker follows the main app image train, not the automation
+# release manifest. It must pass schema checks and remain stable before Nginx
+# can expose the candidate, otherwise synchronous health hides a broken async
+# reply chain.
+log "Recreating split production worker against ${app_runtime_image}"
+APP_RUNTIME_IMAGE="$app_runtime_image" docker compose \
+  --project-name supportportal-automation-production \
+  --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" \
+  --profile automation \
+  up -d --no-build --no-deps automation_production_worker
+if ! wait_for_worker_stable; then
+  stop_candidate "$project" "$override" "$route" "$automation"
+  fail 'split production worker did not remain stable; active upstream was not changed'
+fi
+
 old_target="$(awk '
   $1 == "set" && $2 == "$automation_production_active" {gsub(";", "", $3); sub(":8000$", "", $3); print $3; exit}
   $1 == "server" && $2 ~ /:8000;$/ {gsub(":8000;", "", $2); print $2; exit}
@@ -418,16 +482,6 @@ if [[ "$SKIP_HEALTH" == 0 ]]; then
 fi
 printf 'target=%s\nproject=%s\noverride=%s\nroute=%s\nautomation=%s\nprevious_target=%s\nprevious_project=%s\nprevious_override=%s\nprevious_route=%s\nprevious_automation=%s\nrelease=%s\nprevious_release=%s\ntime=%s\n' \
   "$automation" "$project" "$override" "$route" "$automation" "$old_target" "$old_project" "$old_override" "$old_route" "$old_automation" "$RELEASE" "$old_release" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
-# The parity worker follows the main app image train, not the automation
-# release manifest: recreate it in the split project against the validated
-# APP_RUNTIME_IMAGE. Reply-job claims keep the brief overlap safe.
-log "Recreating split production worker against ${app_runtime_image}"
-APP_RUNTIME_IMAGE="$app_runtime_image" docker compose \
-  --project-name supportportal-automation-production \
-  --env-file "$ENV_FILE" \
-  -f "$COMPOSE_FILE" \
-  --profile automation \
-  up -d --no-build --no-deps automation_production_worker
 if [[ -n "$old_project" && "$old_project" != "$project" ]]; then
   log "Draining old project $old_project for ${DRAIN_SECONDS}s"
   sleep "$DRAIN_SECONDS"
