@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T10:54:38Z",
-  "source_base_commit": "304298fb4bac5e2d9cb89a4522c17afde5023e64",
-  "registry_digest": "0b23360ab2aa7f2bae2690ab42be581c72eddfa3796fa714e97548a1b8045271",
+  "generated_at": "2026-08-25T11:09:28Z",
+  "source_base_commit": "0de026ca8c2876fb7cf7b9d814a146d59ae83c2a",
+  "registry_digest": "a97d0bf5381b7d0b77dfcd36cdc321692121faae951c93213b0d860f45b49929",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1697,6 +1697,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 retirement deployment contracts",
           "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose",
           "details": "79项全绿：覆盖定时 wrapper main-only参数、surface脚本无 split build/deploy/verify、三条路径410、/automation/test继续代理 production API、main部署不创建或连接 split网络，以及既有 Compose/legacy rollback契约。"
+        },
+        {
+          "type": "test",
+          "label": "Daily main-only branch argument hotfix",
+          "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 && bash -n scripts/ops/deploy_surfaces_ec2.sh",
+          "details": "7项全绿并直接执行 deploy_surfaces_ec2.sh --branch main --help 成功；修复 EC2 手动触发 daily service 暴露的 unknown option: --branch，split orchestration保持退役。"
         }
       ],
       "source_refs": [
@@ -5712,6 +5718,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 retirement deployment contracts",
           "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose",
           "details": "79项全绿：覆盖定时 wrapper main-only参数、surface脚本无 split build/deploy/verify、三条路径410、/automation/test继续代理 production API、main部署不创建或连接 split网络，以及既有 Compose/legacy rollback契约。"
+        },
+        {
+          "type": "test",
+          "label": "Daily main-only branch argument hotfix",
+          "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 && bash -n scripts/ops/deploy_surfaces_ec2.sh",
+          "details": "7项全绿并直接执行 deploy_surfaces_ec2.sh --branch main --help 成功；修复 EC2 手动触发 daily service 暴露的 unknown option: --branch，split orchestration保持退役。"
         }
       ],
       "source_refs": [
@@ -5735,6 +5747,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "progress",
           "summary": "用户更新决策为 Staging、Preproduction、Production三环境全部部署到 ECS，并授权直接下线 EC2 split runtime；EC2保留主栈、现有 /production、数据库与历史 volumes。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "progress",
+          "summary": "EC2 split容器与网络下线后，首次手动触发 daily service发现 surface parser遗漏既有 --branch参数；已恢复该 main-only参数契约并增加真实 parser回归测试。"
         }
       ],
       "legacy_refs": [

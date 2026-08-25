@@ -8,7 +8,7 @@ set -Eeuo pipefail
 # state that boundary explicitly.
 #
 # Usage:
-#   scripts/ops/deploy_surfaces_ec2.sh [--dry-run] [--daily]
+#   scripts/ops/deploy_surfaces_ec2.sh [--branch <branch>] [--dry-run] [--daily]
 #        [--skip-main] [--skip-split] [--health-url <url>] [--domain <domain>]
 #
 # Environment overrides: DEPLOY_DOMAIN, DEPLOY_SURFACES_HEALTH_URL.
@@ -34,6 +34,7 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --branch) BRANCH="${2:?}"; shift ;;
     --dry-run) DRY_RUN=1 ;;
     --daily) DAILY_MODE=1 ;;
     --skip-main) SKIP_MAIN=1 ;;

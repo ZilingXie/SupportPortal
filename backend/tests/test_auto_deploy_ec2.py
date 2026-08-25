@@ -360,6 +360,18 @@ class AutoDeployEc2Tests(unittest.TestCase):
 
 
 class AutoDeployAssetTests(unittest.TestCase):
+    def test_surface_deployer_accepts_branch_argument(self) -> None:
+        result = subprocess.run(
+            ["bash", str(SURFACE_SCRIPT_PATH), "--branch", "main", "--help"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("--branch <branch>", result.stdout)
+
     def test_gitignore_ignores_deploy_lock_file(self) -> None:
         gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
@@ -402,6 +414,7 @@ class AutoDeployAssetTests(unittest.TestCase):
         self.assertIn("--skip-split", wrapper)
         self.assertNotIn("--approve-production", wrapper)
         self.assertIn("--daily", surface_script)
+        self.assertIn('--branch) BRANCH="${2:?}"; shift ;;', surface_script)
         self.assertIn("DEPLOY_LOCK_ALREADY_HELD", surface_script)
         self.assertIn("--skip-pull", surface_script)
         self.assertIn("retired from EC2 (ECS migration pending)", surface_script)
