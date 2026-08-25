@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T02:18:33Z",
-  "source_base_commit": "740a249af6ec95c179287601e7f0675f3090bffe",
-  "registry_digest": "d7c72843019060940e27e3b02ac043a082900009c80aed902c12d9c49d856ef6",
+  "generated_at": "2026-08-25T02:43:01Z",
+  "source_base_commit": "f7d22ab998ad5b8689f88b412d30cfb69f5e73ba",
+  "registry_digest": "e58a6ee2a564c575f64caf5a29279c6258a6d9b38235747eb69c7ee64e2184d4",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -6373,8 +6373,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "task_id": "p2-114",
-      "title": "/automation/production 替代 /production：Phase F+G 收尾（邮箱闭环开关 + 切流准备）",
+      "task_id": "p2-115",
+      "title": "/automation/production 替代 /production：Phase F+G 收尾（邮箱闭环开关 + 切流准备，任务号因 p2-114 被并行链 #934 占用顺延）",
       "status": "active",
       "owner": "zac",
       "summary": "七阶段搬迁收尾。Phase F（邮箱闭环）经核实为零代码缺口：worker 邮箱 poller 由 AUTOMATION_REPLY_POLL_ENABLED 门控（split worker 映射 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，默认 false），[automation] 主题前缀过滤（internal_email_subject_matches 锚定前缀）与跨栈 dismissal 机制均为既有代码，启用=EC2 .env 开关+重启。Phase G（切流准备）落地：verify_split_environments.sh 新增六个 parity 端点鉴权负例探针（comment-sync-target/comments/status/slack messages/actions/thread-bindings）；split_environments_report.md 刷新 v3（A-E 合并记录、Phase F 开关步骤、n8n 四组 URL 切流清单、路线更新为直接替代）。",
