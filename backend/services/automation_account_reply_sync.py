@@ -342,6 +342,41 @@ async def process_account_customer_reply(
     message_source_id: str | None = None,
     zendesk_side_effects_enabled: bool = True,
 ) -> dict[str, Any]:
+    from backend.services.llm_usage_capture import (
+        begin_case_usage_capture,
+        end_case_usage_capture,
+        flush_case_usage_capture,
+    )
+
+    usage_capture, usage_token = begin_case_usage_capture(billing_ticket_id=billing_ticket_id)
+    try:
+        return await _process_account_customer_reply_impl(
+            repository=repository,
+            billing_ticket_id=billing_ticket_id,
+            message=message,
+            source=source,
+            message_source_id=message_source_id,
+            zendesk_side_effects_enabled=zendesk_side_effects_enabled,
+        )
+    finally:
+        end_case_usage_capture(usage_token)
+        if usage_capture.entries:
+            import asyncio
+
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: flush_case_usage_capture(repository, usage_capture)
+            )
+
+
+async def _process_account_customer_reply_impl(
+    *,
+    repository: Any,
+    billing_ticket_id: str,
+    message: str,
+    source: str,
+    message_source_id: str | None = None,
+    zendesk_side_effects_enabled: bool = True,
+) -> dict[str, Any]:
     import asyncio
 
     def _sync(call, *args, **kwargs):

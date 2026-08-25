@@ -143,6 +143,7 @@ def create_app() -> FastAPI:
             ticket_context=request.ticket_context,
             source="automation-production",
             build_ref=str(os.getenv("APP_BUILD_REF") or "unknown"),
+            prepare=False,
         )
         try:
             route_result = await call_route(route_request)
