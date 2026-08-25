@@ -100,6 +100,7 @@ def _sync_release(
             "created": False,
             "versions_created": 0,
             "versions_matched": 0,
+            "versions_remapped": 0,
         }
 
     if release.get("status") == "active" and result.get("status") != "active":
