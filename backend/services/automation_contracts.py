@@ -40,6 +40,10 @@ class RouteRequest(BaseModel):
     ticket_context: list[dict[str, str]] = Field(default_factory=list)
     source: str = Field(default="automation", max_length=80)
     build_ref: str = Field(default="unknown", max_length=160)
+    # When False the Route service skips prepare_action_plan: the production
+    # parity runtime rebuilds the attempt itself (old-stack semantics), so the
+    # route-side LLM field extraction would run twice per case (p2-116).
+    prepare: bool = True
 
 
 class RouteResult(BaseModel):

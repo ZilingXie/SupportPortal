@@ -410,3 +410,142 @@ class EngineerSlackEndpointTest(unittest.TestCase):
                         headers={"X-N8n-Request-Token": "execution-token"},
                     )
                 self.assertEqual(response.status_code, 503)
+
+
+def _outcome(response_status: str, **extra):
+    payload = {
+        "response_status": response_status,
+        "route": "enablement",
+        "automation_handler": "enablement",
+        "execution_reason_code": None,
+        "reply_job": None,
+        "engineer_case_id": None,
+        "internal_email_send_status": "not_applicable",
+        "internal_email_send_reason": "",
+        "route_status": "automated",
+        "account_case": {},
+    }
+    payload.update(extra)
+    return payload
+
+
+class UsageCaptureAndPrepareTest(unittest.TestCase):
+    def test_runtime_requests_route_without_preparation(self):
+        from backend.services.automation_contracts import AutomationEnvironment, RouteResult
+
+        route_result = RouteResult(
+            request_id="req-noprep",
+            idempotency_key="production:route:req-noprep",
+            environment=AutomationEnvironment.PRODUCTION,
+            case_id="AC-NOPREP",
+            route={"execution_action": "enablement", "route_family": "automated"},
+            automation={"eligible": True},
+            action_plan={},
+        )
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                with patch(
+                    "backend.automation_production_runtime.call_route",
+                    new_callable=AsyncMock,
+                    return_value=route_result,
+                ) as call, patch(
+                    "backend.services.automation_account_intake.run_production_account_intake",
+                    new_callable=AsyncMock,
+                    return_value=_outcome("automation"),
+                ), patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=object(),
+                ):
+                    response = client.post(
+                        "/v1/cases",
+                        json={"request_id": "req-noprep", "case_id": "AC-NOPREP", "zendesk_ticket_id": "123", "question": "hello"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+                self.assertEqual(response.status_code, 200, response.text)
+                route_request = call.call_args.args[0]
+                self.assertFalse(route_request.prepare)
+
+    def test_reply_chain_flushes_captured_usage(self):
+        import asyncio
+
+        flushed: list[tuple] = []
+
+        class _CaptureRepo(_FakeRepository):
+            pass
+
+        repository = _FakeRepository()
+        repository.get_account_case = lambda case_id: {
+            "account_case_id": "AC-123",
+            "billing_ticket_id": "AC-123",
+            "client_ticket_id": "123",
+            "processing_profile": "production",
+            "automation_status": "automation",
+            "route_family": "automated",
+            "execution_action": "fraud_account",
+            "route_classification": {"handler_binding_status": "completed"},
+            "collected_fields": {"account_type": "company"},
+            "missing_fields": [],
+            "automation_context": {},
+            "created_at": "2026-08-23T00:00:00Z",
+        }
+        repository.get_ticket = lambda ticket_id: {"ticket_id": "123", "status": "open", "messages": [], "customer_id": "c@example.com"}
+        repository.save_ticket = lambda ticket, new_messages=None: None
+        repository.save_account_case = lambda case: None
+        repository.save_account_route_execution = lambda execution: None
+        not_routed = NS(
+            decision=NS(
+                execution_action="human_review_required",
+                route="human_review_required",
+                route_family="human_review",
+                scope_label="account",
+                reason="outside",
+                confidence=0.9,
+                matched_signals=[],
+                semantic_intent=None,
+                automation_eligibility=None,
+                policy_decision=None,
+                not_automated_reason="outside",
+                risk_flags=[],
+                evidence_spans=[],
+                router_source="mock",
+            ),
+            classification={},
+            prompt_snapshots={},
+            stage_attempts=None,
+        )
+        with patch(
+            "backend.services.automation_account_reply_sync.decide_account_route",
+            return_value=not_routed,
+        ), patch(
+            "backend.services.account_admin.route_execution_from_decision",
+            return_value={"ticket_id": "123"},
+        ), patch(
+            "backend.services.automation_account_reply_sync._apply_ownership_gate",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "backend.services.automation_account_reply_sync.should_run_reply_rag_fallback",
+            return_value=False,
+        ), patch(
+            "backend.services.llm_usage_capture.begin_case_usage_capture",
+            return_value=(NS(billing_ticket_id="AC-123", entries=[{"stage": "reply"}]), None),
+        ) as begin, patch(
+            "backend.services.llm_usage_capture.end_case_usage_capture",
+        ) as end, patch(
+            "backend.services.llm_usage_capture.flush_case_usage_capture",
+            side_effect=lambda repo, capture: flushed.append((capture.billing_ticket_id, len(capture.entries))) or 1,
+        ) as flush:
+            outcome = asyncio.run(
+                reply_module.process_account_customer_reply(
+                    repository=repository,
+                    billing_ticket_id="AC-123",
+                    message="customer follow-up",
+                    source="zendesk-comment",
+                    message_source_id="c9",
+                )
+            )
+        self.assertIn("messages", outcome)
+        begin.assert_called_once_with(billing_ticket_id="AC-123")
+        end.assert_called_once()
+        flush.assert_called_once()
+        self.assertEqual(flushed, [("AC-123", 1)])

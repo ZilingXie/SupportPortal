@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-116",
+  "title": "/automation/production parity：回复链接入 token 用量采集 + 消除双重字段抽取",
+  "status": "active",
+  "owner": "zac",
+  "summary": "两项 parity 缺口收口（用户指示）：① 回复链接入 per-case LLM token 用量采集——process_account_customer_reply 按旧栈同款 begin/end/flush_case_usage_capture 包裹（billing_ticket_id 维度，采集条目经 split 生产 repository 落库，进入 /workspace/admin 统计口径）；② 消除每单双重字段抽取——RouteRequest 增加 prepare 开关（默认 True，staging/preproduction 即时评论流不受影响），production runtime 投递时传 prepare=False，route 服务跳过 prepare_action_plan（返回 preparation_status=skipped 的空 plan），因为 parity runtime 按旧栈语义自行重建 attempt（B 阶段设计），route 侧那次 LLM 抽取纯属重复成本。",
+  "next_action": "随 A-F 一并由用户 EC2 部署验证；无独立线上步骤（token 采集条目会在受控工单验收时出现在 /workspace/admin）。",
+  "acceptance_criteria": [
+    "回复链处理期间 LLM 用量被采集并 flush 到 supportportal_production 的用量表（billing_ticket_id 维度）。",
+    "production intake 的 route 调用带 prepare=False，route 服务不再执行 prepare_action_plan 的 LLM 抽取；staging/preproduction 行为不变（默认 prepare=True）。",
+    "旧栈零行为变化。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Usage capture and prepare-flag regression",
+      "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_route_service_contract backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_automation_account_intake backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose",
+      "details": "94 项通过：新增 runtime 断言 route_request.prepare=False、回复链 begin/end/flush 调用与条目数断言；route 契约（含新字段默认行为）与既有全回归绿。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_account_reply_sync.py",
+    "backend/services/automation_contracts.py",
+    "backend/route_service.py",
+    "backend/automation_production_runtime.py",
+    "backend/services/llm_usage_capture.py"
+  ],
+  "created_at": "2026-08-24",
+  "updated_at": "2026-08-24",
+  "history": [
+    {
+      "at": "2026-08-24",
+      "event": "created",
+      "summary": "用户确认两项缺口需处理：回复链 token 采集（缺失）与双重字段抽取（B 阶段已知取舍，登记为可优化）。同 PR 修复：采集直搬旧栈包裹；prepare 开关消除 route 侧重复抽取。"
+    }
+  ],
+  "legacy_refs": [
+    "p2-109",
+    "p2-110",
+    "p2-115"
+  ],
+  "legacy_ids": [],
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment"
+}
