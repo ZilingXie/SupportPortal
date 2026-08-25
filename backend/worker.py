@@ -1385,6 +1385,7 @@ def _deliver_production_account_reply_to_zendesk(
                     ticket_id=ticket_id,
                     job_id=effective_job_id,
                     message_id=effective_message_id,
+                    reply_intent=reply_intent,
                 )
 
 
@@ -1397,8 +1398,9 @@ def _hand_off_fraud_review_after_public_reply(
     ticket_id: str,
     job_id: str | None = None,
     message_id: str | None = None,
+    reply_intent: str | None = None,
 ) -> None:
-    """After the fraud public reply lands, hand the Zendesk ticket to the reviewer.
+    """After the final fraud confirmation reply lands, hand the ticket to the reviewer.
 
     The reply is already published at this point, so a handoff failure is an
     owner-visible signal (event + log), never a delivery failure.
@@ -1407,6 +1409,18 @@ def _hand_off_fraud_review_after_public_reply(
         account_case.get("execution_action") or account_case.get("route") or ""
     ).strip()
     if execution_action != "fraud_account":
+        return
+    if str(reply_intent or "").strip() != ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
+        # Missing-information and other interim public replies keep AI ownership;
+        # only the final 24h confirmation reply completes the fraud handoff.
+        LOGGER.info(
+            "fraud_review_handoff_deferred job_id=%s ticket_id=%s message_id=%s "
+            "failure_code=pending_final_confirmation reply_intent=%s",
+            str(job_id or "").strip() or "unknown",
+            ticket_id,
+            str(message_id or "").strip() or "unknown",
+            str(reply_intent or "").strip() or "none",
+        )
         return
     effective_job_id = str(job_id or "").strip() or "unknown"
     effective_message_id = str(message_id or "").strip() or "unknown"
@@ -1480,7 +1494,14 @@ def _hand_off_fraud_review_after_public_reply(
         assignee_id=result.assignee_id,
         group_id=result.group_id,
         reviewer_email=result.assignee_email,
+        case_automation_status="human_review_required",
     )
+    # Expected handoff completion moves the lifecycle directly; it must not go
+    # through the escalation path, which cancels pending jobs, rewrites
+    # route_status, and routes the Zendesk ticket back to the queue.
+    account_case["automation_status"] = "human_review_required"
+    account_case["updated_at"] = timestamp
+    ticket_repository.save_account_case(account_case)
     LOGGER.info(
         "fraud_review_handoff_%s job_id=%s ticket_id=%s account_case_id=%s "
         "message_id=%s assignee_id=%s group_id=%s",

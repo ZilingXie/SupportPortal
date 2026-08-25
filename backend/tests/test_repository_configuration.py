@@ -1844,6 +1844,29 @@ class RepositoryConfigurationTests(unittest.TestCase):
             repository,
         )
 
+    def test_account_automation_handler_repair_migration_normalizes_suspension_only(self) -> None:
+        migration = Path(
+            "backend/sql/migrations/2026_08_25_account_automation_handler_repair.sql"
+        ).read_text(encoding="utf-8")
+        statement = migration.split("UPDATE", 1)[1]
+
+        self.assertIn("automation_handler = 'account_suspension'", statement)
+        self.assertIn("category = 'account_billing'", statement)
+        self.assertIn("subcategory = 'account_suspension'", statement)
+        self.assertIn("route_status = 'automated'", statement)
+        # The repair must not reinterpret lifecycle, dormancy, or other handlers.
+        self.assertNotIn("automation_status", statement)
+        self.assertNotIn("detailed_invoice", statement)
+        self.assertNotIn("fraud_account", statement)
+
+    def test_repository_initialize_no_longer_rewrites_account_automation_routing(self) -> None:
+        repository = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        # 13001 regression: startup bootstrap must never force stored account
+        # case routing (handler/category) back to legacy billing/automation.
+        self.assertNotIn("automation_handler = 'billing'", repository)
+        self.assertNotIn("category = 'automation'", repository)
+
     def test_ticket_storage_contract_includes_billing_route_corrections(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

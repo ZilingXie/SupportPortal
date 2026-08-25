@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-84",
   "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
-  "status": "done",
+  "status": "active",
   "owner": "zac",
   "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 xieziling@agora.io；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
-  "next_action": "",
+  "next_action": "修复 13004 暴露的 handoff 时序缺陷：handoff 目前对所有 public 交付触发而不看 reply_intent，导致 missing-information 追问回复也把工单过早指派给 reviewer。改为仅最终 fraud_handoff_confirmation 回复交付后指派，并在指派成功后把 Case lifecycle 置为 human_review_required（不触发升级链）。",
   "acceptance_criteria": [
     "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
     "assign_ticket_to_reviewer：按数字 user id 解析 reviewer（GET /users/{id}.json，必须 active agent），assign 到其 default group；已 assign 则 no-op；复用 safe_update 与 required-field autofill 语义。",
@@ -14,6 +14,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Handoff intent-gating regression (worktree account-automation-release-blockers)",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_worker.py -k FraudReviewHandoff",
+      "details": "6 passed。仅 fraud_handoff_confirmation 公开交付指派 reviewer 并写 automation_status=human_review_required（事件 payload 带 case_automation_status）；request_missing_information 公开交付推迟（无指派、无事件、无 lifecycle 写入）；handoff 失败与缺配置不改 lifecycle。全套件结果见 p1-51 evidence。"
+    },
     {
       "type": "test",
       "label": "Handoff service + worker hook tests",
@@ -47,7 +53,7 @@
     ".env.example"
   ],
   "created_at": "2026-08-21",
-  "updated_at": "2026-08-21",
+  "updated_at": "2026-08-25",
   "history": [
     {
       "at": "2026-08-21",
@@ -63,6 +69,11 @@
       "at": "2026-08-21",
       "event": "completed",
       "summary": "PR#834+PR#835 合并（main=ba2a44d），双栈部署，权限与函数级 live 验证通过，标记完成。"
+    },
+    {
+      "at": "2026-08-25",
+      "event": "reopened",
+      "summary": "13004 验收发现：handoff 对所有 public 交付触发（_hand_off_fraud_review_after_public_reply 未接收 reply_intent，仅判 execution_action=fraud_account），request_missing_information 追问回复也过早指派 reviewer，客户补充信息后被 ownership guard fail-closed。重新打开修复：handoff 仅在最终 fraud_handoff_confirmation 公开交付后触发；指派成功后 Case lifecycle 置 human_review_required（直接写，不走 escalate_account_case_to_human_review），后续客户评论 ignored_inactive_case 不产生告警。"
     }
   ],
   "legacy_refs": [],

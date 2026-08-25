@@ -6914,13 +6914,21 @@ async def _process_zendesk_comment_trigger(
             message_source_id=trigger_comment_id,
         )
     except HTTPException as exc:
-        return await _complete(
-            {
-                "trigger_status": "failed",
-                "trigger_comment_id": trigger_comment_id,
-                "error": str(exc.detail),
-            }
+        failure_payload = {
+            "trigger_status": "failed",
+            "trigger_comment_id": trigger_comment_id,
+            "error": str(exc.detail),
+        }
+        # A failed trigger outcome stays replayable: the same comment id
+        # re-claims and re-runs instead of returning this failure forever.
+        await async_to_thread(
+            ticket_repository.fail_idempotent_request,
+            _ZENDESK_COMMENT_TRIGGER_IDEMPOTENCY_SCOPE,
+            f"{account_case_id}:{trigger_comment_id}",
+            response_payload=failure_payload,
+            updated_at=now_iso(),
         )
+        return failure_payload
 
     return await _complete(
         {

@@ -213,6 +213,89 @@ class CommentTriggerTest(unittest.TestCase):
         self.assertEqual(ai_round.call_args.kwargs["message_role"], "customer")
 
 
+    def test_failed_outcome_is_stored_failed_and_replays_after_handler_repair(self):
+        # 13001 scenario: the suspension case's persisted handler was rewritten
+        # to billing, the reply flow raised 409, and the failed outcome must be
+        # stored replayable so the same comment re-runs after the repair.
+        repository = _FakeRepository(
+            {
+                **_FakeRepository.DEFAULT_CASE,
+                "execution_action": "account_suspension",
+                "automation_handler": "billing",
+            }
+        )
+        records: dict[str, dict] = {}
+
+        def begin(scope, key, created_at=None, retry_failed=False):
+            record = records.get(key)
+            if record is None:
+                records[key] = {"state": "processing", "payload": None}
+                return {"created": True, "state": "processing"}
+            if retry_failed and record["state"] == "failed":
+                record.update(state="processing", payload=None)
+                return {"created": True, "state": "processing"}
+            return {
+                "created": False,
+                "state": record["state"],
+                "response_payload": record["payload"],
+            }
+
+        def complete(scope, key, response_payload=None, updated_at=None):
+            records[key] = {"state": "completed", "payload": response_payload}
+
+        def fail(scope, key, response_payload=None, updated_at=None):
+            records[key] = {"state": "failed", "payload": response_payload}
+
+        repository.begin_idempotent_request = begin
+        repository.complete_idempotent_request = complete
+        repository.fail_idempotent_request = fail
+        repository.get_active_engineer_case = lambda ticket_id, include_client_messages=True: None
+        import asyncio
+
+        with patch.object(
+            reply_module,
+            "process_account_customer_reply",
+            new_callable=AsyncMock,
+            side_effect=reply_module.ReplySyncError(
+                409, "account case has no registered automation handler"
+            ),
+        ) as failed_process:
+            first = asyncio.run(
+                reply_module.process_zendesk_comment_trigger(
+                    repository=repository,
+                    account_case=repository.account_case,
+                    snapshot=self._snapshot(),
+                    trigger_comment_id="c1",
+                )
+            )
+        self.assertEqual(first["trigger_status"], "failed")
+        failed_process.assert_awaited_once()
+        self.assertEqual(records["AC-123:c1"]["state"], "failed")
+
+        repository.account_case["automation_handler"] = "account_suspension"
+        with patch.object(
+            reply_module,
+            "process_account_customer_reply",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "processed",
+                "internal_email_send_status": "sent",
+                "ai_reply_status": "pending",
+            },
+        ) as replay_process:
+            second = asyncio.run(
+                reply_module.process_zendesk_comment_trigger(
+                    repository=repository,
+                    account_case=repository.account_case,
+                    snapshot=self._snapshot(),
+                    trigger_comment_id="c1",
+                )
+            )
+        self.assertEqual(second["trigger_status"], "processed")
+        replay_process.assert_awaited_once()
+        self.assertEqual(records["AC-123:c1"]["state"], "completed")
+
+
 if __name__ == "__main__":
     unittest.main()
 

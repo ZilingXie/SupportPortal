@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p1-51",
   "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
-  "status": "done",
+  "status": "active",
   "owner": "zac",
   "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
-  "next_action": "",
+  "next_action": "修复 13001 暴露的 Suspension 启动污染：删除 ticket_repository.initialize() 两段把 automation_handler 回写成 billing 的兼容 SQL，新增双库 repair migration，并把 comment trigger 失败幂等记录改为 failed（可重放），部署后受控恢复 13001 并新建 Suspension 工单跨重启验收。",
   "acceptance_criteria": [
     "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
     "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
@@ -17,6 +17,18 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "13001 regression suite (worktree account-automation-release-blockers)",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_worker.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_zendesk_comment_sync_postgres.py backend/tests/test_account_intake.py backend/tests/test_account_automation_ownership.py backend/tests/test_repository_configuration.py backend/tests/test_account_case_postgres_roundtrip.py backend/tests/test_automation_test_scenarios.py",
+      "result": "477 passed, 2 skipped (PostgreSQL opt-in), 30 subtests passed. Covers: initialize() twice preserves suspension handler/category (PG temp schema), migration text assertions (suspension-only, no automation_status/dormancy rewrite), repository source free of startup handler write-backs, comment-trigger failed outcome stored failed and replayable with side effects exactly once (services + main mirror)."
+    },
+    {
+      "type": "test",
+      "label": "PostgreSQL integration with real staging DSN (isolated temp schemas)",
+      "command": "source .env; RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py backend/tests/test_account_zendesk_comment_sync_postgres.py",
+      "result": "3 passed against the real PostgreSQL, including the new suspension handler no-drift-across-restarts test."
+    },
     {
       "type": "test",
       "label": "Task worktree preflight",
@@ -76,7 +88,7 @@
     "docs/integrations/n8n/zendesk_account_comment_sync.md"
   ],
   "created_at": "2026-08-19",
-  "updated_at": "2026-08-20",
+  "updated_at": "2026-08-25",
   "history": [
     {
       "at": "2026-08-19",
@@ -102,6 +114,11 @@
       "at": "2026-08-20",
       "event": "completed",
       "summary": "Production ownership 改为基于完整 Zendesk 公开评论历史：默认真人 assignee 在尚未公开回复时允许 AI 接管；真人公开回复、未知公开作者或 AI 接管后的真人改派均 fail closed。AI 接管使用 safe_update 原子写入 assignee 与目标 group，并记录失败类别、Zendesk 状态码和阻塞评论 ID。"
+    },
+    {
+      "at": "2026-08-25",
+      "event": "reopened",
+      "summary": "13001 验收发现：ticket_repository.initialize() 的两段兼容回写 SQL 在每次容器重启时把 Account Suspension 的 automation_handler 强制改成 billing，客户追问触发 409（account case has no registered automation handler）；且失败被 complete_idempotent_request 写成 completed+failed，重放直接返回旧失败。Production 2 个 automation + 6 个 closed Suspension 案均被污染。重新打开修复：移除回写、repair migration、幂等失败态改 failed 可重放、恢复 13001。"
     }
   ],
   "phase_id": "phase-1",

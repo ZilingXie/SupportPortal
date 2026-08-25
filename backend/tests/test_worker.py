@@ -248,7 +248,10 @@ class FraudReviewHandoffTests(unittest.TestCase):
             worker, "assign_ticket_to_reviewer", return_value=assignment
         ) as assign_reviewer:
             worker._deliver_production_account_reply_to_zendesk(
-                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+                ticket_id="PRD-12895",
+                message_id="m-fraud",
+                job_id="reply-fraud",
+                reply_intent="fraud_handoff_confirmation",
             )
 
         assign_reviewer.assert_called_once_with(
@@ -263,6 +266,39 @@ class FraudReviewHandoffTests(unittest.TestCase):
         payload = event_calls[0].args[2]
         self.assertEqual(payload["state"], "assigned")
         self.assertEqual(payload["assignee_id"], "31116634341396")
+        self.assertEqual(payload["case_automation_status"], "human_review_required")
+        repository.save_account_case.assert_called_once()
+        saved_case = repository.save_account_case.call_args.args[0]
+        self.assertEqual(saved_case["automation_status"], "human_review_required")
+
+    def test_public_fraud_missing_information_delivery_defers_handoff(self) -> None:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._fraud_case()
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116634341396"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer"
+        ) as assign_reviewer:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-12895",
+                message_id="m-fraud",
+                job_id="reply-fraud",
+                reply_intent="request_missing_information",
+            )
+
+        assign_reviewer.assert_not_called()
+        repository.record_event.assert_not_called()
+        repository.save_account_case.assert_not_called()
 
     def test_internal_fraud_delivery_does_not_hand_off(self) -> None:
         repository = Mock()
@@ -339,10 +375,14 @@ class FraudReviewHandoffTests(unittest.TestCase):
             side_effect=ZendeskCommentError("permanent", status_code=422, error_code="zendesk_http_error", detail="RecordInvalid | {...}"),
         ):
             worker._deliver_production_account_reply_to_zendesk(
-                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+                ticket_id="PRD-12895",
+                message_id="m-fraud",
+                job_id="reply-fraud",
+                reply_intent="fraud_handoff_confirmation",
             )
 
         repository.complete_account_zendesk_comment_delivery.assert_not_called()
+        repository.save_account_case.assert_not_called()
         event_calls = [
             call for call in repository.record_event.call_args_list
             if call.args[1] == "zendesk_fraud_review_handoff"
@@ -371,7 +411,10 @@ class FraudReviewHandoffTests(unittest.TestCase):
             worker, "assign_ticket_to_reviewer"
         ) as assign_reviewer:
             worker._deliver_production_account_reply_to_zendesk(
-                ticket_id="PRD-12895", message_id="m-fraud", job_id="reply-fraud"
+                ticket_id="PRD-12895",
+                message_id="m-fraud",
+                job_id="reply-fraud",
+                reply_intent="fraud_handoff_confirmation",
             )
 
         assign_reviewer.assert_not_called()

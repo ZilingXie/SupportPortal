@@ -11323,34 +11323,6 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL(
-                        """
-                        UPDATE {}
-                        SET route = 'account_suspension',
-                            execution_action = 'account_suspension',
-                            subcategory = 'account_suspension',
-                            category = 'automation',
-                            automation_handler = 'billing',
-                            route_classification = CASE
-                                WHEN route_classification <> '{{}}'::jsonb
-                                    THEN jsonb_set(
-                                        route_classification,
-                                        '{{automation_subcategory}}',
-                                        '"account_suspension"'::jsonb,
-                                        true
-                                    )
-                                ELSE route_classification
-                            END
-                        WHERE route_family IN ('billing_automation', 'automated')
-                          AND route_status = 'automated'
-                          AND (
-                              semantic_intent = 'billing.account_suspension'
-                              OR route_classification ->> 'automation_subcategory' = 'account_suspension'
-                          )
-                        """
-                    ).format(self._table("support_account_cases"))
-                )
-                cur.execute(
-                    sql.SQL(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_review_status TEXT NOT NULL DEFAULT 'pending'"
                     ).format(
                         self._table("support_account_cases"),
@@ -11387,22 +11359,6 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} ALTER COLUMN account_case_id SET NOT NULL").format(
                         self._table("support_account_cases"),
                     )
-                )
-                cur.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {}
-                        SET route_family = 'automated',
-                            category = 'automation',
-                            subcategory = COALESCE(NULLIF(execution_action, ''), route),
-                            route_status = 'automated',
-                            automation_handler = 'billing'
-                        WHERE route_family IN ('billing_automation', 'automated')
-                          AND COALESCE(NULLIF(execution_action, ''), route) IN (
-                              'account_suspension', 'account_verification', 'detailed_invoice'
-                          )
-                        """
-                    ).format(self._table("support_account_cases"))
                 )
                 cur.execute(
                     sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (account_case_id)").format(

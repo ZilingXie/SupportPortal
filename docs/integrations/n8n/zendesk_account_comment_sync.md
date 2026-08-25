@@ -154,5 +154,6 @@ The snapshot body accepts an optional `trigger_comment_id` (the webhook's curren
 - Without `trigger_comment_id` the request is projection-only (display sync).
 - A trigger runs the automation state machine (same path as the workspace reply endpoint) only when the comment is public, authored by the customer (not an agent), non-initial, non-empty, and newer than the Account Case creation, and the case is a production registered automation in an active state.
 - Processing is idempotent per `account_case_id + trigger_comment_id`: replaying the same webhook returns the first run's recorded outcome and never duplicates the customer message, internal email, reply job, or Zendesk comment.
+- A `failed` outcome is the exception: it is stored replayable, so replaying the same webhook re-runs the automation (for example after the blocking defect is fixed) instead of returning the cached failure. Completed and ignored outcomes are never re-run.
 - Agent-authored public comments (including SupportPortal's own AI public replies) return `ignored_agent_comment` and never trigger a second AI reply.
 - The response exposes `trigger_status` (`processed` / `ignored_*` / `failed` / `already_processing`) plus `internal_email_status` and `ai_reply_status` for execution readback.
