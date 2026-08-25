@@ -49,6 +49,12 @@
       "label": "Fraud Account Prompt v4 official runtime readback",
       "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh; curl -fsS http://127.0.0.1:8080/health; podman exec deployment_api_1 python -c 'from backend.services.account_verification_field_extractor import ACCOUNT_VERIFICATION_REQUIRED_GROUPS; from backend.services.prompts.account_routing import build_account_verification_field_system_prompt, ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION; p=build_account_verification_field_system_prompt(); print({\"version\":ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,\"canonical\":all((chr(34)+k+chr(34)) in p for k in ACCOUNT_VERIFICATION_REQUIRED_GROUPS),\"legacy_exact\":{k:(chr(34)+k+chr(34)) in p for k in (\"company_information\",\"contact_information\",\"use_case\",\"payment_information\")}})'",
       "details": "官方单机 local_lightweight 栈于 root_main_ref=23c19e3bd7d4 构建并通过 health=200；official_image_tag、health build ref、runtime build ref 均匹配；prompt_runtime release_id=code-8a779db0373b、status=loaded、prompt_count=28；api、rag_api、rag_worker、worker_query、worker_aux 日志均加载同一 code snapshot。容器内 Prompt 版本为 fraud-account-fields-v4，七个 canonical keys 全部存在，旧四字段均不存在。"
+    },
+    {
+      "type": "test",
+      "label": "Fraud Account v4 deployment gate",
+      "command": ".venv/bin/python -m unittest backend.tests.test_prompt_versioning backend.tests.test_deploy_ec2",
+      "details": "Prompt Release validate 在停旧栈前检查 v4 版本常量、Output JSON 精确七字段、legacy fields 缺失及候选内容与代码 SHA-256 一致；production sync 复用同一 validator。部署契约同时覆盖八个 runtime 的同镜像/build/release 门禁和 production active-release 回读。"
     }
   ],
   "source_refs": [
@@ -65,8 +71,13 @@
     "backend/tests/test_automation_persona.py"
   ],
   "created_at": "2026-08-24",
-  "updated_at": "2026-08-24",
+  "updated_at": "2026-08-25",
   "history": [
+    {
+      "at": "2026-08-25",
+      "event": "fraud_v4_deployment_gate",
+      "summary": "Prompt Release validate 在旧栈停止前强制校验 fraud-account-fields-v4、Output JSON 精确七字段、旧四字段缺失，以及候选 Prompt 内容 hash 与当前代码一致；同一门禁复用于 production Prompt sync。"
+    },
     {
       "at": "2026-08-24",
       "event": "created",

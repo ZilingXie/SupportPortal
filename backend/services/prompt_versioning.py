@@ -1,18 +1,83 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from backend.services.agent_config import build_managed_prompt_catalog
+from backend.services.account_verification_field_extractor import (
+    ACCOUNT_VERIFICATION_FIELD_PROMPT_KEY,
+    ACCOUNT_VERIFICATION_REQUIRED_GROUPS,
+)
 from backend.services.prompt_runtime import load_prompt_release_snapshot
+from backend.services.prompts.account_routing import (
+    ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
+    build_account_verification_field_system_prompt,
+)
 
 
 MAX_PROMPT_CONTENT_CHARS = 100_000
 MAX_CHANGE_NOTE_CHARS = 500
+FRAUD_ACCOUNT_PROMPT_VERSION = "fraud-account-fields-v4"
+FRAUD_ACCOUNT_LEGACY_FIELDS = {
+    "company_information",
+    "contact_information",
+    "use_case",
+    "payment_information",
+}
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_prompt_output_contract(content: str) -> dict[str, Any]:
+    marker = "## Output"
+    marker_index = content.find(marker)
+    if marker_index < 0:
+        raise RuntimeError("Fraud Account Prompt is missing the ## Output contract")
+    object_index = content.find("{", marker_index + len(marker))
+    if object_index < 0:
+        raise RuntimeError("Fraud Account Prompt output contract is missing JSON")
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(content[object_index:])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Fraud Account Prompt output contract is invalid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Fraud Account Prompt output contract must be a JSON object")
+    return parsed
+
+
+def _validate_fraud_account_prompt_contract(content: str) -> None:
+    if ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION != FRAUD_ACCOUNT_PROMPT_VERSION:
+        raise RuntimeError(
+            "Fraud Account Prompt code version must be "
+            f"{FRAUD_ACCOUNT_PROMPT_VERSION}"
+        )
+
+    contract = _parse_prompt_output_contract(content)
+    fields = contract.get("fields")
+    if not isinstance(fields, dict):
+        raise RuntimeError("Fraud Account Prompt output contract is missing fields")
+    actual_fields = set(fields)
+    expected_fields = set(ACCOUNT_VERIFICATION_REQUIRED_GROUPS)
+    legacy_fields = actual_fields & FRAUD_ACCOUNT_LEGACY_FIELDS
+    if legacy_fields:
+        raise RuntimeError(
+            f"Fraud Account Prompt contains legacy fields {sorted(legacy_fields)}"
+        )
+    if actual_fields != expected_fields:
+        missing = sorted(expected_fields - actual_fields)
+        extra = sorted(actual_fields - expected_fields)
+        raise RuntimeError(
+            f"Fraud Account Prompt fields mismatch missing={missing} extra={extra}"
+        )
+    expected_content = build_account_verification_field_system_prompt()
+    actual_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    expected_hash = hashlib.sha256(expected_content.encode("utf-8")).hexdigest()
+    if actual_hash != expected_hash:
+        raise RuntimeError("Fraud Account Prompt content does not match current code")
 
 
 class PromptVersionService:
@@ -111,6 +176,10 @@ class PromptVersionService:
 
     def validate_release(self, release_id: str) -> dict[str, Any]:
         snapshot = load_prompt_release_snapshot(self.repository, release_id)
+        fraud_prompt = snapshot.prompts.get(ACCOUNT_VERIFICATION_FIELD_PROMPT_KEY)
+        if fraud_prompt is None:
+            raise RuntimeError("Prompt Release is missing the Fraud Account Prompt")
+        _validate_fraud_account_prompt_contract(fraud_prompt)
         return snapshot.info()
 
     def release(self, release_id: str) -> dict[str, Any]:
