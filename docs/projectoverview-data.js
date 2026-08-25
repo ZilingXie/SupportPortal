@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T04:09:08Z",
-  "source_base_commit": "0e8ac5123b3fb1d56c40050f86a2f63fff0a0eda",
-  "registry_digest": "0578d316fde8ff63516474a95477d30a00cb5ea29a837b95de07356fc9afc8f3",
+  "generated_at": "2026-08-25T04:14:00Z",
+  "source_base_commit": "09d9820160fa485b74ae3d9936de40f88a4dc1b8",
+  "registry_digest": "01996ef5d909dfa8fbfcc7a302443e0d4cddef7baa3ac9c935151f4f0e30e3ee",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -667,6 +667,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Compose contract suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_single_host_compose.py backend/tests/test_llm_profiles.py -q",
+          "details": "45 passed（合并前在任务 worktree 跑）。断言更新：worker_aux 块 ENABLEMENT_COMPLETION_CLASSIFIER_MODEL 默认 gpt-5.6-luna；compose 6 处 MODEL 行换 luna、6 处 TIMEOUT 行换 30/20；INTENT_ROUTER 与范围外模型钉值未动。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "podman inspect deployment_worker_aux_1 --format '{{.Config.Env}}'",
+          "details": "PR#943 合并后官方栈运行 root main 09d9820（09d9820160fa）：/health ok、build_provenance_status=matched；容器 env 实测 AUTOMATION_PERSONA_MODEL=gpt-5.6-luna、AUTOMATION_PERSONA_TIMEOUT_SECONDS=30、ENABLEMENT_COMPLETION_CLASSIFIER_MODEL=gpt-5.6-luna、ENABLEMENT_COMPLETION_CLASSIFIER_TIMEOUT_SECONDS=20、INTENT_ROUTER_MODEL=gpt-5.4-mini（故意保留）。诊断证据：supportportal.support_account_case_llm_usage 逐条记录显示 08-24 10:07-11:11 的 case extractor=luna 但 automation_persona=gpt-5.4-mini（同次运行，env 钉值所致），08:59 前为旧代码全 mini 历史。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -767,7 +779,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 18,
-      "done_count": 11,
+      "done_count": 12,
       "blocked_count": 1
     },
     {
@@ -6660,17 +6672,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-118",
       "title": "修复 compose 钉值：persona/enablement classifier 容器默认模型对齐代码默认 gpt-5.6-luna（p2-114 残留）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "p2-114 的残留缺口（用户问\"为什么还有 gpt 5.4\"查出）：deployment/docker-compose.single-host.yml 用 ${VAR:-gpt-5.4-mini} 语法给三个服务块（api/worker 系）钉死 AUTOMATION_PERSONA_MODEL 与 ENABLEMENT_COMPLETION_CLASSIFIER_MODEL 的容器 env 默认值，并以 ${...:-8} 钉死两者超时——env 优先级高于 p2-114 改的代码默认（luna/low/30s/20s），且 root .env 未设这些变量，导致账号 case 的 automation_persona/enablement classifier 阶段实际仍调 gpt-5.4-mini（DB 逐条记录实锤：08-24 10:07-11:11 的 case extractor=luna 但 persona=mini，同一次运行）。后果：case 恒混合 luna+mini→成本列 $—（全有或全无）。修复：compose 12 行默认值对齐代码默认（两个 MODEL gpt-5.4-mini→gpt-5.6-luna、AUTOMATION_PERSONA_TIMEOUT_SECONDS 8→30、CLASSIFIER_TIMEOUT 8→20，三个服务块各 4 行），test_single_host_compose.py 断言同步；INTENT_ROUTER:-mini 故意保留（客户端流 p2-114 定案），KNOWLEDGE_INGESTION/RAG_QUERY_EXPANSION/RAG_CONTEXT_COMPRESSION/REQUEST_BODY_ANALYZER 等范围外不动。本地与 EC2 共用该文件，EC2 下次部署自动生效。",
-      "next_action": "实现合并后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+容器 env 实测 AUTOMATION_PERSONA_MODEL=gpt-5.6-luna、TIMEOUT 30/20）；p2-118 翻 done。EC2 侧随用户下次部署（--skip-split）自动携带。",
+      "next_action": "已 done（官方栈 09d9820160fa 运行含本任务，容器 env 实测通过）。用户侧：EC2 下次部署（--skip-split）自动携带同一 compose 默认值；此后新 /account case 的 token_by_model 应只剩 openai:gpt-5.6-luna、成本列显示真实金额（历史混合 case 仍 $— 属预期）。",
       "acceptance_criteria": [
         "compose 三个服务块的 AUTOMATION_PERSONA_MODEL/ENABLEMENT_COMPLETION_CLASSIFIER_MODEL 默认值为 gpt-5.6-luna，超时默认 30/20，与 llm_profiles 代码默认一致。",
         "INTENT_ROUTER_MODEL 及范围外模型钉值不变。",
         "重启后容器 env 实测两变量为 gpt-5.6-luna；此后新 /account case 的 token_by_model 只剩 openai:gpt-5.6-luna，成本列显示真实金额。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Compose contract suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_single_host_compose.py backend/tests/test_llm_profiles.py -q",
+          "details": "45 passed（合并前在任务 worktree 跑）。断言更新：worker_aux 块 ENABLEMENT_COMPLETION_CLASSIFIER_MODEL 默认 gpt-5.6-luna；compose 6 处 MODEL 行换 luna、6 处 TIMEOUT 行换 30/20；INTENT_ROUTER 与范围外模型钉值未动。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "podman inspect deployment_worker_aux_1 --format '{{.Config.Env}}'",
+          "details": "PR#943 合并后官方栈运行 root main 09d9820（09d9820160fa）：/health ok、build_provenance_status=matched；容器 env 实测 AUTOMATION_PERSONA_MODEL=gpt-5.6-luna、AUTOMATION_PERSONA_TIMEOUT_SECONDS=30、ENABLEMENT_COMPLETION_CLASSIFIER_MODEL=gpt-5.6-luna、ENABLEMENT_COMPLETION_CLASSIFIER_TIMEOUT_SECONDS=20、INTENT_ROUTER_MODEL=gpt-5.4-mini（故意保留）。诊断证据：supportportal.support_account_case_llm_usage 逐条记录显示 08-24 10:07-11:11 的 case extractor=luna 但 automation_persona=gpt-5.4-mini（同次运行，env 钉值所致），08:59 前为旧代码全 mini 历史。"
+        }
+      ],
       "source_refs": [
         "deployment/docker-compose.single-host.yml",
         "backend/tests/test_single_host_compose.py"
@@ -6682,6 +6707,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "created",
           "summary": "诊断发现 compose ${VAR:-旧默认} 钉值覆盖 p2-114 代码默认（.env 未设→compose 默认生效；p2-114 只查了 .env 没查 compose），DB 记录实锤 persona/classifier 仍跑 mini。用户确认修复。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "updated",
+          "summary": "实现经 PR#943 合并（root 前进至 09d9820）；官方栈重启后容器 env 实测两模型默认已是 gpt-5.6-luna、超时 30/20，provenance matched；finalize 尾接 cd 成功保住 shell。翻 done。"
         }
       ],
       "legacy_refs": [
