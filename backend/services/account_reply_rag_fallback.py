@@ -27,6 +27,7 @@ from backend.services.account_human_review_escalation import (
 from backend.services.ragflow_docs_search_skill import (
     RagflowDocsSearchError,
     RagflowDocsSearchSkillClient,
+    trusted_docs_source_url,
 )
 
 LOGGER = logging.getLogger("supportportal.account_reply_rag_fallback")
@@ -94,7 +95,7 @@ def _format_citations(payload: dict[str, Any]) -> list[str]:
     for item in citations:
         if not isinstance(item, dict):
             continue
-        url = str(item.get("source_url") or "").strip()
+        url = trusted_docs_source_url(item.get("source_url"))
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
@@ -189,6 +190,8 @@ def try_rag_fallback_answer(
     answer = _strip_trailing_signature(str(payload.get("answer") or "").strip())
     if decision == "answer" and answer:
         references = _format_citations(payload)
+        if not references:
+            return RagFallbackOutcome(kind=ESCALATE, reason="invalid_citations")
         # The answer carries core technical content only; the persona render
         # voices the customer reply and references are appended afterwards.
         return RagFallbackOutcome(
@@ -225,7 +228,7 @@ def escalate_unexpected_reply_to_human(
     escalation = escalate_account_case_to_human_review(
         account_case=account_case,
         ticket_id=ticket_id,
-        handler=str(account_case.get("automation_handler") or account_case.get("execution_action") or "automation"),
+        handler=str(account_case.get("automation_handler") or "automation"),
         failure_stage="reply_rag_fallback",
         failure_code="reply_rag_fallback_escalation",
         reason=reason,
