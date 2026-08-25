@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T11:27:48Z",
-  "source_base_commit": "fd345c92ac79883ada6d51b26ea8548f3d1e1f7b",
-  "registry_digest": "82adaeef5f9e0963b7f49c61b5f4c5ca1a1fa445cd6cfaaa942c3c7718112224",
+  "generated_at": "2026-08-25T13:00:31Z",
+  "source_base_commit": "aefb864ff4b8d7e28f1ba0d1e2a6e4cca7a1a67f",
+  "registry_digest": "507616c7b60e65001472e2e9bd19b3ee2aa20f5477ed9fc8c9c3ff0d6414c2f2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1251,6 +1251,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "13001 regression suite (worktree account-automation-release-blockers)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_worker.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_zendesk_comment_sync_postgres.py backend/tests/test_account_intake.py backend/tests/test_account_automation_ownership.py backend/tests/test_repository_configuration.py backend/tests/test_account_case_postgres_roundtrip.py backend/tests/test_automation_test_scenarios.py",
+          "result": "477 passed, 2 skipped (PostgreSQL opt-in), 30 subtests passed. Covers: initialize() twice preserves suspension handler/category (PG temp schema), migration text assertions (suspension-only, no automation_status/dormancy rewrite), repository source free of startup handler write-backs, comment-trigger failed outcome stored failed and replayable with side effects exactly once (services + main mirror)."
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration with real staging DSN (isolated temp schemas)",
+          "command": "source .env; RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py backend/tests/test_account_zendesk_comment_sync_postgres.py",
+          "result": "3 passed against the real PostgreSQL, including the new suspension handler no-drift-across-restarts test."
+        },
+        {
+          "type": "test",
           "label": "Task worktree preflight",
           "command": "git status --short --branch; git worktree list",
           "result": "Worktree production-automated-public-replies created from clean main 8a746a7 on branch codex/production-automated-public-replies."
@@ -1371,6 +1383,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Handoff intent-gating regression (worktree account-automation-release-blockers)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_worker.py -k FraudReviewHandoff",
+          "details": "6 passed。仅 fraud_handoff_confirmation 公开交付指派 reviewer 并写 automation_status=human_review_required（事件 payload 带 case_automation_status）；request_missing_information 公开交付推迟（无指派、无事件、无 lifecycle 写入）；handoff 失败与缺配置不改 lifecycle。全套件结果见 p1-51 evidence。"
+        },
+        {
+          "type": "test",
           "label": "Handoff service + worker hook tests",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_zendesk_ticket_assignment backend.tests.test_worker",
           "details": "115 全绿：按 id 解析 reviewer（非数字 id、inactive agent 均 fail-closed）、assign 到 default group 的 PUT payload、already-assigned no-op；worker 侧 public+fraud 触发 / internal、非 fraud、缺配置不触发；handoff 失败记录 failed 事件且不影响已发布回复。"
@@ -1464,7 +1482,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 14,
-      "done_count": 13,
+      "done_count": 11,
       "blocked_count": 0
     },
     {
@@ -5507,10 +5525,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-51",
       "title": "Production Automated Case 自动 Ownership 与 Zendesk public reply 闭环",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "让 production 环境 Automated case（fraud_account / account_suspension / enablement）完整闭环：自动 Take Ownership 替代手动按钮、AI 回复以公开评论发给客户、客户在 Zendesk 的公开评论通过 n8n 同步触发后续自动化、closing 类回复确认 solved 后本地才关闭，并修复 delivery ledger confirmed_at timestamptz 写入失败与 fraud follow-up intent 冲突两个缺陷。",
-      "next_action": "",
+      "next_action": "修复 13001 暴露的 Suspension 启动污染：删除 ticket_repository.initialize() 两段把 automation_handler 回写成 billing 的兼容 SQL，新增双库 repair migration，并把 comment trigger 失败幂等记录改为 failed（可重放），部署后受控恢复 13001 并新建 Suspension 工单跨重启验收。",
       "acceptance_criteria": [
         "production Automated case 在任何外部副作用（内部邮件、reply job、Zendesk comment）之前完成自动 Take Ownership；ownership 失败 fail closed 进入 human_review，不发送邮件和评论；staging 不自动改 assignee；人工改派后停止 automation 不抢回。",
         "production AI 回复以 Zendesk public comment 发送并可被 readback 确认；历史 private delivery 行不升级、不重发；手动运维投递路径保持 private。",
@@ -5522,6 +5540,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "13001 regression suite (worktree account-automation-release-blockers)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_worker.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_zendesk_comment_sync_postgres.py backend/tests/test_account_intake.py backend/tests/test_account_automation_ownership.py backend/tests/test_repository_configuration.py backend/tests/test_account_case_postgres_roundtrip.py backend/tests/test_automation_test_scenarios.py",
+          "result": "477 passed, 2 skipped (PostgreSQL opt-in), 30 subtests passed. Covers: initialize() twice preserves suspension handler/category (PG temp schema), migration text assertions (suspension-only, no automation_status/dormancy rewrite), repository source free of startup handler write-backs, comment-trigger failed outcome stored failed and replayable with side effects exactly once (services + main mirror)."
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration with real staging DSN (isolated temp schemas)",
+          "command": "source .env; RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py backend/tests/test_account_zendesk_comment_sync_postgres.py",
+          "result": "3 passed against the real PostgreSQL, including the new suspension handler no-drift-across-restarts test."
+        },
         {
           "type": "test",
           "label": "Task worktree preflight",
@@ -5581,7 +5611,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/zendesk_account_comment_sync.md"
       ],
       "created_at": "2026-08-19",
-      "updated_at": "2026-08-20",
+      "updated_at": "2026-08-25",
       "history": [
         {
           "at": "2026-08-19",
@@ -5607,6 +5637,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-20",
           "event": "completed",
           "summary": "Production ownership 改为基于完整 Zendesk 公开评论历史：默认真人 assignee 在尚未公开回复时允许 AI 接管；真人公开回复、未知公开作者或 AI 接管后的真人改派均 fail closed。AI 接管使用 safe_update 原子写入 assignee 与目标 group，并记录失败类别、Zendesk 状态码和阻塞评论 ID。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "reopened",
+          "summary": "13001 验收发现：ticket_repository.initialize() 的两段兼容回写 SQL 在每次容器重启时把 Account Suspension 的 automation_handler 强制改成 billing，客户追问触发 409（account case has no registered automation handler）；且失败被 complete_idempotent_request 写成 completed+failed，重放直接返回旧失败。Production 2 个 automation + 6 个 closed Suspension 案均被污染。重新打开修复：移除回写、repair migration、幂等失败态改 failed 可重放、恢复 13001。"
         }
       ],
       "phase_id": "phase-1",
@@ -9862,10 +9897,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-84",
       "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 xieziling@agora.io；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
-      "next_action": "",
+      "next_action": "修复 13004 暴露的 handoff 时序缺陷：handoff 目前对所有 public 交付触发而不看 reply_intent，导致 missing-information 追问回复也把工单过早指派给 reviewer。改为仅最终 fraud_handoff_confirmation 回复交付后指派，并在指派成功后把 Case lifecycle 置为 human_review_required（不触发升级链）。",
       "acceptance_criteria": [
         "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
         "assign_ticket_to_reviewer：按数字 user id 解析 reviewer（GET /users/{id}.json，必须 active agent），assign 到其 default group；已 assign 则 no-op；复用 safe_update 与 required-field autofill 语义。",
@@ -9874,6 +9909,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Handoff intent-gating regression (worktree account-automation-release-blockers)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_worker.py -k FraudReviewHandoff",
+          "details": "6 passed。仅 fraud_handoff_confirmation 公开交付指派 reviewer 并写 automation_status=human_review_required（事件 payload 带 case_automation_status）；request_missing_information 公开交付推迟（无指派、无事件、无 lifecycle 写入）；handoff 失败与缺配置不改 lifecycle。全套件结果见 p1-51 evidence。"
+        },
         {
           "type": "test",
           "label": "Handoff service + worker hook tests",
@@ -9907,7 +9948,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         ".env.example"
       ],
       "created_at": "2026-08-21",
-      "updated_at": "2026-08-21",
+      "updated_at": "2026-08-25",
       "history": [
         {
           "at": "2026-08-21",
@@ -9923,6 +9964,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-21",
           "event": "completed",
           "summary": "PR#834+PR#835 合并（main=ba2a44d），双栈部署，权限与函数级 live 验证通过，标记完成。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "reopened",
+          "summary": "13004 验收发现：handoff 对所有 public 交付触发（_hand_off_fraud_review_after_public_reply 未接收 reply_intent，仅判 execution_action=fraud_account），request_missing_information 追问回复也过早指派 reviewer，客户补充信息后被 ownership guard fail-closed。重新打开修复：handoff 仅在最终 fraud_handoff_confirmation 公开交付后触发；指派成功后 Case lifecycle 置 human_review_required（直接写，不走 escalate_account_case_to_human_review），后续客户评论 ignored_inactive_case 不产生告警。"
         }
       ],
       "legacy_refs": [],

@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
@@ -494,6 +495,87 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         self.assertEqual(len(ingested_after), 1)
         process.assert_awaited_once()
         replay_process.assert_not_awaited()
+
+    def test_failed_trigger_outcome_is_replayable_after_handler_repair(self) -> None:
+        # 13001 scenario: a suspension case whose persisted handler was
+        # rewritten to billing fails the reply flow. The failed outcome must
+        # stay replayable so the same comment re-runs once the handler is
+        # repaired, with side effects exactly once.
+        self.repository.save_account_case(
+            {
+                "account_case_id": self.case_id,
+                "billing_ticket_id": self.case_id,
+                "client_ticket_id": self.ticket_id,
+                "title": "Suspend my account",
+                "question": "Please suspend the account.",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12838",
+                "route_family": "automated",
+                "execution_action": "account_suspension",
+                "automation_handler": "billing",
+                "route_status": "automated",
+                "automation_status": "automation",
+                "collected_fields": {},
+                "missing_fields": [],
+                "created_at": "2026-08-19T08:00:30Z",
+            }
+        )
+
+        with patch.object(
+            main,
+            "_process_account_customer_reply",
+            new_callable=AsyncMock,
+            side_effect=HTTPException(
+                status_code=409,
+                detail="account case has no registered automation handler",
+            ),
+        ) as failed_process:
+            failed = self._sync(
+                [self._initial_comment(), self._customer_comment()],
+                trigger_comment_id="52661001",
+            )
+        self.assertEqual(failed.status_code, 200, failed.text)
+        self.assertEqual(failed.json()["trigger_status"], "failed")
+        failed_process.assert_awaited_once()
+
+        async def consume_reply(**kwargs):
+            ticket = self.repository.get_ticket(self.ticket_id)
+            assert ticket is not None
+            ticket["messages"].append(
+                {
+                    "role": "customer",
+                    "content": kwargs["message"],
+                    "external_id": kwargs["message_source_id"],
+                    "created_at": "2026-08-19T09:00:00Z",
+                }
+            )
+            self.repository.save_ticket(ticket)
+            return {"status": "processed"}
+
+        repaired_case = self.repository.get_account_case(self.case_id)
+        assert repaired_case is not None
+        repaired_case["automation_handler"] = "account_suspension"
+        self.repository.save_account_case(repaired_case)
+        with patch.object(
+            main,
+            "_process_account_customer_reply",
+            new_callable=AsyncMock,
+            side_effect=consume_reply,
+        ) as replay_process:
+            replay = self._sync(
+                [self._initial_comment(), self._customer_comment()],
+                trigger_comment_id="52661001",
+            )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["trigger_status"], "processed")
+        replay_process.assert_awaited_once()
+        messages = self.repository.get_ticket(self.ticket_id)["messages"]
+        ingested = [
+            message
+            for message in messages
+            if message.get("external_id") == "52661001"
+        ]
+        self.assertEqual(len(ingested), 1)
 
     def test_not_automated_case_still_consumes_customer_comments(self) -> None:
         # After an unexpected reply re-routes the case (e.g. onto the rag

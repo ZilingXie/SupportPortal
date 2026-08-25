@@ -314,13 +314,21 @@ async def process_zendesk_comment_trigger(
             zendesk_side_effects_enabled=zendesk_side_effects_enabled,
         )
     except ReplySyncError as exc:
-        return await _complete(
-            {
-                "trigger_status": "failed",
-                "trigger_comment_id": trigger_comment_id,
-                "error": str(exc.detail),
-            }
+        failure_payload = {
+            "trigger_status": "failed",
+            "trigger_comment_id": trigger_comment_id,
+            "error": str(exc.detail),
+        }
+        # A failed trigger outcome stays replayable: the same comment id
+        # re-claims and re-runs instead of returning this failure forever.
+        await _sync(
+            repository.fail_idempotent_request,
+            ZENDESK_COMMENT_TRIGGER_IDEMPOTENCY_SCOPE,
+            f"{account_case_id}:{trigger_comment_id}",
+            response_payload=failure_payload,
+            updated_at=_now_iso(),
         )
+        return failure_payload
 
     return await _complete(
         {
