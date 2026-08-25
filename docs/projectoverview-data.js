@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T09:43:59Z",
-  "source_base_commit": "beb07bc9ad71fac0264550620f88bb40f6f309c8",
-  "registry_digest": "a0c98a25f9ae6db30f5424b7142d37fd77b092058350740740d9f29f4f44b8bf",
+  "generated_at": "2026-08-25T09:52:43Z",
+  "source_base_commit": "1582840e3932d480f05019a17f71fae7d4aefab9",
+  "registry_digest": "ee012f3991320cc27fe25ce45572ac483293af21d3c50d2a171de52072bbcb60",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1642,6 +1642,40 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 10,
       "done_count": 6,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "ecs-environment-migration",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "title": "ECS 三环境迁移",
+      "goal": "以本地 Staging、ECS Preproduction 与 ECS Production 建立可验证、可晋升、可回滚且不影响旧 /production 的发布体系。",
+      "acceptance_criteria": [
+        "Staging 只在本地运行并通过固定 ngrok endpoint 接收 n8n 测试 Case，rerun/reset 测试代码不进入 Preproduction 或 Production 镜像。",
+        "Preproduction 与 Production 从 ECR 使用同一组不可变 release digest，并以独立资源身份、队列、凭据和入口运行。",
+        "ECS Production 支持预热、健康门禁、蓝绿发布、请求排空和不重放请求的回滚，迁移期间旧 EC2 /production 保持独立运行。"
+      ],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "ECS migration architecture agreed",
+          "command": "Architecture discussion 2026-08-25",
+          "details": "确定 Staging 不上 ECS，使用本地容器与固定 ngrok endpoint；Preproduction和 Production运行于 ECS Fargate并从 ECR晋升同一 production-safe release；Preproduction Case由 n8n筛选；首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+        }
+      ],
+      "source_refs": [
+        "backend/Dockerfile.automation",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/build_automation_release.sh",
+        "deployment/deploy_automation_production_blue_green.sh",
+        "docs/deploy_automation_release.md",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "legacy_ids": [],
+      "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
       "blocked_count": 0
     },
     {
@@ -5597,6 +5631,62 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-53",
+      "title": "本地 Staging 与 ECS Preproduction/Production 迁移",
+      "status": "planned",
+      "owner": "zac",
+      "summary": "将三环境部署收敛为本地 Staging + ECS Fargate Preproduction/Production：Staging 通过固定 ngrok endpoint 接收 n8n 测试 Case并保留 rerun/reset；测试通过后从干净 commit 构建 production-safe route/API/worker 镜像并推送 ECR；Preproduction 完成受控测试 Case的真实副作用与外部 readback 后，Production 使用完全相同的 image digest 与 Prompt Release进行 ECS 蓝绿部署。现有 EC2 /production 使用不同 endpoint，迁移期间保持不变，正式 Case是否进入新 Production由 n8n workflow publish状态控制。",
+      "next_action": "Phase 0：确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Route53 hosted zone、Preproduction/Production 域名和 GitHub Actions OIDC 权限；随后在独立实施 worktree 中先完成 production-safe API/worker 镜像边界与 staging-only 本地启动入口，再创建 Terraform/ECR/ECS 流水线。",
+      "acceptance_criteria": [
+        "本地启动入口只构建并运行 Staging Route/Automation/Redis/Nginx，固定 ngrok endpoint 可接收 n8n 测试 Case；Staging 保留 rerun/reset且 Zendesk副作用关闭。",
+        "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
+        "ECR repository启用 immutable tag与扫描；每个 release manifest持久化 commit、route/API/worker/RAG image digest和 prompt_release_id，Preproduction验收后 Production禁止重新 build或替换 digest。",
+        "Terraform建立同一 Region/VPC内的 ECS Fargate、公开 ALB、ACM、ECR、分环境 ElastiCache、Secrets Manager、CloudWatch、EFS token cache与最小权限 IAM；运行任务位于 private subnet且无公网 IP，schema bootstrap使用不进入长期 task的独立 DDL凭据。",
+        "Preproduction与 Production使用独立 ECS Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat，Production API与 worker均具备无单点的最小健康副本数。",
+        "Preproduction接收 n8n筛选的测试 Case，完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback；只有上述证据与运行 provenance匹配时 release才可标记 approved_for_production。",
+        "Production读取已批准的同一 manifest创建 green task set，依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁后才开放 endpoint；后续发布由 ECS/CodeDeploy完成预热、流量切换、旧 task排空与失败回滚。",
+        "首次 ECS Production上线不切换或重启旧 EC2 /production；新 endpoint健康后才 publish对应 n8n workflow，旧 workflow unpublish只停止新 Case进入，旧环境既有异步任务仍按独立排空流程处理。",
+        "GitHub Actions使用 AWS OIDC而非长期 access key，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "ECS migration architecture agreed",
+          "command": "Architecture discussion 2026-08-25",
+          "details": "确定 Staging 不上 ECS，使用本地容器与固定 ngrok endpoint；Preproduction和 Production运行于 ECS Fargate并从 ECR晋升同一 production-safe release；Preproduction Case由 n8n筛选；首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+        }
+      ],
+      "source_refs": [
+        "backend/Dockerfile.automation",
+        "deployment/docker-compose.single-host.yml",
+        "deployment/build_automation_release.sh",
+        "deployment/deploy_automation_production_blue_green.sh",
+        "scripts/workflow/start_local_split_environments.sh",
+        "docs/deploy_automation_release.md",
+        "docs/integrations/n8n/automation_environments_cutover.md"
+      ],
+      "created_at": "2026-08-25",
+      "updated_at": "2026-08-25",
+      "history": [
+        {
+          "at": "2026-08-25",
+          "event": "planned",
+          "summary": "用户确认迁移目标：Staging仅本地测试并通过 ngrok接收 n8n请求；测试后构建 production-safe镜像上传 ECR；Preproduction以 n8n筛选的测试 Case完成最终验收；Production部署同一 release到 ECS并使用独立 endpoint，旧 EC2 /production保持不变。"
+        }
+      ],
+      "legacy_refs": [
+        "p2-88",
+        "p2-108",
+        "p2-115"
+      ],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration"
     },
     {
       "schema_version": 2,

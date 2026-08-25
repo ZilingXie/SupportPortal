@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "function_id": "ecs-environment-migration",
+  "phase_id": "phase-1",
+  "module_id": "platform-delivery",
+  "title": "ECS 三环境迁移",
+  "goal": "以本地 Staging、ECS Preproduction 与 ECS Production 建立可验证、可晋升、可回滚且不影响旧 /production 的发布体系。",
+  "acceptance_criteria": [
+    "Staging 只在本地运行并通过固定 ngrok endpoint 接收 n8n 测试 Case，rerun/reset 测试代码不进入 Preproduction 或 Production 镜像。",
+    "Preproduction 与 Production 从 ECR 使用同一组不可变 release digest，并以独立资源身份、队列、凭据和入口运行。",
+    "ECS Production 支持预热、健康门禁、蓝绿发布、请求排空和不重放请求的回滚，迁移期间旧 EC2 /production 保持独立运行。"
+  ],
+  "evidence": [],
+  "source_refs": [
+    "backend/Dockerfile.automation",
+    "deployment/docker-compose.single-host.yml",
+    "deployment/build_automation_release.sh",
+    "deployment/deploy_automation_production_blue_green.sh",
+    "docs/deploy_automation_release.md",
+    "docs/integrations/n8n/automation_environments_cutover.md"
+  ],
+  "legacy_ids": []
+}
