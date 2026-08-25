@@ -36,11 +36,23 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("supportportal_automation_internal_production", compose)
         self.assertEqual(compose.count("external: true"), 4)
 
-    def test_nginx_has_new_paths_and_deploy_script_has_environment_mode(self):
+    def test_nginx_retires_ec2_split_paths_and_keeps_legacy_deploy_mode(self):
         nginx = (ROOT / "deployment/nginx/supportportal.conf").read_text()
         deploy = (ROOT / "deployment/deploy_ec2.sh").read_text()
-        for path in ("/automation/staging/", "/automation/preproduction/", "/automation/production/"):
-            self.assertIn(path, nginx)
+        for environment in ("staging", "preproduction", "production"):
+            exact = nginx[nginx.index(f"location = /automation/{environment} {{") :]
+            exact = exact[: exact.index("}")]
+            prefix = nginx[nginx.index(f"location /automation/{environment}/ {{") :]
+            prefix = prefix[: prefix.index("}")]
+            self.assertIn("return 410;", exact)
+            self.assertIn("return 410;", prefix)
+            self.assertNotIn("proxy_pass", prefix)
+        self.assertNotIn("$automation_staging", nginx)
+        self.assertNotIn("$automation_preproduction", nginx)
+        self.assertNotIn("$automation_production_active", nginx)
+        test_prefix = nginx[nginx.index("location /automation/test/ {") :]
+        test_prefix = test_prefix[: test_prefix.index("}")]
+        self.assertIn("proxy_pass http://$production_api", test_prefix)
         self.assertIn("--environment", deploy)
         self.assertIn("docker compose", deploy)
         self.assertIn("rollback scope is", deploy)
@@ -51,14 +63,13 @@ class SplitEnvironmentDeploymentTest(unittest.TestCase):
         self.assertIn("ensure_nginx_automation_edge_network", deploy)
         self.assertIn('docker network connect "${network_name}" "${nginx_container_id}"', deploy)
 
-    def test_production_blue_green_contract(self):
+    def test_production_blue_green_assets_are_detached_from_retired_nginx_path(self):
         nginx = (ROOT / "deployment/nginx/supportportal.conf").read_text()
         script = (ROOT / "deployment/deploy_automation_production_blue_green.sh").read_text()
         runtime = (ROOT / "deployment/nginx/runtime/automation_production_active.conf").read_text()
         compose = (ROOT / "deployment/docker-compose.single-host.yml").read_text()
-        self.assertIn("include /etc/nginx/runtime/automation_production_active.conf", nginx)
-        self.assertIn("proxy_pass http://$automation_production_active", nginx)
-        self.assertIn("proxy_next_upstream off", nginx)
+        self.assertNotIn("include /etc/nginx/runtime/automation_production_active.conf", nginx)
+        self.assertNotIn("proxy_pass http://$automation_production_active", nginx)
         self.assertIn("set $automation_production_active automation_production:8000", runtime)
         self.assertIn("./nginx/runtime:/etc/nginx/runtime:ro", compose)
         for marker in (

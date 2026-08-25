@@ -276,7 +276,7 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("Execution mode: deploy", result.stdout)
         self.assertEqual(
             (self.state_dir / "deploy_calls.log").read_text(encoding="utf-8").splitlines(),
-            ["--branch main --domain support.stellarix.space --daily --approve-production"],
+            ["--branch main --domain support.stellarix.space --daily --skip-split"],
         )
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
         aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
@@ -306,7 +306,7 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("Execution mode: deploy", result.stdout)
         self.assertEqual(
             (self.state_dir / "deploy_calls.log").read_text(encoding="utf-8").splitlines(),
-            ["--branch main --domain support.stellarix.space --daily --approve-production"],
+            ["--branch main --domain support.stellarix.space --daily --skip-split"],
         )
         self.assertEqual(
             (self.state_dir / "deploy_lock_already_held.txt").read_text(encoding="utf-8").strip(),
@@ -399,14 +399,15 @@ class AutoDeployAssetTests(unittest.TestCase):
 
         self.assertIn("deploy_surfaces_ec2.sh", wrapper)
         self.assertIn("--daily", wrapper)
-        self.assertIn("--approve-production", wrapper)
+        self.assertIn("--skip-split", wrapper)
+        self.assertNotIn("--approve-production", wrapper)
         self.assertIn("--daily", surface_script)
         self.assertIn("DEPLOY_LOCK_ALREADY_HELD", surface_script)
         self.assertIn("--skip-pull", surface_script)
-        self.assertIn("verify_split", surface_script)
-        self.assertIn("last=0", surface_script)
-        self.assertIn('[[ -f "${manifest}" ]] || continue', surface_script)
-        self.assertNotIn("ls .deployments/releases 2>/dev/null | grep", surface_script)
+        self.assertIn("retired from EC2 (ECS migration pending)", surface_script)
+        self.assertNotIn("build_automation_release.sh", surface_script)
+        self.assertNotIn("verify_split_environments.sh", surface_script)
+        self.assertNotIn("--environment", surface_script)
 
 
 if __name__ == "__main__":

@@ -563,6 +563,14 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertNotIn("image-prune", self._docker_actions())
 
         docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertFalse(
+            any(call["argv"][:2] == ["network", "create"] for call in docker_calls),
+            "main-stack deployment must not recreate retired split networks",
+        )
+        self.assertFalse(
+            any(call["argv"][:2] == ["network", "connect"] for call in docker_calls),
+            "main-stack deployment must not attach nginx to the retired split edge network",
+        )
         tag_index = next(
             index
             for index, call in enumerate(docker_calls)

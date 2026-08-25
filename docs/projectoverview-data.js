@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T10:47:31Z",
-  "source_base_commit": "5d858c51e9362bdb0639aabaa7c6259ad040aee3",
-  "registry_digest": "2ea531eef47859636b040bd9c837da28f98ac4fcbf849968223d5fd7c8ef968a",
+  "generated_at": "2026-08-25T10:54:38Z",
+  "source_base_commit": "304298fb4bac5e2d9cb89a4522c17afde5023e64",
+  "registry_digest": "0b23360ab2aa7f2bae2690ab42be581c72eddfa3796fa714e97548a1b8045271",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1637,6 +1637,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Post-merge official stack live verification",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
           "details": "PR#940 合并后官方栈运行 root main 48ca775（built 2026-08-25T03:43:54Z）：official_health_status=ok、build_provenance_status=matched、official_health_build_ref=48ca775d09ad；/workspace/admin/ 实际服务 app.js?v=20260825-model-pricing-1；admin/admin 登录后 GET account-automation 实测 model_pricing：gpt-5.6-luna priced=true（0.2/0.02/1.2），其余五模型 priced=false；当前页 case 为 luna+mini 混合（EC2 旧代码仍在产 mini 条目），成本 $— 与 page cost_usd_available=false 符合全有或全无契约。"
+        },
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_workspace_api.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_llm_pricing.py -q",
+          "details": "67 passed + 4 subtests（合并前在任务 worktree 跑）。新增断言：usage/page_total/两 source 的 total_cached_input_tokens（RAG 400+automation 60）、by_model 分桶 cached（gpt-test 60/gpt-rag 400）；前端 210 cached 小字、by-model \u003cth>Cached\u003c/th> 列、admin-token-cached 样式；版本串断言 20260825-cached-display-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#953 合并后官方栈运行 root main 5d858c5（5d858c51e936）：build_provenance_status=matched；/workspace/admin/ 服务 app.js?v=20260825-cached-display-1；admin 登录后实测 account-automation：page_total 含 total_cached_input_tokens、case 两 source 均含、by_model 分桶含 cached_input_tokens（当前全 0——实测缓存未命中，符合预期）。"
         }
       ],
       "source_refs": [
@@ -1647,7 +1659,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 11,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -1656,18 +1668,35 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "title": "ECS 三环境迁移",
-      "goal": "以本地 Staging、ECS Preproduction 与 ECS Production 建立可验证、可晋升、可回滚且不影响旧 /production 的发布体系。",
+      "goal": "以 ECS Staging、Preproduction 与 Production 建立可验证、可晋升、可回滚且不影响旧 EC2 /production 的发布体系。",
       "acceptance_criteria": [
-        "Staging 只在本地运行并通过固定 ngrok endpoint 接收 n8n 测试 Case，rerun/reset 测试代码不进入 Preproduction 或 Production 镜像。",
-        "Preproduction 与 Production 从 ECR 使用同一组不可变 release digest，并以独立资源身份、队列、凭据和入口运行。",
+        "Staging、Preproduction 与 Production 均运行于 ECS，并使用独立资源身份、队列、凭据和入口；rerun/reset 测试代码不进入 Preproduction 或 Production 镜像。",
+        "三环境从 ECR 使用可追溯的不可变 release digest，Preproduction 与 Production 只晋升已验收的同一组 digest。",
         "ECS Production 支持预热、健康门禁、蓝绿发布、请求排空和不重放请求的回滚，迁移期间旧 EC2 /production 保持独立运行。"
       ],
       "evidence": [
         {
           "type": "decision",
+          "label": "EC2 split environments retired",
+          "details": "2026-08-25 用户确认 Staging、Preproduction、Production 全部转为 ECS 承载；EC2 保留主栈与现有 /production，三条 /automation/* 路径下线。"
+        },
+        {
+          "type": "decision",
           "label": "ECS migration architecture agreed",
           "command": "Architecture discussion 2026-08-25",
-          "details": "确定 Staging 不上 ECS，使用本地容器与固定 ngrok endpoint；Preproduction和 Production运行于 ECS Fargate并从 ECR晋升同一 production-safe release；Preproduction Case由 n8n筛选；首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+          "details": "最初确定本地 Staging、ECS Preproduction/Production；2026-08-25 用户进一步确认 Staging也迁入 ECS。三环境均从 ECR晋升可追溯 release，首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+        },
+        {
+          "type": "document",
+          "label": "EC2 split decommission prepared",
+          "command": "deployment and Nginx contract update 2026-08-25",
+          "details": "EC2主 Nginx对三条 /automation/* 路径返回410，main与timer部署不再构建、部署或验证 split环境，也不再创建或连接 split网络；运行数据与 volumes明确保留。"
+        },
+        {
+          "type": "test",
+          "label": "EC2 retirement deployment contracts",
+          "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose",
+          "details": "79项全绿：覆盖定时 wrapper main-only参数、surface脚本无 split build/deploy/verify、三条路径410、/automation/test继续代理 production API、main部署不创建或连接 split网络，以及既有 Compose/legacy rollback契约。"
         }
       ],
       "source_refs": [
@@ -1679,7 +1708,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "legacy_ids": [],
-      "status": "planned",
+      "status": "active",
       "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
@@ -5647,19 +5676,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-53",
-      "title": "本地 Staging 与 ECS Preproduction/Production 迁移",
-      "status": "planned",
+      "title": "Automation 三环境迁移至 ECS",
+      "status": "active",
       "owner": "zac",
-      "summary": "将三环境部署收敛为本地 Staging + ECS Fargate Preproduction/Production：Staging 通过固定 ngrok endpoint 接收 n8n 测试 Case并保留 rerun/reset；测试通过后从干净 commit 构建 production-safe route/API/worker 镜像并推送 ECR；Preproduction 完成受控测试 Case的真实副作用与外部 readback 后，Production 使用完全相同的 image digest 与 Prompt Release进行 ECS 蓝绿部署。现有 EC2 /production 使用不同 endpoint，迁移期间保持不变，正式 Case是否进入新 Production由 n8n workflow publish状态控制。",
-      "next_action": "Phase 0：确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Route53 hosted zone、Preproduction/Production 域名和 GitHub Actions OIDC 权限；随后在独立实施 worktree 中先完成 production-safe API/worker 镜像边界与 staging-only 本地启动入口，再创建 Terraform/ECR/ECS 流水线。",
+      "summary": "将 Staging、Preproduction、Production 三环境全部迁移到 ECS Fargate：从干净 commit 构建可追溯的 route/API/worker 镜像并推送 ECR，按 Staging → Preproduction → Production 晋升受控 release；Production 使用相同 image digest 与 Prompt Release进行 ECS 蓝绿部署。EC2 直接下线三套 split runtime及公网路径，只保留主栈和独立的现有 /production；数据库与 Docker volumes 保留。正式 Case是否进入 ECS Production由 n8n workflow publish状态控制。",
+      "next_action": "完成 EC2 split runtime下线与 main-only部署门禁后，确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Route53 hosted zone、三环境域名和 GitHub Actions OIDC权限；随后实现 ECR/ECS/Terraform发布链并先部署 ECS Staging。",
       "acceptance_criteria": [
-        "本地启动入口只构建并运行 Staging Route/Automation/Redis/Nginx，固定 ngrok endpoint 可接收 n8n 测试 Case；Staging 保留 rerun/reset且 Zendesk副作用关闭。",
+        "ECS Staging使用独立 Service、Redis、数据库身份、凭据和入口接收 n8n测试 Case；Staging保留 rerun/reset且 Zendesk副作用关闭。",
         "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
         "ECR repository启用 immutable tag与扫描；每个 release manifest持久化 commit、route/API/worker/RAG image digest和 prompt_release_id，Preproduction验收后 Production禁止重新 build或替换 digest。",
-        "Terraform建立同一 Region/VPC内的 ECS Fargate、公开 ALB、ACM、ECR、分环境 ElastiCache、Secrets Manager、CloudWatch、EFS token cache与最小权限 IAM；运行任务位于 private subnet且无公网 IP，schema bootstrap使用不进入长期 task的独立 DDL凭据。",
+        "Terraform建立同一 Region/VPC内的三套 ECS Fargate环境、公开 ALB、ACM、ECR、分环境 ElastiCache、Secrets Manager、CloudWatch、EFS token cache与最小权限 IAM；运行任务位于 private subnet且无公网 IP，schema bootstrap使用不进入长期 task的独立 DDL凭据。",
         "Preproduction与 Production使用独立 ECS Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat，Production API与 worker均具备无单点的最小健康副本数。",
         "Preproduction接收 n8n筛选的测试 Case，完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback；只有上述证据与运行 provenance匹配时 release才可标记 approved_for_production。",
         "Production读取已批准的同一 manifest创建 green task set，依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁后才开放 endpoint；后续发布由 ECS/CodeDeploy完成预热、流量切换、旧 task排空与失败回滚。",
+        "EC2 的三套 split runtime、split网络与公网路径完成下线，常规和每日 EC2部署只管理主栈；历史数据库与 Docker volumes保留，现有 EC2 /production不切换或重启。",
         "首次 ECS Production上线不切换或重启旧 EC2 /production；新 endpoint健康后才 publish对应 n8n workflow，旧 workflow unpublish只停止新 Case进入，旧环境既有异步任务仍按独立排空流程处理。",
         "GitHub Actions使用 AWS OIDC而非长期 access key，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
       ],
@@ -5669,7 +5699,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "ECS migration architecture agreed",
           "command": "Architecture discussion 2026-08-25",
-          "details": "确定 Staging 不上 ECS，使用本地容器与固定 ngrok endpoint；Preproduction和 Production运行于 ECS Fargate并从 ECR晋升同一 production-safe release；Preproduction Case由 n8n筛选；首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+          "details": "最初确定本地 Staging、ECS Preproduction/Production；2026-08-25 用户进一步确认 Staging也迁入 ECS。三环境均从 ECR晋升可追溯 release，首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+        },
+        {
+          "type": "document",
+          "label": "EC2 split decommission prepared",
+          "command": "deployment and Nginx contract update 2026-08-25",
+          "details": "EC2主 Nginx对三条 /automation/* 路径返回410，main与timer部署不再构建、部署或验证 split环境，也不再创建或连接 split网络；运行数据与 volumes明确保留。"
+        },
+        {
+          "type": "test",
+          "label": "EC2 retirement deployment contracts",
+          "command": ".venv/bin/python -m unittest backend.tests.test_auto_deploy_ec2 backend.tests.test_split_environment_deployment backend.tests.test_deploy_ec2 backend.tests.test_single_host_compose",
+          "details": "79项全绿：覆盖定时 wrapper main-only参数、surface脚本无 split build/deploy/verify、三条路径410、/automation/test继续代理 production API、main部署不创建或连接 split网络，以及既有 Compose/legacy rollback契约。"
         }
       ],
       "source_refs": [
@@ -5688,6 +5730,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "planned",
           "summary": "用户确认迁移目标：Staging仅本地测试并通过 ngrok接收 n8n请求；测试后构建 production-safe镜像上传 ECR；Preproduction以 n8n筛选的测试 Case完成最终验收；Production部署同一 release到 ECS并使用独立 endpoint，旧 EC2 /production保持不变。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "progress",
+          "summary": "用户更新决策为 Staging、Preproduction、Production三环境全部部署到 ECS，并授权直接下线 EC2 split runtime；EC2保留主栈、现有 /production、数据库与历史 volumes。"
         }
       ],
       "legacy_refs": [
@@ -7008,17 +7055,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-120",
       "title": "Automated Cases 页显示 cached token 数量（p2-107/p2-117 后续）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "用户要求显示 cached token 数量（预期多轮 case 交流会出现前缀缓存命中）。p2-107 已采集 cached（DB 列 cached_input_tokens、aggregate_usage_ledger 分桶与 total_cached_input_tokens、RAG 批量端点透传），但 admin 展示层无任何 cached 输出。本任务补齐展示链路（数据两侧已就绪，纯透传+渲染）：main.py _merge_account_case_token_by_model 分桶加 cached_input_tokens 累加；_attach_account_case_token_usage 的 rag/automation sources、每 case token_usage、page_total 均加 total_cached_input_tokens；admin 前端 Tokens 单元格 cached>0 时显示 \"· N cached\" 小字（admin-token-cached 样式）、by-model 表加固定 Cached 列（In 之后）、Page tokens 页合计 cached>0 时追加；版本串 bump 20260825-cached-display-1。cached 参与成本计算自 p2-107 已有，本任务不改计价。当前实测 cached 全 0（OpenAI 自动前缀缓存未命中），显示为 0/隐藏属预期，多轮命中后自然出现。",
-      "next_action": "实现合并后按流程重启官方栈并 live 验证（/health+build ref+provenance matched+资产 20260825-cached-display-1+端点 token_usage 含 total_cached_input_tokens 与 by-model cached）；p2-120 翻 done。EC2 随用户下次部署自动生效。",
+      "next_action": "已 done（官方栈 5d858c51e936 运行含本任务，live 验证通过）。用户侧：EC2 随下次部署自动生效；多轮 case 出现缓存命中后，单元格/页合计会出现 · N cached 小字，by-model 表 Cached 列始终可见。",
       "acceptance_criteria": [
         "端点 token_usage 含 total_cached_input_tokens（case/两 source/page_total 四处），by_model 分桶含 cached_input_tokens（RAG+automation 合并累加）。",
         "前端：单元格与页合计 cached>0 时显示 · N cached；by-model 表固定 Cached 列（0 也显示）。",
         "既有字段只增不改；计价行为不变；相关测试全绿。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Affected suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_workspace_api.py backend/tests/test_workspace_admin_ui_contract.py backend/tests/test_llm_pricing.py -q",
+          "details": "67 passed + 4 subtests（合并前在任务 worktree 跑）。新增断言：usage/page_total/两 source 的 total_cached_input_tokens（RAG 400+automation 60）、by_model 分桶 cached（gpt-test 60/gpt-rag 400）；前端 210 cached 小字、by-model \u003cth>Cached\u003c/th> 列、admin-token-cached 样式；版本串断言 20260825-cached-display-1。"
+        },
+        {
+          "type": "deployment",
+          "label": "Post-merge official stack live verification",
+          "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
+          "details": "PR#953 合并后官方栈运行 root main 5d858c5（5d858c51e936）：build_provenance_status=matched；/workspace/admin/ 服务 app.js?v=20260825-cached-display-1；admin 登录后实测 account-automation：page_total 含 total_cached_input_tokens、case 两 source 均含、by_model 分桶含 cached_input_tokens（当前全 0——实测缓存未命中，符合预期）。"
+        }
+      ],
       "source_refs": [
         "backend/main.py",
         "ui/workspace-ui/admin/app.js",
@@ -7032,6 +7092,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "created",
           "summary": "用户问\"cached 的 token 数量呢\"并确认需要显示（多轮交流会有 cached）。任务号 p2-120（p2-119 已被并行链占用）。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "updated",
+          "summary": "实现经 PR#953 合并（root 前进至 5d858c5）；官方栈重启后 live 验证全过（provenance matched、资产 20260825-cached-display-1、端点四处 cached 字段实测），finalize 尾接 cd 保住 shell。翻 done。"
         }
       ],
       "legacy_refs": [
