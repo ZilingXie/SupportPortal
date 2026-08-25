@@ -97,6 +97,22 @@ for env_name in staging preproduction production; do
   expect_eq "${env_name} X-N8n-Request-Token wrong value returns 401" 401 "${code}"
 done
 
+# Parity ingestion endpoints (p2-110/112/113): token-negative probes and
+# membership shape on the production environment only.
+prod_base="${NGINX_BASE}/automation/production"
+for probe in \
+  "GET:${prod_base}/api/integrations/zendesk/account-cases/000000/comment-sync-target" \
+  "PUT:${prod_base}/api/integrations/zendesk/account-cases/000000/comments" \
+  "PUT:${prod_base}/api/integrations/zendesk/account-cases/000000/status" \
+  "POST:${prod_base}/api/integrations/slack/engineer-cases/messages" \
+  "POST:${prod_base}/api/integrations/slack/engineer-cases/actions" \
+  "GET:${prod_base}/api/integrations/slack/engineer-cases/thread-bindings/resolve"; do
+  method="${probe%%:*}"
+  url="${probe#*:}"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X "${method}" "${url}" || echo 000)"
+  expect_eq "production parity ${method} without token returns 401" 401 "${code}"
+done
+
 echo "== Container and network invariants"
 
 automation_container() {
