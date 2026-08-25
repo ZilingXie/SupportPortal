@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-25T02:42:25Z",
-  "source_base_commit": "f468c6e309f29b3253ff92c8774c1240bb2d520c",
-  "registry_digest": "bb369a63c93a1c4f0a4b87bc4c3ea79cb37b67d3c5edce6d9bfad785605f980d",
+  "generated_at": "2026-08-25T02:45:32Z",
+  "source_base_commit": "ab13e4c876b8362ab75a887de4b4a1d118fe62f7",
+  "registry_digest": "3d5384fec48a35a741dbc3b5aa6da1650cd523c89e3c1f146b71787b31352dff",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2005,6 +2005,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 review remediation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
+        },
+        {
+          "type": "test",
+          "label": "Blue-green schema and worker readiness remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 && bash -n deployment/{deploy_automation_production_blue_green,bootstrap_automation_production_schema,deploy_ec2,verify_split_environments}.sh",
+          "details": "75 项部署回归通过。蓝绿顺序收紧为 schema bootstrap -> candidate readiness -> parity worker recreate -> worker stability -> Nginx cutover -> state commit -> drain；worker 注入必填 PGVECTOR_DSN，重启/退出时在切流前失败并停止 candidate。verify_split_environments.sh 按 active upstream 的 Compose service label 识别 candidate，双采样同一 worker 的 running/status/RestartCount，移除硬编码容器名和 grep|head pipefail。EC2 数据库 bootstrap、容器重建和异步回复 readback 尚未执行。"
         },
         {
           "type": "test",
@@ -9451,7 +9457,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将现有 Account route/automation 流程拆分为 staging、preproduction、production 三套 Automation UI/runtime 与 route container。Route 负责无副作用的 route 和 automated case AI/action-plan preparation；Automation 按环境策略执行内部记录、Zendesk internal/external comment、take ownership 和 ticket status。三套环境使用独立镜像、现有项目 DSN 下的独立 schema、独立 execution table、队列和凭据，Production 镜像物理排除 rerun，旧 /account 与 /production 在新环境验收和切流批准前保持不变。",
-      "next_action": "蓝绿部署修复已完成，待在 Docker/EC2 上执行 release manifest 候选预热、共享 production Redis 检查、Nginx 切换、360 秒 drain、回滚演练和真实健康检查；不重启服务 /production。T7/T8 的业务切流仍需单独批准。",
+      "next_action": "2026-08-25 蓝绿部署失败修复代码已完成，待 EC2 更新 main 后重新执行同一 release 的蓝绿部署：必须先由 bootstrap 补齐 supportportal_production ticket/knowledge schema，再确认 automation_production_worker 在稳定窗口内 running 且 RestartCount 不变，最后运行 candidate-aware verify_split_environments.sh 并验证异步回复链。当前公网 health 200 但 worker 持续重启，线上恢复尚未完成。",
       "acceptance_criteria": [
         "新增 /automation/staging/、/automation/preproduction/、/automation/production/，每个环境有独立 UI/API/Route/schema/execution table/queue/credentials 与 build marker；数据库 DSN 复用现有项目配置。",
         "Automation 始终先调用绑定 environment 的 Route；Route 返回 route 和 automated case 的完整 AI/action-plan preparation，不执行 Zendesk、ownership、status 或 delivery side effect。",
@@ -9569,6 +9575,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "EC2 review remediation",
           "command": ".venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose && bash -n deployment/deploy_automation_production_blue_green.sh",
           "details": "修复 EC2 review 发现的 release manifest 未注入、候选 Redis 重复创建、drain 后 rollback 指针失效、切流健康检查失败不恢复、缺部署锁、Nginx optional upstream 破坏和旧 Nginx runtime mount 缺失：manifest 校验本地 image ID；candidate 直接复用 external production Redis；旧服务只 stop 且持久化 override；失败自动恢复 upstream；共享 .deploy_ec2.lock；Nginx 使用 server scope variable；首次切换前自动补齐 runtime mount。Docker/EC2 演练仍待执行。"
+        },
+        {
+          "type": "test",
+          "label": "Blue-green schema and worker readiness remediation",
+          "command": ".venv/bin/python -m unittest backend.tests.test_production_blue_green_behavior backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 && bash -n deployment/{deploy_automation_production_blue_green,bootstrap_automation_production_schema,deploy_ec2,verify_split_environments}.sh",
+          "details": "75 项部署回归通过。蓝绿顺序收紧为 schema bootstrap -> candidate readiness -> parity worker recreate -> worker stability -> Nginx cutover -> state commit -> drain；worker 注入必填 PGVECTOR_DSN，重启/退出时在切流前失败并停止 candidate。verify_split_environments.sh 按 active upstream 的 Compose service label 识别 candidate，双采样同一 worker 的 running/status/RestartCount，移除硬编码容器名和 grep|head pipefail。EC2 数据库 bootstrap、容器重建和异步回复 readback 尚未执行。"
         }
       ],
       "source_refs": [
@@ -9584,6 +9596,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "deployment/docker-compose.single-host.yml",
         "deployment/nginx/supportportal.conf",
         "deployment/deploy_ec2.sh",
+        "deployment/deploy_automation_production_blue_green.sh",
+        "deployment/bootstrap_automation_production_schema.sh",
+        "deployment/verify_split_environments.sh",
         "deployment/build_automation_release.sh",
         "docs/deploy_automation_release.md",
         "backend/Dockerfile",
