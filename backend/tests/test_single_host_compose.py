@@ -127,7 +127,7 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
-            "ENABLEMENT_COMPLETION_CLASSIFIER_MODEL: ${ENABLEMENT_COMPLETION_CLASSIFIER_MODEL:-gpt-5.4-mini}",
+            "ENABLEMENT_COMPLETION_CLASSIFIER_MODEL: ${ENABLEMENT_COMPLETION_CLASSIFIER_MODEL:-gpt-5.6-luna}",
             worker_block,
         )
         self.assertIn(
