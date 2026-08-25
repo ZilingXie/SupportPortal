@@ -12,6 +12,23 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-25 - Fraud Account v4 deployment validation gate
+
+- Area or subsystem: managed Prompt Release validation and `/production` deployment
+- Prompt or model version: `fraud-account-fields-v4`; Prompt text and model configuration unchanged
+- Summary: Added a fail-closed deployment gate that parses the selected Fraud Account Prompt `## Output` JSON, requires exactly the seven canonical fields, rejects the four legacy fields, and requires the selected content SHA-256 to match the current code Prompt.
+- Reason: Stored Prompt Release hashes prove database integrity but did not prevent a structurally valid, internally hashed stale Prompt from being deployed. The gate must fail before the healthy old stack is stopped.
+- Affected files or config:
+  - `backend/services/prompt_versioning.py`
+  - `deployment/deploy_ec2.sh`
+  - Prompt versioning and deployment contract tests
+- Expected behavior change:
+  - Candidate validation and production Prompt sync reject missing, legacy, structurally drifted, or code-divergent Fraud Account Prompt content.
+  - Deployments with a valid current v4 Prompt continue unchanged; no customer Case is processed by the gate.
+- Verification:
+  - Prompt versioning tests cover current v4 success, malformed field structure, legacy fields, and content-hash divergence from code.
+  - Deployment tests cover pre-stop validation, eight-runtime provenance, worker restart stability, and post-activation production readback.
+
 ## 2026-08-24 - Fraud Account field extractor schema contract v4
 
 - Area or subsystem: `/account` Fraud Account field extraction managed Prompt

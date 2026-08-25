@@ -18,6 +18,14 @@ RUNTIME_SERVICE_NAMES = ("api", "rag_api", "rag_worker", "ws_gateway", "worker_q
 BOOTSTRAP_SERVICE_NAMES = ("runtime_bootstrap",)
 PRODUCTION_SERVICE_NAMES = ("api_production", "worker_query_production", "worker_aux_production")
 AUTOMATION_WORKER_SERVICE_NAMES = ("automation_production_worker",)
+LONG_RUNNING_ENV_FILE_SERVICE_NAMES = (
+    "api",
+    "rag_api",
+    "rag_worker",
+    "worker_query",
+    "worker_aux",
+    *PRODUCTION_SERVICE_NAMES,
+)
 
 
 class SingleHostComposeTests(unittest.TestCase):
@@ -238,6 +246,16 @@ class SingleHostComposeTests(unittest.TestCase):
         ws_gateway_block = self._service_block("ws_gateway")
         self.assertNotIn("PROMPT_RELEASE_ID", ws_gateway_block)
         self.assertNotIn("PROMPT_RUNTIME_SERVICE", ws_gateway_block)
+
+    def test_production_migration_dsn_is_empty_in_long_running_services_only(self) -> None:
+        for service_name in LONG_RUNNING_ENV_FILE_SERVICE_NAMES:
+            block = self._service_block(service_name)
+            self.assertIn("env_file:\n      - ../.env", block)
+            self.assertIn('AUTOMATION_PRODUCTION_DB_MIGRATION_DSN: ""', block)
+
+        bootstrap_block = self._service_block("runtime_bootstrap")
+        self.assertIn("env_file:\n      - ../.env", bootstrap_block)
+        self.assertNotIn("AUTOMATION_PRODUCTION_DB_MIGRATION_DSN", bootstrap_block)
 
     def test_client_rag_recovery_defaults_are_present(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")

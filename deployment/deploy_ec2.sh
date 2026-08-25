@@ -365,36 +365,117 @@ sync_candidate_prompt_release_to_production() {
   return 0
 }
 
-verify_prompt_runtime_services_once() {
-  local service container_id actual_release
-  for service in api rag_api rag_worker worker_query worker_aux; do
-    container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps -q "${service}")"
+read_production_active_prompt_release() {
+  local target_dsn
+  target_dsn="$(resolve_env_value PRODUCTION_TICKET_DB_DSN)"
+  [[ -n "${target_dsn}" ]] || return 1
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" run --rm --no-deps \
+    -e "TICKET_DB_DSN=${target_dsn}" api \
+    python -m backend.scripts.prompt_release current --output shell \
+    | tail -n 1
+}
+
+verify_production_active_prompt_release() {
+  if [[ ${#COMPOSE_PROFILE_ARGS[@]} -eq 0 ]]; then
+    return 0
+  fi
+  local active_release_id
+  active_release_id="$(read_production_active_prompt_release)" || return 1
+  [[ "${active_release_id}" == "${CANDIDATE_PROMPT_RELEASE_ID}" ]] || return 1
+  log "Verified /production active Prompt Release ${active_release_id}."
+}
+
+runtime_service_names() {
+  printf '%s\n' api rag_api rag_worker worker_query worker_aux
+  if [[ ${#COMPOSE_PROFILE_ARGS[@]} -gt 0 ]]; then
+    printf '%s\n' api_production worker_query_production worker_aux_production
+  fi
+}
+
+runtime_log_service_name() {
+  case "$1" in
+    api_production) printf '%s\n' api-production ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+worker_runtime_signature() {
+  local service container_id state running status restart_count
+  local services=(rag_worker worker_query worker_aux)
+  if [[ ${#COMPOSE_PROFILE_ARGS[@]} -gt 0 ]]; then
+    services+=(worker_query_production worker_aux_production)
+  fi
+  for service in "${services[@]}"; do
+    container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" ps -q "${service}" | sed -n '1p')"
     [[ -n "${container_id}" ]] || return 1
+    state="$(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.RestartCount}}' "${container_id}" 2>/dev/null)" || return 1
+    read -r running status restart_count <<<"${state}"
+    [[ "${running}" == "true" && "${status}" == "running" && "${restart_count}" == "0" ]] || return 1
+    printf '%s:%s:%s\n' "${service}" "${container_id}" "${restart_count}"
+  done
+}
+
+verify_prompt_runtime_services_once() {
+  local expected_image_id service container_id state running status restart_count actual_image_id
+  local actual_build_ref actual_release log_service
+  expected_image_id="$(docker image inspect --format '{{.Id}}' "${APP_RUNTIME_IMAGE}" 2>/dev/null)" || return 1
+  [[ -n "${expected_image_id}" ]] || return 1
+  while IFS= read -r service; do
+    container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" ps -q "${service}" | sed -n '1p')"
+    [[ -n "${container_id}" ]] || return 1
+    state="$(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.RestartCount}} {{.Image}}' "${container_id}" 2>/dev/null)" || return 1
+    read -r running status restart_count actual_image_id <<<"${state}"
+    [[ "${running}" == "true" && "${status}" == "running" ]] || return 1
+    [[ "${restart_count}" == "0" ]] || return 1
+    [[ "${actual_image_id}" == "${expected_image_id}" ]] || return 1
+    actual_build_ref="$(read_container_env_value "${container_id}" APP_BUILD_REF || true)"
+    [[ "${actual_build_ref}" == "${APP_BUILD_REF}" ]] || return 1
     actual_release="$(read_container_env_value "${container_id}" PROMPT_RELEASE_ID || true)"
     [[ "${actual_release}" == "${CANDIDATE_PROMPT_RELEASE_ID}" ]] || return 1
+    log_service="$(runtime_log_service_name "${service}")"
     docker logs "${container_id}" 2>&1 \
-      | grep -F "prompt_runtime_loaded service=${service} release_id=${CANDIDATE_PROMPT_RELEASE_ID}" >/dev/null \
+      | grep -F "prompt_runtime_loaded service=${log_service} release_id=${CANDIDATE_PROMPT_RELEASE_ID}" >/dev/null \
       || return 1
-  done
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T api \
+  done < <(runtime_service_names)
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" exec -T api \
     python -c 'import json,sys,urllib.request; p=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)); sys.exit(0 if p.get("app_build",{}).get("ref")==sys.argv[1] and p.get("prompt_runtime",{}).get("release_id")==sys.argv[2] else 1)' \
     "${APP_BUILD_REF}" "${CANDIDATE_PROMPT_RELEASE_ID}" \
     || return 1
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T rag_api \
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" exec -T rag_api \
     python -c 'import json,sys,urllib.request; p=json.load(urllib.request.urlopen("http://127.0.0.1:8020/health", timeout=5)); sys.exit(0 if p.get("app_build",{}).get("ref")==sys.argv[1] and p.get("prompt_runtime",{}).get("release_id")==sys.argv[2] else 1)' \
     "${APP_BUILD_REF}" "${CANDIDATE_PROMPT_RELEASE_ID}" \
     || return 1
+  if [[ ${#COMPOSE_PROFILE_ARGS[@]} -gt 0 ]]; then
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "${COMPOSE_PROFILE_ARGS[@]-}" exec -T api_production \
+      python -c 'import json,sys,urllib.request; p=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)); sys.exit(0 if p.get("app_build",{}).get("ref")==sys.argv[1] and p.get("prompt_runtime",{}).get("release_id")==sys.argv[2] else 1)' \
+      "${APP_BUILD_REF}" "${CANDIDATE_PROMPT_RELEASE_ID}" \
+      || return 1
+  fi
 }
 
 verify_prompt_runtime_services() {
   local timeout_seconds="$1"
   local retry_interval_seconds="$2"
-  local start_ts current_ts elapsed
+  local stability_seconds="$3"
+  local start_ts current_ts elapsed initial_worker_signature final_worker_signature
 
   start_ts="$(date +%s)"
   while true; do
     if verify_prompt_runtime_services_once; then
-      return 0
+      initial_worker_signature="$(worker_runtime_signature)" || initial_worker_signature=""
+      if [[ -n "${initial_worker_signature}" ]]; then
+        if (( stability_seconds > 0 )); then
+          log "Observing Prompt workers for ${stability_seconds}s before activation..."
+          sleep "${stability_seconds}"
+        fi
+        final_worker_signature="$(worker_runtime_signature)" || final_worker_signature=""
+        if [[ -n "${final_worker_signature}" ]] \
+          && [[ "${final_worker_signature}" == "${initial_worker_signature}" ]] \
+          && verify_prompt_runtime_services_once; then
+          log "Prompt workers remained stable for ${stability_seconds}s with RestartCount=0."
+          return 0
+        fi
+      fi
     fi
 
     current_ts="$(date +%s)"
@@ -1109,10 +1190,11 @@ main() {
 
   prepare_build_metadata
 
-  local host_port internal_url external_url health_timeout_seconds health_retry_interval_seconds
+  local host_port internal_url external_url health_timeout_seconds health_retry_interval_seconds worker_stability_seconds
   host_port="$(resolve_port)"
   health_timeout_seconds="$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)"
   health_retry_interval_seconds="$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)"
+  worker_stability_seconds="$(resolve_non_negative_integer DEPLOY_WORKER_STABILITY_SECONDS 10)"
 
   ensure_minimum_free_disk_space
 
@@ -1188,7 +1270,7 @@ main() {
   fi
 
   log "Verifying Prompt Release across all Prompt runtime services..."
-  if ! verify_prompt_runtime_services "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
+  if ! verify_prompt_runtime_services "${health_timeout_seconds}" "${health_retry_interval_seconds}" "${worker_stability_seconds}"; then
     show_compose_diagnostics
     mark_candidate_prompt_release_failed "Prompt runtime service verification failed" || true
     restore_previous_stack "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" || true
@@ -1215,7 +1297,14 @@ main() {
   fi
 
   if ! sync_candidate_prompt_release_to_production; then
-    log "WARNING: post-activation Prompt Release production sync failed; the /production database keeps release ${CANDIDATE_PROMPT_RELEASE_ID} as a deployable candidate."
+    cleanup_rollback_image
+    ROLLBACK_IMAGE=""
+    fail "Post-activation Prompt Release production sync failed for ${CANDIDATE_PROMPT_RELEASE_ID}; the healthy activated main stack remains running and /production requires reconciliation"
+  fi
+  if ! verify_production_active_prompt_release; then
+    cleanup_rollback_image
+    ROLLBACK_IMAGE=""
+    fail "Post-activation /production Prompt Release readback failed for ${CANDIDATE_PROMPT_RELEASE_ID}; the healthy activated main stack remains running and /production requires reconciliation"
   fi
 
   cleanup_rollback_image
