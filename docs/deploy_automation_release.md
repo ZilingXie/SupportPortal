@@ -62,7 +62,7 @@ DEPLOY_PRODUCTION_APPROVED=1 \
   --release release-20260822-001
 ```
 
-流程顺序为：candidate route/automation readiness -> Nginx `nginx -t` -> runtime upstream 原子替换 -> graceful reload -> `/automation/production/health` -> 旧 route/automation drain 360 秒并 stop。脚本使用与 `deploy_ec2.sh` 相同的 `.deploy_ec2.lock`，不会和普通部署并发运行；旧 candidate 的 Compose override 会保存在 `.deployments/automation-production-blue-green/`，以便 rollback 重新启动。
+流程顺序为：production schema bootstrap -> candidate route/automation readiness -> recreate `automation_production_worker` -> worker 稳定性门禁 -> Nginx `nginx -t` -> runtime upstream 原子替换 -> graceful reload -> `/automation/production/health` -> 状态落盘 -> 旧 route/automation drain 360 秒并 stop。worker 必须在稳定窗口内保持同一容器处于 `running` 且 `RestartCount` 不变；bootstrap、candidate readiness 或 worker 门禁失败时，脚本会停止 candidate 并保持 active upstream 不变。脚本使用与 `deploy_ec2.sh` 相同的 `.deploy_ec2.lock`，不会和普通部署并发运行；旧 candidate 的 Compose override 会保存在 `.deployments/automation-production-blue-green/`，以便 rollback 重新启动。
 
 如果切换后的 through-Nginx health 失败，脚本会自动恢复旧 upstream 并 stop candidate。Nginx graceful reload 本身失败时也会恢复旧指针并尝试重新加载旧配置；恢复失败会以非零退出并要求立即检查入口层。手工回滚时，脚本会从旧 candidate 的 Compose override 反推出 release，重新加载对应 manifest 的 route image 和生产资源身份，因此可在新的 shell 进程中可靠启动 drain 后已停止的旧 candidate：
 
@@ -77,7 +77,7 @@ DEPLOY_PRODUCTION_APPROVED=1 \
 
 - Staging：确认 `/v1/capabilities` 允许 rerun/reset，且 `zendesk=false`；带执行 token 提交一个 case，确认链路执行成功且无任何 Zendesk 出站。
 - Preproduction：在 `.env` 配置 `PREPRODUCTION_ZENDESK_SIDE_EFFECTS_ENABLED=1` 和 `PREPRODUCTION_TARGET_TICKET_STATUS`（如 `pending`）并 recreate 容器后，只使用 allowlisted ticket（`PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST`：逗号分隔工单号；`*` 放行全部、过滤交给上游；空拒绝全部），确认 ownership/status 和 internal comment，`public=false`。
-- Production：确认 rerun/reset 不存在；p2-109 起 intake 走旧栈语义（分类 → 内部邮件/追问 reply job → 延迟 public 回复，无即时 comment 副作用，`comment_visibility` 不再必填）。先跑 `bootstrap_automation_production_schema.sh` 确保 `supportportal_production` 全套表已建、`automation_production_worker` 运行，再使用受控 ticket 验证 reply job 的 Zendesk public 回复与内部邮件送达。
+- Production：确认 rerun/reset 不存在；p2-109 起 intake 走旧栈语义（分类 → 内部邮件/追问 reply job → 延迟 public 回复，无即时 comment 副作用，`comment_visibility` 不再必填）。确认蓝绿脚本已自动 bootstrap `supportportal_production` 全套表并通过 `automation_production_worker` 稳定性门禁，再运行 `verify_split_environments.sh`（它会按 active upstream 识别 candidate 并双采样 worker 状态），最后使用受控 ticket 验证 reply job 的 Zendesk public 回复与内部邮件送达。
 - 三个开关（`*_ZENDESK_SIDE_EFFECTS_ENABLED`）默认为 0、`AUTOMATION_TARGET_TICKET_STATUS` 默认为空；未显式开启时真实执行会以 `zendesk_side_effects_not_enabled` 或 `automation_target_ticket_status_missing` fail closed，不会写 Zendesk。
 
 ## 5. 回滚
