@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T02:11:49Z",
-  "source_base_commit": "62486b2932a8caacc505dcf4652b742aedfc3cf3",
-  "registry_digest": "966da436c4dfcad0f14982156d9c494555d9d9361781d5d71bf4ebce18d226f8",
+  "generated_at": "2026-08-26T02:20:13Z",
+  "source_base_commit": "818ba6bb74b94c888fc9e4ae559120432f9bbc74",
+  "registry_digest": "e10fe9e87d3a4395ec730b317ce8ba0dcfe39917850ac32e27ca459341583246",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1697,18 +1697,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "ecs-environment-migration",
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
-      "title": "Production 优先的 ECS 三环境迁移",
-      "goal": "分三阶段完成 ECS 环境建设：先将现有 Production 从 EC2 迁移到 ECS，再建立 Preproduction，最后建立 Staging，并保持每个阶段可独立验收和回滚。",
+      "title": "Production 优先的三环境部署重构",
+      "goal": "分三阶段完成环境重构：先将现有 Production 从 EC2 迁移到 ECS，再建立 ECS Preproduction，最后在现有 EC2 上建立 Staging，并保持每个阶段可独立验收和回滚。",
       "acceptance_criteria": [
         "迁移阶段 1 不依赖 Preproduction 或 Staging，先以 production-safe ECR release 建立 ECS Production，完成预热、健康与 provenance 门禁、受控 n8n 切换、旧 EC2 请求排空和可回滚退役。",
         "迁移阶段 2 建立与 Production 隔离但配置同构的 ECS Preproduction；此后 production-safe release 先由 n8n 测试 Case 验收，再以同一组不可变 digest 晋升 Production。",
-        "迁移阶段 3 建立独立 ECS Staging；Staging 可使用包含 rerun/reset 的测试镜像，但该镜像及测试功能不得进入 Preproduction 或 Production。"
+        "迁移阶段 3 在现有 EC2 上建立独立 Staging；Staging 使用隔离的运行资源和包含 rerun/reset 的测试镜像，该镜像及测试功能不得进入 ECS Preproduction 或 Production。"
       ],
       "evidence": [
         {
           "type": "decision",
-          "label": "EC2 split environments retired",
-          "details": "2026-08-25 用户确认 Staging、Preproduction、Production 全部转为 ECS 承载；EC2 保留主栈与现有 /production，三条 /automation/* 路径下线。"
+          "label": "EC2 split environments retired under earlier target",
+          "details": "2026-08-25 用户在当时的全 ECS目标下确认退役 EC2 split环境；EC2保留主栈与现有 /production，三条 /automation/* 路径下线。Staging承载位置已由 2026-08-26的新决策改为现有 EC2。"
         },
         {
           "type": "decision",
@@ -1717,9 +1717,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "decision",
-          "label": "ECS migration architecture agreed",
+          "label": "Staging remains on existing EC2",
+          "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "decision",
+          "label": "Earlier all-ECS migration architecture (superseded)",
           "command": "Architecture discussion 2026-08-25",
-          "details": "最初确定本地 Staging、ECS Preproduction/Production；2026-08-25 用户进一步确认 Staging也迁入 ECS。三环境均从 ECR晋升可追溯 release，首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+          "details": "最初确定本地 Staging、ECS Preproduction/Production；2026-08-25 曾进一步确认 Staging也迁入 ECS。该 Staging承载决策已于 2026-08-26被现有 EC2方案替代；production-safe release与首次 Production独立 n8n endpoint约束继续保留。"
         },
         {
           "type": "document",
@@ -1749,7 +1754,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Production-first ECS rollout order",
           "command": "Architecture discussion 2026-08-26",
-          "details": "迁移顺序调整为 Production → Preproduction → Staging。第一阶段直接迁移现有 EC2 /production到 ECS且不依赖后两个环境；第二阶段再建立 Preproduction验收与同 digest晋升；第三阶段建立允许测试功能的独立 ECS Staging。"
+          "details": "迁移顺序调整为 Production → Preproduction → Staging。第一阶段直接迁移现有 EC2 /production到 ECS且不依赖后两个环境；第二阶段再建立 Preproduction验收与同 digest晋升；第三阶段建立允许测试功能的独立 Staging。"
+        },
+        {
+          "type": "decision",
+          "label": "Staging remains on existing EC2",
+          "command": "Architecture discussion 2026-08-26",
+          "details": "第三阶段 Staging的承载位置改为现有 EC2，而不是 ECS；Production与 Preproduction仍部署在 ECS，Staging使用独立的 EC2运行环境和 staging-only测试镜像。"
         }
       ],
       "source_refs": [
@@ -5757,10 +5768,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p1-53",
-      "title": "Production 优先的 Automation 三环境迁移至 ECS",
+      "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → Staging 的顺序将 Automation 环境迁移到 ECS Fargate。迁移阶段 1 先从干净 commit 构建 production-safe route/API/worker 镜像并推送 ECR，直接建立 ECS Production并从现有 EC2 /production受控切换；迁移阶段 2 再建立同构隔离的 Preproduction，使后续 production-safe release先验收后以同一 digest晋升；迁移阶段 3 最后建立允许 rerun/reset的 ECS Staging。EC2 split runtime及公网路径已下线，现有 EC2 /production在第一阶段切换完成前保持独立运行。",
+      "summary": "按 Production → Preproduction → Staging 的顺序重构 Automation 环境。迁移阶段 1 先从干净 commit 构建 production-safe route/API/worker 镜像并推送 ECR，直接建立 ECS Production并从现有 EC2 /production受控切换；迁移阶段 2 再建立同构隔离的 ECS Preproduction，使后续 production-safe release先验收后以同一 digest晋升；迁移阶段 3 最后在现有 EC2 上建立允许 rerun/reset的独立 Staging。此前 EC2 split runtime及公网路径已下线，现有 EC2 /production在第一阶段切换完成前保持独立运行。",
       "next_action": "迁移阶段 1：确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Production域名、Route53 hosted zone和 GitHub Actions OIDC权限；随后只建设共享 ECR/IAM/观测基础与 ECS Production所需的 Terraform、production-safe构建发布链和 n8n受控切换门禁，暂不创建 Preproduction或 Staging资源。",
       "acceptance_criteria": [
         "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
@@ -5771,17 +5782,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "ECS Production切换后，旧 EC2 /production先完成既有同步请求与异步队列排空；观察期内可通过 n8n workflow恢复入口，验收稳定后再退役旧 runtime，回滚不得重放已完成的外部副作用。",
         "迁移阶段 2 建立与 Production隔离但配置同构的 ECS Preproduction，包括独立 Service、RDS schema、Redis、queue/channel、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
         "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
-        "迁移阶段 3 建立独立 ECS Staging并接收 n8n测试 Case；Staging可使用包含 rerun/reset且关闭 Zendesk副作用的 staging-only镜像，该镜像不得晋升到 Preproduction或 Production。",
-        "EC2 的三套 split runtime、split网络与公网路径已完成下线，常规和每日 EC2部署只管理主栈；该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
+        "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
+        "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
         "GitHub Actions使用 AWS OIDC而非长期 access key，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "decision",
-          "label": "ECS migration architecture agreed",
+          "label": "Earlier all-ECS migration architecture (superseded)",
           "command": "Architecture discussion 2026-08-25",
-          "details": "最初确定本地 Staging、ECS Preproduction/Production；2026-08-25 用户进一步确认 Staging也迁入 ECS。三环境均从 ECR晋升可追溯 release，首次 Production启用通过独立 n8n endpoint完成，不触碰当前 EC2 /production。"
+          "details": "最初确定本地 Staging、ECS Preproduction/Production；2026-08-25 曾进一步确认 Staging也迁入 ECS。该 Staging承载决策已于 2026-08-26被现有 EC2方案替代；production-safe release与首次 Production独立 n8n endpoint约束继续保留。"
         },
         {
           "type": "document",
@@ -5811,7 +5822,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Production-first ECS rollout order",
           "command": "Architecture discussion 2026-08-26",
-          "details": "迁移顺序调整为 Production → Preproduction → Staging。第一阶段直接迁移现有 EC2 /production到 ECS且不依赖后两个环境；第二阶段再建立 Preproduction验收与同 digest晋升；第三阶段建立允许测试功能的独立 ECS Staging。"
+          "details": "迁移顺序调整为 Production → Preproduction → Staging。第一阶段直接迁移现有 EC2 /production到 ECS且不依赖后两个环境；第二阶段再建立 Preproduction验收与同 digest晋升；第三阶段建立允许测试功能的独立 Staging。"
+        },
+        {
+          "type": "decision",
+          "label": "Staging remains on existing EC2",
+          "command": "Architecture discussion 2026-08-26",
+          "details": "第三阶段 Staging的承载位置改为现有 EC2，而不是 ECS；Production与 Preproduction仍部署在 ECS，Staging使用独立的 EC2运行环境和 staging-only测试镜像。"
         }
       ],
       "source_refs": [
@@ -5850,6 +5867,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "replanned",
           "summary": "用户调整 ECS实施顺序：迁移阶段 1 先将现有 Production从 EC2迁移到 ECS，阶段 2建立 Preproduction，阶段 3最后建立 Staging；第一阶段不依赖后两个环境。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "replanned",
+          "summary": "用户进一步确认第三阶段 Staging部署在现有 EC2，而不是 ECS；目标拓扑调整为 ECS Production、ECS Preproduction与 EC2 Staging。"
         }
       ],
       "legacy_refs": [
