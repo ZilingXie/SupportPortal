@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T04:50:15Z",
-  "source_base_commit": "d856ea2f0597f267866606bc0173a2a822a356c5",
-  "registry_digest": "73b30bcc0f0bf15aff9726747f91fbe2e4e4b5556b6a557aba294e785e78597f",
+  "generated_at": "2026-08-26T05:03:04Z",
+  "source_base_commit": "244d5cf00764081d2d4c722f950fbf1038a2fbe3",
+  "registry_digest": "96f3957640ad77a0d70f0e5f25432fd765cad94754601a5df567111fe0cd37cf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2580,7 +2580,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "decision",
-          "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are known; live acceptance remains pending deployment, n8n inbound activation and a new Production Zendesk test ticket. No secret is tracked.",
+          "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are configured without tracked secrets. Production ticket 13023 verified the bound-thread app-mention path; real n8n Interaction button and wrong-channel rejection remain external acceptance items.",
           "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
         },
         {
@@ -2597,6 +2597,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Final Approve and worker now read the current Zendesk comments revision when the initial n8n comment snapshot is absent, while preserving stale-revision cancellation and fail-closed delivery. Targeted Slack action, worker, and Zendesk snapshot tests passed; the two unrelated multi-agent cases also passed with their required feature flag enabled.",
           "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, backend/tests/test_zendesk_ticket_assignment.py"
+        },
+        {
+          "type": "deployment",
+          "summary": "Build 244d5cf00764 completed ticket 13023 draft v1: Final Approve queued one public Engineer delivery, Zendesk audit read back comment 52908525456788 with no solved event and current ticket status pending, Engineer Case 13023-1 stayed active in communicating/delivered round state, and queued/delivered confirmations reached Slack thread 1787712799.749409. EC2 runtime containers reported RestartCount=0.",
+          "ref": "https://agoraio.zendesk.com/agent/tickets/13023; https://support.stellarix.space/health; PR #971"
         },
         {
           "type": "test",
@@ -8942,7 +8947,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "unassigned",
       "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
-      "next_action": "finalize 并部署初始 Zendesk comment revision 只读回源修复；随后在 ticket 13023 的同一 draft/version 上重跑 Final Approve、Zendesk public readback 和工单状态不变验收。Slack Interaction workflow 仍需独立确认。",
+      "next_action": "在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
         "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
@@ -8962,7 +8967,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "decision",
-          "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are known; live acceptance remains pending deployment, n8n inbound activation and a new Production Zendesk test ticket. No secret is tracked.",
+          "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are configured without tracked secrets. Production ticket 13023 verified the bound-thread app-mention path; real n8n Interaction button and wrong-channel rejection remain external acceptance items.",
           "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
         },
         {
@@ -8979,6 +8984,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Final Approve and worker now read the current Zendesk comments revision when the initial n8n comment snapshot is absent, while preserving stale-revision cancellation and fail-closed delivery. Targeted Slack action, worker, and Zendesk snapshot tests passed; the two unrelated multi-agent cases also passed with their required feature flag enabled.",
           "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, backend/tests/test_zendesk_ticket_assignment.py"
+        },
+        {
+          "type": "deployment",
+          "summary": "Build 244d5cf00764 completed ticket 13023 draft v1: Final Approve queued one public Engineer delivery, Zendesk audit read back comment 52908525456788 with no solved event and current ticket status pending, Engineer Case 13023-1 stayed active in communicating/delivered round state, and queued/delivered confirmations reached Slack thread 1787712799.749409. EC2 runtime containers reported RestartCount=0.",
+          "ref": "https://agoraio.zendesk.com/agent/tickets/13023; https://support.stellarix.space/health; PR #971"
         }
       ],
       "source_refs": [
@@ -9026,6 +9036,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "initial_comment_revision_gap_found",
           "summary": "状态重建修复部署后，真实 Final Approve 继续安全阻断于缺失初始 Zendesk comments_revision；增加仅在本地 comment-sync 缺失时的 Zendesk 只读 revision 回源，并在 worker 写入前再次校验。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "production_delivery_verified",
+          "summary": "ticket 13023 的 Final Approve、Zendesk public comment 外部回读、未 solve、Engineer Case communicating 生命周期和同 thread Slack 发布确认均已验证；Task 保持 active，等待真实 n8n Interaction 点击、错误频道拒绝和 pending 派单核对。"
         }
       ],
       "legacy_refs": [
