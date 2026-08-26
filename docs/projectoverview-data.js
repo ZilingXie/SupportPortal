@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T03:10:14Z",
-  "source_base_commit": "24122e67364b9ac5b365c5726196ab04a679645c",
-  "registry_digest": "0fc862eddd4657bd61c63969c51557a036cc35dadb3fbbde7ccf97ebe24b049c",
+  "generated_at": "2026-08-26T03:18:44Z",
+  "source_base_commit": "fd60b094b098809bc748de780bf398f26af2bd9b",
+  "registry_digest": "2444b94ae4dfeccea40ba467075748a96a2f6506ed1828cbd3be41a6cfc24acd",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -604,6 +604,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona v14 deterministic Fraud missing-information regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_intake.py backend/tests/test_account_verification_automation.py",
           "details": "345 项测试通过、45 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖 AC-13000 三字段组合、Fraud/account_verification 别名、1/2/3+ 阈值、字段名不进入 Persona Prompt、无效 preamble 重试、v14 metadata、Worker prepare 持久化和版本 fence。"
+        },
+        {
+          "type": "test",
+          "label": "AC-13018 PostgreSQL flattened asked-field single-follow-up regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_repository_configuration.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_test_scenarios.py",
+          "details": "326 项测试通过、11 个子测试通过；覆盖 PostgreSQL 将消息 meta 展平到顶层的读取契约、nested/top-level asked_field_keys 合并去重，以及 F1 首次追问后仅补部分字段时直接内部交接并断言全程只有一次 request_missing_information。"
         },
         {
           "type": "test",
@@ -5950,12 +5956,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "修复 AC-13000 暴露的 Persona 格式回归：Fraud 缺失字段由应用确定性装配，完成定向回归、官方栈、EC2 /production 和新获批 Case readback 后关闭任务。",
+      "next_action": "完成 AC-13018 单次追问修复的 review/finalize、官方栈与 EC2 main-only 部署，并用新 F1 Case 验证只发布一次缺失信息追问及 Zendesk 外部回读后关闭任务。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
         "Slack 消息增加 Provided: 和 Missing: 行显示字段。",
-        "客户追问缺失字段时，1-2 项以内嵌入自然句子，3 项及以上每项独立使用 bullet；不合规 Persona 输出不得发布。"
+        "客户追问缺失字段时，1-2 项以内嵌入自然句子，3 项及以上每项独立使用 bullet；不合规 Persona 输出不得发布。",
+        "客户首次追问后即使只补充部分信息，也不得再次公开追问缺失字段；系统直接进入内部交接，且整条 Case 仅存在一次 request_missing_information。"
       ],
       "blockers": [],
       "evidence": [
@@ -6006,6 +6013,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona v14 deterministic Fraud missing-information regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_intake.py backend/tests/test_account_verification_automation.py",
           "details": "345 项测试通过、45 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖 AC-13000 三字段组合、Fraud/account_verification 别名、1/2/3+ 阈值、字段名不进入 Persona Prompt、无效 preamble 重试、v14 metadata、Worker prepare 持久化和版本 fence。"
+        },
+        {
+          "type": "test",
+          "label": "AC-13018 PostgreSQL flattened asked-field single-follow-up regression",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_repository_configuration.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_test_scenarios.py",
+          "details": "326 项测试通过、11 个子测试通过；覆盖 PostgreSQL 将消息 meta 展平到顶层的读取契约、nested/top-level asked_field_keys 合并去重，以及 F1 首次追问后仅补部分字段时直接内部交接并断言全程只有一次 request_missing_information。"
         }
       ],
       "source_refs": [
@@ -6015,6 +6028,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/prompts/account_routing.py",
         "backend/services/account_slack_n8n.py",
         "backend/services/automation_persona.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/automation_test_scenarios.py",
+        "backend/main.py",
         "backend/worker.py",
         "backend/tests/test_account_verification_automation.py",
         "backend/tests/test_agent_config.py",
@@ -6025,8 +6041,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/tests/test_account_reply_version_fence.py"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-08-25",
+      "updated_at": "2026-08-26",
       "history": [
+        {
+          "at": "2026-08-26",
+          "event": "single_missing_information_follow_up_fix",
+          "summary": "AC-13018 证明 PostgreSQL 消息将 asked_field_keys 从 meta 展平到顶层后，两个 reply 入口仍只读取嵌套 meta，导致重复追问；修复为合并两种形状，并将 F1 改为部分补充后直接交接且只允许一次 request_missing_information。"
+        },
         {
           "at": "2026-08-25",
           "event": "persona_deterministic_missing_information_reopened",

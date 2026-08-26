@@ -102,10 +102,11 @@ def _asked_field_keys(canonical_ticket: dict[str, Any]) -> set[str]:
         if not isinstance(message, dict) or str(message.get("role") or "").strip().lower() != "assistant":
             continue
         meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
-        for field_name in meta.get("asked_field_keys", []):
-            normalized = str(field_name or "").strip().lower()
-            if normalized:
-                asked.add(normalized)
+        for source in (message, meta):
+            for field_name in source.get("asked_field_keys") or []:
+                normalized = str(field_name or "").strip().lower()
+                if normalized:
+                    asked.add(normalized)
     return asked
 
 

@@ -48,21 +48,11 @@ DEFAULT_POLL_INTERVAL_SECONDS = 20
 
 ENABLEMENT_APP_ID = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
-FRAUD_FULL_INFO_BODY = (
-    "Thanks. Here is the review information.\n\n"
-    "Company Information:\n"
-    "- Company: Zac Test Labs Inc.\n"
-    "- Registration country: United States\n"
-    "- Registered address: 100 Test Avenue, San Jose, CA\n\n"
-    "Contact Information:\n"
-    "- Name: Zac Tester\n"
-    "- Email: zac.tester@example.com\n"
-    "- Phone: +1 555 010 8888\n\n"
-    "Use Case:\n"
-    "We build a live-streaming classroom product and use Agora real-time video and "
-    "audio to connect teachers with students in small groups.\n\n"
-    "Payment Information:\n"
-    "Usage is covered by corporate credit-card top-ups managed by our finance team."
+FRAUD_PARTIAL_INFO_BODY = (
+    "Thanks. I only have part of the review information available right now.\n\n"
+    "Account type: Enterprise\n"
+    "Name: Zac Tester\n"
+    "Contact email: zac.tester@example.com"
 )
 
 DETAILED_INVOICE_BODY = (
@@ -436,6 +426,14 @@ class ScenarioEngine:
         if not ok:
             raise AssertionError(f"unexpected reply job: intent={intent} status={job['status']}")
 
+    def reply_intent_count(self, ctx: ScenarioContext, reply_intent: str) -> int:
+        rows = self.db_query(
+            "SELECT COUNT(*) AS intent_count FROM support_account_reply_jobs "
+            "WHERE ticket_id = %s AND payload->>'reply_intent' = %s",
+            (ctx.client_ticket_id, reply_intent),
+        )
+        return int(rows[0].get("intent_count") or 0) if rows else 0
+
     def wait_suspension_state(self, ctx: ScenarioContext, expected: str, step: str) -> None:
         def probe():
             row = self.case_row(ctx)
@@ -634,7 +632,7 @@ class ScenarioEngine:
             f"execution_action={row.get('execution_action')!r}",
         )
         self.wait_reply_intent(ctx, {"request_missing_information"}, "asks for review information")
-        self.next_customer_turn(ctx, FRAUD_FULL_INFO_BODY)
+        self.next_customer_turn(ctx, FRAUD_PARTIAL_INFO_BODY)
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(ctx, {"fraud_handoff_confirmation"}, "24h handoff reply published")
         self.wait_event(ctx, "zendesk_fraud_review_handoff", "assigned to fraud reviewer")
@@ -644,6 +642,18 @@ class ScenarioEngine:
             str(row.get("zendesk_ticket_status") or "") not in {"solved", "closed"},
             f"zendesk_ticket_status={row.get('zendesk_ticket_status')!r}",
         )
+        missing_request_count = self.reply_intent_count(ctx, "request_missing_information")
+        self.record(
+            ctx,
+            "missing information requested exactly once",
+            missing_request_count == 1,
+            f"request_missing_information_count={missing_request_count}",
+        )
+        if missing_request_count != 1:
+            raise AssertionError(
+                "unexpected missing-information request count: "
+                f"{missing_request_count}"
+            )
 
     def run_s1(self) -> None:
         ctx = ScenarioContext("S1")
@@ -711,7 +721,7 @@ class ScenarioEngine:
         },
         "F1": {
             "label": "Fraud review",
-            "description": "ask info → provide → handoff email + 24h reply + assign reviewer, NOT solved",
+            "description": "ask once → provide partial info → handoff + assign reviewer, NOT solved",
             "run": run_f1,
         },
         "S1": {

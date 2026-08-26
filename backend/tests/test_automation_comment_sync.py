@@ -158,6 +158,22 @@ class CommentTriggerTest(unittest.TestCase):
         comment.update(comment_overrides)
         return NS(comments=[NS(**comment)])
 
+    def test_top_level_postgres_message_fields_count_as_already_asked(self):
+        ticket = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "asked_field_keys": [" Account_Type ", "name"],
+                    "meta": {"asked_field_keys": ["name", "office_address"]},
+                }
+            ]
+        }
+
+        self.assertEqual(
+            reply_module._asked_field_keys(ticket),
+            {"account_type", "name", "office_address"},
+        )
+
     def test_agent_and_initial_comments_are_ignored_without_claim(self):
         repository = _FakeRepository()
         run = lambda **kw: __import__("asyncio").run(

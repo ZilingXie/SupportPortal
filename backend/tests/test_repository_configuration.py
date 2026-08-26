@@ -3363,6 +3363,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
                                 "answer_route": "rag",
                                 "route_reason": "grounded_answer",
                                 "workflow_action": "answer_customer",
+                                "asked_field_keys": ["account_type", "name"],
                                 "client_agent_run_id": "run-123",
                                 "client_agent_runtime_status": "completed",
                                 "client_intake_phase": "gather_customer_inputs",
@@ -3380,6 +3381,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(messages["T-1"][0]["answer_route"], "rag")
         self.assertEqual(messages["T-1"][0]["route_reason"], "grounded_answer")
         self.assertEqual(messages["T-1"][0]["workflow_action"], "answer_customer")
+        self.assertEqual(messages["T-1"][0]["asked_field_keys"], ["account_type", "name"])
         self.assertEqual(messages["T-1"][0]["client_agent_run_id"], "run-123")
         self.assertEqual(messages["T-1"][0]["client_intake_phase"], "gather_customer_inputs")
         self.assertEqual(messages["T-1"][0]["client_intake_missing_information"], ["channel_name"])
