@@ -234,12 +234,13 @@ class AutomationTestTicketStore:
                     f"SELECT * FROM {self._table()} WHERE id = %s",
                     (normalized_id,),
                 )
+                # cursor.description is None once the cursor closes; read
+                # column names inside the cursor block.
+                names = [item.name for item in cursor.description]
                 row = cursor.fetchone()
         if row is None:
             return None
-        return self._record_from_row(
-            dict(zip((item.name for item in cursor.description), row))
-        )
+        return self._record_from_row(dict(zip(names, row)))
 
     def list_tickets(self, limit: int = 100) -> list[dict[str, Any]]:
         normalized_limit = max(1, min(int(limit or 100), 200))
@@ -481,10 +482,13 @@ class AutomationTestScenarioRunStore:
                     f"SELECT * FROM {self._table()} WHERE run_id = %s",
                     (normalized,),
                 )
+                # cursor.description is None once the cursor closes; read
+                # column names inside the cursor block.
+                names = [item.name for item in cursor.description]
                 row = cursor.fetchone()
         if row is None:
             return None
-        return self._run_from_row(dict(zip((item.name for item in cursor.description), row)))
+        return self._run_from_row(dict(zip(names, row)))
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         normalized_limit = max(1, min(int(limit or 20), 100))
