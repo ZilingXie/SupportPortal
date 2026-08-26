@@ -4,9 +4,12 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from backend.services.customer_reply_composer import ensure_customer_reply_email_style
+from backend.services.customer_reply_composer import (
+    ensure_customer_reply_email_style,
+    has_trailing_customer_signature,
+)
 
-GUARDRAIL_VERSION = "engineer-guardrail-final-v1"
+GUARDRAIL_VERSION = "engineer-guardrail-final-v2"
 
 # Markers that would indicate internal-only content leaking into customer reply.
 _INTERNAL_LEAK_PATTERNS = (
@@ -81,13 +84,10 @@ def _run_unsupported_claim_check(draft_reply: str) -> dict[str, Any]:
 
 def _run_style_check(draft_reply: str) -> dict[str, Any]:
     """Verify the reply follows email style."""
-    has_greeting = bool(re.match(r"^(Hi|Dear|Hello)\b", draft_reply))
-    has_signature = bool(re.search(r"Best Regards,", draft_reply))
+    has_greeting = bool(re.match(r"^(?:Hi,?\s+|Dear\s+|Hello,?\s+)", draft_reply, flags=re.IGNORECASE))
     if not has_greeting:
         return {"passed": False, "detail": "Customer reply is missing an email-style greeting."}
-    if not has_signature:
-        return {"passed": False, "detail": "Customer reply is missing an email-style signature."}
-    return {"passed": True, "detail": "Style check passed (email format confirmed)."}
+    return {"passed": True, "detail": "Style check passed (unsigned email body confirmed)."}
 
 
 def run_engineer_guardrail_final(
@@ -109,7 +109,7 @@ def run_engineer_guardrail_final(
     """
     now_value: str = ""  # caller stamps created_at separately
     guardrail_id = f"GRD-{uuid4().hex[:10]}"
-    normalized_draft = _clean_text(draft_customer_reply)
+    normalized_draft = str(draft_customer_reply or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     readiness = reply_readiness if isinstance(reply_readiness, dict) else {}
 
     blockers: list[str] = []
@@ -135,6 +135,7 @@ def run_engineer_guardrail_final(
                 "citation": {"passed": False, "detail": "Blocked before checks."},
                 "no_internal_leakage": {"passed": False, "detail": "Blocked before checks."},
                 "no_unsupported_claims": {"passed": False, "detail": "Blocked before checks."},
+                "no_application_signature": {"passed": False, "detail": "Blocked before checks."},
                 "style": {"passed": False, "detail": "Blocked before checks."},
             },
             "blockers": blockers,
@@ -153,6 +154,15 @@ def run_engineer_guardrail_final(
     citation_check = _run_citation_check(customer_reply, evidence_packet)
     leak_check = _run_internal_leak_check(customer_reply)
     claim_check = _run_unsupported_claim_check(customer_reply)
+    has_application_signature = has_trailing_customer_signature(normalized_draft)
+    signature_check = {
+        "passed": not has_application_signature,
+        "detail": (
+            "No application-side signature detected."
+            if not has_application_signature
+            else "Customer reply contains an application-side signature; Zendesk owns signatures."
+        ),
+    }
     style_check = _run_style_check(customer_reply)
 
     source_mode = _clean_text(readiness.get("source_mode")).lower()
@@ -180,6 +190,7 @@ def run_engineer_guardrail_final(
         "citation": citation_check,
         "no_internal_leakage": leak_check,
         "no_unsupported_claims": claim_check,
+        "no_application_signature": signature_check,
         "style": style_check,
     }
 

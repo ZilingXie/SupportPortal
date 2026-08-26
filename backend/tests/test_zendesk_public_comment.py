@@ -159,6 +159,36 @@ class ZendeskPublicCommentServiceTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.error_code, "zendesk_comment_visibility_unverified")
 
+    def test_public_write_rejects_application_signature_before_network_call(self) -> None:
+        with patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen"
+        ) as urlopen:
+            with self.assertRaises(ZendeskCommentError) as ctx:
+                add_ticket_comment(
+                    ticket_id="13023",
+                    body="Hi, Ziling\n\nPlease retry.\n\nBest Regards,\nSid",
+                    public=True,
+                )
+
+        self.assertEqual(ctx.exception.error_code, "zendesk_public_comment_signature_forbidden")
+        self.assertEqual(ctx.exception.category, "permanent")
+        urlopen.assert_not_called()
+
+    def test_public_write_rejects_standalone_sid_signature_before_network_call(self) -> None:
+        with patch(
+            "backend.services.zendesk_comments.urllib.request.urlopen"
+        ) as urlopen:
+            with self.assertRaises(ZendeskCommentError) as ctx:
+                add_ticket_comment(
+                    ticket_id="13023",
+                    body="Hi, Ziling\n\nPlease retry.\n\nSid",
+                    public=True,
+                )
+
+        self.assertEqual(ctx.exception.error_code, "zendesk_public_comment_signature_forbidden")
+        self.assertEqual(ctx.exception.category, "permanent")
+        urlopen.assert_not_called()
+
     def test_audit_readback_reports_comment_and_solved_change(self) -> None:
         audits_payload = {
             "audits": [

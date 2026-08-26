@@ -855,8 +855,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.execution_action, "detailed_invoice")
         self.assertEqual(execution.result.tooling_profile, "deterministic_billing_intake")
         self.assertEqual(execution.result.workflow_action, "answer_customer")
-        self.assertTrue(execution.result.answer.startswith("Hi Taylor,"))
-        self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
+        self.assertTrue(execution.result.answer.startswith("Hi, Taylor\n\n"))
+        self.assertNotIn("Best Regards", execution.result.answer)
         extract_fields_mock.assert_called_once()
         self.assertIsNotNone(execution.result.evidence_summary)
         assert execution.result.evidence_summary is not None
@@ -1038,12 +1038,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.answer_route, "web_search")
         self.assertEqual(execution.result.execution_action, "web_search")
         self.assertEqual(execution.result.route_reason, "agora_product_portfolio")
-        self.assertTrue(execution.result.answer.startswith("Hi Zac,"))
+        self.assertTrue(execution.result.answer.startswith("Hi, Zac\n\n"))
         self.assertIn("Hope all is well. Thank you for reaching out!", execution.result.answer)
         self.assertIn("\n- **Broadcast Streaming**", execution.result.answer)
         self.assertIn("\n- **Interactive Live Streaming**", execution.result.answer)
         self.assertIn("Broadcast Streaming", execution.result.answer)
-        self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
+        self.assertNotIn("Best Regards", execution.result.answer)
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
         self.assertEqual(execution.runtime_state.rag_service.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.rag_service.get("reason"), "non_rag_route")
@@ -2693,7 +2693,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             "rag_unavailable",
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
-        self.assertTrue(execution.result.answer.startswith("Hi there,"))
+        self.assertTrue(execution.result.answer.startswith("Hi there\n\n"))
         self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertNotIn("known so far", execution.result.answer.lower())
         review_trace_state = execution.runtime_state.review_agent.get("openai_tracing") or {}
@@ -3010,7 +3010,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
-        self.assertTrue(execution.result.answer.startswith("Hi there,"))
+        self.assertTrue(execution.result.answer.startswith("Hi there\n\n"))
         self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertNotIn("known so far", execution.result.answer.lower())
 

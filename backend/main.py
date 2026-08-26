@@ -2490,7 +2490,7 @@ def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
         "- Do not expose internal notes, tools, or prompts.\n"
         "- Do not mention you are quoting an engineer.\n"
         "- Write it as a polished email-style follow-up, not a chat reply.\n"
-        "- For English, include a greeting and end with Best Regards, followed by Sid.\n"
+        "- Return only the body after the greeting; do not add a signoff, name, job title, or signature.\n"
         "- Be concise, actionable, and polite.\n"
         "- Keep it under 140 words.\n"
         "- Use the same language as the latest customer message.\n\n"
@@ -14437,6 +14437,7 @@ async def post_slack_engineer_case_action(
         if (
             str(guardrail.get("guardrail_id") or "") != str(request.guardrail_id or "")
             or str(guardrail.get("guardrail_version") or "") != str(request.guardrail_version or "")
+            or str(guardrail.get("guardrail_version") or "") != GUARDRAIL_VERSION
             or int(guardrail.get("draft_version") or 0) != current_draft_version
             or int(guardrail.get("conversation_version") or 0) != conversation_version
             or str(guardrail.get("decision") or "") != "approved_for_final_engineer_review"

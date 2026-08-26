@@ -50,7 +50,7 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
 
     def test_guardrail_approves_when_all_checks_pass(self):
         packet = run_engineer_guardrail_final(
-            draft_customer_reply="Hi Taylor,\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.\n\nBest Regards,\nSid",
+            draft_customer_reply="Hi, Taylor\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.",
             reply_readiness=_reply_readiness(),
             requester="Taylor",
             customer_id="C-001",
@@ -61,10 +61,11 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
         self.assertTrue(packet["checks"]["proof"]["passed"])
         self.assertTrue(packet["checks"]["no_internal_leakage"]["passed"])
         self.assertTrue(packet["checks"]["no_unsupported_claims"]["passed"])
+        self.assertTrue(packet["checks"]["no_application_signature"]["passed"])
 
     def test_guardrail_detects_internal_leakage(self):
         packet = run_engineer_guardrail_final(
-            draft_customer_reply="Hi Taylor,\n\nThis is engineer-only internal use only. Please upgrade.\n\nBest Regards,\nSid",
+            draft_customer_reply="Hi, Taylor\n\nThis is engineer-only internal use only. Please upgrade.",
             reply_readiness=_reply_readiness(),
             requester="Taylor",
             customer_id="C-001",
@@ -75,7 +76,7 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
 
     def test_guardrail_detects_unsupported_claims(self):
         packet = run_engineer_guardrail_final(
-            draft_customer_reply="Hi Taylor,\n\nWe guarantee this will 100% fix your issue.\n\nBest Regards,\nSid",
+            draft_customer_reply="Hi, Taylor\n\nWe guarantee this will 100% fix your issue.",
             reply_readiness=_reply_readiness(),
             requester="Taylor",
             customer_id="C-001",
@@ -93,12 +94,36 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
             language_hint="en",
         )
         self.assertEqual(packet["decision"], "approved_for_final_engineer_review")
-        self.assertIn("Hi Taylor,", packet["customer_reply"])
-        self.assertIn("Best Regards,", packet["customer_reply"])
+        self.assertIn("Hi, Taylor", packet["customer_reply"])
+        self.assertNotIn("Best Regards,", packet["customer_reply"])
+
+    def test_guardrail_blocks_application_side_signature(self):
+        packet = run_engineer_guardrail_final(
+            draft_customer_reply="Hi, Taylor\n\nPlease retry.\n\nBest Regards,\nSid",
+            reply_readiness=_reply_readiness(),
+            requester="Taylor",
+            customer_id="C-001",
+            language_hint="en",
+        )
+
+        self.assertEqual(packet["decision"], "blocked")
+        self.assertFalse(packet["checks"]["no_application_signature"]["passed"])
+
+    def test_guardrail_blocks_legacy_standalone_sid_signature(self):
+        packet = run_engineer_guardrail_final(
+            draft_customer_reply="Hi, Taylor\n\nPlease retry.\n\nSid",
+            reply_readiness=_reply_readiness(),
+            requester="Taylor",
+            customer_id="C-001",
+            language_hint="en",
+        )
+
+        self.assertEqual(packet["decision"], "blocked")
+        self.assertFalse(packet["checks"]["no_application_signature"]["passed"])
 
     def test_guardrail_includes_evidence_refs(self):
         packet = run_engineer_guardrail_final(
-            draft_customer_reply="Hi Taylor,\n\nPlease upgrade to SDK 4.2.2.\n\nBest Regards,\nSid",
+            draft_customer_reply="Hi, Taylor\n\nPlease upgrade to SDK 4.2.2.",
             reply_readiness=_reply_readiness(),
             active_review={"review_id": "REV-001", "review_decision": "approved"},
             evidence_packet={"evidence_packet_id": "EP-001", "answer_summary": "Test evidence"},
@@ -115,7 +140,7 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
 
     def test_guardrail_blocks_when_proof_missing(self):
         packet = run_engineer_guardrail_final(
-            draft_customer_reply="Hi Taylor,\n\nPlease try again.\n\nBest Regards,\nSid",
+            draft_customer_reply="Hi, Taylor\n\nPlease try again.",
             reply_readiness=_reply_readiness(has_proof=False, proof_summary=""),
             requester="Taylor",
             customer_id="C-001",

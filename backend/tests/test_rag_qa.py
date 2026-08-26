@@ -131,14 +131,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
             question="How do I join a channel?",
         )
 
-        self.assertTrue(answer_text.startswith("Hi there,"))
+        self.assertTrue(answer_text.startswith("Hi there\n\n"))
         self.assertIn(
             "To join a channel, call the SDK join method with the required authentication token.",
             answer_text,
         )
         self.assertIn("1. Provide the channel name.", answer_text)
         self.assertIn("2. Pass a valid authentication token.", answer_text)
-        self.assertTrue(answer_text.endswith("Best Regards,\nSid"))
+        self.assertNotIn("Best Regards", answer_text)
 
     def test_build_answer_text_wraps_raw_json_payload_as_fenced_json(self) -> None:
         answer_text = rag_qa._build_answer_text(
@@ -3853,10 +3853,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(result.trace.needs_human)
         self.assertEqual(result.trace.handoff_reason, None)
         self.assertEqual(len(result.answer.citations), 2)
-        self.assertTrue(result.answer.answer.startswith("Hi there,"))
+        self.assertTrue(result.answer.answer.startswith("Hi there\n\n"))
         self.assertIn("release notes", result.answer.answer.lower())
         self.assertIn("black screen issues", result.answer.answer.lower())
-        self.assertTrue(result.answer.answer.endswith("Best Regards,\nSid"))
+        self.assertNotIn("Best Regards", result.answer.answer)
 
     def test_run_rag_query_short_how_to_faq_recovers_when_original_support_missing_auth_chunk(self) -> None:
         join_chunk = RetrievedChunk(
@@ -5379,7 +5379,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(answer)
         assert answer is not None
-        self.assertIn("Hi Zac,", answer.answer)
+        self.assertIn("Hi, Zac", answer.answer)
         self.assertIn("transcodingConfig is placed in the wrong part", answer.answer)
         self.assertNotIn("Prevention/Best Practice", answer.answer)
         self.assertNotIn("Always validate", answer.answer)

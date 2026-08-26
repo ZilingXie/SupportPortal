@@ -165,12 +165,13 @@ class InvestigationFlowTests(unittest.TestCase):
             customer_id="C-001",
         )
 
-        self.assertTrue(reply.startswith("Hi Taylor,"))
+        self.assertTrue(reply.startswith("Hi, Taylor\n\n"))
         self.assertIn("Thank you for your patience.", reply)
         self.assertIn("This issue requires further internal investigation", reply)
         self.assertIn("within 20 minutes", reply)
         self.assertNotIn("24 " + "hours", reply)
-        self.assertTrue(reply.endswith("Best Regards,\nSid"))
+        self.assertNotIn("Best Regards", reply)
+        self.assertNotIn("\nSid", reply)
 
     def test_default_public_investigation_reply_uses_twenty_minute_wait_in_chinese(self) -> None:
         reply = default_public_investigation_reply(
@@ -3930,9 +3931,9 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "communicating")
         self.assertEqual(payload["route_reason"], "rag_unavailable")
-        self.assertTrue(payload["answer"].startswith("Hi there,"))
+        self.assertTrue(payload["answer"].startswith("Hi there\n\n"))
         self.assertIn(clarify_reply, payload["answer"])
-        self.assertTrue(payload["answer"].endswith("Best Regards,\nSid"))
+        self.assertNotIn("Best Regards", payload["answer"])
         stored = self.repository.get_ticket("TK-RAG-UNAVAIL-BLACK-100")
         self.assertIsNotNone(stored)
         assert stored is not None
@@ -4885,7 +4886,7 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         guardrail_packet = {
             "guardrail_id": "GRD-SLACK-1",
-            "guardrail_version": "engineer-guardrail-final-v1",
+            "guardrail_version": "engineer-guardrail-final-v2",
             "decision": "approved_for_final_engineer_review",
             "customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
             "blockers": [],
@@ -4918,6 +4919,17 @@ class InvestigationFlowTests(unittest.TestCase):
                 headers=headers,
                 json=guardrail_body,
             )
+            stale_guardrail_version = self.client.post(
+                "/api/integrations/slack/engineer-cases/actions",
+                headers=headers,
+                json={
+                    **guardrail_body,
+                    "interaction_id": "Ix-Slack-Final-Stale-Version-1",
+                    "action": "final_approve",
+                    "guardrail_id": "GRD-SLACK-1",
+                    "guardrail_version": "engineer-guardrail-final-v1",
+                },
+            )
             final = self.client.post(
                 "/api/integrations/slack/engineer-cases/actions",
                 headers=headers,
@@ -4926,7 +4938,7 @@ class InvestigationFlowTests(unittest.TestCase):
                     "interaction_id": "Ix-Slack-Final-1",
                     "action": "final_approve",
                     "guardrail_id": "GRD-SLACK-1",
-                    "guardrail_version": "engineer-guardrail-final-v1",
+                    "guardrail_version": "engineer-guardrail-final-v2",
                 },
             )
             duplicate_final = self.client.post(
@@ -4937,13 +4949,14 @@ class InvestigationFlowTests(unittest.TestCase):
                     "interaction_id": "Ix-Slack-Final-2",
                     "action": "final_approve",
                     "guardrail_id": "GRD-SLACK-1",
-                    "guardrail_version": "engineer-guardrail-final-v1",
+                    "guardrail_version": "engineer-guardrail-final-v2",
                 },
             )
 
         self.assertEqual(stale.status_code, 409, stale.text)
         self.assertEqual(guardrail.status_code, 200, guardrail.text)
         self.assertEqual(guardrail.json()["status"], "guardrail_passed")
+        self.assertEqual(stale_guardrail_version.status_code, 409, stale_guardrail_version.text)
         self.assertEqual(final.status_code, 200, final.text)
         self.assertEqual(final.json()["status"], "delivery_queued")
         read_snapshot.assert_called_once_with(ticket_id="12888")
@@ -4962,6 +4975,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(deliveries[0]["comments_revision"], "comments-rev-1")
         self.assertEqual(deliveries[0]["draft_version"], 1)
         self.assertIn("Please upgrade", deliveries[0]["immutable_content"])
+        self.assertNotIn("Best Regards", deliveries[0]["immutable_content"])
 
     def test_engineer_internal_message_uses_investigation_reply_model_and_records_metadata(self) -> None:
         self._seed_ticket(
@@ -5052,7 +5066,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
-        self.assertTrue(payload["active_investigation"]["draft_customer_reply"].startswith("Hi there,"))
+        self.assertTrue(payload["active_investigation"]["draft_customer_reply"].startswith("Hi there\n\n"))
         self.assertIn(
             "Could you please share the channel name with us for further investigation?",
             payload["active_investigation"]["draft_customer_reply"],
@@ -5063,7 +5077,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v8")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v9")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(
@@ -6632,10 +6646,10 @@ class InvestigationFlowTests(unittest.TestCase):
                 "last_refreshed_at": "2026-03-29T09:03:00+00:00",
                 "active_guardrail_final": {
                     "guardrail_id": "GRD-test103b",
-                    "guardrail_version": "engineer-guardrail-final-v1",
+                    "guardrail_version": "engineer-guardrail-final-v2",
                     "decision": "approved_for_final_engineer_review",
-                    "customer_reply": "Hi there,\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.\n\nBest Regards,\nSid",
-                    "normalized_customer_reply": "Hi there,\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.\n\nBest Regards,\nSid",
+                    "customer_reply": "Hi there\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.",
+                    "normalized_customer_reply": "Hi there\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.",
                     "evidence_refs": [],
                     "checks": {
                         "proof": {"passed": True, "detail": "Proof check passed."},
@@ -6648,7 +6662,7 @@ class InvestigationFlowTests(unittest.TestCase):
                     "created_at": "2026-03-29T09:03:00+00:00",
                 },
                 "guardrail_final_id": "GRD-test103b",
-                "guardrail_final_version": "engineer-guardrail-final-v1",
+                "guardrail_final_version": "engineer-guardrail-final-v2",
                 "guardrail_final_decision": "approved_for_final_engineer_review",
                 "final_approval_required": True,
             },
@@ -6711,7 +6725,8 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNone(ticket["sla_due_at"])
         self.assertIsNone(ticket["active_investigation"])
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
-        self.assertTrue(ticket["messages"][-1]["content"].startswith("Hi there,"))
+        self.assertTrue(ticket["messages"][-1]["content"].startswith("Hi there\n\n"))
+        self.assertNotIn("Best Regards", ticket["messages"][-1]["content"])
         self.assertIn("Please upgrade to SDK 4.2.2", ticket["messages"][-1]["content"])
         self.assertEqual(ticket["investigation_history"][0]["state"], "closed")
         self.assertEqual(

@@ -4056,3 +4056,19 @@ For each new entry, record:
   - The production account case chain now runs a single model family (gpt-5.6-luna): route (xhigh), field extraction (low), persona render (low), completion classifier (low), RAGFlow fallback generation (xhigh). Per-case token stats should show only `openai:gpt-5.6-luna`.
 - Verification:
   - See task p2-114 evidence (llm_profiles scenario defaults/env overrides + affected suites, 482 passed).
+
+## 2026-08-26 - Application-side Persona signature removed (p2-68)
+
+- Prompt or model versions:
+  - `automation-persona-v14` -> `automation-persona-v15`.
+  - `engineer-guided-persona-v1` -> `engineer-guided-persona-v2`.
+  - `engineer-investigation-reply-v8` -> `engineer-investigation-reply-v9`.
+  - `engineer-guardrail-final-v1` -> `engineer-guardrail-final-v2`.
+  - Model configuration is unchanged.
+- Summary:
+  - Persona-generated customer replies no longer contain a signoff, agent name, title, or application-side signature. Zendesk remains the sole owner of the final signature/footer.
+  - English replies use the trusted customer first name in the canonical `Hi, Name` greeting. A greeting generated in either of the first two model paragraphs is removed before the canonical greeting is added, preventing `Thank you for waiting.` followed by a second `Hi Name`.
+  - Engineer Guardrail and the shared Zendesk public-comment write boundary reject signature-shaped tails, including legacy `Best Regards,\nSid`, `Thanks in advance!\nSid`, and a standalone trailing `Sid`.
+  - Final approval requires the current Guardrail version, so an old Slack approval button cannot publish a pre-change draft.
+- Verification:
+  - Customer composer, Persona, Guardrail, prompts, Zendesk public write, Slack action, Worker delivery, Account Automation, Client runtime, RAG, routing, and investigation suites cover unsigned output, named greetings, duplicate-greeting removal, stale approvals, and fail-closed legacy delivery.

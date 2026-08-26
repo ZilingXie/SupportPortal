@@ -610,14 +610,14 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         )
 
         self.assertEqual(result.missing_fields, ["use_case"])
-        self.assertTrue(result.customer_reply.startswith("Hi Taylor,"))
+        self.assertTrue(result.customer_reply.startswith("Hi, Taylor\n\n"))
         self.assertIn("could you please provide your use case?", result.customer_reply)
         self.assertIn(
             "We would need this information to escalate the request to our internal team.",
             result.customer_reply,
         )
         self.assertNotIn("- Use Case:", result.customer_reply)
-        self.assertTrue(result.customer_reply.endswith("Thanks in advance!\nSid"))
+        self.assertNotIn("Sid", result.customer_reply)
 
     def test_account_verification_two_missing_fields_asks_inline_with_and(self) -> None:
         result = build_billing_automation_result(
@@ -634,7 +634,7 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertEqual(result.missing_fields, ["phone_number", "use_case"])
         self.assertIn("could you please provide your use case and phone number?", result.customer_reply)
         self.assertNotIn("- Phone number:", result.customer_reply)
-        self.assertTrue(result.customer_reply.endswith("Thanks in advance!\nSid"))
+        self.assertNotIn("Sid", result.customer_reply)
 
     def test_account_verification_three_missing_fields_uses_detail_list(self) -> None:
         result = build_billing_automation_result(
@@ -655,7 +655,7 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertIn("- Address:", result.customer_reply)
         self.assertIn("- Phone number:", result.customer_reply)
         self.assertIn("- Use Case:", result.customer_reply)
-        self.assertTrue(result.customer_reply.endswith("Thanks in advance!\nSid"))
+        self.assertNotIn("Sid", result.customer_reply)
 
     def test_account_verification_humanized_reply_rejects_missing_required_fields(self) -> None:
         with patch("backend.services.billing_automation.resolve_model_profile") as profile_mock, patch(
@@ -663,8 +663,8 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         ) as invoke_mock:
             profile_mock.return_value.has_invocation_credentials.return_value = True
             invoke_mock.return_value.text = (
-                "Hi Taylor,\n\nCould you please provide your use case? We would need this information to "
-                "escalate the request to our internal team.\n\nThanks in advance!\nSid"
+                "Hi, Taylor\n\nCould you please provide your use case? We would need this information to "
+                "escalate the request to our internal team."
             )
 
             result = build_billing_automation_result(

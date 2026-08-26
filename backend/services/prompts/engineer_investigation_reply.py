@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v8"
+ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v9"
 
 
 def _dump_json(value: Any) -> str:
@@ -39,10 +39,10 @@ def build_engineer_investigation_reply_system_prompt() -> str:
             "The internal message is for the engineer only.",
             "The customer draft must be polished, concise, and safe to send as-is.",
             "Write draft_customer_reply as a formal customer email, not as a chat one-liner.",
-            'For English drafts, start with a greeting such as "Hi ..." and end with exactly "Best Regards," followed by "Sid".',
-            "For non-English drafts, use an equivalent formal greeting and signoff in the customer language.",
+            'For English drafts, start with a greeting such as "Hi, Taylor" and do not write a signoff, name, job title, or signature.',
+            "For non-English drafts, use an equivalent formal greeting and do not write a signoff or signature.",
             "If you do not know the customer's usable display name, use a generic greeting instead of a raw customer ID, ticket ID, or email address.",
-            "If the customer-facing draft self-refers, use Sid as the assistant name.",
+            "Do not self-identify or add an assistant name in the customer-facing draft.",
             "known_facts must only contain current customer reports, verified reproduction details, logs, versions, config facts, or cited evidence.",
             "Do not put Sid/client AI candidate answers, draft recommendations, or unverified suggestions into known_facts.",
             "",

@@ -17,7 +17,10 @@ from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     canonical_automation_subcategory,
 )
-from backend.services.customer_reply_composer import compose_customer_reply_email
+from backend.services.customer_reply_composer import (
+    compose_customer_reply_email,
+    has_trailing_customer_signature,
+)
 from backend.services.graph_mail import (
     acquire_graph_access_token,
     automation_internal_email_cc,
@@ -82,7 +85,6 @@ GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
 GRAPH_INBOX_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
 GRAPH_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
 BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX = "[Billing Request]"
-ACCOUNT_VERIFICATION_SIGNOFF = "Thanks in advance!\nSid"
 ACCOUNT_VERIFICATION_FIELD_DISPLAY_ORDER = (
     "use_case",
     "company_location",
@@ -968,13 +970,12 @@ def _account_verification_email_reply(
     customer_id: str | None,
 ) -> str:
     effective_customer_id = None if _clean_text(requester) == _clean_text(customer_id) else customer_id
-    reply = compose_customer_reply_email(
+    return compose_customer_reply_email(
         body=body,
         requester=requester,
         customer_id=effective_customer_id,
         language="en",
     )
-    return reply.removesuffix("Best Regards,\nSid").rstrip() + f"\n\n{ACCOUNT_VERIFICATION_SIGNOFF}"
 
 
 def _humanize_account_verification_reply(
@@ -1000,7 +1001,8 @@ def _humanize_account_verification_reply(
             profile=profile,
             system_prompt=(
                 "You lightly polish customer-facing account verification intake replies. Keep the exact "
-                "email structure, greeting, required information, escalation meaning, and sign-off. Do not "
+                "email structure, greeting, required information, and escalation meaning. Do not add a signoff, "
+                "name, job title, or signature. Do not "
                 "add new requested fields, remove requested fields, mention internal tools, or change facts. "
                 f"Customer voice instruction: {_clean_text(persona_instruction) or 'Use a calm, warm, polished support voice.'}"
             ),
@@ -1025,7 +1027,7 @@ def _humanize_account_verification_reply(
 
     candidate = str(response.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     lowered = candidate.lower()
-    if not candidate.startswith("Hi ") or not candidate.endswith(ACCOUNT_VERIFICATION_SIGNOFF):
+    if not candidate.startswith("Hi, ") or has_trailing_customer_signature(candidate):
         return reply
     if "account verification request" not in lowered or "internal team" not in lowered:
         return reply
