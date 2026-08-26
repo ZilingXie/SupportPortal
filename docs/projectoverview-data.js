@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T03:18:44Z",
-  "source_base_commit": "fd60b094b098809bc748de780bf398f26af2bd9b",
-  "registry_digest": "2444b94ae4dfeccea40ba467075748a96a2f6506ed1828cbd3be41a6cfc24acd",
+  "generated_at": "2026-08-26T04:09:48Z",
+  "source_base_commit": "5cfbc02abce3e7203af2e8bb8b266840567db08c",
+  "registry_digest": "2f45415275f3859d75d05f6c8b62f012ad54b3349021af1db6c5ba7d10781a07",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2582,6 +2582,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are known; live acceptance remains pending deployment, n8n inbound activation and a new Production Zendesk test ticket. No secret is tracked.",
           "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+        },
+        {
+          "type": "test",
+          "summary": "Integrated Slack guided Persona, persisted human-source Guardrail, Slack API/workflow, Zendesk comment-sync and worker regression passed 312 tests and 37 subtests.",
+          "ref": "backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_investigation_flow.py"
         },
         {
           "type": "test",
@@ -8926,8 +8931,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "status": "active",
       "owner": "unassigned",
-      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel 并持久化 thread binding；n8n 只负责固定 Team/Channel/thread 的入站校验、幂等和 AI 转发。",
-      "next_action": "部署 direct Slack 配置并激活两个 n8n inbound workflow，随后用新的 Production Non automated Case 完成真实 thread、两阶段批准和 Zendesk public readback 验收。",
+      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
+      "next_action": "完成目标回归、PR finalization 和 Production 部署；确认 Slack Interaction workflow 与 App Interactivity URL 已激活后，用 ticket 13023 完成 Guardrail、Final Approve、Zendesk public readback 和工单状态不变验收。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
         "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
@@ -8949,13 +8954,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "summary": "Approved Slack Team/Channel and temporary User OAuth outbound identity are known; live acceptance remains pending deployment, n8n inbound activation and a new Production Zendesk test ticket. No secret is tracked.",
           "ref": "docs/integrations/n8n/engineer_case_slack_runbook.md"
+        },
+        {
+          "type": "test",
+          "summary": "Integrated Slack guided Persona, persisted human-source Guardrail, Slack API/workflow, Zendesk comment-sync and worker regression passed 312 tests and 37 subtests.",
+          "ref": "backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_investigation_flow.py"
         }
       ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-24",
+      "updated_at": "2026-08-26",
       "history": [
         {
           "at": "2026-08-16",
@@ -8981,6 +8991,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "architecture_updated",
           "summary": "按用户确认调整为 SupportPortal 直接发送 Slack、n8n 仅控制入站消息与交互。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "guided_reply_implemented",
+          "summary": "Slack @bot 指导改为懒分配固定 Persona 的润色草稿；人类指导作为 Guardrail 来源证明，保留两阶段批准和 Zendesk public delivery。"
         }
       ],
       "legacy_refs": [
@@ -12591,7 +12606,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。AI 草稿、两阶段批准、Zendesk public comment 和后续客户评论都回到同一 thread；发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
+        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。首次有效指导会为 Case 随机固定一个已发布 Persona，AI 仅以该指导作为技术事实来源进行润色，再经 Guardrail 和 Final Approve 发布为 Zendesk public comment；后续客户评论和发布结果都回到同一 thread，发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
         "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],

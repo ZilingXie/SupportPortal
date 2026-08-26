@@ -241,6 +241,7 @@ from backend.services.account_reply_jobs import (
 )
 from backend.services.automation_persona import (
     AutomationPersonaError,
+    ENGINEER_GUIDED_REPLY_INTENT,
     build_account_automation_reply_facts,
     build_automation_reply_facts,
     extract_automation_resolution_facts,
@@ -13858,6 +13859,216 @@ async def _process_engineer_investigation_message(
     }
 
 
+def _engineer_guided_public_context(ticket_id: str, ticket: dict[str, Any]) -> list[dict[str, str]]:
+    comments = ticket_repository.get_account_case_comments(ticket_id)
+    public_comments = [
+        {
+            "role": "customer" if str(item.get("author_kind") or "").strip().lower() == "customer" else "support",
+            "content": str(item.get("body") or "").strip(),
+            "created_at": str(item.get("created_at") or "").strip(),
+        }
+        for item in comments
+        if bool(item.get("is_public"))
+        and str(item.get("author_kind") or "").strip().lower() in {"customer", "agent"}
+        and str(item.get("body") or "").strip()
+    ]
+    if public_comments:
+        return public_comments[-6:]
+    return [
+        {
+            "role": str(item.get("role") or "").strip().lower(),
+            "content": str(item.get("content") or "").strip(),
+            "created_at": str(item.get("created_at") or "").strip(),
+        }
+        for item in (ticket.get("messages") or [])
+        if isinstance(item, dict)
+        and str(item.get("role") or "").strip().lower() in {"customer", "assistant"}
+        and str(item.get("content") or "").strip()
+    ][-6:]
+
+
+async def _process_slack_engineer_guided_reply(
+    engineer_case_id: str,
+    *,
+    slack_user_id: str,
+    message: str,
+    occurred_at: str,
+    slack_event_id: str,
+) -> dict[str, Any]:
+    engineer_case_payload = _resolve_engineer_case_payload(engineer_case_id)
+    if engineer_case_payload is None:
+        raise HTTPException(status_code=404, detail="Engineer Case not found")
+    client_ticket_id = str(
+        (engineer_case_payload.get("client_ticket_ref") or {}).get("ticket_id") or ""
+    ).strip()
+    ticket = ticket_repository.get_ticket(client_ticket_id)
+    account_case = ticket_repository.get_account_case_by_ticket_id(client_ticket_id)
+    if ticket is None or account_case is None:
+        raise HTTPException(status_code=409, detail="Non-automated Account Case is required")
+    if str(account_case.get("processing_profile") or "").strip().lower() != "production":
+        raise HTTPException(status_code=409, detail="Slack guided replies require a production Account Case")
+    route_status = str(account_case.get("route_status") or "").strip().lower()
+    automation_status = str(account_case.get("automation_status") or "").strip().lower()
+    if "not_automated" not in {route_status, automation_status}:
+        raise HTTPException(status_code=409, detail="Slack guided replies require a not_automated Account Case")
+    active_payload = engineer_case_payload.get("active_investigation")
+    if not isinstance(active_payload, dict):
+        raise HTTPException(status_code=409, detail="No active investigation exists")
+
+    ensure_ticket_defaults(ticket)
+    engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
+    public_context = _engineer_guided_public_context(client_ticket_id, ticket)
+    latest_customer_text = next(
+        (
+            item["content"]
+            for item in reversed(public_context)
+            if item.get("role") == "customer" and item.get("content")
+        ),
+        latest_customer_message(ticket),
+    )
+    persona_assignment = await async_to_thread(
+        ticket_repository.resolve_account_persona,
+        client_ticket_id,
+    )
+    facts = {
+        "behavior": "engineer_support",
+        "reply_intent": ENGINEER_GUIDED_REPLY_INTENT,
+        "provided_answer": message.strip(),
+        "latest_customer_message": latest_customer_text,
+        "recent_public_conversation": public_context,
+        "subject": str(account_case.get("title") or ticket.get("subject") or "").strip(),
+        "customer_language": detect_customer_reply_language(latest_customer_text, message),
+        "customer_first_name": str(
+            account_case.get("customer_name") or ticket.get("requester") or ""
+        ).strip(),
+    }
+    rendered = render_automation_reply(
+        reply_facts=facts,
+        persona_assignment=persona_assignment,
+        account_scope=False,
+    )
+
+    timestamp = now_iso()
+    case_context = build_engineer_case_context(ticket, engineer_case)
+    active = case_context.get("active_investigation")
+    if not isinstance(active, dict):
+        raise HTTPException(status_code=409, detail="No active investigation exists")
+    agent_state = dict(
+        engineer_case.get("engineer_agent_state")
+        if isinstance(engineer_case.get("engineer_agent_state"), dict)
+        else {}
+    )
+    conversation_version = int(agent_state.get("conversation_version") or 0) + 1
+    draft_version = int(agent_state.get("draft_version") or 0) + 1
+    for guardrail_key in (
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+        "final_approved_at",
+    ):
+        agent_state.pop(guardrail_key, None)
+    guidance_message = build_internal_message(
+        str(active.get("id") or engineer_case_id),
+        "engineer",
+        message.strip(),
+        occurred_at.strip() or timestamp,
+        sequence=len(active.get("messages") or []) + 1,
+        meta={
+            "source": "slack",
+            "slack_user_id": slack_user_id,
+            "slack_event_id": slack_event_id,
+            "occurred_at": occurred_at,
+        },
+    )
+    persona_meta = {
+        "source": "automation_persona",
+        "source_mode": "human_guided_reply",
+        "human_source_message_id": guidance_message["id"],
+        "slack_event_id": slack_event_id,
+        "persona_key": str(persona_assignment.get("persona_key") or ""),
+        "persona_version": int(persona_assignment.get("version") or 0),
+        "model": rendered.model,
+        "prompt_version": rendered.prompt_version,
+    }
+    ai_message = build_internal_message(
+        str(active.get("id") or engineer_case_id),
+        "engineer_ai",
+        "Persona-polished customer draft is ready for guardrail review.",
+        timestamp,
+        sequence=len(active.get("messages") or []) + 2,
+        meta=persona_meta,
+    )
+    active.setdefault("messages", []).extend([guidance_message, ai_message])
+    active.update(
+        state="awaiting_confirmation",
+        draft_customer_reply=rendered.content,
+        final_confirmation_requested_at=timestamp,
+        updated_at=timestamp,
+    )
+    agent_state.update(
+        phase="awaiting_confirmation",
+        ready_to_reply=True,
+        conversation_version=conversation_version,
+        draft_version=draft_version,
+        round_state="active",
+        reply_readiness={
+            "source_mode": "human_guided_reply",
+            "human_source_message_id": guidance_message["id"],
+            "human_source_slack_event_id": slack_event_id,
+            "has_conclusion": False,
+            "has_proof": False,
+            "has_solution_or_next_step": True,
+            "reply_scope": "human_guided_reply",
+            "conclusion_summary": "",
+            "proof_summary": "",
+            "proof_anchors": [],
+            "solution_or_next_step": message.strip(),
+            "blockers": [],
+            "advisory_followups": [],
+            "critique": "Customer-facing content is sourced from persisted Slack guidance.",
+            "ready_for_customer_reply": True,
+        },
+        guided_reply_generation=persona_meta,
+    )
+    case_context["engineer_agent_state"] = agent_state
+    engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+    ticket["updated_at"] = timestamp
+    ticket["last_engineer_action"] = {
+        "action": "slack_guided_reply",
+        "engineer_id": f"slack:{slack_user_id}",
+        "note": message.strip(),
+        "created_at": timestamp,
+    }
+    slack_event = build_engineer_case_thread_event(
+        event_id=f"{slack_event_id}:ai-response",
+        event_type="engineer_ai_response",
+        engineer_case_id=engineer_case_id,
+        message_text=(
+            f"Persona: {persona_meta['persona_key']} v{persona_meta['persona_version']}\n\n"
+            f"Original guidance:\n{message.strip()}\n\nCustomer draft:\n{rendered.content}"
+        ),
+        investigation_id=str(active.get("id") or "") or None,
+        conversation_version=conversation_version,
+        draft_version=draft_version,
+        customer_draft=rendered.content,
+        action="guardrail",
+    )
+    ticket_repository.save_ticket(ticket, new_messages=[])
+    ticket_repository.save_engineer_case(
+        engineer_case,
+        new_messages=[guidance_message, ai_message],
+        slack_events=[slack_event],
+    )
+    await _record_and_dispatch_investigation_event(ticket, engineer_case)
+    return {
+        "engineer_agent_state": agent_state,
+        "persona_key": persona_meta["persona_key"],
+        "persona_version": persona_meta["persona_version"],
+    }
+
+
 @app.post("/api/engineer/tickets/{ticket_id}/investigation/messages")
 async def post_investigation_message(
     ticket_id: str,
@@ -13955,19 +14166,44 @@ async def post_slack_engineer_case_message(
         return ignored
 
     try:
-        result = await _process_engineer_investigation_message(
+        result = await _process_slack_engineer_guided_reply(
             request.engineer_case_id,
-            engineer_id=f"slack:{request.slack_user_id}",
+            slack_user_id=request.slack_user_id,
             message=request.text.strip(),
-            multi_agent_enabled=False,
-            message_meta={
-                "source": "slack",
-                "slack_user_id": request.slack_user_id,
-                "slack_event_id": request.event_id,
-                "occurred_at": request.occurred_at,
-            },
-            slack_event_id=f"{request.event_id}:ai-response",
+            occurred_at=request.occurred_at,
+            slack_event_id=request.event_id,
         )
+    except (AccountPersonaUnavailableError, AutomationPersonaError) as exc:
+        failure_code = (
+            str(getattr(exc, "code", "") or "").strip()
+            or "engineer_guided_persona_unavailable"
+        )
+        failure_event = build_engineer_case_thread_event(
+            event_id=f"{request.event_id}:draft-failed",
+            event_type="engineer_ai_response_failed",
+            engineer_case_id=request.engineer_case_id,
+            message_text=f"Unable to prepare the customer draft. Failure: {failure_code}",
+            investigation_id=str(
+                (engineer_case_payload.get("active_investigation") or {}).get("id") or ""
+            ) or None,
+            failure_code=failure_code,
+        )
+        await async_to_thread(
+            ticket_repository.save_engineer_case,
+            _engineer_case_payload_to_record(engineer_case_payload),
+            slack_events=[failure_event],
+        )
+        await async_to_thread(
+            ticket_repository.fail_idempotent_request,
+            _SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+            request.event_id,
+            response_payload={"status": "failed", "code": failure_code},
+            updated_at=now_iso(),
+        )
+        raise HTTPException(
+            status_code=503 if isinstance(exc, AccountPersonaUnavailableError) else 502,
+            detail={"code": failure_code, "message": "Customer draft generation failed"},
+        ) from exc
     except Exception as exc:
         await async_to_thread(
             ticket_repository.fail_idempotent_request,
@@ -14073,6 +14309,38 @@ async def post_slack_engineer_case_action(
             )
             if not (isinstance(reply_readiness, dict) and reply_readiness.get("ready_for_customer_reply")):
                 raise HTTPException(status_code=400, detail="A backend-validated customer reply is required")
+            if str(reply_readiness.get("source_mode") or "").strip().lower() == "human_guided_reply":
+                source_message_id = str(reply_readiness.get("human_source_message_id") or "").strip()
+                source_slack_event_id = str(
+                    reply_readiness.get("human_source_slack_event_id") or ""
+                ).strip()
+                source_message = next(
+                    (
+                        item
+                        for item in active.get("messages") or []
+                        if isinstance(item, dict)
+                        and str(item.get("id") or "").strip() == source_message_id
+                    ),
+                    None,
+                )
+                source_meta = (
+                    source_message.get("meta")
+                    if isinstance(source_message, dict)
+                    and isinstance(source_message.get("meta"), dict)
+                    else {}
+                )
+                if not (
+                    source_message_id
+                    and source_slack_event_id
+                    and isinstance(source_message, dict)
+                    and str(source_message.get("role") or "").strip().lower() == "engineer"
+                    and str(source_meta.get("source") or "").strip().lower() == "slack"
+                    and str(source_meta.get("slack_event_id") or "").strip() == source_slack_event_id
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Persisted Slack guidance source is required",
+                    )
             active_review = agent_state.get("active_review") if isinstance(agent_state.get("active_review"), dict) else None
             evidence_packet = agent_state.get("evidence_packet") if isinstance(agent_state.get("evidence_packet"), dict) else None
             task_results = agent_state.get("task_results") if isinstance(agent_state.get("task_results"), list) else None

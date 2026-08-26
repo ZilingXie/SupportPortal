@@ -62,6 +62,17 @@ inbound payloads cannot override them.
   unique Slack `event_id`.
 - Interactions require the same Team/Channel/active binding and a unique
   interaction ID. Button values carry only investigation/version data.
+- A valid mention is persisted as human guidance. SupportPortal lazily assigns
+  and pins one published Persona to the canonical ticket, then uses that Persona
+  to polish the guidance. Slack guidance is the only authority for technical
+  facts, steps, versions, links, and commitments; ticket context is used only
+  for language, greeting, reference resolution, and contradiction avoidance.
+- The response event contains the original guidance, pinned Persona key/version,
+  polished customer draft, and `Run guardrail`. A new mention increments both
+  conversation and draft versions and invalidates every older action.
+- The existing App Mention workflow and message request schema do not change for
+  this mode. `Run guardrail` and `Approve & publish` still require the separate
+  Slack Interaction workflow and the Slack App Interactivity request URL.
 - Rejected, duplicate, unbound, wrong-channel, and mention-free events are ACKed
   without calling SupportPortal or posting a Slack reply.
 - `engineer_case_closed` is posted through the historical binding. The binding
@@ -77,8 +88,10 @@ inbound payloads cannot override them.
    node receives the exact raw request body; a parsed or reconstructed body is
    not valid signature-verification evidence.
 3. Post text without a bot mention in the Case thread. Confirm no AI call.
-4. Mention the bot in the bound Case thread. Confirm one Engineer AI response
-   returns to that thread and the inbound ledger contains one row.
+4. Mention the bot in the bound Case thread with the exact customer guidance.
+   Confirm one Persona-polished draft with `Run guardrail` returns to that thread,
+   the Case has one pinned Persona assignment, and the inbound ledger contains
+   one row. Replay the same event ID and confirm no second model call or draft.
 5. Run guardrail and final approval. Confirm one public Zendesk comment, no
    Zendesk status change, and a delivery confirmation in the same thread.
 6. Add a new public customer comment. Confirm the original comment and new AI

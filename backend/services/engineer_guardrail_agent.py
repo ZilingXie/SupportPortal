@@ -155,15 +155,25 @@ def run_engineer_guardrail_final(
     claim_check = _run_unsupported_claim_check(customer_reply)
     style_check = _run_style_check(customer_reply)
 
-    # Proof check: verify that reply_readiness has_proof and proof_summary are present
-    proof_passed = bool(
-        readiness.get("has_proof") and _clean_text(readiness.get("proof_summary"))
-    )
-    proof_detail = (
-        "Proof check passed."
-        if proof_passed
-        else "Reply readiness is missing proof_summary or has_proof flag."
-    )
+    source_mode = _clean_text(readiness.get("source_mode")).lower()
+    if source_mode == "human_guided_reply":
+        human_source_message_id = _clean_text(readiness.get("human_source_message_id"))
+        human_source_slack_event_id = _clean_text(readiness.get("human_source_slack_event_id"))
+        proof_passed = bool(human_source_message_id and human_source_slack_event_id)
+        proof_detail = (
+            "Human-guided source provenance check passed."
+            if proof_passed
+            else "Human-guided reply is missing its persisted source message or Slack event ID."
+        )
+    else:
+        proof_passed = bool(
+            readiness.get("has_proof") and _clean_text(readiness.get("proof_summary"))
+        )
+        proof_detail = (
+            "Proof check passed."
+            if proof_passed
+            else "Reply readiness is missing proof_summary or has_proof flag."
+        )
 
     checks = {
         "proof": {"passed": proof_passed, "detail": proof_detail},
@@ -181,6 +191,11 @@ def run_engineer_guardrail_final(
     ]
 
     evidence_refs: list[dict[str, Any]] = []
+    if source_mode == "human_guided_reply" and proof_passed:
+        evidence_refs.append({
+            "source": "human_guidance",
+            "ref": _clean_text(readiness.get("human_source_message_id")),
+        })
     if isinstance(evidence_packet, dict):
         evidence_refs.append({
             "source": "evidence_packet",
