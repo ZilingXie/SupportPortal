@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import re
 from typing import Any, Callable
@@ -767,6 +768,67 @@ def append_engineer_investigation_message(
         "active_investigation": active_investigation,
         "new_internal_messages": new_internal_messages,
     }
+
+
+def record_engineer_customer_comment(
+    engineer_case: dict[str, Any],
+    *,
+    customer_message: str,
+    now_value: str,
+    message_meta: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Record customer context and invalidate reply actions without running AI."""
+    updated = copy.deepcopy(engineer_case)
+    if str(updated.get("investigation_state") or "active").strip().lower() == INVESTIGATION_STATE_CLOSED:
+        raise ValueError("No active investigation exists for this ticket.")
+
+    investigation_id = str(
+        updated.get("thread_id") or updated.get("engineer_case_id") or ""
+    ).strip()
+    messages = updated.get("messages") if isinstance(updated.get("messages"), list) else []
+    customer_entry = build_internal_message(
+        investigation_id,
+        "customer",
+        customer_message,
+        now_value,
+        sequence=len(messages) + 1,
+        meta=message_meta,
+    )
+    messages.append(customer_entry)
+
+    state = copy.deepcopy(
+        updated.get("engineer_agent_state")
+        if isinstance(updated.get("engineer_agent_state"), dict)
+        else {}
+    )
+    state["conversation_version"] = int(state.get("conversation_version") or 0) + 1
+    state["draft_version"] = int(state.get("draft_version") or 0) + 1
+    state["phase"] = "investigating"
+    state["round_state"] = INVESTIGATION_STATE_ACTIVE
+    for stale_key in (
+        "reply_readiness",
+        "guided_reply_generation",
+        "ready_to_reply",
+        "active_guardrail_final",
+        "guardrail_final_id",
+        "guardrail_final_version",
+        "guardrail_final_decision",
+        "final_approval_required",
+        "final_approved_at",
+    ):
+        state.pop(stale_key, None)
+
+    updated.update(
+        status=INVESTIGATING_STATUS,
+        investigation_state=INVESTIGATION_STATE_ACTIVE,
+        draft_customer_reply="",
+        final_confirmation_requested_at=None,
+        engineer_agent_state=state,
+        messages=messages,
+        updated_at=now_value,
+        closed_at=None,
+    )
+    return updated, [customer_entry]
 
 
 def apply_investigation_confirmation(

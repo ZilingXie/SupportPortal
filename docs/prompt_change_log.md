@@ -12,6 +12,16 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-26 - Engineer customer-comment AI trigger boundary (p2-68, p2-113)
+
+- Area or subsystem: Production Non automated Engineer Case Zendesk comment sync and Slack collaboration.
+- Prompt or model version: prompt text and model configuration unchanged.
+- Summary: customer comment sync no longer invokes Engineer AI or creates an automatic Draft. It records the customer message in the active investigation, invalidates stale Draft/Guardrail/final approval state, and emits only the content-free Slack notification `Cx has added a new comment`. The next valid Slack `@bot` guidance remains the explicit AI trigger and reads the updated Case context.
+- Reason: Slack users must control when a new customer-facing Draft is generated; customer comments should notify the assigned thread without causing an unsolicited model turn or exposing customer content in Slack outbox payloads.
+- Affected files or config: `backend/main.py`, `backend/services/automation_account_reply_sync.py`, `backend/services/investigation_flow.py`, and the Zendesk comment-sync n8n contract.
+- Expected behavior change: Automated Account Cases retain their existing comment-trigger behavior. Active Non-automated Engineer Cases return `processed_engineer_notification`, queue one notification-only event, and wait for a later Slack mention before generating a Draft.
+- Verification: targeted `/production` and `/automation/production` comment-sync tests assert context persistence, stale-state invalidation, version fencing, no Engineer AI call, one fixed Slack event, and no customer content in its payload.
+
 ## 2026-08-26 - Slack Engineer-guided Persona replies v1 (p2-68)
 
 - Area or subsystem: Production Non automated Engineer Case Slack collaboration.

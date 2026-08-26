@@ -4,7 +4,7 @@
   "title": "通过 Slack 向工程师送达 Round Robin 派单",
   "status": "active",
   "owner": "unassigned",
-  "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
+  "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。n8n 只负责固定 Team/Channel/thread 的入站控制。",
   "next_action": "在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
   "acceptance_criteria": [
     "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
@@ -52,6 +52,11 @@
       "type": "test",
       "summary": "Customer reply composition, Engineer Persona prompting, deterministic Guardrail and Zendesk public-write delivery now enforce an unsigned application body; English greetings use the trusted customer first name as `Hi, Name`, duplicate model greetings are removed, and legacy Sid signatures fail closed.",
       "ref": "backend/tests/test_customer_reply_composer.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_zendesk_public_comment.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py"
+    },
+    {
+      "type": "test",
+      "summary": "Zendesk customer comment sync for active Non automated Engineer Cases now persists the customer message, invalidates stale Draft/Guardrail/final approval state, queues only `Cx has added a new comment`, and does not invoke Engineer AI until a later Slack mention. Targeted comment-sync, Slack, investigation and worker regression passed 276 tests and 22 subtests.",
+      "ref": "backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, docs/integrations/n8n/Zendesk_Account_Comment_Sync.json"
     }
   ],
   "source_refs": [
@@ -109,6 +114,11 @@
       "at": "2026-08-26",
       "event": "customer_signature_removed",
       "summary": "按产品决定删除应用侧 Persona 客户签名：生成内容仅保留使用客户 first name 的问候，Guardrail 和 Zendesk public write 阻断历史 Sid 签名，Zendesk 继续拥有最终签名。"
+    },
+    {
+      "at": "2026-08-26",
+      "event": "customer_comment_trigger_controlled",
+      "summary": "客户新评论改为只持久化调查上下文并在原 Slack thread 发送固定通知；不自动调用 AI，下一次有效 @bot 指导才基于最新上下文生成 Draft。"
     }
   ],
   "legacy_refs": [

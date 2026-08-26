@@ -1,19 +1,20 @@
 # Zendesk Account comment sync
 
-This export is a redacted n8n companion workflow for `/account`. It does not create Account Cases. The existing five-field intake workflow remains responsible for `title`, `question`, `customer_email`, `source`, and `customer_name`.
+`Zendesk_Account_Comment_Sync.json` is the redacted n8n companion workflow for `/account` and `/production/account`. It does not create Account Cases. The existing five-field intake workflow remains responsible for `title`, `question`, `customer_email`, `source`, and `customer_name`.
 
 ## Configure before importing
 
 - Set the n8n environment variable `SUPPORTPORTAL_BASE_URL` to the SupportPortal origin.
 - Set the n8n environment variable `n8n_request_token` to the same secret as SupportPortal's `n8n_request_token`, and send it as the `X-N8n-Request-Token` header. This is the single unified token for every n8n-to-SupportPortal call (the old `X-Zendesk-Account-Sync-Token` header and `Authorization: Bearer` fallback are no longer accepted); see `automation_environments_cutover.md` §6.
-- Configure the Zendesk API credential on the `Get_Case_Comment` node. The export contains no Zendesk token, cookie, or Authorization value.
+- Configure the same n8n Zendesk API Credential on `Get_Case_Comment` and `Get_Case_Comment2`. The export contains no Zendesk token, cookie, or Authorization value. Rotate any Zendesk token that previously appeared in a workflow export before activating this workflow.
+- Rebind the existing `2_SupportPortal` header Credential on both SupportPortal sync nodes after import. Credential IDs are intentionally redacted.
 - Register the webhook URL in Zendesk for ticket updates that include comment changes. The workflow is safe to replay because SupportPortal performs the Account membership check, snapshot completeness check, stale check, and idempotent comment upsert.
 
 ## Flow
 
 1. Receive a Zendesk ticket-updated event and extract the canonical Zendesk ticket ID, `updated_at`, current comment ID, and current comment author.
 2. Ask SupportPortal whether that ticket is an Account Case. Non-Account tickets stop at the IF node and are not queried further.
-3. Fetch the complete Zendesk comments snapshot with n8n HTTP pagination and `include=users`. The request must return every comment, including private/internal comments, plus the user records needed to resolve all historical comment authors.
+3. Fetch the complete Zendesk comments snapshot with n8n HTTP pagination, `include=users`, and `per_page=100`. The request must return every comment, including private/internal comments, plus the user records needed to resolve all historical comment authors. The GET request has no headers or body owned by the workflow; authentication comes only from the Zendesk Credential.
 4. Normalize each comment to ID, public/private flag, author name, role, `is_agent`, body, channel, and timestamp. The current webhook author may supplement only the matching current comment; it must never be copied onto historical comments. The snapshot is sent only when `snapshot_complete=true`.
 5. PUT the snapshot to the SupportPortal integration endpoint with `X-N8n-Request-Token`.
 
@@ -152,8 +153,9 @@ The snapshot body accepts an optional `trigger_comment_id` (the webhook's curren
 
 - `trigger_comment_id` must be present in the snapshot, otherwise the endpoint returns 422 `trigger_comment_missing`.
 - Without `trigger_comment_id` the request is projection-only (display sync).
-- A trigger runs the automation state machine (same path as the workspace reply endpoint) only when the comment is public, authored by the customer (not an agent), non-initial, non-empty, and newer than the Account Case creation, and the case is a production registered automation in an active state.
+- For a production registered Automated Case in an active state, a valid trigger runs the existing automation state machine.
+- For an active production Non-automated Engineer Case, a valid trigger records the full customer comment in the investigation context, advances the conversation/draft versions, invalidates the old Draft/Guardrail/final approval, and queues exactly one `zendesk_customer_comment` Slack event with `message_text="Cx has added a new comment"`. It does not call AI. Customer content and identity are not included in the Slack event payload. A later valid Slack `@bot` message generates the next Draft from the updated Case context.
 - Processing is idempotent per `account_case_id + trigger_comment_id`: replaying the same webhook returns the first run's recorded outcome and never duplicates the customer message, internal email, reply job, or Zendesk comment.
 - A `failed` outcome is the exception: it is stored replayable, so replaying the same webhook re-runs the automation (for example after the blocking defect is fixed) instead of returning the cached failure. Completed and ignored outcomes are never re-run.
 - Agent-authored public comments (including SupportPortal's own AI public replies) return `ignored_agent_comment` and never trigger a second AI reply.
-- The response exposes `trigger_status` (`processed` / `ignored_*` / `failed` / `already_processing`) plus `internal_email_status` and `ai_reply_status` for execution readback.
+- The response exposes `trigger_status` (`processed` / `processed_engineer_notification` / `ignored_*` / `failed` / `already_processing`). Automated responses also expose `internal_email_status` and `ai_reply_status`; Engineer notification responses expose `engineer_case_id`, `conversation_version`, and `draft_version`.

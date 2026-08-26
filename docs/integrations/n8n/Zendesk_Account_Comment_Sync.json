@@ -1,0 +1,454 @@
+{
+  "name": "commen_sync",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "=https://support.stellarix.space/api/integrations/zendesk/account-cases/{{ $json.body.detail.id }}/comment-sync-target",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "6c4f6cf6-bbc5-44dc-923b-2ff468d79920",
+      "name": "Account Case membership check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -496,
+        -16
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "2_SupportPortal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f6e5b090-399b-438f-85d5-e86318fec765",
+              "leftValue": "={{ $json.is_account_case }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4eeb05a5-cc18-4ba6-8411-240e9e5c24df",
+      "name": "Is Account Case",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -272,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $('Get_Case_Comment').all().map(item => item.json || {});\nconst webhookBody = $('Zen_New_Comment_Webhook').first().json?.body || {};\n\nif (!pages.length) {\n  throw new Error('Get_Case_Comment returned no pages');\n}\n\nconst comments = pages.flatMap(page =>\n  Array.isArray(page.comments) ? page.comments : []\n);\n\nconst users = pages.flatMap(page =>\n  Array.isArray(page.users) ? page.users : []\n);\n\nif (!comments.length) {\n  throw new Error('Zendesk comments response is empty');\n}\n\nconst firstCount = pages[0]?.count;\nconst expectedCount =\n  firstCount === null || firstCount === undefined || firstCount === ''\n    ? null\n    : Number(firstCount);\n\nconst lastPage = pages[pages.length - 1];\n\nif (\n  lastPage.next_page != null ||\n  (\n    expectedCount !== null &&\n    Number.isFinite(expectedCount) &&\n    comments.length !== expectedCount\n  )\n) {\n  throw new Error(\n    `Zendesk comment snapshot is incomplete: expected=${expectedCount}, received=${comments.length}`\n  );\n}\n\nconst userById = new Map(\n  users\n    .filter(user => user && user.id !== null && user.id !== undefined)\n    .map(user => [String(user.id), user])\n);\n\nfunction staffFlag(value) {\n  if (!value || typeof value !== 'object') {\n    return null;\n  }\n\n  if (typeof value.is_staff === 'boolean') {\n    return value.is_staff;\n  }\n\n  if (typeof value.is_agent === 'boolean') {\n    return value.is_agent;\n  }\n\n  const role = String(value.role || '').trim().toLowerCase();\n\n  if (['agent', 'admin', 'staff', 'support'].includes(role)) {\n    return true;\n  }\n\n  if (['end-user', 'end_user', 'customer', 'requester', 'user'].includes(role)) {\n    return false;\n  }\n\n  return null;\n}\n\nconst eventComment = webhookBody.event?.comment || {};\nconst eventCommentId = String(eventComment.id || '');\nconst eventAuthor =\n  eventComment.author && typeof eventComment.author === 'object'\n    ? eventComment.author\n    : {};\n\nconst commentsPayload = comments.map(comment => {\n  const commentId = String(comment.id);\n  const commentAuthorId =\n    comment.author_id === null || comment.author_id === undefined\n      ? null\n      : String(comment.author_id);\n\n  const currentAuthor =\n    commentId === eventCommentId\n      ? eventAuthor\n      : {};\n\n  const currentAuthorId =\n    commentAuthorId || (\n      currentAuthor.id === null || currentAuthor.id === undefined\n        ? null\n        : String(currentAuthor.id)\n    );\n\n  const user = currentAuthorId\n    ? userById.get(currentAuthorId)\n    : null;\n\n  const userIsAgent = staffFlag(user);\n  const webhookIsAgent =\n    commentId === eventCommentId\n      ? staffFlag(currentAuthor)\n      : null;\n\n  if (\n    userIsAgent !== null &&\n    webhookIsAgent !== null &&\n    userIsAgent !== webhookIsAgent\n  ) {\n    throw new Error(`Author identity conflict for comment ${commentId}`);\n  }\n\n  const isAgent =\n    userIsAgent !== null\n      ? userIsAgent\n      : webhookIsAgent;\n\n  const role =\n    isAgent === true\n      ? 'agent'\n      : isAgent === false\n        ? 'end-user'\n        : 'unknown';\n\n  const isPublic =\n    typeof comment.public === 'boolean'\n      ? comment.public\n      : comment.is_public === true;\n\n  return {\n    id: comment.id,\n    public: isPublic,\n    author: {\n      id: currentAuthorId,\n      name: user?.name || comment.author_name || currentAuthor.name || null,\n      role,\n      is_agent: isAgent\n    },\n    body: String(comment.body ?? comment.plain_body ?? ''),\n    via_channel: comment.via?.channel ?? null,\n    created_at: comment.created_at\n  };\n});\n\nconst latestCommentAt = comments\n  .map(comment => String(comment.created_at || '').trim())\n  .filter(Boolean)\n  .sort()\n  .at(-1);\n\nconst sourceUpdatedAt = String(\n  webhookBody.detail?.updated_at ||\n  webhookBody.time ||\n  latestCommentAt ||\n  ''\n).trim();\n\nif (!sourceUpdatedAt) {\n  throw new Error('source_updated_at is missing');\n}\n\nreturn [\n  {\n    json: {\n      source_updated_at: sourceUpdatedAt,\n      snapshot_complete: true,\n      trigger_comment_id: eventCommentId, \n      comments: commentsPayload\n    }\n  }\n];"
+      },
+      "id": "1373a315-aa5b-48cc-9122-d8efb78724b5",
+      "name": "Build complete comment snapshot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://support.stellarix.space/api/integrations/zendesk/account-cases/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "3fa77757-9269-463c-8870-5efce6fcef34",
+      "name": "Sync comments to SupportPortal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        -16
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "2_SupportPortal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "3b75c538-533b-4be4-a422-df76effeac24",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -944,
+        80
+      ],
+      "id": "8d1a9d0f-2bfb-44b3-87fe-b91622c8b5bb",
+      "name": "Zen_New_Comment_Webhook",
+      "webhookId": "3b75c538-533b-4be4-a422-df76effeac24"
+    },
+    {
+      "parameters": {
+        "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments.json?include=users&per_page=100",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.next_page }}"
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -48,
+        -16
+      ],
+      "id": "14bc35cb-5426-46ab-8d68-ee54ca5c3840",
+      "name": "Get_Case_Comment",
+      "credentials": {
+        "zendeskApi": {
+          "id": "REPLACE_WITH_ZENDESK_CREDENTIAL_ID",
+          "name": "REPLACE_WITH_ZENDESK_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataToSave": {
+          "values": [
+            {
+              "key": "ticket",
+              "value": "={{ $json.body.detail.id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executionData",
+      "typeVersion": 1.1,
+      "position": [
+        -720,
+        80
+      ],
+      "id": "e1ced965-c832-4e59-8518-d83d7f4ea83f",
+      "name": "Execution Data"
+    },
+    {
+      "parameters": {
+        "url": "=https://support.stellarix.space/production/api/integrations/zendesk/account-cases/{{ $json.body.detail.id }}/comment-sync-target",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "dd8d27e6-cc9f-40da-9ebb-c25c3b783d1e",
+      "name": "prodCase membership check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -496,
+        176
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "2_SupportPortal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f6e5b090-399b-438f-85d5-e86318fec765",
+              "leftValue": "={{ $json.is_account_case }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "188cb025-d082-480c-a10e-80b567b33637",
+      "name": "Is prodCase",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -272,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments.json?include=users&per_page=100",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body.next_page }}"
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zendeskApi"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -48,
+        176
+      ],
+      "id": "1fc7e09d-d500-4a40-a55d-51d12bbdf73b",
+      "name": "Get_Case_Comment2",
+      "credentials": {
+        "zendeskApi": {
+          "id": "REPLACE_WITH_ZENDESK_CREDENTIAL_ID",
+          "name": "REPLACE_WITH_ZENDESK_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $input.all().map(item => item.json || {});\nconst webhookBody = $('Zen_New_Comment_Webhook').first().json?.body || {};\n\nif (!pages.length) {\n  throw new Error('Get_Case_Comment returned no pages');\n}\n\nconst comments = pages.flatMap(page =>\n  Array.isArray(page.comments) ? page.comments : []\n);\n\nconst users = pages.flatMap(page =>\n  Array.isArray(page.users) ? page.users : []\n);\n\nif (!comments.length) {\n  throw new Error('Zendesk comments response is empty');\n}\n\nconst firstCount = pages[0]?.count;\nconst expectedCount =\n  firstCount === null || firstCount === undefined || firstCount === ''\n    ? null\n    : Number(firstCount);\n\nconst lastPage = pages[pages.length - 1];\n\nif (\n  lastPage.next_page != null ||\n  (\n    expectedCount !== null &&\n    Number.isFinite(expectedCount) &&\n    comments.length !== expectedCount\n  )\n) {\n  throw new Error(\n    `Zendesk comment snapshot is incomplete: expected=${expectedCount}, received=${comments.length}`\n  );\n}\n\nconst userById = new Map(\n  users\n    .filter(user => user && user.id !== null && user.id !== undefined)\n    .map(user => [String(user.id), user])\n);\n\nfunction staffFlag(value) {\n  if (!value || typeof value !== 'object') {\n    return null;\n  }\n\n  if (typeof value.is_staff === 'boolean') {\n    return value.is_staff;\n  }\n\n  if (typeof value.is_agent === 'boolean') {\n    return value.is_agent;\n  }\n\n  const role = String(value.role || '').trim().toLowerCase();\n\n  if (['agent', 'admin', 'staff', 'support'].includes(role)) {\n    return true;\n  }\n\n  if (['end-user', 'end_user', 'customer', 'requester', 'user'].includes(role)) {\n    return false;\n  }\n\n  return null;\n}\n\nconst eventComment = webhookBody.event?.comment || {};\nconst eventCommentId = String(eventComment.id || '');\nconst eventAuthor =\n  eventComment.author && typeof eventComment.author === 'object'\n    ? eventComment.author\n    : {};\n\nconst commentsPayload = comments.map(comment => {\n  const commentId = String(comment.id);\n  const commentAuthorId =\n    comment.author_id === null || comment.author_id === undefined\n      ? null\n      : String(comment.author_id);\n\n  const currentAuthor =\n    commentId === eventCommentId\n      ? eventAuthor\n      : {};\n\n  const currentAuthorId =\n    commentAuthorId || (\n      currentAuthor.id === null || currentAuthor.id === undefined\n        ? null\n        : String(currentAuthor.id)\n    );\n\n  const user = currentAuthorId\n    ? userById.get(currentAuthorId)\n    : null;\n\n  const userIsAgent = staffFlag(user);\n  const webhookIsAgent =\n    commentId === eventCommentId\n      ? staffFlag(currentAuthor)\n      : null;\n\n  if (\n    userIsAgent !== null &&\n    webhookIsAgent !== null &&\n    userIsAgent !== webhookIsAgent\n  ) {\n    throw new Error(`Author identity conflict for comment ${commentId}`);\n  }\n\n  const isAgent =\n    userIsAgent !== null\n      ? userIsAgent\n      : webhookIsAgent;\n\n  const role =\n    isAgent === true\n      ? 'agent'\n      : isAgent === false\n        ? 'end-user'\n        : 'unknown';\n\n  const isPublic =\n    typeof comment.public === 'boolean'\n      ? comment.public\n      : comment.is_public === true;\n\n  return {\n    id: comment.id,\n    public: isPublic,\n    author: {\n      id: currentAuthorId,\n      name: user?.name || comment.author_name || currentAuthor.name || null,\n      role,\n      is_agent: isAgent\n    },\n    body: String(comment.body ?? comment.plain_body ?? ''),\n    via_channel: comment.via?.channel ?? null,\n    created_at: comment.created_at\n  };\n});\n\nconst latestCommentAt = comments\n  .map(comment => String(comment.created_at || '').trim())\n  .filter(Boolean)\n  .sort()\n  .at(-1);\n\nconst sourceUpdatedAt = String(\n  webhookBody.detail?.updated_at ||\n  webhookBody.time ||\n  latestCommentAt ||\n  ''\n).trim();\n\nif (!sourceUpdatedAt) {\n  throw new Error('source_updated_at is missing');\n}\n\nreturn [\n  {\n    json: {\n      source_updated_at: sourceUpdatedAt,\n      snapshot_complete: true,\n      trigger_comment_id: eventCommentId, \n      comments: commentsPayload\n    }\n  }\n];"
+      },
+      "id": "a0e7c708-756a-4e55-950d-715181dd7d7c",
+      "name": "Build complete comment snapshot1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://support.stellarix.space/production/api/integrations/zendesk/account-cases/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "57d2f356-2447-4215-8fba-faa17a8daa61",
+      "name": "Sync comments to prod",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        176
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "2_SupportPortal"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Account Case membership check": {
+      "main": [
+        [
+          {
+            "node": "Is Account Case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Account Case": {
+      "main": [
+        [
+          {
+            "node": "Get_Case_Comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build complete comment snapshot": {
+      "main": [
+        [
+          {
+            "node": "Sync comments to SupportPortal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zen_New_Comment_Webhook": {
+      "main": [
+        [
+          {
+            "node": "Execution Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Case_Comment": {
+      "main": [
+        [
+          {
+            "node": "Build complete comment snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execution Data": {
+      "main": [
+        [
+          {
+            "node": "Account Case membership check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "prodCase membership check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prodCase membership check": {
+      "main": [
+        [
+          {
+            "node": "Is prodCase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is prodCase": {
+      "main": [
+        [
+          {
+            "node": "Get_Case_Comment2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Case_Comment2": {
+      "main": [
+        [
+          {
+            "node": "Build complete comment snapshot1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build complete comment snapshot1": {
+      "main": [
+        [
+          {
+            "node": "Sync comments to prod",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "fa788fe0-ca29-4873-9417-cc62f50b553b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9c1c5da9c01a69cb97c8bfcdda5d8c958bfec33f069adf496d62e9901ce5455b"
+  },
+  "id": "REPLACE_WITH_WORKFLOW_ID",
+  "tags": []
+}
