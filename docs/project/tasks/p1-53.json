@@ -1,21 +1,22 @@
 {
   "schema_version": 2,
   "task_id": "p1-53",
-  "title": "Automation 三环境迁移至 ECS",
+  "title": "Production 优先的 Automation 三环境迁移至 ECS",
   "status": "active",
   "owner": "zac",
-  "summary": "将 Staging、Preproduction、Production 三环境全部迁移到 ECS Fargate：从干净 commit 构建可追溯的 route/API/worker 镜像并推送 ECR，按 Staging → Preproduction → Production 晋升受控 release；Production 使用相同 image digest 与 Prompt Release进行 ECS 蓝绿部署。EC2 直接下线三套 split runtime及公网路径，只保留主栈和独立的现有 /production；数据库与 Docker volumes 保留。正式 Case是否进入 ECS Production由 n8n workflow publish状态控制。",
-  "next_action": "EC2 split runtime下线与 main-only部署门禁已完成；下一步确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Route53 hosted zone、三环境域名和 GitHub Actions OIDC权限，随后实现 ECR/ECS/Terraform发布链并先部署 ECS Staging。",
+  "summary": "按 Production → Preproduction → Staging 的顺序将 Automation 环境迁移到 ECS Fargate。迁移阶段 1 先从干净 commit 构建 production-safe route/API/worker 镜像并推送 ECR，直接建立 ECS Production并从现有 EC2 /production受控切换；迁移阶段 2 再建立同构隔离的 Preproduction，使后续 production-safe release先验收后以同一 digest晋升；迁移阶段 3 最后建立允许 rerun/reset的 ECS Staging。EC2 split runtime及公网路径已下线，现有 EC2 /production在第一阶段切换完成前保持独立运行。",
+  "next_action": "迁移阶段 1：确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Production域名、Route53 hosted zone和 GitHub Actions OIDC权限；随后只建设共享 ECR/IAM/观测基础与 ECS Production所需的 Terraform、production-safe构建发布链和 n8n受控切换门禁，暂不创建 Preproduction或 Staging资源。",
   "acceptance_criteria": [
-    "ECS Staging使用独立 Service、Redis、数据库身份、凭据和入口接收 n8n测试 Case；Staging保留 rerun/reset且 Zendesk副作用关闭。",
     "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
-    "ECR repository启用 immutable tag与扫描；每个 release manifest持久化 commit、route/API/worker/RAG image digest和 prompt_release_id，Preproduction验收后 Production禁止重新 build或替换 digest。",
-    "Terraform建立同一 Region/VPC内的三套 ECS Fargate环境、公开 ALB、ACM、ECR、分环境 ElastiCache、Secrets Manager、CloudWatch、EFS token cache与最小权限 IAM；运行任务位于 private subnet且无公网 IP，schema bootstrap使用不进入长期 task的独立 DDL凭据。",
-    "Preproduction与 Production使用独立 ECS Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat，Production API与 worker均具备无单点的最小健康副本数。",
-    "Preproduction接收 n8n筛选的测试 Case，完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback；只有上述证据与运行 provenance匹配时 release才可标记 approved_for_production。",
-    "Production读取已批准的同一 manifest创建 green task set，依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁后才开放 endpoint；后续发布由 ECS/CodeDeploy完成预热、流量切换、旧 task排空与失败回滚。",
-    "EC2 的三套 split runtime、split网络与公网路径完成下线，常规和每日 EC2部署只管理主栈；历史数据库与 Docker volumes保留，现有 EC2 /production不切换或重启。",
-    "首次 ECS Production上线不切换或重启旧 EC2 /production；新 endpoint健康后才 publish对应 n8n workflow，旧 workflow unpublish只停止新 Case进入，旧环境既有异步任务仍按独立排空流程处理。",
+    "ECR repository启用 immutable tag与扫描；每个 production-safe release manifest持久化 commit、route/API/worker/RAG image digest和 prompt_release_id，已发布 digest禁止重新 build或覆盖。",
+    "迁移阶段 1 的 Terraform只建立共享 ECR/IAM/观测基础和 ECS Production所需的 Fargate、ALB、ACM、ElastiCache、Secrets Manager、CloudWatch与 EFS token cache；运行任务位于 private subnet且无公网 IP，schema bootstrap使用不进入长期 task的独立 DDL凭据。",
+    "ECS Production使用独立 Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat，Production API与 worker均具备无单点的最小健康副本数。",
+    "迁移阶段 1 不等待 Preproduction或 Staging：Production green task set依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁，再由 n8n筛选少量测试 Case完成真实行为与外部 readback验收；通过后才 publish正式 Case指向 ECS endpoint的 workflow并停止新 Case进入 EC2 workflow。",
+    "ECS Production切换后，旧 EC2 /production先完成既有同步请求与异步队列排空；观察期内可通过 n8n workflow恢复入口，验收稳定后再退役旧 runtime，回滚不得重放已完成的外部副作用。",
+    "迁移阶段 2 建立与 Production隔离但配置同构的 ECS Preproduction，包括独立 Service、RDS schema、Redis、queue/channel、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
+    "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
+    "迁移阶段 3 建立独立 ECS Staging并接收 n8n测试 Case；Staging可使用包含 rerun/reset且关闭 Zendesk副作用的 staging-only镜像，该镜像不得晋升到 Preproduction或 Production。",
+    "EC2 的三套 split runtime、split网络与公网路径已完成下线，常规和每日 EC2部署只管理主栈；该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
     "GitHub Actions使用 AWS OIDC而非长期 access key，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
   ],
   "blockers": [],
@@ -49,6 +50,12 @@
       "label": "EC2 split runtime decommissioned",
       "command": "EC2 main-only deploy + exact Compose project/container/network retirement + public readback",
       "details": "EC2运行 fd345c92ac79：/health与/production为200，/automation/staging、preproduction、production为410，/automation/test保留301；五个split project共14个容器和四个split网络已删除，四个历史named volumes保留。主栈及production runtime共10个容器running且RestartCount=0，Nginx仅连接deployment_default；timer active/enabled，oneshot service inactive，近30分钟无split build/deploy/verify动作。"
+    },
+    {
+      "type": "decision",
+      "label": "Production-first ECS rollout order",
+      "command": "Architecture discussion 2026-08-26",
+      "details": "迁移顺序调整为 Production → Preproduction → Staging。第一阶段直接迁移现有 EC2 /production到 ECS且不依赖后两个环境；第二阶段再建立 Preproduction验收与同 digest晋升；第三阶段建立允许测试功能的独立 ECS Staging。"
     }
   ],
   "source_refs": [
@@ -61,7 +68,7 @@
     "docs/integrations/n8n/automation_environments_cutover.md"
   ],
   "created_at": "2026-08-25",
-  "updated_at": "2026-08-25",
+  "updated_at": "2026-08-26",
   "history": [
     {
       "at": "2026-08-25",
@@ -82,6 +89,11 @@
       "at": "2026-08-25",
       "event": "progress",
       "summary": "EC2 split下线完成：14个容器与四个网络删除，历史volumes保留；main与/production健康，三条旧路径410，定时部署收敛为main-only。p1-53继续active，后续工作转为ECS三环境基础设施与发布链。"
+    },
+    {
+      "at": "2026-08-26",
+      "event": "replanned",
+      "summary": "用户调整 ECS实施顺序：迁移阶段 1 先将现有 Production从 EC2迁移到 ECS，阶段 2建立 Preproduction，阶段 3最后建立 Staging；第一阶段不依赖后两个环境。"
     }
   ],
   "legacy_refs": [
