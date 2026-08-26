@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T02:51:56Z",
-  "source_base_commit": "90c0562f07ce9a9382ad826a8962f6d231d41b8c",
-  "registry_digest": "3460f5607d8df98e9ce92b281cdab38f52d123055d9b472ce6a6c52b739e2e7d",
+  "generated_at": "2026-08-26T03:10:14Z",
+  "source_base_commit": "24122e67364b9ac5b365c5726196ab04a679645c",
+  "registry_digest": "0fc862eddd4657bd61c63969c51557a036cc35dadb3fbbde7ccf97ebe24b049c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1996,6 +1996,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "review 未发现需修复的功能性问题。"
         },
         {
+          "type": "deployment",
+          "label": "Revert deploy + controlled acceptance (PR#965)",
+          "command": "ssh zacbot 'cd ~/SupportPortal && bash scripts/ops/deploy_surfaces_ec2.sh --branch main --skip-split'；psql production outbox 查询；POST /automation-test/tickets（建单）+ /tickets/4/refresh",
+          "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=xieziling@agora.io delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -2340,7 +2346,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 22,
-      "done_count": 8,
+      "done_count": 9,
       "blocked_count": 0
     },
     {
@@ -2377,6 +2383,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "staging 与 production 两库均输出 migration applied；随后容器内 GET /api/automation-test/scenarios 复验（部署 p2-103 镜像后）。"
         },
         {
+          "type": "deployment",
+          "label": "Console fixes live retest (deploy 24122e6)",
+          "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
+          "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
+        },
+        {
           "type": "test",
           "label": "Console API + UI contract + prefix-safety",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
@@ -2404,9 +2416,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/testing/production_ticket_regression_runbook.md"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 4,
-      "done_count": 3,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -6115,10 +6127,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-103",
       "title": "修复：automation test 建表走迁移 DSN + 双库迁移 SQL（runtime 角色无 CREATE 权限）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "p2-102 的读路径懒 ensure 在本地官方栈暴露第二层问题：runtime 角色（supportportal_runtime）对 supportportal schema 无 CREATE 权限，且 CREATE TABLE IF NOT EXISTS 对已存在表也先查权限——GET /scenarios 仍 500（InsufficientPrivilege）。修复三件套：① ensure_schema 先用 runtime DSN to_regclass 探测表存在即跳过 DDL；② 需要建表时 DDL 走迁移 DSN（AUTOMATION_TEST_MIGRATION_DSN/TICKET_DB_MIGRATION_DSN，且仅当其库名与 runtime DSN 一致才用，防 api_production 容器里误建到 staging 库）；③ 新增 backend/sql/migrations/2026_08_23_automation_test_console.sql（两张表+授权）并按仓库惯例手工双库执行（staging+production 均已应用）。",
-      "next_action": "部署后复测 production 控制台建单（不再 500）与 refresh 端点（200），补 evidence 置 done。",
+      "next_action": "",
       "acceptance_criteria": [
         "表已存在时（迁移建好）读路径 ensure 直接跳过 DDL，GET /tickets 与 /scenarios 在无 CREATE 权限的 runtime 角色下返回 200。",
         "表不存在时 DDL 尝试走迁移 DSN（同库才用）；迁移 SQL 文件可重复执行（IF NOT EXISTS + 授权）。"
@@ -6136,6 +6148,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Dual-DB migration executed",
           "command": "psycopg execute backend/sql/migrations/2026_08_23_automation_test_console.sql via TICKET_DB_MIGRATION_DSN (staging) and same master creds on /supportportal_production",
           "details": "staging 与 production 两库均输出 migration applied；随后容器内 GET /api/automation-test/scenarios 复验（部署 p2-103 镜像后）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Console fixes live retest (deploy 24122e6)",
+          "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
+          "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
         }
       ],
       "source_refs": [
@@ -6143,7 +6161,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/sql/migrations/2026_08_23_automation_test_console.sql"
       ],
       "created_at": "2026-08-23",
-      "updated_at": "2026-08-25",
+      "updated_at": "2026-08-26",
       "history": [
         {
           "at": "2026-08-23",
@@ -6154,6 +6172,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "reopened",
           "summary": "三案回归暴露两存量缺陷：①2026_08_23 migration 只授了表权限、漏了 BIGSERIAL 序列 GRANT，production 建单 500（permission denied for sequence automation_test_tickets_id_seq；staging 当年手工补过未回写文件）。已现场对两库补 GRANT，并新增 2026_08_25_automation_test_console_sequence_grant.sql 保新环境（scenario_runs 为 TEXT 主键无序列）。②automation_test_store.py get_ticket/get_run 在 cursor 关闭后读 description，读到任何已存在行必 TypeError → refresh 端点 500；修复为块内读取列名并新增 PG 集成回归测试。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "completed",
+          "summary": "PR#962（序列 GRANT migration 补丁 + store closed-cursor 修复）随 24122e6 部署后 live 复测通过：POST 建单 tracking-id=4 send_status=sent（无 500，序列权限实证）；refresh 端点 200 且正确关联 Zendesk 13026（此前该调用必 500，store 修复实证）。"
         }
       ],
       "legacy_refs": [
@@ -7138,10 +7161,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-119",
       "title": "Production Automation 分类邮件通知",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；suhrid/emmazhong+cc 属于各流程内部 review 邮件的既有契约）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
-      "next_action": "回退 PR 部署后以受控工单验证分类邮件仅发 xieziling（无 cc），补 evidence 置 done。",
+      "next_action": "",
       "acceptance_criteria": [
         "Production active Automation Case 只创建一条分类邮件通知，收件人固定为 xieziling@agora.io，不按分类路由、不 cc；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
         "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
@@ -7168,6 +7191,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implemented plan review",
           "command": "review-implemented-plan skill",
           "details": "review 未发现需修复的功能性问题。"
+        },
+        {
+          "type": "deployment",
+          "label": "Revert deploy + controlled acceptance (PR#965)",
+          "command": "ssh zacbot 'cd ~/SupportPortal && bash scripts/ops/deploy_surfaces_ec2.sh --branch main --skip-split'；psql production outbox 查询；POST /automation-test/tickets（建单）+ /tickets/4/refresh",
+          "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=xieziling@agora.io delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
         }
       ],
       "source_refs": [
@@ -7200,6 +7229,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "recipient_routing_reverted",
           "summary": "用户上线验证指出 PR#961 把内部 review 邮件的路由契约（suspension/fraud→suhrid、enablement→emmazhong、cc xieziling）误套到分类通知邮件：13017 的分类邮件被发到 zhonghuang@agora.io（无害噪音，已送达不回收）。内部邮件链路经核实本就正确（13007 实证 to=suhrid.das+cc xieziling）。回退收件人路由与 worker cc，恢复仅发 xieziling；保留 account_billing eligibility 与 automation_status=automation 门槛（原始缺陷的正确修复）。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "completed",
+          "summary": "PR#965（24122e6）回退收件人路由并部署 EC2；受控验收 Zendesk 13026（suspension 新案）：分类邮件 outbox recipient=xieziling@agora.io、无 cc、delivered、零失败；已关闭存量 case（13011）未因重保存迟发（automation_status 门槛实证）。elibility 修复（account_billing+active 门槛）保留并经 13026 复验。"
         }
       ],
       "legacy_refs": [],
