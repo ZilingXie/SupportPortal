@@ -112,6 +112,7 @@ class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
             snapshot = read_ticket_ownership_snapshot(ticket_id="12875")
 
         self.assertFalse(snapshot.required_field_missing)
+        self.assertTrue(snapshot.comments_revision)
 
     def test_already_assigned_does_not_put(self) -> None:
         responses = [

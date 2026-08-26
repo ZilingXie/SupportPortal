@@ -96,6 +96,7 @@ from backend.services.zendesk_comments import (
 from backend.services.zendesk_ticket_assignment import (
     ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV,
     assign_ticket_to_reviewer,
+    read_ticket_ownership_snapshot,
 )
 from backend.services.account_zendesk_internal_comment import (
     AccountZendeskInternalCommentError,
@@ -1728,6 +1729,24 @@ def _deliver_engineer_approved_zendesk_comment(delivery: dict[str, Any]) -> None
             str((ticket_repository.get_account_case(account_case_id) or {}).get("client_ticket_id") or "")
         )
         current_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        if not current_revision:
+            try:
+                current_revision = str(
+                    read_ticket_ownership_snapshot(
+                        ticket_id=zendesk_ticket_id,
+                    ).comments_revision
+                    or ""
+                ).strip()
+            except ZendeskCommentError as exc:
+                LOGGER.warning(
+                    "engineer_zendesk_revision_verify_failed ticket_id=%s account_case_id=%s "
+                    "message_id=%s failure_code=%s",
+                    zendesk_ticket_id,
+                    account_case_id,
+                    message_id,
+                    exc.error_code,
+                )
+                return
         if current_revision != str(delivery.get("comments_revision") or "").strip():
             ticket_repository.complete_account_zendesk_comment_delivery(
                 account_case_id=account_case_id,

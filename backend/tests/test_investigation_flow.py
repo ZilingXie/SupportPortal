@@ -4883,11 +4883,6 @@ class InvestigationFlowTests(unittest.TestCase):
                 "created_at": "2026-08-24T00:00:00+00:00",
             }
         )
-        self.repository._account_case_comment_sync["TK-SLACK-ACTION-1"] = {
-            "comments_revision": "comments-rev-1",
-            "comment_count": 1,
-            "synced_at": "2026-08-24T00:00:30+00:00",
-        }
         guardrail_packet = {
             "guardrail_id": "GRD-SLACK-1",
             "guardrail_version": "engineer-guardrail-final-v1",
@@ -4908,7 +4903,11 @@ class InvestigationFlowTests(unittest.TestCase):
         }
         with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
             main, "run_engineer_guardrail_final", return_value=guardrail_packet
-        ):
+        ), patch.object(
+            main,
+            "read_ticket_ownership_snapshot",
+            return_value=types.SimpleNamespace(comments_revision="comments-rev-1"),
+        ) as read_snapshot:
             stale = self.client.post(
                 "/api/integrations/slack/engineer-cases/actions",
                 headers=headers,
@@ -4947,6 +4946,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(guardrail.json()["status"], "guardrail_passed")
         self.assertEqual(final.status_code, 200, final.text)
         self.assertEqual(final.json()["status"], "delivery_queued")
+        read_snapshot.assert_called_once_with(ticket_id="12888")
         self.assertEqual(duplicate_final.status_code, 409, duplicate_final.text)
         stored_case = self.repository.get_engineer_case("TK-SLACK-ACTION-1-1")
         assert stored_case is not None

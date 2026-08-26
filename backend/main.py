@@ -273,6 +273,7 @@ from backend.services.zendesk_ticket_assignment import (
     ZendeskAssignmentResult,
     ZendeskRouteBackResult,
     assign_ticket_to_configured_ai,
+    read_ticket_ownership_snapshot,
     route_ticket_back_to_queue,
 )
 from backend.services.account_case_filters import (
@@ -14445,14 +14446,26 @@ async def post_slack_engineer_case_action(
         account_case = ticket_repository.get_account_case_by_ticket_id(str(ticket.get("ticket_id") or ""))
         if not isinstance(account_case, dict) or str(account_case.get("processing_profile") or "").lower() != "production":
             raise HTTPException(status_code=409, detail="Production Account Case is required")
-        sync_state = ticket_repository.get_account_case_comment_sync(str(ticket.get("ticket_id") or ""))
-        comments_revision = str((sync_state or {}).get("comments_revision") or "").strip()
-        if not comments_revision:
-            raise HTTPException(status_code=409, detail="Zendesk comments snapshot is required before approval")
         account_case_id = str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
         zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
         if not account_case_id or not zendesk_ticket_id or not approved_content:
             raise HTTPException(status_code=409, detail="Zendesk delivery target is incomplete")
+        sync_state = ticket_repository.get_account_case_comment_sync(str(ticket.get("ticket_id") or ""))
+        comments_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        if not comments_revision:
+            try:
+                zendesk_snapshot = await async_to_thread(
+                    read_ticket_ownership_snapshot,
+                    ticket_id=zendesk_ticket_id,
+                )
+            except ZendeskCommentError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Unable to verify Zendesk comments before approval",
+                ) from exc
+            comments_revision = str(zendesk_snapshot.comments_revision or "").strip()
+        if not comments_revision:
+            raise HTTPException(status_code=409, detail="Zendesk comments snapshot is required before approval")
 
         approval_message = build_internal_message(
             request.investigation_id,

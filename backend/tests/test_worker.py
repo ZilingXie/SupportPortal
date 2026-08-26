@@ -846,6 +846,42 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(stored_ticket["status"], "communicating")
         self.assertEqual(stored_ticket["messages"][-1]["content"], "Please upgrade and retry.")
 
+    def test_engineer_delivery_reads_zendesk_revision_when_local_snapshot_is_missing(self) -> None:
+        repository = Mock()
+        delivery = {
+            "source": "engineer",
+            "account_case_id": "AC-ENG-LIVE-REV",
+            "message_id": "approval-live-rev",
+            "engineer_case_id": "EC-ENG-LIVE-REV",
+            "investigation_id": "EC-ENG-LIVE-REV-round-1",
+            "draft_version": 1,
+            "comments_revision": "live-revision",
+            "immutable_content": "Approved reply",
+            "zendesk_ticket_id": "12892",
+            "status": "queued",
+        }
+        repository.get_account_case.return_value = {"client_ticket_id": "TK-ENG-LIVE-REV"}
+        repository.get_account_case_comment_sync.return_value = None
+        repository.claim_account_zendesk_comment_delivery.return_value = {"claimed": True}
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "read_ticket_ownership_snapshot",
+            return_value=types.SimpleNamespace(comments_revision="live-revision"),
+        ) as read_snapshot, patch.object(
+            worker,
+            "add_ticket_comment",
+            return_value=types.SimpleNamespace(comment_id="comment-live-rev"),
+        ) as add_comment, patch.object(worker, "_complete_engineer_delivery_round"):
+            worker._deliver_engineer_approved_zendesk_comment(delivery)
+
+        read_snapshot.assert_called_once_with(ticket_id="12892")
+        add_comment.assert_called_once_with(
+            ticket_id="12892",
+            body="Approved reply",
+            public=True,
+            solve=False,
+        )
+
     def test_delivery_is_not_put_twice_after_first_completion(self) -> None:
         repository = Mock()
         repository.get_account_case_by_ticket_id.return_value = {
