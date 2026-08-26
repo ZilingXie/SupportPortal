@@ -69,6 +69,7 @@ class ZendeskOwnershipSnapshot:
     blocking_comment_id: str | None
     unresolved_public_comment_id: str | None
     required_field_missing: bool = True
+    comments_revision: str = ""
 
 
 def _assignment_required_field_missing(ticket: dict[str, Any]) -> bool:
@@ -462,6 +463,7 @@ def read_ticket_ownership_snapshot(
         blocking_comment_id=blocking_comment_id,
         unresolved_public_comment_id=unresolved_public_comment_id,
         required_field_missing=_assignment_required_field_missing(ticket),
+        comments_revision=snapshot.comments_revision,
     )
 
 

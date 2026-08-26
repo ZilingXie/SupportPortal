@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T04:29:22Z",
-  "source_base_commit": "c4c3b368facd3af1fad67b94803b5965199bb32e",
-  "registry_digest": "f3cd806afff2ee2598b66aabce0f111229fcb24f096c9ca93be3873af7d705c1",
+  "generated_at": "2026-08-26T04:50:15Z",
+  "source_base_commit": "d856ea2f0597f267866606bc0173a2a822a356c5",
+  "registry_digest": "73b30bcc0f0bf15aff9726747f91fbe2e4e4b5556b6a557aba294e785e78597f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2592,6 +2592,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "summary": "Production ticket 13023 pinned default-support v1, generated engineer-guided-persona-v1 draft v1 with gpt-5.6-luna, delivered the response to Slack thread 1787712799.749409, and passed Guardrail with persisted human guidance evidence. Final Approve was safely blocked before Zendesk write because PostgreSQL reconstructed awaiting_confirmation instead of the persisted awaiting_final_approval agent phase.",
           "ref": "https://support.stellarix.space/production/; engineer case 13023-1; live-p2-68-13023-c4c3b36"
+        },
+        {
+          "type": "test",
+          "summary": "Final Approve and worker now read the current Zendesk comments revision when the initial n8n comment snapshot is absent, while preserving stale-revision cancellation and fail-closed delivery. Targeted Slack action, worker, and Zendesk snapshot tests passed; the two unrelated multi-agent cases also passed with their required feature flag enabled.",
+          "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, backend/tests/test_zendesk_ticket_assignment.py"
         },
         {
           "type": "test",
@@ -8937,7 +8942,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "unassigned",
       "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
-      "next_action": "finalize 并部署 PostgreSQL awaiting_final_approval 状态重建修复；随后在 ticket 13023 的同一 draft/version 上重跑 Guardrail、Final Approve、Zendesk public readback 和工单状态不变验收。Slack Interaction workflow 仍需独立确认。",
+      "next_action": "finalize 并部署初始 Zendesk comment revision 只读回源修复；随后在 ticket 13023 的同一 draft/version 上重跑 Final Approve、Zendesk public readback 和工单状态不变验收。Slack Interaction workflow 仍需独立确认。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
         "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
@@ -8969,6 +8974,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "summary": "Production ticket 13023 pinned default-support v1, generated engineer-guided-persona-v1 draft v1 with gpt-5.6-luna, delivered the response to Slack thread 1787712799.749409, and passed Guardrail with persisted human guidance evidence. Final Approve was safely blocked before Zendesk write because PostgreSQL reconstructed awaiting_confirmation instead of the persisted awaiting_final_approval agent phase.",
           "ref": "https://support.stellarix.space/production/; engineer case 13023-1; live-p2-68-13023-c4c3b36"
+        },
+        {
+          "type": "test",
+          "summary": "Final Approve and worker now read the current Zendesk comments revision when the initial n8n comment snapshot is absent, while preserving stale-revision cancellation and fail-closed delivery. Targeted Slack action, worker, and Zendesk snapshot tests passed; the two unrelated multi-agent cases also passed with their required feature flag enabled.",
+          "ref": "backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, backend/tests/test_zendesk_ticket_assignment.py"
         }
       ],
       "source_refs": [
@@ -9011,6 +9021,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "production_state_gap_found",
           "summary": "真实 Guardrail 通过后发现 PostgreSQL 仅按 final_confirmation_requested_at 重建 state，导致 awaiting_final_approval 丢失并安全阻断 Final Approve；开始修复 repository 状态重建。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "initial_comment_revision_gap_found",
+          "summary": "状态重建修复部署后，真实 Final Approve 继续安全阻断于缺失初始 Zendesk comments_revision；增加仅在本地 comment-sync 缺失时的 Zendesk 只读 revision 回源，并在 worker 写入前再次校验。"
         }
       ],
       "legacy_refs": [
