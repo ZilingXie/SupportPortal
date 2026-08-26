@@ -1859,6 +1859,20 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertNotIn("detailed_invoice", statement)
         self.assertNotIn("fraud_account", statement)
 
+    def test_automation_test_console_sequence_grant_migration_covers_runtime_role(self) -> None:
+        migration = Path(
+            "backend/sql/migrations/2026_08_25_automation_test_console_sequence_grant.sql"
+        ).read_text(encoding="utf-8")
+        statement = migration.split("GRANT", 1)[1]
+
+        self.assertIn(
+            "USAGE ON SEQUENCE supportportal.automation_test_tickets_id_seq",
+            statement,
+        )
+        self.assertIn("TO supportportal_runtime", statement)
+        # scenario_runs has a TEXT primary key and must not be granted.
+        self.assertNotIn("scenario_runs", statement)
+
     def test_repository_initialize_no_longer_rewrites_account_automation_routing(self) -> None:
         repository = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
 
