@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T02:20:13Z",
-  "source_base_commit": "818ba6bb74b94c888fc9e4ae559120432f9bbc74",
-  "registry_digest": "e10fe9e87d3a4395ec730b317ce8ba0dcfe39917850ac32e27ca459341583246",
+  "generated_at": "2026-08-26T02:51:56Z",
+  "source_base_commit": "90c0562f07ce9a9382ad826a8962f6d231d41b8c",
+  "registry_digest": "3460f5607d8df98e9ce92b281cdab38f52d123055d9b472ce6a6c52b739e2e7d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7140,10 +7140,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production Automation 分类邮件通知",
       "status": "active",
       "owner": "codex",
-      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，按分类路由收件人（fraud_account/account_suspension→suhrid、enablement→emmazhong，统一 cc xieziling），内容为可信 Zendesk Case 链接、客户问题和 canonical classification path；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
-      "next_action": "实现 account_billing eligibility 与按分类路由收件人（fraud/suspension→suhrid、enablement→emmazhong，统一 cc xieziling），finalize 部署后以三类受控工单完成邮箱回读。",
+      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；suhrid/emmazhong+cc 属于各流程内部 review 邮件的既有契约）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
+      "next_action": "回退 PR 部署后以受控工单验证分类邮件仅发 xieziling（无 cc），补 evidence 置 done。",
       "acceptance_criteria": [
-        "Production active Automation Case 只创建一条分类邮件通知，收件人按分类路由：fraud_account/account_suspension→suhrid（BILLING_AUTOMATION_INTERNAL_EMAIL/ACCOUNT_SUSPENSION_EMAIL）、enablement→emmazhong（ENABLEMENT_AUTOMATION_INTERNAL_EMAIL），全部 cc xieziling（AUTOMATION_INTERNAL_EMAIL_CC）；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
+        "Production active Automation Case 只创建一条分类邮件通知，收件人固定为 xieziling@agora.io，不按分类路由、不 cc；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
         "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
         "staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不发送错误邮件，并保留可审计失败状态。",
         "Graph 200/202 标记 delivered；明确错误标记 failed；网络或 5xx 结果未知标记 outcome_unknown，禁止自动盲目重发。",
@@ -7179,7 +7179,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/tests/test_production_automation_classification_email.py"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-08-25",
+      "updated_at": "2026-08-26",
       "history": [
         {
           "at": "2026-08-25",
@@ -7195,6 +7195,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-25",
           "event": "reopened",
           "summary": "13005-13007 复验发现分类邮件 eligibility 白名单缺 account_billing：fraud/suspension 新案契约 category=account_billing（PR#960 修复启动污染后不再被改写成 automation），outbox 从未创建（Fraud 0/2、Suspension 0/2 vs Enablement 3/3），与本任务'每个 active Automation Case 一封通知'验收冲突。用户同日裁定收件人改为按分类路由（fraud/suspension→suhrid、enablement→emmazhong，cc xieziling）并加 automation_status=automation 门槛防已关闭案重保存迟发。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "recipient_routing_reverted",
+          "summary": "用户上线验证指出 PR#961 把内部 review 邮件的路由契约（suspension/fraud→suhrid、enablement→emmazhong、cc xieziling）误套到分类通知邮件：13017 的分类邮件被发到 zhonghuang@agora.io（无害噪音，已送达不回收）。内部邮件链路经核实本就正确（13007 实证 to=suhrid.das+cc xieziling）。回退收件人路由与 worker cc，恢复仅发 xieziling；保留 account_billing eligibility 与 automation_status=automation 门槛（原始缺陷的正确修复）。"
         }
       ],
       "legacy_refs": [],
