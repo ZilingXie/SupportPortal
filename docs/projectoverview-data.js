@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T02:08:57Z",
-  "source_base_commit": "d8d49adf590728af8d4cf829fc1caab710a4eb50",
-  "registry_digest": "6bf61a8396d42594af26820cdcae58fe65ed90e451d85f3c758702b8c3789fef",
+  "generated_at": "2026-08-26T02:11:49Z",
+  "source_base_commit": "62486b2932a8caacc505dcf4652b742aedfc3cf3",
+  "registry_digest": "966da436c4dfcad0f14982156d9c494555d9d9361781d5d71bf4ebce18d226f8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2393,9 +2393,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/testing/production_ticket_regression_runbook.md"
       ],
       "legacy_ids": [],
-      "status": "done",
+      "status": "active",
       "task_count": 4,
-      "done_count": 4,
+      "done_count": 3,
       "blocked_count": 0
     },
     {
@@ -6093,10 +6093,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-103",
       "title": "修复：automation test 建表走迁移 DSN + 双库迁移 SQL（runtime 角色无 CREATE 权限）",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
       "summary": "p2-102 的读路径懒 ensure 在本地官方栈暴露第二层问题：runtime 角色（supportportal_runtime）对 supportportal schema 无 CREATE 权限，且 CREATE TABLE IF NOT EXISTS 对已存在表也先查权限——GET /scenarios 仍 500（InsufficientPrivilege）。修复三件套：① ensure_schema 先用 runtime DSN to_regclass 探测表存在即跳过 DDL；② 需要建表时 DDL 走迁移 DSN（AUTOMATION_TEST_MIGRATION_DSN/TICKET_DB_MIGRATION_DSN，且仅当其库名与 runtime DSN 一致才用，防 api_production 容器里误建到 staging 库）；③ 新增 backend/sql/migrations/2026_08_23_automation_test_console.sql（两张表+授权）并按仓库惯例手工双库执行（staging+production 均已应用）。",
-      "next_action": "无（表已在双库存在，运行时 DDL 成为 no-op 兜底）。",
+      "next_action": "部署后复测 production 控制台建单（不再 500）与 refresh 端点（200），补 evidence 置 done。",
       "acceptance_criteria": [
         "表已存在时（迁移建好）读路径 ensure 直接跳过 DDL，GET /tickets 与 /scenarios 在无 CREATE 权限的 runtime 角色下返回 200。",
         "表不存在时 DDL 尝试走迁移 DSN（同库才用）；迁移 SQL 文件可重复执行（IF NOT EXISTS + 授权）。"
@@ -6121,12 +6121,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/sql/migrations/2026_08_23_automation_test_console.sql"
       ],
       "created_at": "2026-08-23",
-      "updated_at": "2026-08-23",
+      "updated_at": "2026-08-25",
       "history": [
         {
           "at": "2026-08-23",
           "event": "created",
           "summary": "p2-102 部署后复验仍 500：runtime 角色无 schema CREATE 权限且 IF NOT EXISTS 也查权限；按仓库迁移惯例（migration DSN+手工双库）修复并执行迁移。"
+        },
+        {
+          "at": "2026-08-25",
+          "event": "reopened",
+          "summary": "三案回归暴露两存量缺陷：①2026_08_23 migration 只授了表权限、漏了 BIGSERIAL 序列 GRANT，production 建单 500（permission denied for sequence automation_test_tickets_id_seq；staging 当年手工补过未回写文件）。已现场对两库补 GRANT，并新增 2026_08_25_automation_test_console_sequence_grant.sql 保新环境（scenario_runs 为 TEXT 主键无序列）。②automation_test_store.py get_ticket/get_run 在 cursor 关闭后读 description，读到任何已存在行必 TypeError → refresh 端点 500；修复为块内读取列名并新增 PG 集成回归测试。"
         }
       ],
       "legacy_refs": [
