@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from backend.services.account_route_pipeline import account_case_labels
 from backend.services.automation_intake_compat import zendesk_ticket_id_from_source
 from backend.services.automation_routing import ACTIVE_AUTOMATION_SUBCATEGORIES
-from backend.services.billing_automation import _destination_email_for_action
-from backend.services.enablement_automation import ENABLEMENT_INTERNAL_EMAIL_ENV
 
 
 PRODUCTION_AUTOMATION_CLASSIFICATION_EMAIL_RECIPIENT = "xieziling@agora.io"
@@ -30,18 +27,6 @@ def is_production_automation_classification(case: dict[str, Any]) -> bool:
         .lower()
         in ACTIVE_AUTOMATION_SUBCATEGORIES
     )
-
-
-def _classification_email_recipient(subcategory: str) -> str:
-    normalized = str(subcategory or "").strip().lower()
-    if normalized == "enablement":
-        return (
-            str(os.getenv(ENABLEMENT_INTERNAL_EMAIL_ENV) or "").strip()
-            or PRODUCTION_AUTOMATION_CLASSIFICATION_EMAIL_RECIPIENT
-        )
-    if normalized in {"fraud_account", "account_suspension"}:
-        return _destination_email_for_action(normalized)
-    return PRODUCTION_AUTOMATION_CLASSIFICATION_EMAIL_RECIPIENT
 
 
 def build_production_automation_classification_email(
@@ -96,9 +81,7 @@ def build_production_automation_classification_email(
         "zendesk_ticket_url": zendesk_ticket_url,
         "question": question,
         "classification_path": classification_path,
-        "recipient": _classification_email_recipient(
-            str(case.get("subcategory") or case.get("execution_action") or "")
-        ),
+        "recipient": PRODUCTION_AUTOMATION_CLASSIFICATION_EMAIL_RECIPIENT,
         "subject": subject,
         "body": body,
         "status": (
