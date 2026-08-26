@@ -3,23 +3,28 @@
   "function_id": "ecs-environment-migration",
   "phase_id": "phase-1",
   "module_id": "platform-delivery",
-  "title": "Production 优先的 ECS 三环境迁移",
-  "goal": "分三阶段完成 ECS 环境建设：先将现有 Production 从 EC2 迁移到 ECS，再建立 Preproduction，最后建立 Staging，并保持每个阶段可独立验收和回滚。",
+  "title": "Production 优先的三环境部署重构",
+  "goal": "分三阶段完成环境重构：先将现有 Production 从 EC2 迁移到 ECS，再建立 ECS Preproduction，最后在现有 EC2 上建立 Staging，并保持每个阶段可独立验收和回滚。",
   "acceptance_criteria": [
     "迁移阶段 1 不依赖 Preproduction 或 Staging，先以 production-safe ECR release 建立 ECS Production，完成预热、健康与 provenance 门禁、受控 n8n 切换、旧 EC2 请求排空和可回滚退役。",
     "迁移阶段 2 建立与 Production 隔离但配置同构的 ECS Preproduction；此后 production-safe release 先由 n8n 测试 Case 验收，再以同一组不可变 digest 晋升 Production。",
-    "迁移阶段 3 建立独立 ECS Staging；Staging 可使用包含 rerun/reset 的测试镜像，但该镜像及测试功能不得进入 Preproduction 或 Production。"
+    "迁移阶段 3 在现有 EC2 上建立独立 Staging；Staging 使用隔离的运行资源和包含 rerun/reset 的测试镜像，该镜像及测试功能不得进入 ECS Preproduction 或 Production。"
   ],
   "evidence": [
     {
       "type": "decision",
-      "label": "EC2 split environments retired",
-      "details": "2026-08-25 用户确认 Staging、Preproduction、Production 全部转为 ECS 承载；EC2 保留主栈与现有 /production，三条 /automation/* 路径下线。"
+      "label": "EC2 split environments retired under earlier target",
+      "details": "2026-08-25 用户在当时的全 ECS目标下确认退役 EC2 split环境；EC2保留主栈与现有 /production，三条 /automation/* 路径下线。Staging承载位置已由 2026-08-26的新决策改为现有 EC2。"
     },
     {
       "type": "decision",
       "label": "Production-first ECS rollout order",
       "details": "2026-08-26 用户将实施顺序调整为：先迁移现有 Production 从 EC2 到 ECS，第二阶段建立 Preproduction，第三阶段再建立 Staging。"
+    },
+    {
+      "type": "decision",
+      "label": "Staging remains on existing EC2",
+      "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
     }
   ],
   "source_refs": [
