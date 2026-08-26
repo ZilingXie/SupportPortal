@@ -211,10 +211,21 @@ class FraudReviewHandoffTests(unittest.TestCase):
     def _fraud_case(self) -> dict:
         return {
             "account_case_id": "AC-FRAUD",
+            "client_ticket_id": "12895",
             "processing_profile": "production",
             "zendesk_ticket_id": "12895",
             "route_family": "automated",
+            "route_status": "automated",
             "execution_action": "fraud_account",
+            "automation_handler": "billing",
+            "automation_context": {
+                "zendesk_ownership": {
+                    "state": "assigned",
+                    "assignee_id": "48557297720084",
+                    "group_id": "29388501432596",
+                    "source_group_id": "27216253642772",
+                }
+            },
         }
 
     def test_public_fraud_delivery_hands_off_to_reviewer(self) -> None:
@@ -270,6 +281,38 @@ class FraudReviewHandoffTests(unittest.TestCase):
         repository.save_account_case.assert_called_once()
         saved_case = repository.save_account_case.call_args.args[0]
         self.assertEqual(saved_case["automation_status"], "human_review_required")
+        self.assertEqual(saved_case["route_status"], "automated")
+        self.assertEqual(
+            saved_case["automation_context"]["zendesk_ownership"],
+            {
+                "state": "human_reassigned",
+                "assignee_id": "31116634341396",
+                "group_id": "27216254064148",
+                "failure_code": None,
+                "failure_category": None,
+                "zendesk_status_code": None,
+                "failure_detail": None,
+                "blocking_comment_id": None,
+                "source_assignee_id": None,
+                "source_group_id": "27216253642772",
+                "handoff_status": "assigned_to_reviewer",
+                "confirmed_at": None,
+                "updated_at": "2026-03-22T00:00:00+00:00",
+            },
+        )
+
+        repository.list_account_cases.return_value = [saved_case]
+        with patch(
+            "backend.services.account_human_review_escalation.escalate_account_case_to_human_review"
+        ) as escalate:
+            reconciled = worker.reconcile_account_human_review_queue_mismatches(
+                repository=repository,
+                processing_profile="production",
+                timestamp="2026-03-22T00:00:02+00:00",
+            )
+
+        self.assertEqual(reconciled, [])
+        escalate.assert_not_called()
 
     def test_public_fraud_missing_information_delivery_defers_handoff(self) -> None:
         repository = Mock()
@@ -299,6 +342,49 @@ class FraudReviewHandoffTests(unittest.TestCase):
         assign_reviewer.assert_not_called()
         repository.record_event.assert_not_called()
         repository.save_account_case.assert_not_called()
+
+    def test_already_assigned_reviewer_records_terminal_ownership(self) -> None:
+        repository = Mock()
+        account_case = self._fraud_case()
+        assignment = ZendeskAssignmentResult(
+            ticket_id="12895",
+            assignee_id="31116634341396",
+            assignee_email="xieziling@agora.io",
+            assignee_name="Xie Ziling",
+            group_id="27216254064148",
+            previous_group_id="27216254064148",
+            group_changed=False,
+            status_code=200,
+            already_assigned=True,
+        )
+
+        with patch.dict(
+            os.environ,
+            {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116634341396"},
+            clear=False,
+        ), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer", return_value=assignment
+        ):
+            worker._hand_off_fraud_review_after_public_reply(
+                account_case=account_case,
+                ticket_id="PRD-12895",
+                job_id="reply-fraud",
+                message_id="m-fraud",
+                reply_intent="fraud_handoff_confirmation",
+            )
+
+        event_payload = repository.record_event.call_args.args[2]
+        self.assertEqual(event_payload["state"], "already_assigned")
+        saved_case = repository.save_account_case.call_args.args[0]
+        ownership = saved_case["automation_context"]["zendesk_ownership"]
+        self.assertEqual(saved_case["automation_status"], "human_review_required")
+        self.assertEqual(saved_case["route_status"], "automated")
+        self.assertEqual(ownership["state"], "human_reassigned")
+        self.assertEqual(ownership["handoff_status"], "assigned_to_reviewer")
+        self.assertEqual(ownership["assignee_id"], "31116634341396")
+        self.assertEqual(ownership["group_id"], "27216254064148")
 
     def test_internal_fraud_delivery_does_not_hand_off(self) -> None:
         repository = Mock()

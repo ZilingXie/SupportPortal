@@ -5,13 +5,14 @@
   "status": "active",
   "owner": "zac",
   "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-  "next_action": "完成 AC-13018 单次追问修复的 review/finalize、官方栈与 EC2 main-only 部署，并用新 F1 Case 验证只发布一次缺失信息追问及 Zendesk 外部回读后关闭任务。",
+  "next_action": "完成 AC-13018 单次追问与 AC-13027 reviewer handoff reconciliation 修复的 review/finalize、官方栈与 EC2 main-only 部署，并用新 F1 Case 验证单次追问、正常 reviewer assignment 且无错误 reconciliation Internal comment 后关闭任务。",
   "acceptance_criteria": [
     "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
     "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
     "Slack 消息增加 Provided: 和 Missing: 行显示字段。",
     "客户追问缺失字段时，1-2 项以内嵌入自然句子，3 项及以上每项独立使用 bullet；不合规 Persona 输出不得发布。",
-    "客户首次追问后即使只补充部分信息，也不得再次公开追问缺失字段；系统直接进入内部交接，且整条 Case 仅存在一次 request_missing_information。"
+    "客户首次追问后即使只补充部分信息，也不得再次公开追问缺失字段；系统直接进入内部交接，且整条 Case 仅存在一次 request_missing_information。",
+    "Fraud 最终确认回复成功并 assign 给 reviewer 后，ownership 必须持久化为 human_reassigned、handoff_status 为 assigned_to_reviewer；route_status 保持 automated，且后续 reconciliation 不得写入 account_human_review_reconciliation Internal comment 或将 Case route back。"
   ],
   "blockers": [],
   "evidence": [
@@ -68,6 +69,12 @@
       "label": "AC-13018 PostgreSQL flattened asked-field single-follow-up regression",
       "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_repository_configuration.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_test_scenarios.py",
       "details": "326 项测试通过、11 个子测试通过；覆盖 PostgreSQL 将消息 meta 展平到顶层的读取契约、nested/top-level asked_field_keys 合并去重，以及 F1 首次追问后仅补部分字段时直接内部交接并断言全程只有一次 request_missing_information。"
+    },
+    {
+      "type": "test",
+      "label": "AC-13027 Fraud reviewer handoff reconciliation regression",
+      "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_account_human_review_escalation.py backend/tests/test_worker.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py",
+      "details": "350 项测试通过、32 个子测试通过；覆盖正常与 already-assigned reviewer handoff 统一写入 human_reassigned/assigned_to_reviewer、保留源 ownership、后续 reconciliation 不升级，以及真实 assigned mismatch 仍写 Internal note 并 route back。另覆盖 F1 等待 Zendesk 通知超时后使用 plus-address 继续下一客户回合，并确认取消或非超时异常不会误发 fallback 邮件。"
     }
   ],
   "source_refs": [
@@ -78,6 +85,8 @@
     "backend/services/account_slack_n8n.py",
     "backend/services/automation_persona.py",
     "backend/services/automation_account_reply_sync.py",
+    "backend/services/account_automation_ownership.py",
+    "backend/services/account_human_review_escalation.py",
     "backend/services/automation_test_scenarios.py",
     "backend/main.py",
     "backend/worker.py",
@@ -92,6 +101,11 @@
   "created_at": "2026-08-24",
   "updated_at": "2026-08-26",
   "history": [
+    {
+      "at": "2026-08-26",
+      "event": "fraud_reviewer_handoff_reconciliation_fix",
+      "summary": "AC-13027 的公开确认和 reviewer assignment 均成功，但 Case 仍保留 AI assigned ownership，下一轮 reconciliation 因而误写失败 Internal comment；正常 handoff 现持久化为 human_reassigned/assigned_to_reviewer，真实 mismatch 仍保留原升级路径。"
+    },
     {
       "at": "2026-08-26",
       "event": "single_missing_information_follow_up_fix",

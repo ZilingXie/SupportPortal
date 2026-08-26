@@ -477,11 +477,16 @@ class ScenarioEngine:
     def next_customer_turn(self, ctx: ScenarioContext, body: str) -> None:
         ctx.turn_started_at = now_utc()
         since_date = (ctx.turn_started_at - timedelta(days=1)).strftime("%d-%b-%Y")
-        notification = self.wait_for(
-            "Zendesk notification email in IMAP inbox",
-            lambda: self.imap_find_notification(ctx.zendesk_ticket_id, since_date),
-            timeout_seconds=min(8 * 60, self.turn_timeout_min * 60),
-        ) if ctx.zendesk_ticket_id else None
+        notification = None
+        if ctx.zendesk_ticket_id:
+            try:
+                notification = self.wait_for(
+                    "Zendesk notification email in IMAP inbox",
+                    lambda: self.imap_find_notification(ctx.zendesk_ticket_id, since_date),
+                    timeout_seconds=min(8 * 60, self.turn_timeout_min * 60),
+                )
+            except TimeoutError:
+                self.info("Zendesk notification did not arrive; using plus-address fallback")
         if notification:
             headers = {}
             if notification["message_id"]:

@@ -82,7 +82,10 @@ from backend.services.account_automation_delivery import (
     is_rerun_owned_delivery,
 )
 from backend.services.automation_routing import is_registered_automation
-from backend.services.account_automation_ownership import ensure_production_automation_ownership
+from backend.services.account_automation_ownership import (
+    ensure_production_automation_ownership,
+    mark_production_ownership_handed_to_reviewer,
+)
 from backend.services.account_human_review_escalation import (
     escalate_account_case_to_human_review,
     reconcile_account_human_review_queue_mismatches,
@@ -1502,6 +1505,12 @@ def _hand_off_fraud_review_after_public_reply(
     # route_status, and routes the Zendesk ticket back to the queue.
     account_case["automation_status"] = "human_review_required"
     account_case["updated_at"] = timestamp
+    mark_production_ownership_handed_to_reviewer(
+        account_case,
+        updated_at=timestamp,
+        assignee_id=result.assignee_id,
+        group_id=result.group_id,
+    )
     ticket_repository.save_account_case(account_case)
     LOGGER.info(
         "fraud_review_handoff_%s job_id=%s ticket_id=%s account_case_id=%s "

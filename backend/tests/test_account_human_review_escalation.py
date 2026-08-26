@@ -204,6 +204,17 @@ class AccountHumanReviewEscalationTests(unittest.TestCase):
                     "zendesk_ownership": {"state": "released_to_queue"}
                 },
             },
+            {
+                **self.case,
+                "automation_status": "human_review_required",
+                "route_status": "automated",
+                "automation_context": {
+                    "zendesk_ownership": {
+                        "state": "human_reassigned",
+                        "handoff_status": "assigned_to_reviewer",
+                    }
+                },
+            },
         ]
 
         self.assertEqual(
