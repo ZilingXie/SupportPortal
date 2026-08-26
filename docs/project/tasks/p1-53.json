@@ -4,20 +4,20 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Production → Preproduction → Staging 的顺序重构 Automation 环境。迁移阶段 1 先从干净 commit 构建 production-safe route/API/worker 镜像并推送 ECR，直接建立 ECS Production并从现有 EC2 /production受控切换；迁移阶段 2 再建立同构隔离的 ECS Preproduction，使后续 production-safe release先验收后以同一 digest晋升；迁移阶段 3 最后在现有 EC2 上建立允许 rerun/reset的独立 Staging。此前 EC2 split runtime及公网路径已下线，现有 EC2 /production在第一阶段切换完成前保持独立运行。",
-  "next_action": "迁移阶段 1：确认 AWS Region、与现有 RDS 同 VPC 的 private/public subnet、Production域名、Route53 hosted zone和 GitHub Actions OIDC权限；随后只建设共享 ECR/IAM/观测基础与 ECS Production所需的 Terraform、production-safe构建发布链和 n8n受控切换门禁，暂不创建 Preproduction或 Staging资源。",
+  "summary": "按 Production → Preproduction → Staging 的顺序重构 Automation 环境。迁移阶段 1 在 support.stellarix.space/automation/production建立成本优先的 ECS Production，现有 EC2 /production长期保留为 n8n可切回的 backup；迁移阶段 2 再建立 ECS Preproduction并以同 digest晋升；迁移阶段 3 最后在现有 EC2 上建立允许 rerun/reset的独立 Staging。此前 EC2 split runtime及公网路径已下线，不会恢复旧 orchestration。",
+  "next_action": "迁移阶段 1 Stage 1：拆除 worker对 backend.main的依赖，建立 production-safe worker/RAG镜像、Prompt/manifest provenance与真实 worker heartbeat；同时补齐 /automation/production/account及相关 /api路径对现有 /production request body/业务语义的兼容，并统一要求 X-N8n-Request-Token。Stage 0已完成 AWS/VPC/RDS/DNS/IAM/负载盘点；后续基础设施采用 Cloudflare + shared ALB、public-subnet单副本且无 NAT的成本优先方案。",
   "acceptance_criteria": [
     "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
     "ECR repository启用 immutable tag与扫描；每个 production-safe release manifest持久化 commit、route/API/worker/RAG image digest和 prompt_release_id，已发布 digest禁止重新 build或覆盖。",
-    "迁移阶段 1 的 Terraform只建立共享 ECR/IAM/观测基础和 ECS Production所需的 Fargate、ALB、ACM、ElastiCache、Secrets Manager、CloudWatch与 EFS token cache；运行任务位于 private subnet且无公网 IP，schema bootstrap使用不进入长期 task的独立 DDL凭据。",
-    "ECS Production使用独立 Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat，Production API与 worker均具备无单点的最小健康副本数。",
-    "迁移阶段 1 不等待 Preproduction或 Staging：Production green task set依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁，再由 n8n筛选少量测试 Case完成真实行为与外部 readback验收；通过后才 publish正式 Case指向 ECS endpoint的 workflow并停止新 Case进入 EC2 workflow。",
-    "ECS Production切换后，旧 EC2 /production先完成既有同步请求与异步队列排空；观察期内可通过 n8n workflow恢复入口，验收稳定后再退役旧 runtime，回滚不得重放已完成的外部副作用。",
+    "迁移阶段 1 的 Terraform只建立共享 ECR/IAM/观测基础和 ECS Production所需的 Fargate、shared ALB、ACM、单节点 ElastiCache、Secrets Manager、CloudWatch与 EFS token cache；Cloudflare将 support.stellarix.space指向 ALB，/automation/production进入 ECS、default及 /production继续进入 EC2。成本优先阶段 Task在现有 public subnet以 public IP出站且不创建 NAT，应用端口只允许最小 security group来源；schema bootstrap使用不进入长期 task的独立 DDL凭据。",
+    "ECS Production使用独立 Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat。当前测试阶段 API、worker和 RAG desired count均为1，blue/green部署只在切换窗口短暂增加 candidate task。",
+    "迁移阶段 1 不等待 Preproduction或 Staging：Production green task set依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁；ECS endpoint上线后再确认 live n8n workflow并筛选少量测试 Case完成真实行为与外部 readback验收，通过后才将新 Case从 /production切到 /automation/production。",
+    "ECS Production切换后，EC2 /production及其独立 schema/Redis/worker长期保持为 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回 /production，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
     "迁移阶段 2 建立与 Production隔离但配置同构的 ECS Preproduction，包括独立 Service、RDS schema、Redis、queue/channel、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
     "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
     "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
     "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
-    "GitHub Actions使用 AWS OIDC而非长期 access key，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
+    "GitHub Actions使用 AWS OIDC而非长期 access key，Terraform identity与更窄的 release identity分离，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
   ],
   "blockers": [],
   "evidence": [
@@ -62,6 +62,18 @@
       "label": "Staging remains on existing EC2",
       "command": "Architecture discussion 2026-08-26",
       "details": "第三阶段 Staging的承载位置改为现有 EC2，而不是 ECS；Production与 Preproduction仍部署在 ECS，Staging使用独立的 EC2运行环境和 staging-only测试镜像。"
+    },
+    {
+      "type": "decision",
+      "label": "Cost-first shared-domain ECS Production with EC2 backup",
+      "command": "Architecture discussion 2026-08-26",
+      "details": "用户确认 support.stellarix.space保持唯一域名：/automation/production部署到 ECS，/production长期留在 EC2作为 n8n可切回的 backup；当前仍在测试阶段，采用单副本和成本优先，不提前建设高可用。新路径按现有 /production接口的 request body和业务语义兼容，live n8n workflow在 ECS上线后再测试。"
+    },
+    {
+      "type": "document",
+      "label": "Stage 0 AWS and runtime preflight",
+      "command": "Read-only AWS CLI, DNS, repository, CloudWatch and EC2 container inventory 2026-08-26",
+      "details": "确认 account 891612554546/us-east-1；SupportPortal RDS与 zacBot均在 default VPC vpc-0125f57b2ec2f0423，六个 subnet全部 public且无 NAT；stellarix.space由 Cloudflare管理，support.stellarix.space当前解析到 zacBot；AWS尚无匹配 ACM、OIDC、ECS/ECR/ALB/ElastiCache/EFS/Secrets资源。14天 EC2 CPU平均约4.7%、峰值约71%，据此确定 API 0.5vCPU/1GiB、Worker 0.5vCPU/1GiB、RAG API 1vCPU/2GiB的单副本初始值，切流前必须压测。"
     }
   ],
   "source_refs": [
@@ -105,6 +117,16 @@
       "at": "2026-08-26",
       "event": "replanned",
       "summary": "用户进一步确认第三阶段 Staging部署在现有 EC2，而不是 ECS；目标拓扑调整为 ECS Production、ECS Preproduction与 EC2 Staging。"
+    },
+    {
+      "at": "2026-08-26",
+      "event": "replanned",
+      "summary": "第一阶段进一步收敛为 shared-domain成本优先方案：support.stellarix.space/automation/production进入单副本 ECS，/production长期保留 EC2 backup；n8n上线后仅切换路径，新路径保持旧接口 body/业务语义并增加 token鉴权。"
+    },
+    {
+      "at": "2026-08-26",
+      "event": "progress",
+      "summary": "Stage 0完成只读 preflight：确认 AWS/VPC/RDS/subnet/DNS/ACM/IAM/OIDC/现有服务、secret names、接口差异与初始容量；下一步进入 production-safe runtime、接口兼容、heartbeat和 provenance实现。"
     }
   ],
   "legacy_refs": [
