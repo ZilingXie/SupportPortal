@@ -124,6 +124,45 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
         self.assertEqual(packet["decision"], "blocked")
         self.assertFalse(packet["checks"]["proof"]["passed"])
 
+    def test_guardrail_accepts_persisted_human_guidance_without_investigation_proof(self):
+        packet = run_engineer_guardrail_final(
+            draft_customer_reply="Please upgrade to SDK 4.2.2 and retry token renewal.",
+            reply_readiness=_reply_readiness(
+                source_mode="human_guided_reply",
+                human_source_message_id="INV-1-m-3",
+                human_source_slack_event_id="Ev-Slack-1",
+                has_proof=False,
+                proof_summary="",
+            ),
+            requester="Taylor",
+            customer_id="C-001",
+            language_hint="en",
+        )
+        self.assertEqual(packet["decision"], "approved_for_final_engineer_review")
+        self.assertTrue(packet["checks"]["proof"]["passed"])
+        self.assertIn(
+            {"source": "human_guidance", "ref": "INV-1-m-3"},
+            packet["evidence_refs"],
+        )
+
+    def test_guardrail_blocks_human_guidance_without_persisted_source(self):
+        packet = run_engineer_guardrail_final(
+            draft_customer_reply="Please retry.",
+            reply_readiness=_reply_readiness(
+                source_mode="human_guided_reply",
+                human_source_message_id="",
+                human_source_slack_event_id="Ev-Slack-2",
+                has_proof=False,
+                proof_summary="",
+            ),
+            requester="Taylor",
+            customer_id="C-001",
+            language_hint="en",
+        )
+        self.assertEqual(packet["decision"], "blocked")
+        self.assertFalse(packet["checks"]["proof"]["passed"])
+        self.assertTrue(any("persisted source" in item for item in packet["blockers"]))
+
 
 if __name__ == "__main__":
     unittest.main()

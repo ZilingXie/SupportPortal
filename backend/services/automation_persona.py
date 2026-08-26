@@ -35,6 +35,8 @@ _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_C
 
 
 AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v14"
+ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
+ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v1"
 
 _HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 
@@ -52,6 +54,7 @@ _SUPPORT_ID_RE = re.compile(
     r"(?i)\b(?:ticket\s*(?:id\s*)?[:#-]?\s*(?:TK-[A-Z0-9-]+|\d{3,})|"
     r"account case\s*(?:id\s*)?[:#-]?\s*AC-[A-Z0-9-]+)\b"
 )
+_URL_RE = re.compile(r"(?i)https?://[^\s<>()\[\]{}\"'|]+")
 _SIGNOFF_LINE_RE = re.compile(
     r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
     r"sincerely|thanks|thank\s+you|cheers|此致|谢谢)[,!:]?\s*$"
@@ -117,6 +120,18 @@ def _assert_no_forbidden_values(value: Any, forbidden_values: list[str], *, erro
         raise AutomationPersonaError(error_code)
     if _APP_ID_RE.search(serialized) or _EMAIL_RE.search(serialized) or _SUPPORT_ID_RE.search(serialized):
         raise AutomationPersonaError(error_code)
+
+
+def _assert_guided_source_values(reply: str, provided_answer: str) -> None:
+    """Reject identifiers and links that were not present in the Slack guidance."""
+    source = str(provided_answer or "")
+    rendered = str(reply or "")
+    for pattern in (_APP_ID_RE, _EMAIL_RE, _SUPPORT_ID_RE, _URL_RE):
+        allowed = {match.group(0).rstrip(".,;:!?").casefold() for match in pattern.finditer(source)}
+        for match in pattern.finditer(rendered):
+            value = match.group(0).rstrip(".,;:!?").casefold()
+            if value not in allowed:
+                raise AutomationPersonaError("automation_persona_guided_source_value_invented")
 
 
 def customer_first_name(customer_name: Any) -> str:
@@ -696,11 +711,14 @@ def _validated_automation_reply_content(
     if account_scope:
         validate_account_reply_contract(reply, facts)
     rendered_content = f"{greeting}\n\n{reply}"
-    _assert_no_forbidden_values(
-        rendered_content,
-        forbidden_values,
-        error_code="automation_persona_forbidden_value",
-    )
+    if str(facts.get("reply_intent") or "").strip().lower() == ENGINEER_GUIDED_REPLY_INTENT:
+        _assert_guided_source_values(rendered_content, str(facts.get("provided_answer") or ""))
+    else:
+        _assert_no_forbidden_values(
+            rendered_content,
+            forbidden_values,
+            error_code="automation_persona_forbidden_value",
+        )
     return rendered_content
 
 
@@ -789,7 +807,8 @@ def render_automation_reply(
     if not str(facts.get("behavior") or "").strip() or not str(facts.get("reply_intent") or "").strip():
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
     if (
-        str(facts.get("reply_intent") or "").strip().lower() == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        str(facts.get("reply_intent") or "").strip().lower()
+        in {ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER, ENGINEER_GUIDED_REPLY_INTENT}
         and not str(facts.get("provided_answer") or "").strip()
     ):
         raise AutomationPersonaError("automation_persona_missing_provided_answer")
@@ -828,6 +847,11 @@ def render_automation_reply(
     )
     reply_contract_policy = ""
     intent = str(facts.get("reply_intent") or "").strip().lower()
+    prompt_version = (
+        ENGINEER_GUIDED_PERSONA_PROMPT_VERSION
+        if intent == ENGINEER_GUIDED_REPLY_INTENT
+        else AUTOMATION_PERSONA_PROMPT_VERSION
+    )
     behavior = str(facts.get("behavior") or "").strip().lower()
     if behavior == "enablement" and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
         reply_contract_policy = (
@@ -873,6 +897,15 @@ def render_automation_reply(
             "Do not invent links or citations; the application appends the reference links itself after your "
             "reply. Do not mention knowledge bases, documentation searches, or where the content came from. "
         )
+    elif intent == ENGINEER_GUIDED_REPLY_INTENT:
+        reply_contract_policy = (
+            "For an Engineer-guided reply, provided_answer is the only authority for customer-facing technical "
+            "claims, instructions, versions, URLs, steps, and commitments. Preserve all of that source content "
+            "while polishing its language and organization. Use latest_customer_message, recent_public_conversation, "
+            "subject, and customer_language only to choose language, resolve references, avoid contradictions, and "
+            "write a relevant acknowledgement. Do not derive or add any diagnosis, recommendation, promise, link, "
+            "identifier, internal detail, or technical fact from that context. Do not mention Slack or the engineer. "
+        )
     validated: dict[str, Any] = {}
 
     def validate_response(response: Any) -> None:
@@ -889,7 +922,7 @@ def render_automation_reply(
         response = invoke_responses_text(
             profile=profile,
             system_prompt=(
-                f"Prompt version: {AUTOMATION_PERSONA_PROMPT_VERSION}.\n"
+                f"Prompt version: {prompt_version}.\n"
                 "You are the customer-facing Automation Persona. Write the final customer reply from the "
                 "structured Automation facts supplied by the application. Use only those facts. Clearly state "
                 "the current status, any information the customer needs to provide, and the next step. Preserve "
@@ -932,4 +965,5 @@ def render_automation_reply(
     return AutomationPersonaResult(
         content=str(validated["content"]),
         model=str(response.model_name or profile.model).strip() or profile.model,
+        prompt_version=prompt_version,
     )

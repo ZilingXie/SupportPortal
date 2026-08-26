@@ -153,6 +153,84 @@ class AutomationPersonaTests(unittest.TestCase):
                     account_scope=True,
                 )
 
+    def test_render_engineer_guided_reply_uses_human_answer_as_only_technical_source(self) -> None:
+        facts = {
+            "behavior": "engineer_support",
+            "reply_intent": "engineer_guided_reply",
+            "provided_answer": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            "latest_customer_message": "The token callback does not fire on Android 14.",
+            "recent_public_conversation": [
+                {"role": "customer", "content": "The token callback does not fire on Android 14."}
+            ],
+            "subject": "Token callback missing",
+            "customer_language": "en",
+            "customer_first_name": "Maya",
+        }
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Please upgrade to SDK 4.2.2 and retry token renewal.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and concise"}},
+            )
+
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("provided_answer is the only authority", system_prompt)
+        self.assertIn("Do not derive or add any diagnosis", system_prompt)
+        self.assertEqual(result.prompt_version, "engineer-guided-persona-v1")
+        self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
+        self.assertIn("SDK 4.2.2", result.content)
+
+    def test_render_engineer_guided_reply_preserves_source_identifier_and_url(self) -> None:
+        app_id = "abcdefabcdefabcdefabcdefabcdefab"
+        url = "https://docs.agora.io/en/video-calling/get-started/get-started-sdk"
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=f"For App ID {app_id}, follow {url} and retry.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts={
+                    "behavior": "engineer_support",
+                    "reply_intent": "engineer_guided_reply",
+                    "provided_answer": f"For App ID {app_id}, follow <{url}|this guide> and retry.",
+                    "customer_first_name": "Maya",
+                },
+                persona_assignment={"content": {"instruction": "Precise"}},
+            )
+        self.assertIn(app_id, result.content)
+        self.assertIn(url, result.content)
+
+    def test_render_engineer_guided_reply_rejects_invented_identifier(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Use App ID abcdefabcdefabcdefabcdefabcdefab and retry.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            with self.assertRaisesRegex(
+                AutomationPersonaError, "automation_persona_guided_source_value_invented"
+            ):
+                render_automation_reply(
+                    reply_facts={
+                        "behavior": "engineer_support",
+                        "reply_intent": "engineer_guided_reply",
+                        "provided_answer": "Please retry.",
+                        "customer_first_name": "Maya",
+                    },
+                    persona_assignment={"content": {"instruction": "Precise"}},
+                )
+
     def test_final_reply_allows_canonical_feature_label(self) -> None:
         facts = build_automation_reply_facts(
             behavior="enablement", reply_intent="resolution_update",

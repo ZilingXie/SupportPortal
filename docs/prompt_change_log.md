@@ -12,6 +12,15 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-26 - Slack Engineer-guided Persona replies v1 (p2-68)
+
+- Area or subsystem: Production Non automated Engineer Case Slack collaboration.
+- Prompt or model version: new scoped `engineer-guided-persona-v1`; shared `automation-persona-v14` and its model profile are unchanged.
+- Summary: added the `engineer_guided_reply` intent. The Persona preserves the human's Slack guidance while polishing tone and organization. The guidance is the only authority for customer-facing technical claims, instructions, versions, URLs, steps, and commitments; bounded public Case context may only determine language, greeting, reference resolution, and contradiction avoidance.
+- Safety behavior: App IDs, email addresses, support IDs, and URLs may appear only when the exact value exists in the persisted Slack guidance. Newly invented values, signed output, empty output, unavailable Persona, and model failures remain fail closed and do not create a publish action.
+- Approval behavior: the action handler verifies that the source message exists in the active investigation and that its persisted Slack event ID matches before the human source can replace investigation proof. The existing investigation proof contract is unchanged for every other source mode.
+- Verification: integrated Persona, Guardrail, Slack API/workflow, Zendesk comment-sync, and worker suite passed 312 tests and 37 subtests; live evidence is recorded in task `p2-68` after deployment.
+
 ## 2026-08-25 - Fraud missing-information deterministic rendering v14
 
 - Area or subsystem: `/production` Fraud Account missing-information customer reply and shared Automation Persona renderer

@@ -4429,17 +4429,25 @@ class InvestigationFlowTests(unittest.TestCase):
             "round_state": "active",
         }
         self.repository.save_engineer_case(engineer_case)
-        ai_turn = Mock(
-            return_value={
-                "state": "awaiting_confirmation",
-                "message": "The evidence supports a customer reply.",
-                "draft_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
-                "engineer_agent_state": {
-                    "phase": "awaiting_confirmation",
-                    "ready_to_reply": True,
-                    "reply_readiness": _reply_readiness(),
-                },
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-SLACK-INV-1",
+                "billing_ticket_id": "AC-SLACK-INV-1",
+                "client_ticket_id": "TK-SLACK-INV-1",
+                "title": "Token callback missing",
+                "question": "Token callback never fires.",
+                "processing_profile": "production",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-24T00:00:00+00:00",
             }
+        )
+        persona_render = Mock(
+            return_value=types.SimpleNamespace(
+                content="Hi Customer,\n\nPlease upgrade to SDK 4.2.2 and retry token renewal.",
+                model="persona-model",
+                prompt_version="engineer-guided-persona-v1",
+            )
         )
         body = {
             "schema_version": 1,
@@ -4450,7 +4458,7 @@ class InvestigationFlowTests(unittest.TestCase):
             "occurred_at": "2026-08-24T00:01:00Z",
         }
         with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
-            main, "generate_investigation_ai_turn", ai_turn
+            main, "render_automation_reply", persona_render
         ), patch.object(main, "dispatch_event", AsyncMock()):
             first = self.client.post(
                 "/api/integrations/slack/engineer-cases/messages",
@@ -4468,14 +4476,123 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(first.json()["conversation_version"], 1)
         self.assertEqual(first.json()["draft_version"], 1)
         self.assertTrue(second.json()["idempotent_replay"])
-        self.assertEqual(ai_turn.call_count, 1)
+        self.assertEqual(persona_render.call_count, 1)
+        assigned_persona = self.repository.get_account_persona_assignment("TK-SLACK-INV-1")
+        self.assertIsNotNone(assigned_persona)
+        self.assertEqual(
+            persona_render.call_args.kwargs["persona_assignment"]["persona_key"],
+            assigned_persona["persona_key"],
+        )
         case = self.repository.get_engineer_case("TK-SLACK-INV-1-1")
         assert case is not None
         slack_message = case["active_investigation"]["messages"][-2]
         self.assertEqual(slack_message["meta"]["slack_user_id"], "U123")
+        ai_message = case["active_investigation"]["messages"][-1]
+        self.assertEqual(ai_message["meta"]["source_mode"], "human_guided_reply")
+        self.assertEqual(ai_message["meta"]["model"], "persona-model")
+        readiness = case["engineer_agent_state"]["reply_readiness"]
+        self.assertEqual(readiness["human_source_message_id"], slack_message["id"])
+        self.assertFalse(readiness["has_proof"])
         events = self.repository.list_engineer_slack_events(statuses=("queued",))
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["payload"]["event_type"], "engineer_ai_response")
+        self.assertEqual(events[0]["payload"]["action"], "guardrail")
+        self.assertIn("Original guidance", events[0]["payload"]["message_text"])
+
+    def test_slack_message_fails_closed_when_persona_is_unavailable(self) -> None:
+        ticket = self._seed_ticket(ticket_id="TK-SLACK-NO-PERSONA", status="investigating")
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-NO-PERSONA-1",
+            case_sequence=1,
+            title="No Persona",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        engineer_case["thread_id"] = "TK-SLACK-NO-PERSONA-1-round-1"
+        self.repository.save_engineer_case(engineer_case)
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-SLACK-NO-PERSONA",
+                "billing_ticket_id": "AC-SLACK-NO-PERSONA",
+                "client_ticket_id": "TK-SLACK-NO-PERSONA",
+                "processing_profile": "production",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-24T00:00:00+00:00",
+            }
+        )
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
+            self.repository,
+            "resolve_account_persona",
+            side_effect=main.AccountPersonaUnavailableError("no enabled Persona"),
+        ), patch.object(main, "render_automation_reply") as render:
+            response = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json={
+                    "schema_version": 1,
+                    "event_id": "Ev-Slack-No-Persona",
+                    "engineer_case_id": "TK-SLACK-NO-PERSONA-1",
+                    "slack_user_id": "U123",
+                    "text": "Please retry.",
+                    "occurred_at": "2026-08-24T00:01:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        render.assert_not_called()
+        case = self.repository.get_engineer_case("TK-SLACK-NO-PERSONA-1")
+        self.assertFalse(str(case.get("draft_customer_reply") or "").strip())
+        events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(events[0]["payload"]["failure_code"], "engineer_guided_persona_unavailable")
+
+    def test_slack_message_rejects_non_production_case_before_persona_generation(self) -> None:
+        ticket = self._seed_ticket(ticket_id="TK-SLACK-STAGING", status="investigating")
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-STAGING-1",
+            case_sequence=1,
+            title="Staging Case",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        engineer_case["thread_id"] = "TK-SLACK-STAGING-1-round-1"
+        self.repository.save_engineer_case(engineer_case)
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-SLACK-STAGING",
+                "billing_ticket_id": "AC-SLACK-STAGING",
+                "client_ticket_id": "TK-SLACK-STAGING",
+                "processing_profile": "staging",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-24T00:00:00+00:00",
+            }
+        )
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
+            main, "render_automation_reply"
+        ) as render:
+            response = self.client.post(
+                "/api/integrations/slack/engineer-cases/messages",
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json={
+                    "schema_version": 1,
+                    "event_id": "Ev-Slack-Staging",
+                    "engineer_case_id": "TK-SLACK-STAGING-1",
+                    "slack_user_id": "U123",
+                    "text": "Please retry.",
+                    "occurred_at": "2026-08-24T00:01:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        render.assert_not_called()
+        self.assertIsNone(self.repository.get_account_persona_assignment("TK-SLACK-STAGING"))
 
     def test_slack_message_rejects_destination_fields_and_bad_token(self) -> None:
         body = {
@@ -4606,19 +4723,27 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
         self.repository.save_engineer_case(engineer_case)
+        self.repository.save_account_case(
+            {
+                "account_case_id": "AC-SLACK-SAME-DRAFT",
+                "billing_ticket_id": "AC-SLACK-SAME-DRAFT",
+                "client_ticket_id": "TK-SLACK-SAME-DRAFT",
+                "title": "Same draft",
+                "question": "Please retry.",
+                "processing_profile": "production",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-08-24T00:00:00+00:00",
+            }
+        )
         with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False), patch.object(
             main,
-            "generate_investigation_ai_turn",
-            return_value={
-                "state": "awaiting_confirmation",
-                "message": "The recommendation is unchanged.",
-                "draft_customer_reply": "Please upgrade and retry.",
-                "engineer_agent_state": {
-                    "phase": "awaiting_confirmation",
-                    "ready_to_reply": True,
-                    "reply_readiness": _reply_readiness(),
-                },
-            },
+            "render_automation_reply",
+            return_value=types.SimpleNamespace(
+                content="Please upgrade and retry.",
+                model="persona-model",
+                prompt_version="engineer-guided-persona-v1",
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/integrations/slack/engineer-cases/messages",
@@ -4636,6 +4761,89 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["conversation_version"], 2)
         self.assertEqual(response.json()["draft_version"], 5)
+
+    def test_slack_guardrail_requires_and_accepts_matching_persisted_guidance(self) -> None:
+        ticket = self._seed_ticket(ticket_id="TK-SLACK-SOURCE", status="investigating")
+        engineer_case = build_new_engineer_case(
+            ticket,
+            engineer_case_id="TK-SLACK-SOURCE-1",
+            case_sequence=1,
+            title="Guided source",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="not_automated",
+            now_value="2026-08-24T00:00:00+00:00",
+        )
+        source_message = {
+            "id": "TK-SLACK-SOURCE-1-round-1-m-1",
+            "role": "engineer",
+            "content": "Please retry the request.",
+            "created_at": "2026-08-24T00:01:00+00:00",
+            "meta": {
+                "source": "slack",
+                "slack_user_id": "U123",
+                "slack_event_id": "Ev-Slack-Source",
+            },
+        }
+        engineer_case.update(
+            thread_id="TK-SLACK-SOURCE-1-round-1",
+            draft_customer_reply="Please retry the request.",
+            messages=[source_message],
+            engineer_agent_state={
+                "conversation_version": 1,
+                "draft_version": 1,
+                "round_number": 1,
+                "round_state": "active",
+                "reply_readiness": _reply_readiness(
+                    has_proof=False,
+                    proof_summary="",
+                    reply_scope="human_guided_reply",
+                )
+                | {
+                    "source_mode": "human_guided_reply",
+                    "human_source_message_id": "missing-message",
+                    "human_source_slack_event_id": "Ev-Slack-Source",
+                    "ready_for_customer_reply": True,
+                },
+            },
+        )
+        self.repository.save_engineer_case(engineer_case)
+        endpoint = "/api/integrations/slack/engineer-cases/actions"
+        body = {
+            "interaction_id": "Ix-Slack-Source-Missing",
+            "engineer_case_id": "TK-SLACK-SOURCE-1",
+            "slack_user_id": "U123",
+            "action": "guardrail",
+            "investigation_id": "TK-SLACK-SOURCE-1-round-1",
+            "draft_version": 1,
+            "guardrail_id": None,
+            "guardrail_version": None,
+        }
+        with patch.dict(os.environ, {"n8n_request_token": "slack-token"}, clear=False):
+            missing = self.client.post(
+                endpoint,
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json=body,
+            )
+            engineer_case["engineer_agent_state"]["reply_readiness"][
+                "human_source_message_id"
+            ] = source_message["id"]
+            self.repository.save_engineer_case(engineer_case)
+            passed = self.client.post(
+                endpoint,
+                headers={"X-N8n-Request-Token": "slack-token"},
+                json={**body, "interaction_id": "Ix-Slack-Source-Passed"},
+            )
+
+        self.assertEqual(missing.status_code, 400, missing.text)
+        self.assertEqual(passed.status_code, 200, passed.text)
+        self.assertEqual(passed.json()["status"], "guardrail_passed")
+        stored_case = self.repository.get_engineer_case("TK-SLACK-SOURCE-1")
+        evidence_refs = stored_case["engineer_agent_state"]["active_guardrail_final"]["evidence_refs"]
+        self.assertIn(
+            {"source": "human_guidance", "ref": source_message["id"]},
+            evidence_refs,
+        )
 
     def test_slack_actions_guardrail_then_queue_public_engineer_delivery(self) -> None:
         ticket = self._seed_ticket(ticket_id="TK-SLACK-ACTION-1", status="investigating")
