@@ -70,6 +70,11 @@ inbound payloads cannot override them.
 - The response event contains the original guidance, pinned Persona key/version,
   polished customer draft, and `Run guardrail`. A new mention increments both
   conversation and draft versions and invalidates every older action.
+- A new public customer Zendesk comment is persisted into the active
+  investigation and posts only `Cx has added a new comment` to the bound thread.
+  Comment content and customer identity never enter that Slack event. Comment
+  sync does not call Engineer AI; the next valid `@bot` guidance generates the
+  next Draft using the updated Case context.
 - The existing App Mention workflow and message request schema do not change for
   this mode. `Run guardrail` and `Approve & publish` still require the separate
   Slack Interaction workflow and the Slack App Interactivity request URL.
@@ -94,8 +99,11 @@ inbound payloads cannot override them.
    one row. Replay the same event ID and confirm no second model call or draft.
 5. Run guardrail and final approval. Confirm one public Zendesk comment, no
    Zendesk status change, and a delivery confirmation in the same thread.
-6. Add a new public customer comment. Confirm the original comment and new AI
-   draft return to the same thread and old buttons fail as stale.
+6. Add a new public customer comment. Confirm exactly one
+   `Cx has added a new comment` notification reaches the same thread, no Draft
+   or action button is posted automatically, and old buttons fail as stale.
+   Then mention the bot and confirm the new Draft uses the latest customer
+   comment context.
 7. Mark the Zendesk ticket solved. Confirm the Case resolves and the
    SupportPortal binding resolver returns `ignored_unbound`.
 

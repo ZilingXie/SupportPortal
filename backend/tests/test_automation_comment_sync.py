@@ -189,44 +189,63 @@ class CommentTriggerTest(unittest.TestCase):
         )
         self.assertEqual(repository.synced, [])
 
-    def test_engineer_case_branch_records_customer_comment_event(self):
+    def test_engineer_case_branch_records_customer_context_and_only_notifies_slack(self):
         repository = _FakeRepository()
         repository.account_case["automation_status"] = "not_automated"
         saved: list[dict] = []
 
         def fake_save_engineer_case(engineer_case, new_messages=None, slack_events=None):
-            saved.append({"slack_events": slack_events})
+            saved.append(
+                {
+                    "engineer_case": engineer_case,
+                    "new_messages": new_messages,
+                    "slack_events": slack_events,
+                }
+            )
 
         repository.get_active_engineer_case = lambda ticket_id, include_client_messages=True: {
             "engineer_case_id": "123-1",
-            "active_investigation": {"id": "inv-1"},
+            "client_ticket_ref": {"ticket_id": "123"},
+            "status": "investigating",
+            "active_investigation": {
+                "id": "inv-1",
+                "state": "awaiting_final_approval",
+                "draft_customer_reply": "stale draft",
+                "messages": [],
+            },
+            "engineer_agent_state": {
+                "conversation_version": 1,
+                "draft_version": 4,
+                "ready_to_reply": True,
+                "final_approval_required": True,
+            },
         }
         repository.save_engineer_case = fake_save_engineer_case
         import asyncio
 
-        with patch(
-            "backend.services.automation_engineer_collab.process_engineer_investigation_message",
-            new_callable=AsyncMock,
-            return_value={
-                "engineer_agent_state": {"conversation_version": 2, "draft_version": 1},
-            },
-        ) as ai_round:
-            result = asyncio.run(
-                reply_module.process_zendesk_comment_trigger(
-                    repository=repository,
-                    account_case=repository.account_case,
-                    snapshot=self._snapshot(),
-                    trigger_comment_id="c1",
-                )
+        result = asyncio.run(
+            reply_module.process_zendesk_comment_trigger(
+                repository=repository,
+                account_case=repository.account_case,
+                snapshot=self._snapshot(),
+                trigger_comment_id="c1",
             )
-        self.assertEqual(result["trigger_status"], "processed_engineer_case")
+        )
+        self.assertEqual(result["trigger_status"], "processed_engineer_notification")
         self.assertEqual(result["engineer_case_id"], "123-1")
         self.assertEqual(result["conversation_version"], 2)
-        self.assertEqual(result["draft_version"], 1)
+        self.assertEqual(result["draft_version"], 5)
+        self.assertEqual(saved[0]["new_messages"][0]["role"], "customer")
+        self.assertEqual(saved[0]["new_messages"][0]["content"], "here is my account type")
+        self.assertEqual(saved[0]["engineer_case"]["draft_customer_reply"], "")
+        self.assertNotIn("ready_to_reply", saved[0]["engineer_case"]["engineer_agent_state"])
+        self.assertNotIn("final_approval_required", saved[0]["engineer_case"]["engineer_agent_state"])
         self.assertEqual(saved[0]["slack_events"][0]["event_type"], "zendesk_customer_comment")
-        ai_round.assert_awaited_once()
-        self.assertEqual(ai_round.call_args.args[1], "123-1")
-        self.assertEqual(ai_round.call_args.kwargs["message_role"], "customer")
+        self.assertEqual(
+            saved[0]["slack_events"][0]["message_text"],
+            "Cx has added a new comment",
+        )
+        self.assertNotIn("account type", str(saved[0]["slack_events"][0]).lower())
 
 
     def test_failed_outcome_is_stored_failed_and_replays_after_handler_repair(self):

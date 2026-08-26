@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T07:41:55Z",
-  "source_base_commit": "47ba37670076350aba944aad2d874d02ba36f7bb",
-  "registry_digest": "b1abe4f7d0cb043d10177b943a769b94d33721e274744f2dce3872bc6cc72104",
+  "generated_at": "2026-08-26T11:28:03Z",
+  "source_base_commit": "ee16590b46751634e8b702232d4a26d8a9b47ebd",
+  "registry_digest": "f17fa3eed27d206936f150a4d49f7df31739dbb5acb61967a2b6c8c443517392",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1991,6 +1991,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Customer comment notification-only trigger",
+          "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/pytest -q backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_comment_sync.py backend/tests/test_engineer_slack.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py",
+          "details": "276 tests、22 subtests 通过；验证两套 Production 客户评论只更新 Engineer investigation、推进 conversation/draft fencing、清除旧审批状态并发送固定 Slack 通知，不产生自动 AI Draft，同时覆盖 Slack outbox、Guardrail/Final Approve 与 worker 回归。"
+        },
+        {
+          "type": "test",
           "label": "Static verification and parity regression",
           "command": "bash -n deployment/verify_split_environments.sh && .venv/bin/python -m unittest backend.tests.test_split_environment_deployment backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract",
           "details": "verify 脚本语法通过；split 部署/评论/intake/runtime 契约回归绿。"
@@ -2625,6 +2631,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Customer reply composition, Engineer Persona prompting, deterministic Guardrail and Zendesk public-write delivery now enforce an unsigned application body; English greetings use the trusted customer first name as `Hi, Name`, duplicate model greetings are removed, and legacy Sid signatures fail closed.",
           "ref": "backend/tests/test_customer_reply_composer.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_zendesk_public_comment.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py"
+        },
+        {
+          "type": "test",
+          "summary": "Zendesk customer comment sync for active Non automated Engineer Cases now persists the customer message, invalidates stale Draft/Guardrail/final approval state, queues only `Cx has added a new comment`, and does not invoke Engineer AI until a later Slack mention. Targeted comment-sync, Slack, investigation and worker regression passed 276 tests and 22 subtests.",
+          "ref": "backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, docs/integrations/n8n/Zendesk_Account_Comment_Sync.json"
         },
         {
           "type": "test",
@@ -6931,11 +6942,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "/automation/production 替代 /production：Phase E Slack 协作收口（纯移植）",
       "status": "active",
       "owner": "zac",
-      "summary": "Phase E：把旧栈 Engineer Case Slack 协作闭环搬进 /automation/production——新增 backend/services/automation_engineer_collab.py：process_engineer_investigation_message（guardrail-only 路径的调查 AI 回合：状态版本管理、append_engineer_investigation_message + default_investigation_prompt、engineer_ai_response 线程事件）、handle_slack_engineer_message（event_id 幂等 claim/fail/complete）、handle_slack_engineer_action（guardrail 终审 + final_approve：guardrail 校验链、engineer Zendesk delivery 入队（幂等键/immutable_content/comments_revision 门控））、resolve_slack_engineer_thread_binding（team/channel hmac 校验 + 线程绑定解析）；runtime 新增三个入向端点（GET thread-bindings/resolve、POST messages、POST actions，X-N8n-Request-Token）；评论触发链的 Engineer Case 分支从'仅记录事件'升级为完整 AI 调查回合。刻意省略（登记）：multi-agent Plan/Execute/Review 刷新分支（两条 split 入向均 multi_agent_enabled=False）与 _normalize_engineer_case_payload_for_read 读取整形。",
+      "summary": "Phase E：把旧栈 Engineer Case Slack 协作闭环搬进 /automation/production——新增 backend/services/automation_engineer_collab.py：Slack @bot 消息显式触发调查 AI 回合，actions 执行 guardrail 与 final_approve，thread binding resolver 校验固定 Team/Channel/thread。Zendesk 客户评论分支只持久化最新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知；不会自动运行 AI。刻意省略（登记）：multi-agent Plan/Execute/Review 刷新分支（两条 split 入向均 multi_agent_enabled=False）与 _normalize_engineer_case_payload_for_read 读取整形。",
       "next_action": "待用户 EC2 部署 + n8n Slack 入向工作流（App Mention/Interaction→Engineer）切到 /automation/production 端点后做全链验收（工程师消息→AI 回合→guardrail→final_approve→Zendesk 公开评论投递，投递由 automation_production_worker 的 engineer zendesk delivery drain 执行）。随后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
       "acceptance_criteria": [
         "三个入向端点在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致；messages/actions 按 event_id/interaction_id 幂等。",
-        "评论触发链 Engineer 分支：客户评论→zendesk_customer_comment 事件→调查 AI 回合→engineer_ai_response 事件（conversation/draft 版本推进）。",
+        "评论触发链 Engineer 分支：客户评论→持久化调查上下文并使旧 Draft/审批失效→单个无正文 zendesk_customer_comment 通知；只有后续 Slack @bot 才触发调查 AI 回合与 engineer_ai_response。",
         "guardrail→final_approve→engineer Zendesk delivery 入队（worker 侧投递），guardrail 校验链与 stale 防护语义一致。",
         "旧栈与 preprod/staging 零行为变化。"
       ],
@@ -6946,6 +6957,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Engineer Slack endpoints and parity regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose",
           "details": "91 项通过：Slack 端点鉴权/非法载荷 422、messages 跑完整 AI 回合（conversation/draft 版本与 engineer_ai_response 事件断言）、thread-bindings 未配置 503、评论触发 Engineer 分支升级后版本断言；既有全回归绿。"
+        },
+        {
+          "type": "test",
+          "label": "Customer comment notification-only trigger",
+          "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/pytest -q backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_comment_sync.py backend/tests/test_engineer_slack.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py",
+          "details": "276 tests、22 subtests 通过；验证两套 Production 客户评论只更新 Engineer investigation、推进 conversation/draft fencing、清除旧审批状态并发送固定 Slack 通知，不产生自动 AI Draft，同时覆盖 Slack outbox、Guardrail/Final Approve 与 worker 回归。"
         }
       ],
       "source_refs": [
@@ -6957,12 +6974,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-08-24",
+      "updated_at": "2026-08-26",
       "history": [
         {
           "at": "2026-08-24",
           "event": "created",
           "summary": "Phase D（p2-112/PR#929）合并后开工 Phase E。investigation AI 回合/三个入向端点/guardrail-final_approve 链按 B 纯移植方案完成；依赖的 engineer_guardrail_agent/investigation_flow/engineer_cases 均已在 production 镜像内。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "customer_comment_trigger_controlled",
+          "summary": "与旧 /production 对齐：客户评论仅更新调查上下文并发送内容无关 Slack 通知，Engineer AI 只由后续有效 @bot 消息触发。"
         }
       ],
       "legacy_refs": [
@@ -9005,7 +9027,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "status": "active",
       "owner": "unassigned",
-      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
+      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。n8n 只负责固定 Team/Channel/thread 的入站控制。",
       "next_action": "在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
@@ -9053,6 +9075,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Customer reply composition, Engineer Persona prompting, deterministic Guardrail and Zendesk public-write delivery now enforce an unsigned application body; English greetings use the trusted customer first name as `Hi, Name`, duplicate model greetings are removed, and legacy Sid signatures fail closed.",
           "ref": "backend/tests/test_customer_reply_composer.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_zendesk_public_comment.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py"
+        },
+        {
+          "type": "test",
+          "summary": "Zendesk customer comment sync for active Non automated Engineer Cases now persists the customer message, invalidates stale Draft/Guardrail/final approval state, queues only `Cx has added a new comment`, and does not invoke Engineer AI until a later Slack mention. Targeted comment-sync, Slack, investigation and worker regression passed 276 tests and 22 subtests.",
+          "ref": "backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, docs/integrations/n8n/Zendesk_Account_Comment_Sync.json"
         }
       ],
       "source_refs": [
@@ -9110,6 +9137,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "customer_signature_removed",
           "summary": "按产品决定删除应用侧 Persona 客户签名：生成内容仅保留使用客户 first name 的问候，Guardrail 和 Zendesk public write 阻断历史 Sid 签名，Zendesk 继续拥有最终签名。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "customer_comment_trigger_controlled",
+          "summary": "客户新评论改为只持久化调查上下文并在原 Slack thread 发送固定通知；不自动调用 AI，下一次有效 @bot 指导才基于最新上下文生成 Draft。"
         }
       ],
       "legacy_refs": [
@@ -12720,7 +12752,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。首次有效指导会为 Case 随机固定一个已发布 Persona，AI 仅以该指导作为技术事实来源进行润色，再经 Guardrail 和 Final Approve 发布为 Zendesk public comment；后续客户评论和发布结果都回到同一 thread，发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
+        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。首次有效指导会为 Case 随机固定一个已发布 Persona，AI 仅以该指导作为技术事实来源进行润色，再经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成 Draft。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
         "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],

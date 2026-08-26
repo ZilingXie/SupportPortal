@@ -322,6 +322,7 @@ from backend.services.investigation_flow import (
     default_investigation_prompt as generate_investigation_ai_turn,
     ensure_ticket_investigation_defaults,
     normalize_ticket_status,
+    record_engineer_customer_comment,
     surface_legacy_pending_question,
     start_or_refresh_investigation,
 )
@@ -6842,52 +6843,38 @@ async def _process_zendesk_comment_trigger(
             (active_engineer_case.get("active_investigation") or {}).get("id") or ""
         ).strip()
         customer_text = str(trigger_comment.body or "").strip()
+        engineer_case_record = _engineer_case_payload_to_record(active_engineer_case)
+        timestamp = now_iso()
+        engineer_case_record, customer_messages = record_engineer_customer_comment(
+            engineer_case_record,
+            customer_message=customer_text,
+            now_value=timestamp,
+            message_meta={
+                "source": "zendesk_comment",
+                "zendesk_comment_id": trigger_comment_id,
+                "occurred_at": str(trigger_comment.created_at or ""),
+            },
+        )
         customer_event = build_engineer_case_thread_event(
             event_id=f"zendesk-comment:{account_case_id}:{trigger_comment_id}:customer",
             event_type="zendesk_customer_comment",
             engineer_case_id=engineer_case_id,
-            message_text=f"Customer comment:\n{customer_text}",
+            message_text="Cx has added a new comment",
             investigation_id=investigation_id or None,
         )
-        engineer_case_record = _engineer_case_payload_to_record(active_engineer_case)
         ticket_repository.save_engineer_case(
             engineer_case_record,
-            new_messages=[],
+            new_messages=customer_messages,
             slack_events=[customer_event],
         )
-        try:
-            processed = await _process_engineer_investigation_message(
-                engineer_case_id,
-                engineer_id="zendesk:customer",
-                message=customer_text,
-                multi_agent_enabled=False,
-                message_role="customer",
-                message_meta={
-                    "source": "zendesk_comment",
-                    "zendesk_comment_id": trigger_comment_id,
-                    "occurred_at": str(trigger_comment.created_at or ""),
-                },
-                slack_event_id=f"zendesk-comment:{account_case_id}:{trigger_comment_id}:ai-response",
-            )
-        except HTTPException as exc:
-            return await _complete(
-                {
-                    "trigger_status": "failed",
-                    "trigger_comment_id": trigger_comment_id,
-                    "error": str(exc.detail),
-                }
-            )
+        state = engineer_case_record.get("engineer_agent_state") or {}
         return await _complete(
             {
-                "trigger_status": "processed_engineer_case",
+                "trigger_status": "processed_engineer_notification",
                 "trigger_comment_id": trigger_comment_id,
                 "engineer_case_id": engineer_case_id,
-                "conversation_version": int(
-                    (processed.get("engineer_agent_state") or {}).get("conversation_version") or 0
-                ),
-                "draft_version": int(
-                    (processed.get("engineer_agent_state") or {}).get("draft_version") or 0
-                ),
+                "conversation_version": int(state.get("conversation_version") or 0),
+                "draft_version": int(state.get("draft_version") or 0),
             }
         )
     if (

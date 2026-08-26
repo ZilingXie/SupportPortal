@@ -608,7 +608,7 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         self.assertEqual(response.json()["trigger_status"], "processed")
         process.assert_awaited_once()
 
-    def test_active_non_automated_engineer_case_receives_customer_comment_and_ai_draft(self) -> None:
+    def test_active_non_automated_engineer_case_records_customer_comment_and_only_notifies_slack(self) -> None:
         account_case = self.repository.get_account_case(self.case_id)
         assert account_case is not None
         account_case.update(
@@ -632,46 +632,95 @@ class ZendeskCommentTriggerTests(unittest.TestCase):
         )
         engineer_case.update(
             thread_id="12838-1-round-1",
+            draft_customer_reply="Old draft that must be invalidated.",
+            final_confirmation_requested_at="2026-08-19T08:01:00Z",
+            investigation_state="awaiting_final_approval",
             engineer_agent_state={
-                "conversation_version": 0,
-                "draft_version": 0,
+                "conversation_version": 3,
+                "draft_version": 2,
                 "round_number": 1,
-                "round_state": "active",
+                "round_state": "awaiting_final_approval",
+                "ready_to_reply": True,
+                "reply_readiness": {"ready_for_customer_reply": True},
+                "guided_reply_generation": {"source": "slack"},
+                "active_guardrail_final": {"decision": "passed"},
+                "guardrail_final_id": "guardrail-1",
+                "guardrail_final_version": 1,
+                "guardrail_final_decision": "passed",
+                "final_approval_required": True,
+                "final_approved_at": "2026-08-19T08:02:00Z",
             },
         )
         self.repository.save_engineer_case(engineer_case)
-        ai_turn = {
-            "state": "awaiting_confirmation",
-            "message": "The customer supplied the missing app id.",
-            "draft_customer_reply": "We received the app id and are checking enablement.",
-            "engineer_agent_state": {
-                "phase": "awaiting_confirmation",
-                "ready_to_reply": True,
-                "reply_readiness": {"ready_for_customer_reply": True},
-            },
-        }
         with patch.object(main, "_process_account_customer_reply", new_callable=AsyncMock) as account_reply, patch.object(
-            main, "generate_investigation_ai_turn", return_value=ai_turn
-        ), patch.object(main, "dispatch_event", new_callable=AsyncMock):
+            main, "_process_engineer_investigation_message", new_callable=AsyncMock
+        ) as engineer_ai:
             response = self._sync(
+                [self._initial_comment(), self._customer_comment()],
+                trigger_comment_id="52661001",
+            )
+            replay = self._sync(
                 [self._initial_comment(), self._customer_comment()],
                 trigger_comment_id="52661001",
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["trigger_status"], "processed_engineer_case")
+        self.assertEqual(response.json()["trigger_status"], "processed_engineer_notification")
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["status"], "unchanged")
+        self.assertEqual(
+            {
+                key: replay.json()[key]
+                for key in (
+                    "trigger_status",
+                    "trigger_comment_id",
+                    "engineer_case_id",
+                    "conversation_version",
+                    "draft_version",
+                )
+            },
+            {
+                key: response.json()[key]
+                for key in (
+                    "trigger_status",
+                    "trigger_comment_id",
+                    "engineer_case_id",
+                    "conversation_version",
+                    "draft_version",
+                )
+            },
+        )
+        self.assertEqual(response.json()["conversation_version"], 4)
+        self.assertEqual(response.json()["draft_version"], 3)
         account_reply.assert_not_awaited()
+        engineer_ai.assert_not_awaited()
         stored_case = self.repository.get_engineer_case("12838-1")
         assert stored_case is not None
-        customer_message = stored_case["active_investigation"]["messages"][-2]
+        customer_message = stored_case["active_investigation"]["messages"][-1]
+        self.assertEqual(len(stored_case["active_investigation"]["messages"]), 1)
         self.assertEqual(customer_message["role"], "customer")
         self.assertEqual(customer_message["meta"]["zendesk_comment_id"], "52661001")
-        self.assertIn("received the app id", stored_case["active_investigation"]["draft_customer_reply"])
+        self.assertEqual(stored_case["active_investigation"]["draft_customer_reply"], "")
+        self.assertEqual(stored_case["active_investigation"]["state"], "active")
+        state = stored_case["engineer_agent_state"]
+        self.assertEqual(state["phase"], "investigating")
+        for stale_key in (
+            "ready_to_reply",
+            "reply_readiness",
+            "guided_reply_generation",
+            "active_guardrail_final",
+            "guardrail_final_id",
+            "guardrail_final_version",
+            "guardrail_final_decision",
+            "final_approval_required",
+            "final_approved_at",
+        ):
+            self.assertNotIn(stale_key, state)
         slack_events = self.repository.list_engineer_slack_events(statuses=("queued",))
-        self.assertEqual(
-            {event["event_type"] for event in slack_events},
-            {"zendesk_customer_comment", "engineer_ai_response"},
-        )
+        self.assertEqual(len(slack_events), 1)
+        self.assertEqual(slack_events[0]["event_type"], "zendesk_customer_comment")
+        self.assertEqual(slack_events[0]["payload"]["message_text"], "Cx has added a new comment")
+        self.assertNotIn("app id", str(slack_events[0]["payload"]).lower())
 
     def test_zendesk_solved_status_closes_active_engineer_case_and_thread(self) -> None:
         ticket = self.repository.get_ticket(self.ticket_id)
