@@ -1375,9 +1375,13 @@ def _derive_engineer_case_investigation_state(
     *,
     final_confirmation_requested_at: Any,
     closed_at: Any,
+    engineer_agent_state: dict[str, Any] | None = None,
 ) -> str:
     if closed_at is not None:
         return "closed"
+    agent_state = engineer_agent_state if isinstance(engineer_agent_state, dict) else {}
+    if str(agent_state.get("phase") or "").strip().lower() == "awaiting_final_approval":
+        return "awaiting_final_approval"
     if final_confirmation_requested_at is not None:
         return "awaiting_confirmation"
     return "active"
@@ -12146,6 +12150,7 @@ class PostgresTicketRepository:
         investigation_state = _derive_engineer_case_investigation_state(
             final_confirmation_requested_at=row[8],
             closed_at=row[13],
+            engineer_agent_state=row[10] if isinstance(row[10], dict) else None,
         )
         return {
             "engineer_case_id": str(row[0]),
