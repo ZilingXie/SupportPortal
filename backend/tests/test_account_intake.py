@@ -507,6 +507,24 @@ def _fake_account_route_stage(
     )
 
 
+class AccountAskedFieldKeysTest(unittest.TestCase):
+    def test_top_level_postgres_message_fields_count_as_already_asked(self) -> None:
+        ticket = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "asked_field_keys": [" Account_Type ", "name"],
+                    "meta": {"asked_field_keys": ["name", "office_address"]},
+                }
+            ]
+        }
+
+        self.assertEqual(
+            main._account_asked_field_keys(ticket),
+            {"account_type", "name", "office_address"},
+        )
+
+
 class AccountIntakeApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = InMemoryTicketRepository()
@@ -6355,6 +6373,13 @@ class AccountIntakeApiTests(unittest.TestCase):
                 {"account_type", "name", "office_address", "contact_number", "contact_email", "use_case_description", "console_configuration"},
             )
             self._publish_latest_account_reply(created["ticket_id"])
+            ticket = self.repository.get_ticket(created["ticket_id"])
+            assert ticket is not None
+            first_reply = ticket["messages"][-1]
+            first_reply_meta = first_reply.get("meta")
+            assert isinstance(first_reply_meta, dict)
+            first_reply["asked_field_keys"] = first_reply_meta.pop("asked_field_keys")
+            self.repository.save_ticket(ticket)
 
             response = self.client.post(
                 f"/api/account/cases/{created['account_case_id']}/reply",

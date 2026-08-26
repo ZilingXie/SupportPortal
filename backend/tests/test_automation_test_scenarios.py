@@ -51,6 +51,14 @@ class ScriptedEngine(ScenarioEngine):
             {"subject": subject, "body": body, "to": to_address, "headers": headers or {}}
         )
 
+    def imap_find_notification(self, zendesk_ticket_id, since_date):
+        return {
+            "message_id": "<zendesk-notification@example.com>",
+            "references": "",
+            "subject": self.tagged("Account flagged for suspicious activity"),
+            "reply_to": f"support+{zendesk_ticket_id}@agoraio.zendesk.com",
+        }
+
     def sleep(self, seconds):
         return None
 
@@ -141,6 +149,41 @@ class ScenarioEngineTests(unittest.TestCase):
             engine.run_scenario("E1")
         self.assertFalse(engine.all_passed())
         self.assertEqual(engine.steps[0].status, "FAIL")
+
+    def test_f1_partial_reply_hands_off_without_second_missing_information_request(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [{
+                "account_case_id": "AC-13018",
+                "client_ticket_id": "13018",
+                "zendesk_ticket_id": "13018",
+                "title": engine.tagged("Account flagged for suspicious activity"),
+            }]),
+            ("WHERE account_case_id", [{"execution_action": "fraud_account"}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "request_missing_information",
+                "close_after_publish": None,
+            }]),
+            ("WHERE account_case_id", [{"internal_email_send_status": "sent"}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "fraud_handoff_confirmation",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_ticket_events", [{"id": 1}]),
+            ("WHERE account_case_id", [{"zendesk_ticket_status": "open"}]),
+            ("COUNT(*) AS intent_count", [{"intent_count": 1}]),
+        ]
+
+        engine.run_scenario("F1")
+
+        self.assertTrue(engine.all_passed())
+        self.assertEqual(len(engine.sent_emails), 2)
+        self.assertIn("only have part", engine.sent_emails[1]["body"])
+        final_step = engine.steps[-1]
+        self.assertEqual(final_step.step, "missing information requested exactly once")
+        self.assertEqual(final_step.detail, "request_missing_information_count=1")
 
 
 class FakeEngine:
