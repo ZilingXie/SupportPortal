@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-119",
   "title": "Production Automation 分类邮件通知",
-  "status": "active",
+  "status": "done",
   "owner": "codex",
   "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；suhrid/emmazhong+cc 属于各流程内部 review 邮件的既有契约）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
-  "next_action": "回退 PR 部署后以受控工单验证分类邮件仅发 xieziling（无 cc），补 evidence 置 done。",
+  "next_action": "",
   "acceptance_criteria": [
     "Production active Automation Case 只创建一条分类邮件通知，收件人固定为 xieziling@agora.io，不按分类路由、不 cc；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
     "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
@@ -32,6 +32,12 @@
       "label": "Implemented plan review",
       "command": "review-implemented-plan skill",
       "details": "review 未发现需修复的功能性问题。"
+    },
+    {
+      "type": "deployment",
+      "label": "Revert deploy + controlled acceptance (PR#965)",
+      "command": "ssh zacbot 'cd ~/SupportPortal && bash scripts/ops/deploy_surfaces_ec2.sh --branch main --skip-split'；psql production outbox 查询；POST /automation-test/tickets（建单）+ /tickets/4/refresh",
+      "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=xieziling@agora.io delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
     }
   ],
   "source_refs": [
@@ -64,6 +70,11 @@
       "at": "2026-08-26",
       "event": "recipient_routing_reverted",
       "summary": "用户上线验证指出 PR#961 把内部 review 邮件的路由契约（suspension/fraud→suhrid、enablement→emmazhong、cc xieziling）误套到分类通知邮件：13017 的分类邮件被发到 zhonghuang@agora.io（无害噪音，已送达不回收）。内部邮件链路经核实本就正确（13007 实证 to=suhrid.das+cc xieziling）。回退收件人路由与 worker cc，恢复仅发 xieziling；保留 account_billing eligibility 与 automation_status=automation 门槛（原始缺陷的正确修复）。"
+    },
+    {
+      "at": "2026-08-26",
+      "event": "completed",
+      "summary": "PR#965（24122e6）回退收件人路由并部署 EC2；受控验收 Zendesk 13026（suspension 新案）：分类邮件 outbox recipient=xieziling@agora.io、无 cc、delivered、零失败；已关闭存量 case（13011）未因重保存迟发（automation_status 门槛实证）。elibility 修复（account_billing+active 门槛）保留并经 13026 复验。"
     }
   ],
   "legacy_refs": [],
