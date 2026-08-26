@@ -2641,6 +2641,35 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "2026-04-09T10:05:00+00:00",
         )
 
+    def test_ticket_repository_restores_awaiting_final_approval_from_agent_state(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        engineer_row = (
+            "TK-ENG-FINAL-001-1",
+            "TK-ENG-FINAL-001",
+            1,
+            "Engineer case",
+            "investigating",
+            "account_not_automated",
+            "not_automated",
+            "Hi Taylor,\n\nPlease retry.",
+            "2026-08-26T04:20:00+00:00",
+            None,
+            {
+                "phase": "awaiting_final_approval",
+                "final_approval_required": True,
+                "active_guardrail_final": {
+                    "decision": "approved_for_final_engineer_review"
+                },
+            },
+            "2026-08-26T04:00:00+00:00",
+            "2026-08-26T04:21:00+00:00",
+            None,
+        )
+
+        record = repository._row_to_engineer_case_record(engineer_row, [])
+
+        self.assertEqual(record["investigation_state"], "awaiting_final_approval")
+
     def test_in_memory_ticket_repository_list_engineer_case_headers_returns_lightweight_payload(self) -> None:
         repository = InMemoryTicketRepository()
         repository.initialize()

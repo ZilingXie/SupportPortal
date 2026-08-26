@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T04:09:48Z",
-  "source_base_commit": "5cfbc02abce3e7203af2e8bb8b266840567db08c",
-  "registry_digest": "2f45415275f3859d75d05f6c8b62f012ad54b3349021af1db6c5ba7d10781a07",
+  "generated_at": "2026-08-26T04:29:22Z",
+  "source_base_commit": "c4c3b368facd3af1fad67b94803b5965199bb32e",
+  "registry_digest": "f3cd806afff2ee2598b66aabce0f111229fcb24f096c9ca93be3873af7d705c1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2585,8 +2585,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "summary": "Integrated Slack guided Persona, persisted human-source Guardrail, Slack API/workflow, Zendesk comment-sync and worker regression passed 312 tests and 37 subtests.",
-          "ref": "backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_investigation_flow.py"
+          "summary": "Integrated repository-state, Slack guided Persona, persisted human-source Guardrail, Slack API/workflow, Zendesk comment-sync and worker regression passed 435 tests and 37 subtests.",
+          "ref": "backend/tests/test_repository_configuration.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_investigation_flow.py"
+        },
+        {
+          "type": "deployment",
+          "summary": "Production ticket 13023 pinned default-support v1, generated engineer-guided-persona-v1 draft v1 with gpt-5.6-luna, delivered the response to Slack thread 1787712799.749409, and passed Guardrail with persisted human guidance evidence. Final Approve was safely blocked before Zendesk write because PostgreSQL reconstructed awaiting_confirmation instead of the persisted awaiting_final_approval agent phase.",
+          "ref": "https://support.stellarix.space/production/; engineer case 13023-1; live-p2-68-13023-c4c3b36"
         },
         {
           "type": "test",
@@ -8932,7 +8937,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "unassigned",
       "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
-      "next_action": "完成目标回归、PR finalization 和 Production 部署；确认 Slack Interaction workflow 与 App Interactivity URL 已激活后，用 ticket 13023 完成 Guardrail、Final Approve、Zendesk public readback 和工单状态不变验收。",
+      "next_action": "finalize 并部署 PostgreSQL awaiting_final_approval 状态重建修复；随后在 ticket 13023 的同一 draft/version 上重跑 Guardrail、Final Approve、Zendesk public readback 和工单状态不变验收。Slack Interaction workflow 仍需独立确认。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
         "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
@@ -8957,8 +8962,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "summary": "Integrated Slack guided Persona, persisted human-source Guardrail, Slack API/workflow, Zendesk comment-sync and worker regression passed 312 tests and 37 subtests.",
-          "ref": "backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_investigation_flow.py"
+          "summary": "Integrated repository-state, Slack guided Persona, persisted human-source Guardrail, Slack API/workflow, Zendesk comment-sync and worker regression passed 435 tests and 37 subtests.",
+          "ref": "backend/tests/test_repository_configuration.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_investigation_flow.py"
+        },
+        {
+          "type": "deployment",
+          "summary": "Production ticket 13023 pinned default-support v1, generated engineer-guided-persona-v1 draft v1 with gpt-5.6-luna, delivered the response to Slack thread 1787712799.749409, and passed Guardrail with persisted human guidance evidence. Final Approve was safely blocked before Zendesk write because PostgreSQL reconstructed awaiting_confirmation instead of the persisted awaiting_final_approval agent phase.",
+          "ref": "https://support.stellarix.space/production/; engineer case 13023-1; live-p2-68-13023-c4c3b36"
         }
       ],
       "source_refs": [
@@ -8996,6 +9006,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "guided_reply_implemented",
           "summary": "Slack @bot 指导改为懒分配固定 Persona 的润色草稿；人类指导作为 Guardrail 来源证明，保留两阶段批准和 Zendesk public delivery。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "production_state_gap_found",
+          "summary": "真实 Guardrail 通过后发现 PostgreSQL 仅按 final_confirmation_requested_at 重建 state，导致 awaiting_final_approval 丢失并安全阻断 Final Approve；开始修复 repository 状态重建。"
         }
       ],
       "legacy_refs": [
