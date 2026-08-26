@@ -229,8 +229,9 @@ Please enable Media Relay.
         self.assertNotIn("From:", reply)
         self.assertNotIn("Account Case ID", reply)
         self.assertNotIn("sensitive-app-id", reply)
-        self.assertTrue(reply.startswith("Hi there,"))
-        self.assertTrue(reply.endswith("Best Regards,\nSid"))
+        self.assertTrue(reply.startswith("Hi there\n\n"))
+        self.assertNotIn("Best Regards", reply)
+        self.assertNotIn("\nSid", reply)
         system_prompt = invoke_mock.call_args.kwargs["system_prompt"]
         self.assertIn("newest human-authored resolution", system_prompt)
         self.assertIn("quoted messages", system_prompt)

@@ -135,7 +135,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertIn("Do not invent links", system_prompt)
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("An App ID identifies an Agora project created in Console.", user_prompt)
-        self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
+        self.assertTrue(result.content.startswith("Hi, Maya\n\n"))
         self.assertIn("an App ID identifies an Agora project", result.content)
 
     def test_render_rag_fallback_requires_provided_answer(self) -> None:
@@ -182,8 +182,8 @@ class AutomationPersonaTests(unittest.TestCase):
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("provided_answer is the only authority", system_prompt)
         self.assertIn("Do not derive or add any diagnosis", system_prompt)
-        self.assertEqual(result.prompt_version, "engineer-guided-persona-v1")
-        self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
+        self.assertEqual(result.prompt_version, "engineer-guided-persona-v2")
+        self.assertTrue(result.content.startswith("Hi, Maya\n\n"))
         self.assertIn("SDK 4.2.2", result.content)
 
     def test_render_engineer_guided_reply_preserves_source_identifier_and_url(self) -> None:
@@ -389,12 +389,12 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(result.content, f"Hi Jack,\n\n{response.text}")
+        self.assertEqual(result.content, f"Hi, Jack\n\n{response.text}")
         self.assertEqual(result.model, "persona-model")
         self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
         self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("Do not write a greeting, signoff", invoke.call_args.kwargs["system_prompt"])
-        self.assertIn("Hi Jack,", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("Hi, Jack", invoke.call_args.kwargs["system_prompt"])
         self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
         self.assertNotIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
 
@@ -465,7 +465,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Taylor,\n\n"
+            "Hi, Taylor\n\n"
             "Thank you for sharing the information you have so far.\n\n"
             "Could you please provide the following information?\n\n"
             "- Office address\n"
@@ -473,7 +473,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v14")
+        self.assertEqual(result.prompt_version, "automation-persona-v15")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -593,9 +593,55 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated. Activation may "
+            "Hi, Jack\n\nI am coordinating the request with our internal team and will keep you updated. Activation may "
             "take up to 24 hours, and the change window is Monday-Friday.",
         )
+
+    def test_engineer_guided_reply_removes_greeting_after_waiting_preamble(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thank you for waiting.\n\n"
+                "Hi Ziling, I understand you are seeing a black screen. Please share the SDK logs."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts={
+                    "behavior": "engineer_support",
+                    "reply_intent": "engineer_guided_reply",
+                    "provided_answer": "Please share the SDK logs.",
+                    "customer_first_name": "Ziling Xie",
+                },
+                persona_assignment={"content": {"instruction": "Warm"}},
+            )
+
+        self.assertEqual(
+            result.content,
+            "Hi, Ziling\n\nThank you for waiting.\n\n"
+            "I understand you are seeing a black screen. Please share the SDK logs.",
+        )
+        self.assertEqual(result.content.lower().count("hi"), 1)
+
+    def test_engineer_guided_reply_requires_customer_name(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile):
+            with self.assertRaisesRegex(
+                AutomationPersonaError,
+                "automation_persona_guided_customer_name_missing",
+            ):
+                render_automation_reply(
+                    reply_facts={
+                        "behavior": "engineer_support",
+                        "reply_intent": "engineer_guided_reply",
+                        "provided_answer": "Please retry.",
+                        "customer_first_name": "",
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                )
 
     def test_legacy_signoff_name_is_ignored(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -608,7 +654,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm", "signoff_name": "Maya"}},
             )
 
-        self.assertEqual(result.content, "Hi Customer,\n\nThe request is complete.")
+        self.assertEqual(result.content, "Hi, Customer\n\nThe request is complete.")
 
     def test_trailing_signature_is_rejected_without_rewriting_body(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -661,7 +707,7 @@ class AutomationPersonaTests(unittest.TestCase):
             facts,
         )
         validate_account_reply_contract(
-            "Hi Customer,\n\nThe relevant team will contact you within 24 hours.",
+            "Hi, Customer\n\nThe relevant team will contact you within 24 hours.",
             facts,
         )
         with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
@@ -703,7 +749,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Customer,\n\nThe relevant team will contact you within 24 hours.",
+            "Hi, Customer\n\nThe relevant team will contact you within 24 hours.",
         )
         self.assertEqual(invoke.call_count, 4)
 

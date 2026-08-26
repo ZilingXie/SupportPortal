@@ -12,6 +12,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services.customer_reply_composer import has_trailing_customer_signature
+
 
 ZENDESK_TICKET_API_BASE = "https://agoraio.zendesk.com/api/v2/tickets"
 ZENDESK_UPLOADS_API_BASE = "https://agoraio.zendesk.com/api/v2/uploads"
@@ -390,6 +392,11 @@ def add_ticket_comment(
     expected_public = bool(public)
     if not normalized_ticket_id or not normalized_body:
         raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    if expected_public and has_trailing_customer_signature(normalized_body):
+        raise ZendeskCommentError(
+            "permanent",
+            error_code="zendesk_public_comment_signature_forbidden",
+        )
     timeout = _request_timeout(timeout_seconds)
     url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
     comment_payload: dict[str, Any] = {"body": normalized_body, "public": expected_public}

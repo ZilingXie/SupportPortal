@@ -15,6 +15,20 @@ _GENERIC_REQUESTER_VALUES = {
     "unknown",
     "user",
 }
+_SIGNOFF_LINE_RE = re.compile(
+    r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
+    r"sincerely|thanks(?:\s+in\s+advance)?|thank\s+you|cheers|此致|谢谢)[,!:]?\s*$"
+)
+_INLINE_SIGNOFF_RE = re.compile(
+    r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
+    r"sincerely|thanks|thank\s+you|cheers)[,!:]\s+\S.*$"
+)
+_SIGNATURE_IDENTITY_LINE_RE = re.compile(r"^[\w .'-]{1,80}$", flags=re.UNICODE)
+_GENERATED_GREETING_PREFIX_RE = re.compile(
+    r"^(?:(?:hi|hello|hey)(?:\s*,)?\s+there(?:,\s*|$)|"
+    r"(?:hi|hello|hey)(?:\s*,)?\s+[^,\n]{1,80},\s*)",
+    flags=re.IGNORECASE,
+)
 _DEFAULT_OPENERS = {
     "clarification": {
         "en": "Thank you for the details.",
@@ -85,19 +99,14 @@ def _normalize_requester(requester: str | None, customer_id: str | None) -> str 
 
 
 def _english_salutation(requester: str | None) -> str:
-    return f"Hi {requester}," if requester else "Hi there,"
+    first_name = str(requester or "").split(" ", 1)[0].strip()
+    return f"Hi, {first_name}" if first_name else "Hi there"
 
 
 def _localized_salutation(requester: str | None, language: str) -> str:
     if language.startswith("zh"):
         return f"{requester}，您好：" if requester else "您好："
     return _english_salutation(requester)
-
-
-def _localized_signoff(language: str, signoff_name: str) -> str:
-    if language.startswith("zh"):
-        return f"此致\n{signoff_name}"
-    return f"Best Regards,\n{signoff_name}"
 
 
 def _default_opener(reply_kind: str | None, language: str) -> str:
@@ -126,36 +135,80 @@ def _split_paragraph_blocks(value: object) -> list[str]:
 
 
 def _looks_like_salutation_block(block: str) -> bool:
-    lowered = _clean_text(block).lower()
-    if not lowered:
+    normalized = _clean_text(block)
+    if not normalized:
         return False
-    if lowered.startswith(("hi ", "hello ", "dear ")):
-        return lowered.endswith(",")
+    if re.fullmatch(r"(?:hi|hello|dear),?\s+[^,\n]{1,80},?", normalized, flags=re.IGNORECASE):
+        return True
     if "您好" in block:
         return block.endswith(("：", ":"))
     return False
 
 
-def _looks_like_signoff_block(block: str, signoff_name: str) -> bool:
+def strip_generated_customer_greetings(value: object) -> str:
+    """Remove model-generated greetings from the first two body paragraphs."""
+    blocks = _split_paragraph_blocks(value)
+    normalized: list[str] = []
+    for index, block in enumerate(blocks):
+        if index >= 2:
+            normalized.append(block)
+            continue
+        cleaned = "" if _looks_like_salutation_block(block) else _GENERATED_GREETING_PREFIX_RE.sub(
+            "", block, count=1
+        ).strip()
+        if cleaned:
+            normalized.append(cleaned)
+    return "\n\n".join(normalized).strip()
+
+
+def _looks_like_signature_identity_line(line: str) -> bool:
+    if not _SIGNATURE_IDENTITY_LINE_RE.fullmatch(line):
+        return False
+    words = line.split()
+    if not words or len(words) > 6:
+        return False
+    for word in words:
+        letters = [character for character in word if character.isalpha()]
+        if letters and not letters[0].isupper():
+            return False
+    return True
+
+
+def has_trailing_customer_signature(value: object) -> bool:
+    lines = [line.strip() for line in _normalize_body(value).split("\n") if line.strip()]
+    if lines and lines[-1].casefold() == "sid":
+        return True
+    tail = lines[-4:]
+    for index, line in enumerate(tail):
+        if index == len(tail) - 1 and _INLINE_SIGNOFF_RE.match(line):
+            return True
+        if not _SIGNOFF_LINE_RE.match(line):
+            continue
+        identity_lines = tail[index + 1 :]
+        if not identity_lines or all(_looks_like_signature_identity_line(item) for item in identity_lines):
+            return True
+    return False
+
+
+def _looks_like_legacy_sid_signoff_block(block: str) -> bool:
     normalized_block = _normalize_body(block)
-    normalized_name = _clean_text(signoff_name) or "Sid"
     return normalized_block in {
-        f"Best Regards,\n{normalized_name}",
-        f"Best regards,\n{normalized_name}",
-        f"此致\n{normalized_name}",
+        "Best Regards,\nSid",
+        "Best regards,\nSid",
+        "Thanks in advance!\nSid",
+        "此致\nSid",
     }
 
 
-def _strip_email_wrapper(value: object, *, signoff_name: str = "Sid") -> str:
-    blocks = _split_paragraph_blocks(value)
-    if blocks and _looks_like_salutation_block(blocks[0]):
-        blocks = blocks[1:]
-    normalized_name = _clean_text(signoff_name) or "Sid"
-    if len(blocks) >= 2 and _clean_text(blocks[-2]).lower() in {"best regards,", "best regards", "此致"} and _clean_text(
-        blocks[-1]
-    ) == normalized_name:
+def _strip_email_wrapper(value: object) -> str:
+    blocks = _split_paragraph_blocks(strip_generated_customer_greetings(value))
+    if (
+        len(blocks) >= 2
+        and _SIGNOFF_LINE_RE.fullmatch(_clean_text(blocks[-2]))
+        and _clean_text(blocks[-1]).casefold() == "sid"
+    ):
         blocks = blocks[:-2]
-    elif blocks and _looks_like_signoff_block(blocks[-1], normalized_name):
+    elif blocks and _looks_like_legacy_sid_signoff_block(blocks[-1]):
         blocks = blocks[:-1]
     return "\n\n".join(blocks).strip()
 
@@ -169,7 +222,6 @@ def compose_customer_reply_email(
     language: str | None = None,
     opener: str | None = None,
     steps: Iterable[str] | None = None,
-    signoff_name: str = "Sid",
 ) -> str:
     normalized_language = detect_customer_reply_language(
         opener,
@@ -195,7 +247,6 @@ def compose_customer_reply_email(
     if rendered_steps:
         sections.append(rendered_steps)
 
-    sections.append(_localized_signoff(normalized_language, _clean_text(signoff_name) or "Sid"))
     return "\n\n".join(section for section in sections if section).strip()
 
 
@@ -207,10 +258,9 @@ def ensure_customer_reply_email_style(
     customer_id: str | None = None,
     language: str | None = None,
     opener: str | None = None,
-    signoff_name: str = "Sid",
 ) -> str:
     normalized_body = _normalize_body(body)
-    stripped_body = _strip_email_wrapper(normalized_body, signoff_name=signoff_name)
+    stripped_body = _strip_email_wrapper(normalized_body)
     effective_reply_kind = reply_kind if stripped_body == normalized_body else None
     return compose_customer_reply_email(
         reply_kind=effective_reply_kind,
@@ -219,7 +269,6 @@ def ensure_customer_reply_email_style(
         customer_id=customer_id,
         language=detect_customer_reply_language(normalized_body, language=language),
         opener=opener,
-        signoff_name=signoff_name,
     )
 
 
@@ -230,7 +279,6 @@ def append_customer_reply_email_paragraph(
     requester: str | None = None,
     customer_id: str | None = None,
     language: str | None = None,
-    signoff_name: str = "Sid",
 ) -> str:
     normalized_paragraph = _normalize_body(paragraph)
     if not normalized_paragraph:
@@ -239,14 +287,12 @@ def append_customer_reply_email_paragraph(
             requester=requester,
             customer_id=customer_id,
             language=language,
-            signoff_name=signoff_name,
         )
-    base_body = _strip_email_wrapper(existing_reply, signoff_name=signoff_name) or _normalize_body(existing_reply)
+    base_body = _strip_email_wrapper(existing_reply) or _normalize_body(existing_reply)
     merged_body = "\n\n".join(section for section in [base_body, normalized_paragraph] if section).strip()
     return ensure_customer_reply_email_style(
         body=merged_body,
         requester=requester,
         customer_id=customer_id,
         language=detect_customer_reply_language(existing_reply, paragraph, language=language),
-        signoff_name=signoff_name,
     )

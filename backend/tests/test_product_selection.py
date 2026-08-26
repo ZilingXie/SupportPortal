@@ -127,9 +127,9 @@ class ProductSelectionTests(unittest.TestCase):
             context.preflight_execution.workflow_action,
             WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_PRODUCT,
         )
-        self.assertTrue(context.preflight_execution.answer.startswith("Hi Taylor,"))
+        self.assertTrue(context.preflight_execution.answer.startswith("Hi, Taylor\n\n"))
         self.assertIn("Audio/Video Calling (RTC)", context.preflight_execution.answer)
-        self.assertTrue(context.preflight_execution.answer.endswith("Best Regards,\nSid"))
+        self.assertNotIn("Best Regards", context.preflight_execution.answer)
 
     def test_resolve_support_product_context_confirms_pending_product_and_combines_original_message(self) -> None:
         state = build_product_selection_state(

@@ -29,14 +29,18 @@ from backend.services.llm_factory import LlmInvocationError
 # Kept as a patch point for existing unit tests; production calls are pinned below.
 invoke_responses_text = invoke_account_responses_text
 from backend.services.llm_profiles import AUTOMATION_PERSONA_SCENARIO, resolve_model_profile
+from backend.services.customer_reply_composer import (
+    has_trailing_customer_signature,
+    strip_generated_customer_greetings,
+)
 
 _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v14"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v15"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
-ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v1"
+ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v2"
 
 _HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 
@@ -55,30 +59,6 @@ _SUPPORT_ID_RE = re.compile(
     r"account case\s*(?:id\s*)?[:#-]?\s*AC-[A-Z0-9-]+)\b"
 )
 _URL_RE = re.compile(r"(?i)https?://[^\s<>()\[\]{}\"'|]+")
-_SIGNOFF_LINE_RE = re.compile(
-    r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
-    r"sincerely|thanks|thank\s+you|cheers|此致|谢谢)[,!:]?\s*$"
-)
-_INLINE_SIGNOFF_RE = re.compile(
-    r"(?i)^\s*(?:best(?:\s+regards)?|kind\s+regards|warm\s+regards|regards|"
-    r"sincerely|thanks|thank\s+you|cheers)[,!:]\s+\S.*$"
-)
-_SIGNATURE_IDENTITY_LINE_RE = re.compile(r"^[\w .'-]{1,80}$", flags=re.UNICODE)
-
-
-def _looks_like_signature_identity_line(line: str) -> bool:
-    if not _SIGNATURE_IDENTITY_LINE_RE.fullmatch(line):
-        return False
-    words = line.split()
-    if not words or len(words) > 6:
-        return False
-    for word in words:
-        letters = [character for character in word if character.isalpha()]
-        if not letters:
-            continue
-        if any(character.isupper() or character.islower() for character in letters) and not letters[0].isupper():
-            return False
-    return True
 
 
 def _forbidden_values(known_information: dict[str, Any] | None) -> list[str]:
@@ -170,20 +150,8 @@ class AutomationPersonaResult:
 
 def assert_no_trailing_automation_signature(reply: str) -> None:
     """Reject a signature-shaped tail without rewriting customer content."""
-    lines = [
-        line.strip()
-        for line in str(reply or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        if line.strip()
-    ]
-    tail = lines[-4:]
-    for index, line in enumerate(tail):
-        if index == len(tail) - 1 and _INLINE_SIGNOFF_RE.match(line):
-            raise AutomationPersonaError("automation_persona_signature_forbidden")
-        if not _SIGNOFF_LINE_RE.match(line):
-            continue
-        identity_lines = tail[index + 1 :]
-        if not identity_lines or all(_looks_like_signature_identity_line(item) for item in identity_lines):
-            raise AutomationPersonaError("automation_persona_signature_forbidden")
+    if has_trailing_customer_signature(reply):
+        raise AutomationPersonaError("automation_persona_signature_forbidden")
 
 
 def extract_automation_resolution_facts(
@@ -699,7 +667,7 @@ def _validated_automation_reply_content(
     reply = str(getattr(response, "text", "") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
-    reply = re.sub(r"^(?:hi|hello|hey)\b[^,\n]{0,80},\s*", "", reply, count=1, flags=re.IGNORECASE).strip()
+    reply = strip_generated_customer_greetings(reply)
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     assert_no_trailing_automation_signature(reply)
@@ -813,7 +781,11 @@ def render_automation_reply(
     ):
         raise AutomationPersonaError("automation_persona_missing_provided_answer")
 
-    greeting = f"Hi {customer_first_name(facts.get('customer_first_name'))},"
+    first_name = customer_first_name(facts.get("customer_first_name"))
+    intent = str(facts.get("reply_intent") or "").strip().lower()
+    if intent == ENGINEER_GUIDED_REPLY_INTENT and first_name == "Customer":
+        raise AutomationPersonaError("automation_persona_guided_customer_name_missing")
+    greeting = f"Hi, {first_name}"
     deterministic_missing_information = _uses_deterministic_missing_information(facts)
     missing_information_policy = (
         "For request_missing_information, write only one brief, warm acknowledgement paragraph. Do not name, "
@@ -846,7 +818,6 @@ def render_automation_reply(
         else ""
     )
     reply_contract_policy = ""
-    intent = str(facts.get("reply_intent") or "").strip().lower()
     prompt_version = (
         ENGINEER_GUIDED_PERSONA_PROMPT_VERSION
         if intent == ENGINEER_GUIDED_REPLY_INTENT

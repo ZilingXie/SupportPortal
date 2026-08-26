@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T05:42:36Z",
-  "source_base_commit": "a5a66d6ea4db25d3ec496af83561e402f77b9b98",
-  "registry_digest": "b44ca3b7a13e0736148ba511a9adac1718d30f0cef539f9031d1324469fbea11",
+  "generated_at": "2026-08-26T06:27:31Z",
+  "source_base_commit": "3529ba7aa2204982a5eb2f2f3ea9dea2afc36466",
+  "registry_digest": "a00e862e71e6ca2f04a96c332b432c279cf324e9fff7e9e16acb5a1ea39c05c2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2608,6 +2608,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "summary": "Build 244d5cf00764 completed ticket 13023 draft v1: Final Approve queued one public Engineer delivery, Zendesk audit read back comment 52908525456788 with no solved event and current ticket status pending, Engineer Case 13023-1 stayed active in communicating/delivered round state, and queued/delivered confirmations reached Slack thread 1787712799.749409. EC2 runtime containers reported RestartCount=0.",
           "ref": "https://agoraio.zendesk.com/agent/tickets/13023; https://support.stellarix.space/health; PR #971"
+        },
+        {
+          "type": "test",
+          "summary": "Customer reply composition, Engineer Persona prompting, deterministic Guardrail and Zendesk public-write delivery now enforce an unsigned application body; English greetings use the trusted customer first name as `Hi, Name`, duplicate model greetings are removed, and legacy Sid signatures fail closed.",
+          "ref": "backend/tests/test_customer_reply_composer.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_zendesk_public_comment.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py"
         },
         {
           "type": "test",
@@ -8966,7 +8971,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "status": "active",
       "owner": "unassigned",
-      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
+      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。n8n 只负责固定 Team/Channel/thread 的入站控制。",
       "next_action": "在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
@@ -9009,6 +9014,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "summary": "Build 244d5cf00764 completed ticket 13023 draft v1: Final Approve queued one public Engineer delivery, Zendesk audit read back comment 52908525456788 with no solved event and current ticket status pending, Engineer Case 13023-1 stayed active in communicating/delivered round state, and queued/delivered confirmations reached Slack thread 1787712799.749409. EC2 runtime containers reported RestartCount=0.",
           "ref": "https://agoraio.zendesk.com/agent/tickets/13023; https://support.stellarix.space/health; PR #971"
+        },
+        {
+          "type": "test",
+          "summary": "Customer reply composition, Engineer Persona prompting, deterministic Guardrail and Zendesk public-write delivery now enforce an unsigned application body; English greetings use the trusted customer first name as `Hi, Name`, duplicate model greetings are removed, and legacy Sid signatures fail closed.",
+          "ref": "backend/tests/test_customer_reply_composer.py, backend/tests/test_automation_persona.py, backend/tests/test_engineer_guardrail_agent.py, backend/tests/test_zendesk_public_comment.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py"
         }
       ],
       "source_refs": [
@@ -9061,6 +9071,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "production_delivery_verified",
           "summary": "ticket 13023 的 Final Approve、Zendesk public comment 外部回读、未 solve、Engineer Case communicating 生命周期和同 thread Slack 发布确认均已验证；Task 保持 active，等待真实 n8n Interaction 点击、错误频道拒绝和 pending 派单核对。"
+        },
+        {
+          "at": "2026-08-26",
+          "event": "customer_signature_removed",
+          "summary": "按产品决定删除应用侧 Persona 客户签名：生成内容仅保留使用客户 first name 的问候，Guardrail 和 Zendesk public write 阻断历史 Sid 签名，Zendesk 继续拥有最终签名。"
         }
       ],
       "legacy_refs": [

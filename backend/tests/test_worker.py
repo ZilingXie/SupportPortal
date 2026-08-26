@@ -968,6 +968,55 @@ class WorkerResilienceTests(unittest.TestCase):
             solve=False,
         )
 
+    def test_engineer_delivery_marks_signed_public_reply_failed_and_notifies_slack(self) -> None:
+        repository = Mock()
+        delivery = {
+            "source": "engineer",
+            "account_case_id": "AC-ENG-SIGNED",
+            "message_id": "approval-signed",
+            "engineer_case_id": "EC-ENG-SIGNED",
+            "investigation_id": "EC-ENG-SIGNED-round-1",
+            "draft_version": 1,
+            "comments_revision": "signed-revision",
+            "immutable_content": "Hi, Ziling\n\nPlease retry.\n\nSid",
+            "zendesk_ticket_id": "12893",
+            "status": "queued",
+        }
+        repository.get_account_case.return_value = {"client_ticket_id": "TK-ENG-SIGNED"}
+        repository.get_account_case_comment_sync.return_value = {
+            "comments_revision": "signed-revision"
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {"claimed": True}
+        signature_error = ZendeskCommentError(
+            "permanent",
+            error_code="zendesk_public_comment_signature_forbidden",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "add_ticket_comment",
+            side_effect=signature_error,
+        ), patch.object(
+            worker,
+            "_record_engineer_delivery_slack_event",
+        ) as slack_event:
+            worker._deliver_engineer_approved_zendesk_comment(delivery)
+
+        repository.complete_account_zendesk_comment_delivery.assert_called_once_with(
+            account_case_id="AC-ENG-SIGNED",
+            message_id="approval-signed",
+            status="failed",
+            zendesk_comment_id=None,
+            failure_code="zendesk_public_comment_signature_forbidden",
+            completed_at="2026-03-22T00:00:00+00:00",
+        )
+        slack_event.assert_called_once_with(
+            delivery,
+            event_type="zendesk_publish_failed",
+            message_text="Zendesk public comment delivery failed.",
+            failure_code="zendesk_public_comment_signature_forbidden",
+        )
+
     def test_delivery_is_not_put_twice_after_first_completion(self) -> None:
         repository = Mock()
         repository.get_account_case_by_ticket_id.return_value = {
