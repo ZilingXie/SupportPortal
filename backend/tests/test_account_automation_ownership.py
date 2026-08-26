@@ -7,6 +7,7 @@ from unittest.mock import patch
 from backend.services.account_automation_ownership import (
     OWNERSHIP_CONTEXT_KEY,
     ensure_production_automation_ownership,
+    mark_production_ownership_handed_to_reviewer,
     ownership_gate_eligible,
 )
 from backend.services.zendesk_comments import ZendeskCommentError
@@ -88,6 +89,45 @@ class OwnershipGateEligibilityTests(unittest.TestCase):
                 )
             )
         )
+
+
+class OwnershipReviewerHandoffTests(unittest.TestCase):
+    def test_reviewer_handoff_preserves_source_ownership_and_clears_failures(self):
+        case = _production_case(
+            automation_context={
+                OWNERSHIP_CONTEXT_KEY: {
+                    "state": "assigned",
+                    "assignee_id": "ai-1",
+                    "group_id": "ai-group",
+                    "source_assignee_id": "source-agent",
+                    "source_group_id": "source-group",
+                    "failure_code": "old_failure",
+                    "failure_category": "permanent",
+                    "zendesk_status_code": 422,
+                    "failure_detail": "old detail",
+                    "blocking_comment_id": "comment-1",
+                }
+            }
+        )
+
+        ownership = mark_production_ownership_handed_to_reviewer(
+            case,
+            updated_at="2026-08-26T00:00:00Z",
+            assignee_id="reviewer-1",
+            group_id="reviewer-group",
+        )
+
+        self.assertEqual(ownership["state"], "human_reassigned")
+        self.assertEqual(ownership["assignee_id"], "reviewer-1")
+        self.assertEqual(ownership["group_id"], "reviewer-group")
+        self.assertEqual(ownership["source_assignee_id"], "source-agent")
+        self.assertEqual(ownership["source_group_id"], "source-group")
+        self.assertEqual(ownership["handoff_status"], "assigned_to_reviewer")
+        self.assertIsNone(ownership["failure_code"])
+        self.assertIsNone(ownership["failure_category"])
+        self.assertIsNone(ownership["zendesk_status_code"])
+        self.assertIsNone(ownership["failure_detail"])
+        self.assertIsNone(ownership["blocking_comment_id"])
 
 
 class OwnershipGateModeTests(unittest.TestCase):

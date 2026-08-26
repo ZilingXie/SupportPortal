@@ -218,6 +218,30 @@ def mark_production_ownership_released(
     return ownership
 
 
+def mark_production_ownership_handed_to_reviewer(
+    account_case: dict[str, Any],
+    *,
+    updated_at: str,
+    assignee_id: str,
+    group_id: str | None,
+) -> dict[str, Any]:
+    ownership = _persist_ownership_state(
+        account_case,
+        state=OWNERSHIP_STATE_HUMAN_REASSIGNED,
+        assignee_id=str(assignee_id or "").strip() or None,
+        group_id=str(group_id or "").strip() or None,
+        failure_code=None,
+        failure_category=None,
+        zendesk_status_code=None,
+        blocking_comment_id=None,
+        failure_detail=None,
+        updated_at=updated_at,
+    )
+    ownership["handoff_status"] = "assigned_to_reviewer"
+    account_case["automation_context"][OWNERSHIP_CONTEXT_KEY] = ownership
+    return ownership
+
+
 def _snapshot_policy_blocker(
     account_case: dict[str, Any],
     *,

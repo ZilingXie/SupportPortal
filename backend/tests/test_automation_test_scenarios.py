@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -93,6 +94,50 @@ class ScenarioEngineTests(unittest.TestCase):
         engine = ScriptedEngine()
         self.assertEqual(engine.tagged("Hello"), "[zac test] Hello")
         self.assertEqual(engine.tagged("[zac test] Hello"), "[zac test] Hello")
+
+    def test_next_customer_turn_uses_plus_address_when_notification_times_out(self) -> None:
+        engine = ScriptedEngine()
+        context = SimpleNamespace(
+            subject=engine.tagged("Account flagged for suspicious activity"),
+            zendesk_ticket_id="13027",
+            turn_started_at=None,
+        )
+
+        with patch.object(
+            engine,
+            "wait_for",
+            side_effect=TimeoutError("Zendesk notification email did not arrive"),
+        ):
+            engine.next_customer_turn(context, "Here is partial information.")
+
+        self.assertEqual(
+            engine.sent_emails,
+            [
+                {
+                    "subject": "Re: [zac test] Account flagged for suspicious activity",
+                    "body": "Here is partial information.",
+                    "to": "support+13027@agoraio.zendesk.com",
+                    "headers": {},
+                }
+            ],
+        )
+
+    def test_next_customer_turn_does_not_fallback_after_cancel_or_other_error(self) -> None:
+        for error in (ScenarioCancelled("cancelled"), RuntimeError("imap unavailable")):
+            with self.subTest(error=type(error).__name__):
+                engine = ScriptedEngine()
+                context = SimpleNamespace(
+                    subject=engine.tagged("Account flagged for suspicious activity"),
+                    zendesk_ticket_id="13027",
+                    turn_started_at=None,
+                )
+
+                with patch.object(engine, "wait_for", side_effect=error), self.assertRaises(
+                    type(error)
+                ):
+                    engine.next_customer_turn(context, "Here is partial information.")
+
+                self.assertEqual(engine.sent_emails, [])
 
     def test_e1_happy_path_scripted(self) -> None:
         engine = ScriptedEngine()
