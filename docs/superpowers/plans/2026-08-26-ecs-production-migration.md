@@ -2,34 +2,34 @@
 
 Recommendation: Sol medium for implementation. 架构和迁移边界已经收敛；实施会同时涉及运行时隔离、不可变发布、AWS 基础设施、Production 验收和 n8n 受控切换，适合由 Sol medium 按阶段门禁执行。
 
-状态：`implementation_ready`
+状态：`stage_0_complete`
 
 - Project Task：`p1-53`
 - Project Phase：`phase-1`
 - Module：`platform-delivery`
 - Function：`ecs-environment-migration`
 - 范围：仅迁移阶段 1
-- 目标：将 Automation Production 的新 Case 入口从现有 EC2 `/production` 迁移到 ECS Production
+- 目标：在 `support.stellarix.space/automation/production` 建立 ECS Production，并长期保留 EC2 `/production` 作为 n8n 可切回的 backup
 
 ## 目标和范围
 
-建立一套独立、production-safe 的 ECS Automation Production，通过 n8n 筛选的测试 Case 完成真实验收，然后将新的 Production Case 从现有 EC2 endpoint 受控切换到 ECS endpoint，并保留边界清晰的回滚路径。
+建立一套独立、production-safe 的 ECS Automation Production，通过 n8n 筛选的测试 Case 完成真实验收，然后将新的 Production Case 从 EC2 `/production` 受控切换到 ECS `/automation/production`。两条路径共用 `support.stellarix.space`，EC2 `/production` 长期保留为 backup。
 
-在 ECS 验收、切流和旧任务排空完成前，现有 EC2 `/production` 保持不变并继续运行。ECS 不接管或重放已经进入 EC2 的任务。
+现有 EC2 `/production` 保持不变并继续运行。ECS 不接管或重放已经进入 EC2 的任务；回滚只把后续新 Case 的 n8n 目标切回 `/production`。
 
 本阶段包含：
 
 1. Production-safe 的 Route、API、Worker、RAG API 和 RAG Worker 镜像。
 2. 基于 ECR immutable digest 的构建发布链和可审计 release manifest。
 3. 当前所需的共享 AWS 基础以及 ECS Production Terraform。
-4. Dark deploy、受控 Production 验收、n8n 切换、EC2 排空、回滚和退役门禁。
+4. Shared ALB 路径路由、dark deploy、受控 Production 验收、n8n 切换、回滚和 EC2 backup 健康门禁。
 
 本阶段不包含：
 
 1. ECS Preproduction；它属于迁移阶段 2。
 2. EC2 Staging；它属于迁移阶段 3。
 3. 将 EC2 中的在途任务复制、迁移或重放到 ECS。
-4. 恢复已退役的 EC2 split orchestration 或 `/automation/*` 公网路径。
+4. 恢复已退役的 EC2 split orchestration；`/automation/production` 只作为新的 ECS 路径建立。
 5. 改变 Automation 业务规则、Case 资格、回复内容或副作用策略。
 
 ## 已验证的当前状态
@@ -45,25 +45,31 @@ Recommendation: Sol medium for implementation. 架构和迁移边界已经收敛
 7. `backend/scripts/prompt_release.py` 已具备 Prompt Release 校验和同步能力，可以复用于 ECS bootstrap。
 8. 仓库目前没有本计划需要的 Terraform、ECR push、ECS deployment 或 GitHub Actions AWS release 实现。
 9. 已退役的 EC2 split runtime 和网络必须保持退役；当前 EC2 `/production` 独立运行到正式切换。
+10. Stage 0 已确认 AWS account `891612554546`、Region `us-east-1`；SupportPortal RDS、`zacBot` EC2 和全部现有 subnets 都位于 default VPC `vpc-0125f57b2ec2f0423`。
+11. 当前六个 subnet 全部是 public subnet并直连 Internet Gateway；没有 private subnet 或 NAT Gateway。用户选择当前测试阶段成本优先，不建设 NAT 和多副本应用层。
+12. `stellarix.space` DNS 由 Cloudflare 管理；`support.stellarix.space` 当前直接解析到 `zacBot`。AWS 没有该域名 ACM certificate，也没有 GitHub OIDC provider/role。
+13. 用户确认 ECS 使用 `/automation/production`，EC2 `/production` 长期保留为 backup；新路径按现有 `/production` request body/业务语义兼容，n8n live workflow 在 ECS 上线后再验证。
 
 ## 目标架构
 
 ```text
 n8n Production workflow
         |
-Route53 + ACM
+Cloudflare DNS + ACM
         |
 Public ALB + blue/green target groups
-        |
-ECS API Service，至少 2 个 Task、跨 2 个 AZ
+        |-- `/automation/production*` -> ECS target group
+        `-- default（包含 `/production*`）-> EC2 target group
+
+ECS API Service，desired count 1
         |-- Automation Production API
         `-- 同 release 的 Route sidecar，通过 localhost 通信
 
-ECS Worker Service，至少 2 个 Task、跨 2 个 AZ
+ECS Worker Service，desired count 1
         |-- production-safe Worker image
         `-- Redis heartbeat + structured heartbeat logs
 
-ECS RAG API + RAG Worker
+ECS RAG API + RAG Worker，desired count 1
         `-- 私有服务发现，不依赖 EC2 runtime
 
 共享依赖
@@ -76,7 +82,7 @@ ECS RAG API + RAG Worker
         `-- versioned S3 release manifest storage
 ```
 
-ALB 位于 public subnets。ECS Tasks 位于至少两个 AZ 的 private subnets，不分配公网 IP。由于运行时需要访问 OpenAI、Zendesk、Slack、Microsoft Graph、DeepSeek 等外部服务，private subnets 必须具备 NAT 出口。
+ALB 按 AWS 要求位于两个 AZ 的 public subnets。当前成本优先阶段的 ECS Tasks 使用现有 public subnets并分配 public IP 取得外网出口，不创建 NAT Gateway；API ingress 只允许来自 ALB security group，Worker/RAG 不允许公网 ingress，服务间使用 VPC private address/service discovery。该取舍降低当前测试成本，但不是高可用拓扑；未来进入正式容量阶段时再单独评估 private subnets、NAT 和多副本。
 
 ## 发布单位和不变量
 
@@ -94,40 +100,40 @@ ALB 位于 public subnets。ECS Tasks 位于至少两个 AZ 的 private subnets�
 8. 本地 `published_at` 不等于 Zendesk 客户可见，必须 external readback。
 9. `outcome_unknown` 不自动重试。
 10. 切换和回滚只改变新 Case 的入口；已被某个环境接收的 Case 留在该环境完成或进入 Human Review。
+11. ECS 使用独立 `supportportal_production` schema、Redis 和 queue/channel；EC2 backup 保持原 schema和本地 Redis，两个环境的 worker 不得争抢同一任务。
+12. EC2 `/production` 长期保留，不属于阶段 1 的退役对象；它与 ECS 共享 RDS instance，因此不是数据库容灾方案。
 
 ## 实施前置条件
 
-实施超过 preflight 前需要确认：
+Stage 0 已确认：
 
-1. AWS account 和 Region。
-2. 现有 RDS VPC ID、RDS security group，以及跨两个 AZ 的 public/private subnets。
-3. Private subnets 的 NAT 出口。
-4. Production DNS、Route53 hosted zone 和 ACM certificate ownership。
-5. GitHub repository 和 AWS IAM 中配置 GitHub Actions OIDC 的权限。
-6. Production secrets 清单及每个 secret 的 owner。
-7. 根据当前 EC2 负载确定初始 Fargate CPU、memory、desired count 和成本告警阈值。
-
-网络、DNS、身份或 secret ownership 不明确时必须暂停。初始 Fargate sizing 可以保守设置，再根据 CloudWatch 实测调整，不改变总体架构。
+1. AWS account `891612554546`，Region `us-east-1`，当前操作者通过 `CSEGROUP` 具备 bootstrap authority。
+2. RDS VPC `vpc-0125f57b2ec2f0423`、RDS security group `sg-0e9c3bd50e371fbf4`，以及六个可用 public subnets。
+3. 当前无 private subnet/NAT；成本优先阶段采用 public-IP egress + 最小 security groups。
+4. DNS owner 为 Cloudflare；后续申请 `support.stellarix.space` ACM certificate并用 Cloudflare DNS validation，切换时将现有 A record 改为 ALB alias/CNAME 方案。
+5. GitHub repository 为 `ZilingXie/SupportPortal`；OIDC provider和 roles 尚未创建，由后续 Terraform/bootstrap实现，不使用长期 AWS access key。
+6. Production secret values 已存在于当前运行配置；迁移只记录 names和 owner，不在 manifest、GitHub 或日志中暴露值。专用 runtime/DDL DSN 需要按最小权限创建。
+7. 14 天 EC2 CPU 平均约 4.7%、峰值约 71%；初始采用 API `0.5 vCPU/1 GiB`、Worker `0.5 vCPU/1 GiB`、RAG API `1 vCPU/2 GiB`，均 desired count 1并在切流前压测。
 
 ## 实施阶段
 
-### Stage 0：AWS 和发布链 Preflight
+### Stage 0：AWS 和发布链 Preflight（完成）
 
-确认全部前置条件，盘点当前 Production runtime 依赖，并确定负责 Production intake 的唯一 n8n workflow/version。通过 GitHub Actions OIDC 建立 Terraform deployment identity 和权限更窄的 ECR/ECS release identity。
+已完成 AWS、VPC/RDS、subnet/route、DNS/ACM、IAM/OIDC、现有服务、secret names、EC2 负载和接口契约盘点，并收敛为 shared ALB、EC2 backup、public-subnet 单副本的成本优先架构。n8n live workflow identity按用户决定延后到 ECS endpoint 上线后的受控验收前；Stage 0 只定义 OIDC/role边界，资源由后续 Terraform/bootstrap创建。
 
-可观察结果：VPC、subnets、security groups、DNS、secret owner、n8n 切换对象和 IAM role 都有唯一答案。
+可观察结果：VPC、subnets、security groups、DNS owner、secret来源、n8n URL切换契约和 IAM role职责都有唯一答案。
 
-放行门禁：不存在网络、DNS、credential、n8n ownership 或数据边界未决项。
+放行门禁：已通过。Live n8n workflow ID 和 Cloudflare DNS实际变更分别是 Stage 5、Stage 4 的执行门禁，不阻塞 Stage 1 runtime实现。
 
 ### Stage 1：Production-safe Runtime Boundary
 
-拆除 Worker 对 `backend.main` 的依赖，建立只包含必要模块的 production-safe Worker 和 RAG roles，并保留 Production API 现有的 rerun/reset 物理隔离。
+拆除 Worker 对 `backend.main` 的依赖，建立只包含必要模块的 production-safe Worker 和 RAG roles，并保留 Production API 现有的 rerun/reset 物理隔离。新增 `/automation/production/account` 和所需 `/automation/production/api/*` compatibility routes：保持现有 `/production` request body/业务语义，仅在新路径增加统一的 `X-N8n-Request-Token` 鉴权。
 
 把 schema 创建从长期运行的启动路径移出；在 health/provenance 中补充 build、Prompt Release、manifest 和 resource identity；为每个 Worker Task 增加 Redis heartbeat 和结构化日志。
 
-可观察结果：Production API、Route、Worker、RAG API 和 RAG Worker 都能独立于完整应用镜像启动并报告一致 provenance。
+可观察结果：Production API、Route、Worker、RAG API 和 RAG Worker 都能独立于完整应用镜像启动并报告一致 provenance；现有 n8n payload只替换 prefix并增加 token即可调用新入口。
 
-放行门禁：filesystem、imports、OpenAPI 和 UI 检查证明没有 rerun/reset；runtime credential 无法执行 DDL；Worker heartbeat freshness 可独立于 ECS 状态测量。
+放行门禁：filesystem、imports、OpenAPI 和 UI 检查证明没有 rerun/reset；compatibility contract tests覆盖 intake、Zendesk sync和Slack integration；runtime credential 无法执行 DDL；Worker heartbeat freshness 可独立于 ECS 状态测量。
 
 ### Stage 2：Immutable Build And Release Pipeline
 
@@ -139,21 +145,21 @@ ALB 位于 public subnets。ECS Tasks 位于至少两个 AZ 的 private subnets�
 
 ### Stage 3：Terraform ECS Production Foundation
 
-建立当前最小所需 Terraform：remote state、ECR、IAM、network attachments、ALB listeners/target groups、API Service 的 CodeDeploy blue/green、ECS cluster/services/task definitions、ElastiCache、Secrets Manager references、EFS、CloudWatch、ACM 和 Route53。
+建立当前最小所需 Terraform：remote state、ECR、IAM/OIDC、network attachments、ALB listeners/target groups、API Service 的 CodeDeploy blue/green、ECS cluster/services/task definitions、单节点 ElastiCache、Secrets Manager references、EFS、CloudWatch 和 ACM。Cloudflare record/validation由明确的外部 DNS步骤管理，不创建 Route53 hosted zone。
 
-不创建 Preproduction 或 Staging。复用现有 RDS VPC，但 ECS Production 使用独立 schema identity、Redis endpoint/namespace、queue/channel、secrets、logs 和 public endpoint。
+不创建 Preproduction 或 Staging。复用现有 default VPC/public subnets，但 ECS Production 使用独立 schema identity、Redis endpoint/namespace、queue/channel、secrets和logs。Public ALB 的 ECS path指向 `/automation/production*`，default target group继续指向 EC2，保留 `/production` backup。
 
 可观察结果：Terraform 能 dark deploy ECS Production，且不会修改或重启现有 EC2 `/production`。
 
-放行门禁：plan 不删除或替换 EC2；Tasks 无公网 IP并跨两个 AZ；security groups 最小授权；长期 Tasks 不获取 DDL credential。
+放行门禁：plan 不删除、停止或替换 EC2；ALB跨两个 AZ，应用 desired count 1；ECS public IP只用于 egress，API ingress只接受 ALB security group；长期 Tasks 不获取 DDL credential。
 
 ### Stage 4：Dark Deployment
 
-从一个 approved manifest 部署。先运行一次性 schema bootstrap Task，再同步 Prompt Release，然后依次启动 RAG services、Worker services 和 green API task set。正式 n8n Production intake 继续指向 EC2。
+从一个 approved manifest 部署。先运行一次性 schema bootstrap Task，再同步 Prompt Release，然后依次启动 RAG services、Worker services 和 green API task set。先确认 ALB 的 EC2 default target和 ECS path target均健康，再在 Cloudflare完成 ACM validation并把 `support.stellarix.space` 从 EC2 A record切到 ALB；正式 n8n Production intake仍使用 `/production`，因此业务继续进入 EC2。
 
-可观察结果：ECS endpoint 已经完整可用，但正常 Production Case 尚未进入 ECS。
+可观察结果：同一域名下 `/production` 仍由 EC2处理，`/automation/production` 已由 ECS处理，但正常 Production Case尚未切换到 ECS。
 
-放行门禁：schema/Prompt 同步成功；Task 健康；Worker heartbeat 新鲜；ALB targets healthy；health 中 commit 和 Prompt Release 与 manifest 一致；相关 CloudWatch alarms 无异常。
+放行门禁：schema/Prompt 同步成功；Task 健康；Worker heartbeat 新鲜；ALB两组 targets healthy；切 DNS前后现有 `/health`、`/production` 和其他默认路径保持正常；ECS health 中 commit和 Prompt Release与 manifest一致；相关 CloudWatch alarms无异常。
 
 ### Stage 5：受控 Production 验收
 
@@ -165,21 +171,21 @@ ALB 位于 public subnets。ECS Tasks 位于至少两个 AZ 的 private subnets�
 
 ### Stage 6：Production Cutover And EC2 Drain
 
-使用唯一的 n8n Production workflow/version 作为正常副作用入口，发布一个将 SupportPortal destination 从 EC2 endpoint 改为 ECS endpoint 的版本。测试 workflow 可以保留为 unpublished，但两条正式 Production workflow 绝不能同时 active。
+ECS endpoint上线后确认唯一的 n8n Production workflow/version，发布一个将 destination 从 `https://support.stellarix.space/production` 改为 `https://support.stellarix.space/automation/production` 的版本。新前缀保持 `/production` request body和业务语义，并要求 `X-N8n-Request-Token`；测试 workflow 可以保留为 unpublished，但两条正式 Production workflow 绝不能同时 active。
 
-切换后立即确认新 Case 只被 ECS 接收。EC2 停止接收新 Case，但 runtime 和 Worker 保持运行，直到已有同步请求和异步队列自然排空。
+切换后立即确认新 Case 只被 ECS 接收。EC2 `/production` runtime和Worker保持运行作为独立 backup，但 n8n 不再向其投递新 Case。
 
 可观察结果：所有新 Case 只进入 ECS 一次；旧 EC2 任务继续完成，没有复制或重放。
 
 放行门禁：记录 active n8n version；首批切换后 Case 具有 ECS provenance；EC2 不再收到新 intake；两个环境均无重复外部副作用。
 
-### Stage 7：观察、回滚演练和退役
+### Stage 7：观察、回滚演练和 Backup 保留
 
 EC2 至少保留 24 小时观察窗口。使用正常流量检查 alarms、latency、Task stability、Worker heartbeat、queue depth、delivery 和 external readback，并在不重放 Case 的前提下演练回滚。
 
 回滚是发布上一版 n8n workflow，使后续新 Case 回到 EC2。已经进入 ECS 的 Case 继续在 ECS 完成。外部结果不明确时停止并进入 reconciliation，不做自动重试。
 
-只有观察窗口通过、EC2 active request 为零、queue 为零、没有 unresolved delivery、ECS 持续健康并得到 owner 确认后，才停止旧 EC2 `/production` runtime。
+观察窗口通过后不停止 EC2 `/production`。持续对 backup health和build provenance做低频检查；任何回滚都只接收后续新 Case，不能重放 ECS 已接收任务。
 
 ## 部署和回滚契约
 
@@ -187,7 +193,7 @@ ECS 不会通过重命名晋升一个正在运行的容器。它会从 immutable
 
 首次迁移时 ECS queue 为空，并与 EC2 queue 隔离，因此 ECS Worker 可以在第一条 ECS Case 到达前完全 ready。后续 ECS 原地发布需要先明确并验证 queue compatibility window；这个要求不能被解释为在迁移阶段 1 提前建立 Preproduction。
 
-由于新旧 endpoint 不同，n8n workflow version 是迁移流量开关，不需要修改旧 EC2 endpoint 的 DNS。回滚只改变后续 Case 的 n8n destination，不能跨 database 复制已完成或在途 Case。
+Cloudflare 将 `support.stellarix.space` 从 EC2 A record切到 ALB后，ALB default rule继续把 `/production` 和其他现有路径转发到 EC2，只有 `/automation/production*` 进入 ECS。DNS切换和 n8n路径切换是两个独立门禁；回滚只改变后续 Case 的 n8n destination，不能跨 database/schema复制已完成或在途 Case。
 
 ## 相关文件和入口
 
@@ -226,7 +232,7 @@ rtk git diff --check
 rtk python3 scripts/generate_project_overview.py --check
 ```
 
-基础设施和 live gates 还必须证明：ECR tag 不可覆盖且 digest 可解析；image scan 达标；ECS Services 跨两个 AZ 达到预期 healthy count；ALB targets 在切流前 healthy；Worker heartbeat 新鲜；`/health` provenance 匹配 manifest；CloudWatch 告警生效；受控 Case 具备完整内部证据和 Zendesk readback；切换没有双 intake 或重复副作用；回滚只改变后续 Case。
+基础设施和 live gates 还必须证明：ECR tag 不可覆盖且 digest 可解析；image scan 达标；ECS Services 达到 desired count 1；ALB 的 ECS和EC2 target均在切流前 healthy；Worker heartbeat 新鲜；`/health` provenance 匹配 manifest；CloudWatch 告警生效；受控 Case 具备完整内部证据和 Zendesk readback；切换没有双 intake 或重复副作用；回滚只改变后续 Case。
 
 ## 验收标准
 
@@ -235,21 +241,21 @@ rtk python3 scripts/generate_project_overview.py --check
 1. Production-safe Route、API、Worker、RAG API、RAG Worker 镜像来自同一干净 commit，并以 immutable ECR digest 保存。
 2. Production 镜像物理排除 rerun/reset，Worker 不再依赖完整应用镜像。
 3. Release manifest 绑定 commit、Prompt Release、全部 image digests、schema revision 和 Terraform revision。
-4. ECS Production 与 EC2 runtime resources 隔离；Tasks 无公网 IP并跨两个 AZ；API 和 Worker 都不存在单健康副本依赖。
+4. ECS Production 与 EC2 runtime resources 隔离；成本优先阶段 Tasks desired count 1并以 public IP出站，所有 ingress由最小 security groups限制，不能直接从公网访问应用端口。
 5. Schema 和 Prompt Release 在应用 ready 前完成；长期 Tasks 没有 DDL credential。
 6. Worker heartbeat、ALB health、build provenance、logs 和 alarms 形成可观察部署门禁。
 7. 受控测试 Case 通过 external Zendesk readback 以及所需 email/Slack evidence。
-8. 唯一 n8n Production workflow 将新 Case 只发送到 ECS，不再发送到 EC2。
-9. EC2 既有任务在没有迁移、重放或重复副作用的情况下排空。
-10. 回滚已验证，24 小时观察门禁通过，并获得 owner 对 EC2 退役的明确确认。
+8. 唯一 n8n Production workflow 将新 Case 只发送到 `/automation/production`，并可受控切回 `/production`。
+9. ECS和EC2使用隔离 schema/Redis/queue，既有任务不迁移、不重放且没有重复副作用。
+10. 回滚已验证，24 小时观察门禁通过，EC2 `/production` 继续作为健康 backup保留。
 
 ## 执行暂停条件
 
 遇到以下任一事实时，执行者必须在受影响的变更前暂停并确认：
 
-1. 实际 RDS、VPC、subnet、NAT、Route53 或 certificate 与本计划存在实质差异。
+1. 实际 RDS、VPC、subnet、Cloudflare DNS 或 ACM certificate 与 Stage 0 盘点存在实质差异。
 2. n8n Production intake 无法在不造成重复或漏事件的情况下维持唯一 active destination。
 3. Production-safe Worker 或 RAG 镜像无法在不改变业务行为的情况下拆分。
 4. ECS 切换后仍必须依赖某个 EC2 application container。
 5. 必要外部副作用无法安全验证或处于 `outcome_unknown`。
-6. Terraform 在退役门禁前计划删除或修改现有 EC2 `/production` runtime。
+6. Terraform 计划删除、停止或破坏现有 EC2 `/production` backup，或要求 ECS runtime依赖 EC2 application container。
