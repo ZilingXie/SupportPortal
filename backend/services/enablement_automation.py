@@ -37,6 +37,7 @@ ENABLEMENT_CUSTOMER_REPLY_PROMPT_VERSION = "enablement-customer-reply-v1"
 ENABLEMENT_INTERNAL_EMAIL_PENDING = "pending"
 ENABLEMENT_INTERNAL_EMAIL_RETRY = "retry"
 ENABLEMENT_INTERNAL_EMAIL_SENT = "sent"
+SUPPORTED_AUTOMATED_ENABLEMENT_FEATURES = frozenset({"media_relay"})
 
 _ENABLEMENT_FEATURE_DISPLAY_NAMES = {
     "media_relay": "Media Relay",
@@ -79,8 +80,8 @@ _FEATURE_ACTION_TITLE_PATTERNS = (
     re.compile(r"^(?P<feature>[a-z0-9][a-z0-9+&./ _-]{1,100}?)\s+(?:activation|enablement)$", re.IGNORECASE),
     re.compile(r"^(?P<feature>[a-z0-9][a-z0-9+&./ _-]{1,100}?)\s+enable$", re.IGNORECASE),
 )
-_MEDIA_RELAY_RE = re.compile(
-    r"\b(?:(?:cross|channel|cross[- ]channel)\s+)?(?:media|medial)\s+relay\b",
+_MEDIA_RELAY_TARGET_RE = re.compile(
+    r"(?:(?:cross|channel|cross[- _]channel)[ _]+)?(?:media[ _]+relay|medial[ _]+relay|media[ _]+rele)",
     re.IGNORECASE,
 )
 _DETERMINISTIC_ENABLEMENT_BLOCKER_RE = re.compile(
@@ -88,7 +89,6 @@ _DETERMINISTIC_ENABLEMENT_BLOCKER_RE = re.compile(
     r"error|fails?|failed|failure|not\s+working|no\s+response|why|cost|price|pricing)\b",
     re.IGNORECASE,
 )
-_REGISTERED_DETERMINISTIC_ENABLEMENT_FEATURES = frozenset({"media_relay"})
 _GENERIC_FEATURE_VALUES = {"feature", "service", "a feature", "the feature", "a service", "the service"}
 _EMAIL_ADDRESS_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _INTERNAL_REPLY_MARKERS = (
@@ -178,9 +178,20 @@ def detect_registered_enablement_route(message: str) -> EnablementRouteMatch | N
     if not text or _DETERMINISTIC_ENABLEMENT_BLOCKER_RE.search(text):
         return None
     match = detect_enablement_route(text)
-    if match is None or match.requested_feature not in _REGISTERED_DETERMINISTIC_ENABLEMENT_FEATURES:
+    if match is None or not is_supported_enablement_feature(match.requested_feature):
         return None
     return match
+
+
+def canonical_enablement_feature(value: Any) -> str:
+    feature = _clean_text(value).strip(" -_.,:;")
+    if _MEDIA_RELAY_TARGET_RE.fullmatch(feature):
+        return "media_relay"
+    return re.sub(r"[^a-z0-9]+", "_", feature.lower()).strip("_")
+
+
+def is_supported_enablement_feature(value: Any) -> bool:
+    return canonical_enablement_feature(value) in SUPPORTED_AUTOMATED_ENABLEMENT_FEATURES
 
 
 def build_enablement_automation_result(
@@ -440,7 +451,7 @@ def _clean_feature_label(value: str) -> str:
 
 
 def _canonical_feature(feature_label: str) -> str:
-    if _MEDIA_RELAY_RE.search(feature_label):
+    if _MEDIA_RELAY_TARGET_RE.fullmatch(_clean_text(feature_label)):
         return "media_relay"
     normalized = re.sub(r"[^a-z0-9]+", "_", feature_label.lower()).strip("_")
     return normalized if normalized and normalized not in {"feature", "service"} else ""

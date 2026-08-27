@@ -27,6 +27,7 @@ from backend.services.enablement_automation import (
     ENABLEMENT_SEMANTIC_INTENT,
     ENABLEMENT_TOOLING_PROFILE,
     detect_registered_enablement_route,
+    is_supported_enablement_feature,
 )
 from backend.services.quota_automation import QUOTA_SEMANTIC_INTENT, QUOTA_TOOLING_PROFILE
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
@@ -686,16 +687,19 @@ def account_route_metadata(
 ) -> dict[str, str | None]:
     """Resolve persisted category metadata from the layered Account classification."""
     normalized_classification = classification if isinstance(classification, dict) else {}
+    normalized_family = str(route_family or "").strip().lower()
+
+    def apply_route_family(metadata: dict[str, str | None]) -> dict[str, str | None]:
+        if normalized_family not in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}:
+            metadata.update({"route_status": "not_automated", "automation_handler": None})
+        return metadata
+
     agora_route = str(normalized_classification.get("agora_route") or "").strip().lower()
     account_billing_subcategory = str(
         normalized_classification.get("account_billing_subcategory") or ""
     ).strip().lower()
     if agora_route == "account_billing":
-        metadata = account_billing_metadata(account_billing_subcategory)
-        normalized_family = str(route_family or "").strip().lower()
-        if normalized_family not in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}:
-            metadata.update({"route_status": "not_automated", "automation_handler": None})
-        return metadata
+        return apply_route_family(account_billing_metadata(account_billing_subcategory))
     if agora_route == "security_compliance":
         return security_compliance_metadata()
     legacy_automation_subcategory = str(
@@ -706,21 +710,23 @@ def account_route_metadata(
         "fraud_account",
         "detailed_invoice",
     }:
-        return account_billing_metadata(
-            "fraud_account" if legacy_automation_subcategory == "account_verification" else legacy_automation_subcategory
+        return apply_route_family(
+            account_billing_metadata(
+                "fraud_account" if legacy_automation_subcategory == "account_verification" else legacy_automation_subcategory
+            )
         )
     if agora_route == "automation" and legacy_automation_subcategory in {
         "enablement",
         "quota",
         "unregistered",
     }:
-        return backend_operation_metadata(legacy_automation_subcategory)
+        return apply_route_family(backend_operation_metadata(legacy_automation_subcategory))
     backend_operation_subcategory = str(
         normalized_classification.get("backend_operation_subcategory") or ""
     ).strip().lower()
     if agora_route == "backend_operation":
-        return backend_operation_metadata(backend_operation_subcategory)
-    if str(route_family or "").strip().lower() in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}:
+        return apply_route_family(backend_operation_metadata(backend_operation_subcategory))
+    if normalized_family in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}:
         legacy_action = canonical_automation_subcategory(execution_action)
         if legacy_action in {"account_verification", "fraud_account", "detailed_invoice"}:
             return account_billing_metadata(
@@ -767,7 +773,20 @@ def classification_for_corrected_route(
         }
     )
     action = canonical_automation_subcategory(execution_action)
+    normalized_family = str(route_family or "").strip().lower()
     if (
+        scope_label in {"backend_operation", "enablement"}
+        and action == "enablement"
+        and normalized_family not in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}
+    ):
+        classification.update(
+            agora_route="backend_operation",
+            backend_operation_subcategory="enablement",
+            route_target="human_review",
+            human_review_reason="route_corrected_to_human_review",
+            handler_binding_status=None,
+        )
+    elif (
         scope_label not in {"account_billing", "billing", "fraud_account", "detailed_invoice"}
         and is_registered_automation(route_family=route_family, execution_action=action)
     ):
@@ -1759,14 +1778,25 @@ def decide_account_route(
         candidate = _automation_candidate(backend_operation_payload.get("automation_candidate"))
         if subcategory == "unregistered" and candidate is None:
             candidate = _automation_candidate(raw_subcategory)
+        enablement_automation_eligible = (
+            subcategory == "enablement"
+            and is_supported_enablement_feature(
+                (classification.get("backend_operation") or {}).get("target")
+            )
+        )
+        route_reason = (
+            "unsupported_enablement_feature"
+            if subcategory == "enablement" and not enablement_automation_eligible
+            else backend_operation_reason
+        )
         classification.update(
             backend_operation_subcategory=subcategory,
             automation_candidate=candidate if subcategory == "unregistered" else None,
-            route_target="automation" if subcategory == "enablement" else "human_review",
+            route_target="automation" if enablement_automation_eligible else "human_review",
             human_review_reason=(
-                None if subcategory == "enablement" else backend_operation_reason
+                None if enablement_automation_eligible else route_reason
             ),
-            route_reason_code=backend_operation_reason,
+            route_reason_code=route_reason,
         )
         classification["stage_confidences"]["backend_operation_router"] = backend_operation_confidence
         classification["stage_reason_codes"]["backend_operation_router"] = backend_operation_reason
@@ -1806,6 +1836,24 @@ def decide_account_route(
                     route_family="human_review",
                     semantic_intent="backend_operation.quota",
                     not_automated_reason=backend_operation_reason,
+                    evidence_spans=classification["evidence_spans"],
+                    router_source=backend_operation_router_source,
+                ),
+                attempts,
+            ))
+        if subcategory == "enablement" and not enablement_automation_eligible:
+            classification["handler_binding_status"] = None
+            return finish(_result(
+                classification,
+                _decision(
+                    scope_label="enablement",
+                    action="human_review_required",
+                    confidence=confidence,
+                    reason=route_reason,
+                    response_language=response_language,
+                    route_family="human_review",
+                    semantic_intent="backend_operation.enablement",
+                    not_automated_reason=route_reason,
                     evidence_spans=classification["evidence_spans"],
                     router_source=backend_operation_router_source,
                 ),
@@ -1892,25 +1940,35 @@ def decide_account_route(
     classification["stage_confidences"]["automation_router"] = automation_confidence
     classification["stage_reason_codes"]["automation_router"] = automation_reason
     classification["route_reason_code"] = automation_reason
+    unsupported_enablement = subcategory == "enablement" and not is_supported_enablement_feature(
+        (classification.get("backend_operation") or {}).get("target")
+    )
     registered = is_registered_automation(
         route_family=AUTOMATED_ROUTE_FAMILY,
         execution_action=subcategory,
     )
-    if subcategory == "unregistered" or not registered:
+    if subcategory == "unregistered" or not registered or unsupported_enablement:
+        route_reason = (
+            "unsupported_enablement_feature" if unsupported_enablement else automation_reason
+        )
+        classification["route_reason_code"] = route_reason
         classification.update(
             route_target="human_review",
-            human_review_reason=automation_reason,
+            human_review_reason=route_reason,
         )
         return finish(_result(
             classification,
             _decision(
-                scope_label="automation",
+                scope_label="enablement" if unsupported_enablement else "automation",
                 action="human_review_required",
                 confidence=min(intent_confidence, agora_confidence, automation_confidence),
-                reason=automation_reason,
+                reason=route_reason,
                 response_language=response_language,
                 route_family="human_review",
-                not_automated_reason=automation_reason,
+                semantic_intent=(
+                    "backend_operation.enablement" if unsupported_enablement else None
+                ),
+                not_automated_reason=route_reason,
                 risk_flags=risk_flags,
                 evidence_spans=classification["evidence_spans"],
             ),

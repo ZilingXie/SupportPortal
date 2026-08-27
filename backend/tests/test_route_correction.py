@@ -64,13 +64,16 @@ class RouteCorrectionValidationTests(unittest.TestCase):
         self.assertEqual(result["execution_action"], "human_review_required")
         self.assertEqual(result["category"], "human_review")
 
-    def test_valid_enablement_derives_automated_tuple(self) -> None:
+    def test_targetless_enablement_is_classification_only(self) -> None:
         result = validate_route_correction(scope_label="enablement", execution_action="enablement")
         self.assertEqual(result["scope_label"], "enablement")
         self.assertEqual(result["execution_action"], "enablement")
-        self.assertEqual(result["route_family"], "automated")
-        self.assertEqual(result["tooling_profile"], "deterministic_enablement_intake")
-        self.assertEqual(result["automation_handler"], "enablement")
+        self.assertEqual(result["route_family"], "human_review")
+        self.assertEqual(result["tooling_profile"], "classification_only")
+        self.assertEqual(result["category"], "backend_operation")
+        self.assertEqual(result["subcategory"], "enablement")
+        self.assertEqual(result["route_status"], "not_automated")
+        self.assertIsNone(result["automation_handler"])
 
     def test_invalid_scope_rejected(self) -> None:
         with self.assertRaises(RouteCorrectionValidationError):
@@ -113,14 +116,14 @@ class RouteCorrectionValidationTests(unittest.TestCase):
             ("automation", "unregistered", "human_review", "classification_only"),
             ("backend_operation", "unregistered", "human_review", "classification_only"),
             ("backend_operation", "human_review_required", "human_review", "classification_only"),
-            ("backend_operation", "enablement", "automated", "deterministic_enablement_intake"),
+            ("backend_operation", "enablement", "human_review", "classification_only"),
             ("backend_operation", "quota", "automated", "deterministic_quota_intake"),
             ("ticket_resolution", "resolve_ticket", "ticket_resolution", "deterministic_resolution"),
             ("billing", "detailed_invoice", "human_review", "classification_only"),
             ("billing", "account_verification", "automated", "deterministic_billing_intake"),
             ("account_suspension", "human_review_required", "human_review", "classification_only"),
             ("fraud_account", "fraud_account", "automated", "deterministic_billing_intake"),
-            ("enablement", "enablement", "automated", "deterministic_enablement_intake"),
+            ("enablement", "enablement", "human_review", "classification_only"),
             ("quota", "quota", "automated", "deterministic_quota_intake"),
             ("billing", "human_review_required", "billing_review", "deterministic_billing_intake"),
             ("billing", "refuse", "fallback_or_refuse", "no_agora_docs_refusal"),

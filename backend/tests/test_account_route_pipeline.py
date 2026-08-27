@@ -13,6 +13,7 @@ from backend.services.account_route_pipeline import (
     _validate_account_billing_payload,
     _validate_agora_payload,
     account_case_labels,
+    account_route_metadata,
     classification_for_corrected_route,
     decide_account_route,
 )
@@ -167,6 +168,63 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(
             [call.kwargs["stage_name"] for call in invoke_stage.call_args_list],
             ["intent_classifier", "backend_operation_router"],
+        )
+
+    def test_other_enablement_keeps_classification_without_automation(self) -> None:
+        attempts = [
+            _attempt({"intent_class": "agora", "intent_confidence": 0.99, "reason_code": "agora_case"}),
+            _attempt({
+                "agora_route": "backend_operation",
+                "confidence": 0.99,
+                "reason_code": "explicit_backend_operation",
+                "backend_operation": {
+                    "action": "activate",
+                    "target": "faceunity_ar_filter_extension",
+                    "evidence": "activate the FaceUnity AR Filter extension",
+                },
+            }),
+            _attempt({
+                "backend_operation_subcategory": "enablement",
+                "confidence": 0.99,
+                "reason_code": "registered_enablement",
+            }),
+        ]
+
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ), patch(
+            "backend.services.account_route_pipeline.detect_registered_enablement_route",
+            return_value=None,
+        ):
+            result = decide_account_route("Please activate the FaceUnity AR Filter extension.")
+
+        self.assertEqual(result.secondary_label, "Backend Operation / Enablement")
+        self.assertEqual(result.classification["agora_route"], "backend_operation")
+        self.assertEqual(result.classification["backend_operation_subcategory"], "enablement")
+        self.assertEqual(result.classification["route_target"], "human_review")
+        self.assertEqual(result.classification["route_reason_code"], "unsupported_enablement_feature")
+        self.assertEqual(
+            result.classification["stage_reason_codes"]["backend_operation_router"],
+            "registered_enablement",
+        )
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.decision.not_automated_reason, "unsupported_enablement_feature")
+        self.assertEqual(result.decision.automation_eligibility, "not_eligible")
+        metadata = account_route_metadata(
+            classification=result.classification,
+            route_family=result.decision.route_family,
+            execution_action=result.decision.execution_action,
+        )
+        self.assertEqual(
+            metadata,
+            {
+                "category": "backend_operation",
+                "subcategory": "enablement",
+                "route_status": "not_automated",
+                "automation_handler": None,
+            },
         )
 
     def test_registered_enablement_determinism_does_not_use_subject(self) -> None:
@@ -850,6 +908,59 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.decision.route_family, "automated")
         self.assertEqual(result.decision.execution_action, "enablement")
         self.assertEqual(invoke_stage.call_count, 3)
+
+    def test_legacy_enablement_route_rejects_unsupported_target(self) -> None:
+        attempts = [
+            _attempt(
+                {
+                    "intent_class": "agora",
+                    "intent_confidence": 0.99,
+                    "reason_code": "agora_case",
+                }
+            ),
+            _attempt(
+                {
+                    "agora_route": "automation",
+                    "confidence": 0.97,
+                    "reason_code": "explicit_backend_operation",
+                    "backend_operation": {
+                        "action": "enable",
+                        "target": "cloud_recording",
+                        "evidence": "enable Cloud Recording from your end",
+                    },
+                }
+            ),
+            _attempt(
+                {
+                    "automation_subcategory": "enablement",
+                    "confidence": 0.96,
+                    "reason_code": "registered_enablement",
+                }
+            ),
+        ]
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            side_effect=attempts,
+        ), patch(
+            "backend.services.account_route_pipeline.detect_registered_enablement_route",
+            return_value=None,
+        ):
+            result = decide_account_route("Please enable Cloud Recording from your end.")
+
+        self.assertEqual(result.secondary_label, "Backend Operation / Enablement")
+        self.assertEqual(result.classification["automation_subcategory"], "enablement")
+        self.assertEqual(result.classification["route_target"], "human_review")
+        self.assertEqual(
+            result.classification["route_reason_code"],
+            "unsupported_enablement_feature",
+        )
+        self.assertEqual(result.decision.route_family, "human_review")
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.decision.semantic_intent, "backend_operation.enablement")
+        self.assertEqual(
+            result.decision.not_automated_reason,
+            "unsupported_enablement_feature",
+        )
 
     def test_non_fraud_account_suspension_routes_to_account_billing(self) -> None:
         attempts = [
