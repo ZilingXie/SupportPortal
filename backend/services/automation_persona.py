@@ -38,7 +38,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v16"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v17"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v2"
 
@@ -353,7 +353,8 @@ def _is_positive_clause(clause: str) -> bool:
     if "?" in clause:
         return False
     return not re.search(
-        r"\b(?:not|never|cannot|can't|won't|unable|failed|no\s+longer)\b",
+        r"\b(?:not|never|cannot|can't|won't|don't|doesn't|didn't|isn't|aren't|wasn't|weren't|"
+        r"hasn't|haven't|hadn't|unable|failed|no\s+longer)\b",
         clause,
     )
 
@@ -615,7 +616,7 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
     elif acknowledgement == "patience":
         has_acknowledgement = _has_positive_clause(
             reply,
-            r"\bthank(?:s|\s+you)\b",
+            r"\b(?:thank(?:s|\s+you)|appreciat(?:e|ed|ing))\b",
             r"\b(?:patience|waiting)\b",
         ) and not re.search(
             r"\badditional\s+(?:information|details?)\b",
@@ -625,7 +626,9 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
     else:
         has_acknowledgement = False
     if not has_acknowledgement:
-        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+        raise AutomationPersonaError(
+            "automation_persona_completion_contract_failed_acknowledgement"
+        )
 
     enabled_clauses = [
         clause
@@ -640,7 +643,9 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
         )
         for clause in enabled_clauses
     ):
-        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+        raise AutomationPersonaError(
+            "automation_persona_completion_contract_failed_enabled_state"
+        )
 
     archive_clauses = [
         clause
@@ -659,15 +664,19 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
         )
         for clause in archive_clauses
     ):
-        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+        raise AutomationPersonaError(
+            "automation_persona_completion_contract_failed_archive"
+        )
 
     if not _has_positive_clause(
         reply,
-        r"\b(?:questions?|concerns?)\b",
+        r"\b(?:questions?|concerns?|need\s+(?:anything\s+else|further\s+help))\b",
         r"(?:\bplease\b[^.!?\n]{0,35}|\byou\s+(?:can|may|could)\b[^.!?\n]{0,35}|\bfeel\s+free\s+to\b[^.!?\n]{0,20})"
         r"\b(?:open|create|submit|start|raise)\b[^.!?\n]{0,40}\bnew\s+(?:support\s+)?(?:ticket|case)\b",
     ):
-        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+        raise AutomationPersonaError(
+            "automation_persona_completion_contract_failed_new_ticket_guidance"
+        )
 
 
 def validate_account_reply_contract(
@@ -914,13 +923,15 @@ def render_automation_reply(
         acknowledgement_policy = (
             "Thank the customer for providing the additional information. "
             if acknowledgement == "additional_information"
-            else "Thank the customer for their patience without implying that they provided additional information. "
+            else "Thank the customer or express appreciation for their patience without implying that they "
+            "provided additional information. "
         )
         reply_contract_policy = (
             f"For completed Enablement, {acknowledgement_policy}Explicitly state that the feature is already "
             "enabled, activated, provisioned, or turned on. Say that the case will be archived now; customer-facing "
             "archive wording is independent of the system's internal solved status. Tell the customer that if they "
-            "have further questions or concerns, they can open a new ticket. Do not describe enablement or archival "
+            "have further questions or concerns, need anything else, or need further help, they can open a new "
+            "ticket. Do not describe enablement or archival "
             "as delayed or tentative future work; saying the case will be archived now is acceptable. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE:
