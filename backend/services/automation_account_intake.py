@@ -527,13 +527,14 @@ def _create_reply_job(
     automation_delivery_key: str | None = None,
     close_after_publish: bool = False,
     reply_intent: str | None = None,
+    processing_profile: str = "production",
 ) -> dict[str, Any]:
     return create_account_reply_job(
         repository,
         ticket_id=ticket_id,
         trigger_message_created_at=trigger_message_created_at,
         created_at=_now_iso(),
-        delay_seconds=account_reply_delay_seconds_for_profile("production"),
+        delay_seconds=account_reply_delay_seconds_for_profile(processing_profile),
         draft_content="",
         reply_facts=reply_facts,
         asked_field_keys=asked_field_keys,
@@ -559,6 +560,7 @@ async def run_production_account_intake(
     route_prompt_snapshots: dict[str, Any] | None = None,
     zendesk_side_effects_enabled: bool = True,
     case_id: str | None = None,
+    processing_profile: str = "production",
 ) -> dict[str, Any]:
     """Execute the old-stack intake semantics against the split production schema.
 
@@ -579,6 +581,9 @@ async def run_production_account_intake(
     if not ticket_id:
         raise ValueError("ticket_id is required")
     account_case_id = str(case_id or f"AC-{ticket_id}").strip()
+    normalized_processing_profile = str(processing_profile or "production").strip().lower()
+    if normalized_processing_profile not in {"preproduction", "production"}:
+        raise ValueError("processing_profile must be preproduction or production")
     timestamp = _now_iso()
     zendesk_ticket_url = _zendesk_ticket_url(zendesk_ticket_id or ticket_id)
 
@@ -771,13 +776,13 @@ async def run_production_account_intake(
         "account_case_id": account_case_id,
         "billing_ticket_id": account_case_id,
         "client_ticket_id": ticket_id,
-        "processing_profile": "production",
+        "processing_profile": normalized_processing_profile,
         "zendesk_ticket_id": str(zendesk_ticket_id or "").strip() or None,
         "origin_staging_case_id": None,
         "rule_release": {},
         "source": json.dumps({"Link": zendesk_ticket_url}, ensure_ascii=False) if zendesk_ticket_url else "api",
         "external_id": str(zendesk_ticket_id or "").strip() or None,
-        "created_by": "automation-production-intake",
+        "created_by": f"automation-{normalized_processing_profile}-intake",
         "customer_name": customer_name or None,
         "title": title,
         "question": question,
@@ -858,6 +863,7 @@ async def run_production_account_intake(
                 reply_facts=assistant_reply_facts,
                 asked_field_keys=asked_field_keys,
                 persona_assignment=persona_assignment,
+                processing_profile=normalized_processing_profile,
                 reply_intent=(
                     "account_suspension_contact_confirmation_request"
                     if route == "account_suspension"
@@ -949,6 +955,7 @@ async def run_production_account_intake(
                         (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
                     ),
                     close_after_publish=route == "account_suspension",
+                    processing_profile=normalized_processing_profile,
                     reply_intent=(
                         "fraud_handoff_confirmation"
                         if route == "fraud_account"
