@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-27T07:24:38Z",
-  "source_base_commit": "54e8235d7fce78e84cd8289b45abc185410f0740",
-  "registry_digest": "778ea9c17a1bc6bb030ff40052edc32a0a9653ab4328571a2b23a90471f4812a",
+  "generated_at": "2026-08-27T09:10:41Z",
+  "source_base_commit": "5540c80a82ece87a8e74a7a1f66792d8737e27c5",
+  "registry_digest": "a42177db1e40f8309c5bfc6859dfd027726e9fc7d7d5d9c4a8997b6cf4ca6a35",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -709,6 +709,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Persona, Worker, scripted scenario, and reply-version suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_version_fence.py -q",
+          "details": "184 passed，49 subtests passed，4 个既有 FastAPI lifecycle deprecation warnings。覆盖预期自然表达、四项组件级失败代码、否定及常见否定缩写、疑问/未来/矛盾表达拒绝、patience 禁止虚构补充信息，以及未发布 v16 payload 通过现有 Worker 版本围栏重渲染为 v17。"
+        },
+        {
+          "type": "test",
+          "label": "Project Overview and diff validation",
+          "command": "rtk python3 scripts/generate_project_overview.py --check && rtk git diff --check",
+          "details": "Project Overview validation passed；Git diff whitespace validation passed。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -814,7 +826,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 19,
+      "task_count": 20,
       "done_count": 12,
       "blocked_count": 0
     },
@@ -7551,6 +7563,69 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-27",
           "event": "updated",
           "summary": "实现 Worker completion acknowledgement facts、Persona v16 四项语义合同及 scripted E1/E2 语义检查；用户明确要求不部署，任务以本地代码和测试证据完成。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-122",
+      "title": "修复 Enablement completion 自然表达误判并细分 Persona 失败代码",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Case 13068 的 Enablement Handle、内部邮件和完成确认均成功，但 Persona v16 completion validator 连续拒绝模型回复并将任务转入 Human Review。当前 validator 会拒绝 We appreciate your patience 以及 If you need anything else/further help, please open a new ticket 等满足业务语义的自然表达，且四项 completion 合同共用一个失败代码，无法直接定位失败组件。本任务将 Persona 升级到 v17，只扩展已证明必要的 acknowledgement 与 future-help 等价表达，并为 acknowledgement、enabled state、archive、new-ticket guidance 分配组件级失败代码；四次生成预算、Human Review、Enablement Handle、Zendesk solved 时机及历史 Case 行为保持不变。Case 13068 不重跑、不重置、不补发、不修改。",
+      "next_action": "Persona v17 代码、目标测试和 owner review 已完成。按用户要求不部署、不重启；由用户部署后验证运行版本与隔离新 Case，Case 13068 保持不变。",
+      "acceptance_criteria": [
+        "patience 场景接受 thank/thanks 或 appreciate 与 patience/waiting 的自然组合，同时继续禁止虚构客户提供了 additional information。",
+        "后续指引接受 questions/concerns 或 need anything else/further help，但必须在同一正向 clause 中明确 open/create/submit/start/raise a new ticket/case。",
+        "完成回复仍必须包含上下文 acknowledgement、当前已启用、当前归档和后续新开 Ticket 四项语义；否定、疑问、未来启用、延迟归档和矛盾表达继续 fail closed。",
+        "四项合同失败分别产生稳定的组件级 failure code，外层重试耗尽、manual_attention 和 Human Review 行为不变。",
+        "Persona 版本从 v16 升级到 v17；未发布 v16 payload 通过现有版本围栏重新渲染，已发布回复和 Case 13068 不变。",
+        "不增加模板、fallback、额外 retry、migration、历史补发或 Production 写操作。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Persona, Worker, scripted scenario, and reply-version suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_version_fence.py -q",
+          "details": "184 passed，49 subtests passed，4 个既有 FastAPI lifecycle deprecation warnings。覆盖预期自然表达、四项组件级失败代码、否定及常见否定缩写、疑问/未来/矛盾表达拒绝、patience 禁止虚构补充信息，以及未发布 v16 payload 通过现有 Worker 版本围栏重渲染为 v17。"
+        },
+        {
+          "type": "test",
+          "label": "Project Overview and diff validation",
+          "command": "rtk python3 scripts/generate_project_overview.py --check && rtk git diff --check",
+          "details": "Project Overview validation passed；Git diff whitespace validation passed。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_worker.py",
+        "backend/tests/test_automation_test_scenarios.py",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-08-27",
+      "updated_at": "2026-08-27",
+      "history": [
+        {
+          "at": "2026-08-27",
+          "event": "created",
+          "summary": "只读调查确认 Case 13068 失败于 Persona v16 completion validator，而不是 Enablement Handle；用户批准修复，并明确禁止对 Case 13068 做任何更改及禁止部署。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "updated",
+          "summary": "实现 Persona v17 自然表达兼容、四项组件级 failure code、否定缩写保护和版本围栏回归；本地目标测试通过，Case 13068 与 Production 外部状态均未修改。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "reviewed",
+          "summary": "Owner review 修复常见否定缩写误判并收紧 Case 13068 证据措辞；复跑目标套件和 Project Overview 检查通过，无剩余 review finding。"
         }
       ],
       "legacy_refs": [],

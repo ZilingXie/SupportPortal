@@ -4108,3 +4108,20 @@ For each new entry, record:
 - Verification:
   - Persona, Worker, scripted Automation scenario, and Account reply version-fence suites: 184 passed with 43 subtests passed.
   - Live E1/E2, deployment, container restart, and Zendesk readback were intentionally not run at the user's request.
+
+## 2026-08-27 - Enablement completion natural-language validation (p2-122)
+
+- Area or subsystem:
+  - Account Automation Enablement completion reply generation and publication validation.
+- Prompt version:
+  - `automation-persona-v16` -> `automation-persona-v17`; model configuration is unchanged.
+- Reason:
+  - Case 13068 completed Enablement handling and internal confirmation, but Persona v16 completion drafts exhausted the existing retry budget at publication validation. The rejected candidate bodies were not persisted; local reproduction proved that the validator rejected semantically valid wording such as `We appreciate your patience` and `If you need anything else, please open a new ticket`.
+- Prompt and validator changes:
+  - The patience acknowledgement accepts `thank/thanks` or `appreciate` with `patience/waiting` while continuing to reject invented additional-information claims.
+  - Future-help guidance accepts `questions/concerns`, `need anything else`, or `need further help` only when the same positive clause directs the customer to open a new ticket or case.
+  - Acknowledgement, current enabled state, archive-now wording, and new-ticket guidance remain mandatory. Negative, interrogative, future enablement, delayed archival, and contradictory wording remain rejected.
+  - Completion failures now identify the failed component as acknowledgement, enabled state, archive, or new-ticket guidance. Retry exhaustion and Human Review behavior are unchanged; rejected candidate bodies are not persisted.
+- Historical and runtime scope:
+  - Unpublished v16 Persona payloads are regenerated through the existing prompt-version fence. Already published replies and Case 13068 are unchanged; no historical reply is rerun or backfilled.
+  - Deployment, stack restart, live Production cases, email, Zendesk writes, and Case 13068 mutations are outside this implementation at the user's request.
