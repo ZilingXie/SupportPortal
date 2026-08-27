@@ -126,6 +126,37 @@ def build_engineer_case_thread_event(
     return payload
 
 
+def build_engineer_case_status_changed_event(
+    *,
+    event_id: str,
+    engineer_case_id: str,
+    prior_status: str | None,
+    zendesk_status: str,
+    investigation_id: str | None = None,
+) -> dict[str, Any]:
+    normalized_prior_status = _clean_text(prior_status).lower() or "unknown"
+    normalized_status = _clean_text(zendesk_status).lower()
+    if not normalized_status:
+        raise ValueError("Zendesk status change event requires a new status")
+    event = build_engineer_case_thread_event(
+        event_id=event_id,
+        event_type="zendesk_status_changed",
+        engineer_case_id=engineer_case_id,
+        message_text=(
+            "Ticket's Status has been changed from "
+            f"{normalized_prior_status} to {normalized_status}."
+        ),
+        investigation_id=investigation_id,
+    )
+    event.update(
+        {
+            "prior_zendesk_status": normalized_prior_status,
+            "zendesk_status": normalized_status,
+        }
+    )
+    return event
+
+
 def _timeout_seconds() -> float:
     try:
         return max(1.0, float(os.getenv("ENGINEER_SLACK_TIMEOUT_SECONDS") or "15"))

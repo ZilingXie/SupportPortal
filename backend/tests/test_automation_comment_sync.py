@@ -347,7 +347,11 @@ class StatusSyncEndpointTest(unittest.TestCase):
 
         def update_status(**kwargs):
             repository.updated.append(kwargs)
-            return {"status": "updated", "synced_at": "2026-08-24T00:00:00Z"}
+            return {
+                "status": "updated",
+                "synced_at": "2026-08-24T00:00:00Z",
+                "engineer_slack_event_queued": bool(kwargs.get("engineer_slack_event")),
+            }
 
         repository.update_account_case_zendesk_status = update_status
         repository.get_ticket = lambda ticket_id: repository.tickets.get(ticket_id)
@@ -426,6 +430,55 @@ class StatusSyncEndpointTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertFalse(response.json()["engineer_case_closed"])
                 self.assertEqual(repository.saved_engineer, [])
+
+    def test_non_automated_status_change_queues_status_event_without_closure_event(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                repository = self._repo()
+                repository.account_case["automation_status"] = "not_automated"
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ):
+                    response = client.put(
+                        "/api/integrations/zendesk/account-cases/123/status",
+                        json={"zendesk_status": "pending", "updated_at": "2026-08-24T02:00:00Z"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(response.json()["engineer_slack_event_queued"])
+                event = repository.updated[0]["engineer_slack_event"]
+                self.assertEqual(event["event_type"], "zendesk_status_changed")
+                self.assertEqual(
+                    event["message_text"],
+                    "Ticket's Status has been changed from unknown to pending.",
+                )
+                self.assertEqual(repository.saved_engineer, [])
+
+    def test_non_automated_solved_status_has_one_status_notification(self):
+        with patch.dict(os.environ, ENV, clear=False):
+            with TestClient(create_app()) as client:
+                repository = self._repo()
+                repository.account_case["automation_status"] = "not_automated"
+                with patch(
+                    "backend.automation_production_runtime._ticket_repository",
+                    return_value=repository,
+                ), patch(
+                    "backend.services.automation_account_reply_sync.EngineerAssignmentService"
+                ) as assignment:
+                    response = client.put(
+                        "/api/integrations/zendesk/account-cases/123/status",
+                        json={"zendesk_status": "solved", "updated_at": "2026-08-24T02:00:00Z"},
+                        headers={"X-N8n-Request-Token": "execution-token"},
+                    )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(response.json()["engineer_case_closed"])
+                self.assertTrue(response.json()["engineer_slack_event_queued"])
+                self.assertEqual(repository.updated[0]["engineer_slack_event"]["event_type"], "zendesk_status_changed")
+                self.assertEqual(repository.saved_engineer[0]["events"], [])
+                assignment.return_value.resolve_case.assert_called_once_with("123-1", actor="zendesk_status_sync")
 
 
 class EngineerSlackEndpointTest(unittest.TestCase):

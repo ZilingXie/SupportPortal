@@ -11,6 +11,7 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.engineer_cases import build_new_engineer_case
 
 
 class AccountZendeskStatusSyncTests(unittest.TestCase):
@@ -157,6 +158,81 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
         account_case = self.repository.get_account_case(self.case_id)
         self.assertEqual(account_case["zendesk_ticket_status"], "open")
         self.assertEqual(account_case["automation_status"], "automation")
+
+    def test_automated_case_with_engineer_case_does_not_queue_slack_status_event(self) -> None:
+        self.repository.save_engineer_case(
+            build_new_engineer_case(
+                self.repository.get_ticket(self.ticket_id),
+                engineer_case_id=f"{self.ticket_id}-1",
+                case_sequence=1,
+                title="Enablement request",
+                status="investigating",
+                trigger_source="account_not_automated",
+                trigger_reason="technical request",
+                now_value="2026-08-21T08:01:00Z",
+            )
+        )
+
+        response = self.push_status("pending", updated_at="2026-08-21T09:00:00Z")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["engineer_slack_event_queued"])
+        self.assertEqual(self.repository.list_engineer_slack_events(statuses=("queued",)), [])
+
+    def test_non_automated_production_status_change_queues_one_slack_event(self) -> None:
+        account_case = self.repository.get_account_case(self.case_id)
+        account_case.update(
+            {
+                "automation_status": "not_automated",
+                "route_status": "not_automated",
+                "zendesk_ticket_status": "open",
+            }
+        )
+        self.repository.save_account_case(account_case)
+        self.repository.save_engineer_case(
+            build_new_engineer_case(
+                self.repository.get_ticket(self.ticket_id),
+                engineer_case_id=f"{self.ticket_id}-1",
+                case_sequence=1,
+                title="Enablement request",
+                status="investigating",
+                trigger_source="account_not_automated",
+                trigger_reason="technical request",
+                now_value="2026-08-21T08:01:00Z",
+            )
+        )
+
+        first = self.push_status("pending", updated_at="2026-08-21T09:00:00Z")
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertTrue(first.json()["engineer_slack_event_queued"])
+        events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "zendesk_status_changed")
+        self.assertEqual(
+            events[0]["payload"]["message_text"],
+            "Ticket's Status has been changed from open to pending.",
+        )
+
+        replay = self.push_status("pending", updated_at="2026-08-21T09:05:00Z")
+        self.assertEqual(replay.json()["status"], "unchanged")
+        self.assertEqual(len(self.repository.list_engineer_slack_events(statuses=("queued",))), 1)
+
+        stale = self.push_status("solved", updated_at="2026-08-21T08:30:00Z")
+        self.assertEqual(stale.json()["status"], "stale_ignored")
+        self.assertFalse(stale.json()["engineer_case_closed"])
+        self.assertEqual(len(self.repository.list_engineer_slack_events(statuses=("queued",))), 1)
+
+        second = self.push_status("open", updated_at="2026-08-21T10:00:00Z")
+        self.assertEqual(second.json()["status"], "updated")
+        events = self.repository.list_engineer_slack_events(statuses=("queued",))
+        self.assertEqual(len(events), 2)
+        self.assertTrue(
+            any(
+                event["payload"]["message_text"]
+                == "Ticket's Status has been changed from pending to open."
+                for event in events
+            )
+        )
 
     def test_reopen_restores_prior_automation_status(self) -> None:
         self.push_status("solved", updated_at="2026-08-21T09:00:00Z")

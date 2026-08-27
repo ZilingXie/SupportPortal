@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-27T03:38:18Z",
-  "source_base_commit": "b64efd53da781a02f4ef0f123b78de4682d9b115",
-  "registry_digest": "1a0d4a156eae028b3520ea9397758db7c7bdc390be4d6c37cc34e6bd4ce10d18",
+  "generated_at": "2026-08-27T04:03:30Z",
+  "source_base_commit": "132bd6edcff5081f9378f7b4d4bb955174ec1710",
+  "registry_digest": "cc1532ad059f8c4121bdb0c26e1a12e84d1f5fd20ba8f6fdfabd963efd7f7472",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2642,6 +2642,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Zendesk customer comment sync for active Non automated Engineer Cases now persists the customer message, invalidates stale Draft/Guardrail/final approval state, queues only `Cx has added a new comment`, and does not invoke Engineer AI until a later Slack mention. Targeted comment-sync, Slack, investigation and worker regression passed 276 tests and 22 subtests.",
           "ref": "backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, docs/integrations/n8n/Zendesk_Account_Comment_Sync.json"
+        },
+        {
+          "type": "test",
+          "summary": "Zendesk status transitions for Production Non automated Engineer Cases now queue an exact status-change Slack event atomically with the in-memory/PostgreSQL projection, preserve stale/replay idempotency, and avoid a second closure notification for solved cases; targeted and worker/investigation regressions passed 270 tests, 22 subtests.",
+          "ref": "backend/tests/test_account_zendesk_status_sync.py, backend/tests/test_account_zendesk_status_sync_postgres.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_worker.py, backend/tests/test_investigation_flow.py"
         },
         {
           "type": "test",
@@ -9086,10 +9091,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "status": "active",
       "owner": "unassigned",
-      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。n8n 只负责固定 Team/Channel/thread 的入站控制。",
+      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。Zendesk status sync 对绑定 Case thread 发送状态变化通知，不触发 AI 或客户交付。n8n 只负责固定 Team/Channel/thread 的入站控制。",
       "next_action": "在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
+        "Production Non automated Engineer Case 的真实 Zendesk status transition 只队列一条 `Ticket's Status has been changed from XXX to XXX.` Slack thread 通知；重复或 stale status 不新增事件，solved/closed 仍关闭 Engineer Case。",
         "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
         "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。"
       ],
@@ -9139,13 +9145,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Zendesk customer comment sync for active Non automated Engineer Cases now persists the customer message, invalidates stale Draft/Guardrail/final approval state, queues only `Cx has added a new comment`, and does not invoke Engineer AI until a later Slack mention. Targeted comment-sync, Slack, investigation and worker regression passed 276 tests and 22 subtests.",
           "ref": "backend/tests/test_account_zendesk_comment_sync.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_investigation_flow.py, backend/tests/test_worker.py, docs/integrations/n8n/Zendesk_Account_Comment_Sync.json"
+        },
+        {
+          "type": "test",
+          "summary": "Zendesk status transitions for Production Non automated Engineer Cases now queue an exact status-change Slack event atomically with the in-memory/PostgreSQL projection, preserve stale/replay idempotency, and avoid a second closure notification for solved cases; targeted and worker/investigation regressions passed 270 tests, 22 subtests.",
+          "ref": "backend/tests/test_account_zendesk_status_sync.py, backend/tests/test_account_zendesk_status_sync_postgres.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_worker.py, backend/tests/test_investigation_flow.py"
         }
       ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-26",
+      "updated_at": "2026-08-27",
       "history": [
         {
           "at": "2026-08-16",
@@ -9201,6 +9212,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "customer_comment_trigger_controlled",
           "summary": "客户新评论改为只持久化调查上下文并在原 Slack thread 发送固定通知；不自动调用 AI，下一次有效 @bot 指导才基于最新上下文生成 Draft。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "zendesk_status_slack_notification",
+          "summary": "Production Non automated Case 的 Zendesk status transition 通过现有 status endpoint 入队固定文案 Slack thread 通知；重复/stale 不重复，solved/closed 保留 Engineer Case 关闭且不再额外发送 closure 文案。"
         }
       ],
       "legacy_refs": [
@@ -12811,7 +12827,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。首次有效指导会为 Case 随机固定一个已发布 Persona，AI 仅以该指导作为技术事实来源进行润色，再经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成 Draft。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
+        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。首次有效指导会为 Case 随机固定一个已发布 Persona，AI 仅以该指导作为技术事实来源进行润色，再经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成 Draft。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
         "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
