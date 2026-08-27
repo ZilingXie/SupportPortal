@@ -473,7 +473,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v16")
+        self.assertEqual(result.prompt_version, "automation-persona-v17")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -827,19 +827,46 @@ class AutomationPersonaTests(unittest.TestCase):
             facts,
             close_after_publish=True,
         )
-        for invalid_reply in (
-            "Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. This case is archived. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. Media Relay is enabled. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. Media Relay is enabled. This case is archived.",
-            "Thanks for providing the additional information. Media Relay is not enabled. This case is archived. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. Will Media Relay be enabled? This case is archived. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. Media Relay will be enabled tomorrow. This case will be archived tomorrow. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. Media Relay is not enabled. Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
-            "Thanks for providing the additional information. Media Relay is enabled. This case will be archived tomorrow. This case is archived now. If you have questions, please open a new ticket.",
+        for invalid_reply, failure_code in (
+            (
+                "Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
+                "completion_contract_failed_acknowledgement",
+            ),
+            (
+                "Thanks for providing the additional information. This case is archived. If you have questions, please open a new ticket.",
+                "completion_contract_failed_enabled_state",
+            ),
+            (
+                "Thanks for providing the additional information. Media Relay is enabled. If you have questions, please open a new ticket.",
+                "completion_contract_failed_archive",
+            ),
+            (
+                "Thanks for providing the additional information. Media Relay is enabled. This case is archived.",
+                "completion_contract_failed_new_ticket_guidance",
+            ),
+            (
+                "Thanks for providing the additional information. Media Relay is not enabled. This case is archived. If you have questions, please open a new ticket.",
+                "completion_contract_failed_enabled_state",
+            ),
+            (
+                "Thanks for providing the additional information. Will Media Relay be enabled? This case is archived. If you have questions, please open a new ticket.",
+                "completion_contract_failed_enabled_state",
+            ),
+            (
+                "Thanks for providing the additional information. Media Relay will be enabled tomorrow. This case will be archived tomorrow. If you have questions, please open a new ticket.",
+                "completion_contract_failed_enabled_state",
+            ),
+            (
+                "Thanks for providing the additional information. Media Relay is not enabled. Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
+                "completion_contract_failed_enabled_state",
+            ),
+            (
+                "Thanks for providing the additional information. Media Relay is enabled. This case will be archived tomorrow. This case is archived now. If you have questions, please open a new ticket.",
+                "completion_contract_failed_archive",
+            ),
         ):
-            with self.subTest(invalid_reply=invalid_reply):
-                with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
+            with self.subTest(invalid_reply=invalid_reply, failure_code=failure_code):
+                with self.assertRaisesRegex(AutomationPersonaError, failure_code):
                     validate_account_reply_contract(
                         invalid_reply,
                         facts,
@@ -852,19 +879,47 @@ class AutomationPersonaTests(unittest.TestCase):
             "reply_intent": "enablement_completed_and_close",
             "completion_acknowledgement": "patience",
         }
-        validate_account_reply_contract(
-            "Thank you for your patience. Media Relay is now enabled. We are archiving this case now. "
-            "If you have further questions, you can open a new ticket.",
-            facts,
-            close_after_publish=True,
-        )
-        with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
-            validate_account_reply_contract(
+        for valid_reply in (
+            "We appreciate your patience. Media Relay is now enabled. We are archiving this case now. "
+            "If you need anything else, please open a new ticket.",
+            "Thank you for waiting. Media Relay is now enabled. We are archiving this case now. "
+            "If you need further help, you can open a new ticket.",
+        ):
+            with self.subTest(valid_reply=valid_reply):
+                validate_account_reply_contract(
+                    valid_reply,
+                    facts,
+                    close_after_publish=True,
+                )
+        for invalid_reply, failure_code in (
+            (
                 "Thank you for your patience and for providing the additional information. Media Relay is now "
                 "enabled. We are archiving this case now. If you have further questions, you can open a new ticket.",
-                facts,
-                close_after_publish=True,
-            )
+                "completion_contract_failed_acknowledgement",
+            ),
+            (
+                "I don't appreciate your patience. Media Relay is now enabled. We are archiving this case now. "
+                "If you need anything else, please open a new ticket.",
+                "completion_contract_failed_acknowledgement",
+            ),
+            (
+                "We appreciate your patience. Media Relay isn't enabled. We are archiving this case now. "
+                "If you need anything else, please open a new ticket.",
+                "completion_contract_failed_enabled_state",
+            ),
+            (
+                "We appreciate your patience. Media Relay is now enabled. We are archiving this case now. "
+                "If you don't need anything else, please open a new ticket.",
+                "completion_contract_failed_new_ticket_guidance",
+            ),
+        ):
+            with self.subTest(invalid_reply=invalid_reply, failure_code=failure_code):
+                with self.assertRaisesRegex(AutomationPersonaError, failure_code):
+                    validate_account_reply_contract(
+                        invalid_reply,
+                        facts,
+                        close_after_publish=True,
+                    )
 
     def test_completion_prompt_carries_additional_information_archive_and_new_ticket_policy(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -894,11 +949,12 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi, Ziling\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v16")
+        self.assertEqual(result.prompt_version, "automation-persona-v17")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("providing the additional information", system_prompt)
         self.assertIn("archived now", system_prompt)
         self.assertIn("open a new ticket", system_prompt)
+        self.assertIn("need anything else", system_prompt)
 
     def test_conflicting_intents_and_legacy_fraud_close_are_rejected(self) -> None:
         with self.assertRaisesRegex(AutomationPersonaError, "account_reply_intent_conflict"):
