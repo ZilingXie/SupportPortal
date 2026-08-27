@@ -80,6 +80,7 @@ from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFie
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_slack_n8n import account_slack_n8n_configured
 from backend.services.engineer_slack import (
+    build_engineer_case_status_changed_event,
     build_engineer_case_opened_event,
     build_engineer_case_thread_event,
     engineer_slack_configured,
@@ -6678,21 +6679,63 @@ async def sync_zendesk_account_ticket_status(
         raise HTTPException(status_code=409, detail="Account Case has no canonical id")
 
     source_updated_at = _canonical_zendesk_source_updated_at(request.updated_at)
+    synced_at = now_iso()
+    status_engineer_case = None
+    engineer_slack_event = None
+    if (
+        str(account_case.get("processing_profile") or "staging").strip().lower()
+        == "production"
+        and str(account_case.get("automation_status") or "").strip().lower()
+        == "not_automated"
+    ):
+        client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+        status_engineer_case = (
+            ticket_repository.get_active_engineer_case(client_ticket_id, include_client_messages=True)
+            if client_ticket_id
+            else None
+        )
+        engineer_case_id = (
+            str(status_engineer_case.get("engineer_case_id") or "").strip()
+            if isinstance(status_engineer_case, dict)
+            else ""
+        )
+        if engineer_case_id:
+            active_investigation = (
+                status_engineer_case.get("active_investigation")
+                if isinstance(status_engineer_case.get("active_investigation"), dict)
+                else {}
+            )
+            revision_token = str(source_updated_at or synced_at).strip()
+            prior_status = str(account_case.get("zendesk_ticket_status") or "").strip().lower() or None
+            engineer_slack_event = build_engineer_case_status_changed_event(
+                event_id=(
+                    f"engineer-slack:{engineer_case_id}:zendesk-status:"
+                    f"{prior_status or 'unknown'}:{request.zendesk_status}:{revision_token}"
+                ),
+                engineer_case_id=engineer_case_id,
+                prior_status=prior_status,
+                zendesk_status=request.zendesk_status,
+                investigation_id=str(active_investigation.get("id") or "").strip() or None,
+            )
     try:
         result = await async_to_thread(
             ticket_repository.update_account_case_zendesk_status,
             account_case_id=account_case_id,
             zendesk_status=request.zendesk_status,
-            synced_at=now_iso(),
+            synced_at=synced_at,
             source_updated_at=source_updated_at,
+            engineer_slack_event=engineer_slack_event,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Account Case not found") from exc
     engineer_case_closed = False
     normalized_zendesk_status = str(request.zendesk_status or "").strip().lower()
-    if normalized_zendesk_status in {"solved", "closed"}:
+    if (
+        normalized_zendesk_status in {"solved", "closed"}
+        and str(result.get("status") or "").strip().lower() != "stale_ignored"
+    ):
         client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
-        active_case_payload = (
+        active_case_payload = status_engineer_case or (
             ticket_repository.get_active_engineer_case(client_ticket_id, include_client_messages=True)
             if client_ticket_id
             else None
@@ -6706,13 +6749,20 @@ async def sync_zendesk_account_ticket_status(
                 now_value=now_iso(),
             )
             engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip()
-            thread_closed_event = build_engineer_case_thread_event(
-                event_id=f"engineer-slack:{engineer_case_id}:closed:{normalized_zendesk_status}",
-                event_type="engineer_case_closed",
-                engineer_case_id=engineer_case_id,
-                message_text=f"Zendesk ticket is {normalized_zendesk_status}. This Case thread is closed.",
-                investigation_id=str(engineer_case.get("thread_id") or "") or None,
-            )
+            thread_events = []
+            if (
+                str(result.get("status") or "").strip().lower() == "updated"
+                and not bool(result.get("engineer_slack_event_queued"))
+            ):
+                thread_events.append(
+                    build_engineer_case_thread_event(
+                        event_id=f"engineer-slack:{engineer_case_id}:closed:{normalized_zendesk_status}",
+                        event_type="engineer_case_closed",
+                        engineer_case_id=engineer_case_id,
+                        message_text=f"Zendesk ticket is {normalized_zendesk_status}. This Case thread is closed.",
+                        investigation_id=str(engineer_case.get("thread_id") or "") or None,
+                    )
+                )
             ticket["status"] = RESOLVED_STATUS
             ticket["closed_at"] = now_iso()
             ticket["updated_at"] = ticket["closed_at"]
@@ -6720,7 +6770,7 @@ async def sync_zendesk_account_ticket_status(
             ticket_repository.save_engineer_case(
                 engineer_case,
                 new_messages=closed_messages,
-                slack_events=[thread_closed_event],
+                slack_events=thread_events,
             )
             _engineer_assignment_service().resolve_case(
                 engineer_case_id,
@@ -6738,6 +6788,7 @@ async def sync_zendesk_account_ticket_status(
         "restored_automation_status": result.get("restored_automation_status"),
         "synced_at": result.get("zendesk_status_synced_at"),
         "engineer_case_closed": engineer_case_closed,
+        "engineer_slack_event_queued": bool(result.get("engineer_slack_event_queued")),
     }
 
 

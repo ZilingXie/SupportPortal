@@ -2691,6 +2691,7 @@ class TicketRepository(Protocol):
         zendesk_status: str,
         synced_at: str,
         source_updated_at: str | None = None,
+        engineer_slack_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -3650,6 +3651,7 @@ class InMemoryTicketRepository:
         zendesk_status: str,
         synced_at: str,
         source_updated_at: str | None = None,
+        engineer_slack_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_status = str(zendesk_status or "").strip().lower()
@@ -3684,6 +3686,7 @@ class InMemoryTicketRepository:
                     "automation_status": account_case.get("automation_status"),
                     "local_ticket_closed": False,
                     "restored_automation_status": None,
+                    "engineer_slack_event_queued": False,
                 }
 
             client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
@@ -3723,6 +3726,18 @@ class InMemoryTicketRepository:
                 },
                 created_at=synced_at,
             )
+            engineer_slack_event_queued = False
+            if (
+                isinstance(engineer_slack_event, dict)
+                and str(account_case.get("automation_status") or "").strip().lower()
+                == "not_automated"
+            ):
+                record = _new_engineer_slack_event_record(
+                    engineer_slack_event,
+                    created_at=synced_at,
+                )
+                self._engineer_slack_events.setdefault(record["event_id"], record)
+                engineer_slack_event_queued = True
             return {
                 "status": "updated",
                 "account_case_id": stored_key,
@@ -3732,6 +3747,7 @@ class InMemoryTicketRepository:
                 "automation_status": plan["automation_status"],
                 "local_ticket_closed": local_ticket_closed,
                 "restored_automation_status": plan["restored_automation_status"],
+                "engineer_slack_event_queued": engineer_slack_event_queued,
             }
 
     def count_account_cases(
@@ -8896,6 +8912,7 @@ class PostgresTicketRepository:
         zendesk_status: str,
         synced_at: str,
         source_updated_at: str | None = None,
+        engineer_slack_event: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_status = str(zendesk_status or "").strip().lower()
@@ -8904,6 +8921,11 @@ class PostgresTicketRepository:
             raise ValueError("account_case_id is required")
         if normalized_status not in _ZENDESK_SYNC_STATUSES:
             raise ValueError("invalid Zendesk ticket status")
+        normalized_slack_event = (
+            _new_engineer_slack_event_record(engineer_slack_event, created_at=synced_at)
+            if isinstance(engineer_slack_event, dict)
+            else None
+        )
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
@@ -8949,6 +8971,7 @@ class PostgresTicketRepository:
                         "automation_status": automation_status,
                         "local_ticket_closed": False,
                         "restored_automation_status": None,
+                        "engineer_slack_event_queued": False,
                     }
 
                 local_ticket_closed = False
@@ -9000,6 +9023,33 @@ class PostgresTicketRepository:
                         synced_at,
                     ),
                 )
+                engineer_slack_event_queued = False
+                if (
+                    normalized_slack_event is not None
+                    and str(automation_status or "").strip().lower() == "not_automated"
+                ):
+                    record = normalized_slack_event
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                event_id, engineer_case_id, event_type, payload,
+                                status, created_at, updated_at
+                            )
+                            VALUES (%s, %s, %s, %s, 'queued', %s, %s)
+                            ON CONFLICT (event_id) DO NOTHING
+                            """
+                        ).format(self._table("support_engineer_slack_events")),
+                        (
+                            record["event_id"],
+                            record["engineer_case_id"],
+                            record["event_type"],
+                            Json(record["payload"]),
+                            record["created_at"],
+                            record["updated_at"],
+                        ),
+                    )
+                    engineer_slack_event_queued = True
                 return {
                     "status": "updated",
                     "account_case_id": stored_key,
@@ -9009,6 +9059,7 @@ class PostgresTicketRepository:
                     "automation_status": plan["automation_status"],
                     "local_ticket_closed": local_ticket_closed,
                     "restored_automation_status": plan["restored_automation_status"],
+                    "engineer_slack_event_queued": engineer_slack_event_queued,
                 }
 
         return self._run_with_connection_retry(

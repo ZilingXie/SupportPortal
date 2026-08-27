@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from backend.repositories.ticket_repository import PostgresTicketRepository
+from backend.services.engineer_slack import build_engineer_case_status_changed_event
 
 
 class _Cursor:
@@ -156,6 +157,48 @@ class AccountZendeskStatusPostgresTests(unittest.TestCase):
         )
         self.assertEqual(stale["status"], "stale_ignored")
         self.assertEqual(len(_queries(stale_connection)), 1)
+
+    def test_non_automated_status_change_inserts_slack_event_in_same_transaction(self) -> None:
+        non_automated_row = (
+            "AC-12896",
+            "AC-12896",
+            "12896",
+            "not_automated",
+            {},
+            "open",
+            "2026-08-21T09:00:00+00:00",
+            "2026-08-21T09:00:01+00:00",
+        )
+        repository = PostgresTicketRepository("postgresql://example.invalid/test")
+        connection = _Connection(non_automated_row)
+        connection.cursor_instance.rowcount = 1
+        repository._run_with_connection_retry = lambda _operation_name, operation: operation(connection)  # type: ignore[method-assign]
+        event = build_engineer_case_status_changed_event(
+            event_id="engineer-slack:12896-1:zendesk-status:open:pending:2026-08-21T09:30:00Z",
+            engineer_case_id="12896-1",
+            prior_status="open",
+            zendesk_status="pending",
+            investigation_id="12896-1-round-1",
+        )
+
+        result = repository.update_account_case_zendesk_status(
+            account_case_id="AC-12896",
+            zendesk_status="pending",
+            synced_at="2026-08-21T10:00:00+00:00",
+            source_updated_at="2026-08-21T09:30:00Z",
+            engineer_slack_event=event,
+        )
+
+        self.assertTrue(result["engineer_slack_event_queued"])
+        event_inserts = [
+            params
+            for query, params in _queries(connection).items()
+            if "support_engineer_slack_events" in query
+        ]
+        self.assertEqual(len(event_inserts), 1)
+        self.assertEqual(event_inserts[0][0], event["event_id"])
+        self.assertEqual(event_inserts[0][1], "12896-1")
+        self.assertEqual(event_inserts[0][2], "zendesk_status_changed")
 
     def test_missing_case_raises_key_error(self) -> None:
         repository = PostgresTicketRepository("postgresql://example.invalid/test")

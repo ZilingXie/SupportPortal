@@ -17,6 +17,7 @@ from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.engineer_cases import build_new_engineer_case
 from backend.services.engineer_slack import (
     EngineerSlackDeliveryError,
+    build_engineer_case_status_changed_event,
     build_engineer_case_opened_event,
     build_engineer_case_thread_event,
     engineer_slack_configured,
@@ -145,6 +146,22 @@ class EngineerSlackContractTests(unittest.TestCase):
         self.assertEqual(event["conversation_version"], 2)
         self.assertEqual(event["draft_version"], 1)
         self.assertFalse({"team_id", "channel_id", "thread_ts"} & set(event))
+
+    def test_status_changed_event_uses_exact_customer_facing_text(self) -> None:
+        event = build_engineer_case_status_changed_event(
+            event_id="engineer-slack:EC-1:status:open:pending:revision-1",
+            engineer_case_id="EC-1",
+            prior_status=" OPEN ",
+            zendesk_status="PENDING",
+            investigation_id="EC-1-round-1",
+        )
+
+        self.assertEqual(
+            event["message_text"],
+            "Ticket's Status has been changed from open to pending.",
+        )
+        self.assertEqual(event["prior_zendesk_status"], "open")
+        self.assertEqual(event["zendesk_status"], "pending")
 
     def test_direct_post_uses_fixed_channel_and_returns_root_binding(self) -> None:
         _ticket, engineer_case = _ticket_and_case()
