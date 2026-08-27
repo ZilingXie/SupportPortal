@@ -54,6 +54,7 @@ from backend.services.account_reply_jobs import (
     create_account_reply_job,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+    ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
     ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
     normalize_account_reply_contract,
     is_account_reply_persona_preparing_status,
@@ -226,6 +227,42 @@ TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
 PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID = "system:production-account-reply"
+
+
+def _enablement_completion_acknowledgement(ticket: dict[str, Any]) -> str:
+    requested_missing_information = False
+    for message in ticket.get("messages", []):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+        if role == "assistant":
+            meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+            reply_intent = str(
+                meta.get("reply_intent") or message.get("reply_intent") or ""
+            ).strip().lower()
+            if reply_intent == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION:
+                requested_missing_information = True
+        elif role in {"customer", "user"} and requested_missing_information:
+            return "additional_information"
+    return "patience"
+
+
+def _with_enablement_completion_acknowledgement(
+    payload: dict[str, Any],
+    ticket: dict[str, Any],
+) -> dict[str, Any]:
+    facts = payload.get("reply_facts") if isinstance(payload.get("reply_facts"), dict) else {}
+    if (
+        str(facts.get("reply_intent") or payload.get("reply_intent") or "").strip().lower()
+        == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE
+        and not str(facts.get("completion_acknowledgement") or "").strip()
+    ):
+        updated_facts = dict(facts)
+        updated_facts["completion_acknowledgement"] = (
+            _enablement_completion_acknowledgement(ticket)
+        )
+        payload["reply_facts"] = updated_facts
+    return payload
 
 
 def _account_reply_needs_persona_render(payload: dict[str, Any]) -> bool:
@@ -745,6 +782,7 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
         except AutomationPersonaError as exc:
             _move_invalid_account_reply_to_human_review(job, ticket, exc)
             return
+        payload = _with_enablement_completion_acknowledgement(payload, ticket)
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
         if payload.get("reply_pipeline") not in {
             None,
@@ -1006,6 +1044,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         except AutomationPersonaError as exc:
             _move_invalid_account_reply_to_human_review(current_job, ticket, exc)
             return
+        payload = _with_enablement_completion_acknowledgement(payload, ticket)
 
     if (
         existing_message is None
@@ -3110,6 +3149,7 @@ def _queue_enablement_completion_reply_job(
     reply_key: str,
     owner_token: str,
     account_case: dict[str, Any],
+    canonical_ticket: dict[str, Any],
     client_ticket_id: str,
     note: str,
     known_information: dict[str, Any],
@@ -3172,6 +3212,9 @@ def _queue_enablement_completion_reply_job(
         source_facts=[note],
         resolution_status="completed",
         customer_name=str(account_case.get("customer_name") or ""),
+    )
+    reply_facts["completion_acknowledgement"] = (
+        _enablement_completion_acknowledgement(canonical_ticket)
     )
     delay_seconds = account_reply_delay_seconds_for_profile(
         str(account_case.get("processing_profile") or "staging")
@@ -3453,7 +3496,8 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
             return _dismiss_cross_environment_reply(
                 reply_key, owner_token, client_ticket_id, "automation_handler_mismatch"
             )
-        if ticket_repository.get_ticket(client_ticket_id) is None:
+        canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
+        if canonical_ticket is None:
             return _dismiss_cross_environment_reply(
                 reply_key, owner_token, client_ticket_id, "linked_ticket_not_found"
             )
@@ -3497,6 +3541,7 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                 reply_key=reply_key,
                 owner_token=owner_token,
                 account_case=account_case,
+                canonical_ticket=canonical_ticket,
                 client_ticket_id=client_ticket_id,
                 note=note,
                 known_information=known_information,

@@ -162,6 +162,10 @@ class ScenarioEngineTests(unittest.TestCase):
                 "status": "published",
                 "reply_intent": "enablement_completed_and_close",
                 "close_after_publish": True,
+                "content": (
+                    "Thank you for your patience. Media Relay is now enabled. We are archiving this case now. "
+                    "If you have further questions, you can open a new ticket."
+                ),
             }]),
             ("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}]),
         ]
@@ -178,6 +182,58 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertEqual(linked["zendesk_ticket_id"], "13001")
         hint = next(data for kind, data in engine.events if kind == "approval_required")
         self.assertIn("[Enablement Request] Media Relay", hint["internal_email_subject_prefix"])
+        completion_step = next(
+            step for step in engine.steps if step.step == "completion reply contract published"
+        )
+        self.assertIn("acknowledgement=patience", completion_step.detail)
+
+    def test_e2_followup_completion_acknowledges_additional_information(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [{
+                "account_case_id": "AC-13061",
+                "client_ticket_id": "13061",
+                "zendesk_ticket_id": "13061",
+                "title": engine.tagged("Could you enable Media Relay for our project"),
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "request_missing_information",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "rag_fallback_answer",
+                "close_after_publish": None,
+            }]),
+            ("WHERE account_case_id", [{"internal_email_send_status": "sent"}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_ticket_events", [{"id": 1}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "enablement_completed_and_close",
+                "close_after_publish": True,
+                "content": (
+                    "Thanks for providing the additional information. We have now enabled Media Relay. "
+                    "We will mark this case as archived now. If you have further questions or concerns, "
+                    "please feel free to open a new ticket."
+                ),
+            }]),
+            ("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}]),
+        ]
+
+        engine.run_scenario("E2")
+
+        self.assertTrue(engine.all_passed())
+        self.assertEqual(len(engine.sent_emails), 3)
+        completion_step = next(
+            step for step in engine.steps if step.step == "completion reply contract published"
+        )
+        self.assertIn("acknowledgement=additional_information", completion_step.detail)
 
     def test_e1_assertion_failure_marks_failed_step(self) -> None:
         engine = ScriptedEngine()
