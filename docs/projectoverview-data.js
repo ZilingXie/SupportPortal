@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-26T11:28:03Z",
-  "source_base_commit": "ee16590b46751634e8b702232d4a26d8a9b47ebd",
-  "registry_digest": "f17fa3eed27d206936f150a4d49f7df31739dbb5acb61967a2b6c8c443517392",
+  "generated_at": "2026-08-27T03:38:18Z",
+  "source_base_commit": "b64efd53da781a02f4ef0f123b78de4682d9b115",
+  "registry_digest": "1a0d4a156eae028b3520ea9397758db7c7bdc390be4d6c37cc34e6bd4ce10d18",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -703,6 +703,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Persona, Worker, and scripted scenario suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_automation_test_scenarios.py -q",
+          "details": "184 passed，43 subtests passed。覆盖初始信息齐全的 patience、追问后客户补充的 additional_information、四项 completion publication contract、否定/疑问/未来及矛盾表达拒绝、patience 禁止虚构 additional information、v15 到 v16 未发布 payload 重渲染、Prompt 指令，以及 scripted E1/E2 completion 文案语义检查。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -808,8 +814,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 18,
-      "done_count": 11,
+      "task_count": 19,
+      "done_count": 12,
       "blocked_count": 0
     },
     {
@@ -7420,6 +7426,59 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "admin-operations",
       "function_id": "admin-case-operations"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-121",
+      "title": "优化 Enablement 完成回复：保留 Persona 并强制上下文感谢、archive 与新 Case 指引",
+      "status": "done",
+      "owner": "zac",
+      "summary": "Case 13061 暴露出 Enablement completion 虽经过 automation-persona-v15，但 completion prompt 和发布合同只要求正向 enabled 与 closing，导致合法生成了生硬的两句回复。修复将客户回复文案与 Zendesk 状态解耦：系统仍在投递确认后设置 target_status=solved，客户文案必须感谢相应上下文、确认功能已启用、说明当前 Case 将 archived，并引导后续问题新开 ticket。Worker 根据 canonical ticket 的有序消息确定 acknowledgement：若 AI 曾以 request_missing_information 追问且之后有客户回复，则记录 additional_information；否则记录 patience，禁止虚构客户补充了信息。Persona 版本升级为 automation-persona-v16，缺少任一语义、否定/疑问/未来启用或延后归档表达均继续 fail closed 到 Human Review，不添加模板或 fallback。未发布 v15 payload 会走现有版本围栏重渲染；已发布历史回复及 Case 13061 不修改、不重跑、不补发。",
+      "next_action": "代码与本地验证已完成；按用户要求不部署、不重启、不创建 Production Case。合并后由用户自行部署并决定是否执行 live E1/E2 验证。",
+      "acceptance_criteria": [
+        "发生过 request_missing_information 且其后有客户消息的 Enablement completion facts 使用 additional_information；初始信息齐全时使用 patience。",
+        "Persona completion 回复必须包含与 facts 一致的感谢、当前已启用、当前 Case archived、后续问题或 concerns 新开 ticket 四项语义。",
+        "Zendesk target_status=solved 与客户文案 archived 保持解耦；现有投递确认后关闭机制不变。",
+        "合同不满足时沿用现有重试耗尽后 Human Review；不增加模板、fallback、migration 或历史 Case 补发。",
+        "automation-persona-v15 升级到 v16；未发布旧 payload 触发重渲染，已发布回复不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Persona, Worker, and scripted scenario suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_automation_test_scenarios.py -q",
+          "details": "184 passed，43 subtests passed。覆盖初始信息齐全的 patience、追问后客户补充的 additional_information、四项 completion publication contract、否定/疑问/未来及矛盾表达拒绝、patience 禁止虚构 additional information、v15 到 v16 未发布 payload 重渲染、Prompt 指令，以及 scripted E1/E2 completion 文案语义检查。"
+        }
+      ],
+      "source_refs": [
+        "backend/worker.py",
+        "backend/services/automation_persona.py",
+        "backend/services/automation_test_scenarios.py",
+        "backend/tests/test_worker.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_automation_test_scenarios.py",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-08-27",
+      "updated_at": "2026-08-27",
+      "history": [
+        {
+          "at": "2026-08-27",
+          "event": "created",
+          "summary": "调查 Case 13061 后确认 Persona v15 确实生成了最终回复，但 completion prompt/validator 允许只写 enabled + closing；用户批准按上下文感谢并将客户 archive 文案与 Zendesk solved 状态解耦。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "updated",
+          "summary": "实现 Worker completion acknowledgement facts、Persona v16 四项语义合同及 scripted E1/E2 语义检查；用户明确要求不部署，任务以本地代码和测试证据完成。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,

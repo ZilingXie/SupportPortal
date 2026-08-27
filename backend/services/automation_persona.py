@@ -38,7 +38,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v15"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v16"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v2"
 
@@ -603,10 +603,70 @@ def _assert_suspension_closing_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
-def _assert_enablement_completion_contract(reply: str) -> None:
-    if not _has_positive_clause(reply, r"\b(?:enabled|activated|provisioned)\b|turned\s+on"):
+def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) -> None:
+    acknowledgement = str(facts.get("completion_acknowledgement") or "").strip().lower()
+    if acknowledgement == "additional_information":
+        has_acknowledgement = _has_positive_clause(
+            reply,
+            r"\bthank(?:s|\s+you)\b",
+            r"\b(?:provid(?:e|ed|ing)|shar(?:e|ed|ing)|send|sent|suppl(?:y|ied|ying))\b",
+            r"\b(?:information|details?)\b",
+        )
+    elif acknowledgement == "patience":
+        has_acknowledgement = _has_positive_clause(
+            reply,
+            r"\bthank(?:s|\s+you)\b",
+            r"\b(?:patience|waiting)\b",
+        ) and not re.search(
+            r"\badditional\s+(?:information|details?)\b",
+            str(reply or ""),
+            flags=re.IGNORECASE,
+        )
+    else:
+        has_acknowledgement = False
+    if not has_acknowledgement:
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
-    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b"):
+
+    enabled_clauses = [
+        clause
+        for clause in _reply_clauses(reply)
+        if re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", clause)
+    ]
+    if not enabled_clauses or any(
+        not _is_positive_clause(clause)
+        or re.search(
+            r"\b(?:will|would|going\s+to|plans?\s+to|scheduled\s+to|expected\s+to|tomorrow|later)\b",
+            clause,
+        )
+        for clause in enabled_clauses
+    ):
+        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+
+    archive_clauses = [
+        clause
+        for clause in _reply_clauses(reply)
+        if re.search(r"\b(?:case|ticket)\b", clause)
+        and re.search(r"\barchiv(?:e|ed|ing|es)\b", clause)
+    ]
+    if not archive_clauses or any(
+        not _is_positive_clause(clause)
+        or (
+            re.search(
+                r"\b(?:will|would|going\s+to|plans?\s+to|scheduled\s+to|expected\s+to|tomorrow|later)\b",
+                clause,
+            )
+            and not re.search(r"\b(?:now|currently|already|immediately)\b", clause)
+        )
+        for clause in archive_clauses
+    ):
+        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+
+    if not _has_positive_clause(
+        reply,
+        r"\b(?:questions?|concerns?)\b",
+        r"(?:\bplease\b[^.!?\n]{0,35}|\byou\s+(?:can|may|could)\b[^.!?\n]{0,35}|\bfeel\s+free\s+to\b[^.!?\n]{0,20})"
+        r"\b(?:open|create|submit|start|raise)\b[^.!?\n]{0,40}\bnew\s+(?:support\s+)?(?:ticket|case)\b",
+    ):
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
@@ -642,7 +702,7 @@ def validate_account_reply_contract(
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
         _assert_suspension_closing_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
-        _assert_enablement_completion_contract(normalized_reply)
+        _assert_enablement_completion_contract(normalized_reply, facts)
     elif intent == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION:
         _assert_missing_information_contract(
             normalized_reply,
@@ -850,9 +910,18 @@ def render_automation_reply(
             "them within 24 hours. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
+        acknowledgement = str(facts.get("completion_acknowledgement") or "").strip().lower()
+        acknowledgement_policy = (
+            "Thank the customer for providing the additional information. "
+            if acknowledgement == "additional_information"
+            else "Thank the customer for their patience without implying that they provided additional information. "
+        )
         reply_contract_policy = (
-            "For completed Enablement, explicitly state that the feature is enabled, activated, provisioned, or "
-            "turned on, and explain that the ticket is closing. "
+            f"For completed Enablement, {acknowledgement_policy}Explicitly state that the feature is already "
+            "enabled, activated, provisioned, or turned on. Say that the case will be archived now; customer-facing "
+            "archive wording is independent of the system's internal solved status. Tell the customer that if they "
+            "have further questions or concerns, they can open a new ticket. Do not describe enablement or archival "
+            "as delayed or tentative future work; saying the case will be archived now is acceptable. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE:
         reply_contract_policy = (
