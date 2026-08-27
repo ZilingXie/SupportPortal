@@ -12,6 +12,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.terraform/
 
 # Runtime files
 *.log
