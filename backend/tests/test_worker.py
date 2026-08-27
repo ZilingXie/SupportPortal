@@ -105,6 +105,24 @@ def _load_worker_module():
 worker = _load_worker_module()
 
 
+def test_account_automation_cycle_is_public_and_does_not_start_redis_consumer():
+    with patch.object(worker, "_process_claimed_account_reply_jobs") as replies, patch.object(
+        worker, "_drain_production_zendesk_comment_deliveries"
+    ) as zendesk, patch.object(worker, "_drain_account_slack_deliveries") as slack, patch.object(
+        worker, "_drain_engineer_slack_events"
+    ) as engineer_slack, patch.dict(
+        os.environ,
+        {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "preproduction"},
+        clear=False,
+    ):
+        worker.process_account_automation_once()
+
+    assert replies.call_count == 2
+    zendesk.assert_called_once_with(limit=20)
+    slack.assert_called_once_with(limit=20)
+    engineer_slack.assert_called_once_with(limit=20)
+
+
 def _route_decision(*, action: str, scope_label: str, reason: str) -> types.SimpleNamespace:
     route_family = "agora_docs_rag" if action == "rag" else "web_company_info" if action == "web_search" else "fallback_or_refuse"
     tooling_profile = "agora_docs_only" if action == "rag" else "official_web_search" if action == "web_search" else "no_agora_docs_refusal"

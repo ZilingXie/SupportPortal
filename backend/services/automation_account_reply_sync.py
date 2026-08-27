@@ -11,6 +11,7 @@ wired in the Slack collaboration phase instead.
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 from backend.services.account_automation_reconciliation import (
@@ -157,6 +158,9 @@ async def process_zendesk_comment_trigger(
     snapshot: Any,
     trigger_comment_id: str | None,
     zendesk_side_effects_enabled: bool = True,
+    precomputed_route: dict[str, Any] | None = None,
+    route_prompt_snapshots: dict[str, Any] | None = None,
+    processing_profile: str = "production",
 ) -> dict[str, Any]:
     import asyncio
 
@@ -224,7 +228,8 @@ async def process_zendesk_comment_trigger(
                 return dict(payload)
         return _ignored("already_processing")
 
-    if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
+    expected_profile = str(processing_profile or "production").strip().lower()
+    if str(account_case.get("processing_profile") or "staging").strip().lower() != expected_profile:
         return await _complete(_ignored("ignored_non_production_case"))
     client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
     active_engineer_case = (
@@ -298,6 +303,9 @@ async def process_zendesk_comment_trigger(
             source="zendesk-comment",
             message_source_id=trigger_comment_id,
             zendesk_side_effects_enabled=zendesk_side_effects_enabled,
+            precomputed_route=precomputed_route,
+            route_prompt_snapshots=route_prompt_snapshots,
+            processing_profile=expected_profile,
         )
     except ReplySyncError as exc:
         failure_payload = {
@@ -335,6 +343,9 @@ async def process_account_customer_reply(
     source: str,
     message_source_id: str | None = None,
     zendesk_side_effects_enabled: bool = True,
+    precomputed_route: dict[str, Any] | None = None,
+    route_prompt_snapshots: dict[str, Any] | None = None,
+    processing_profile: str = "production",
 ) -> dict[str, Any]:
     from backend.services.llm_usage_capture import (
         begin_case_usage_capture,
@@ -351,6 +362,9 @@ async def process_account_customer_reply(
             source=source,
             message_source_id=message_source_id,
             zendesk_side_effects_enabled=zendesk_side_effects_enabled,
+            precomputed_route=precomputed_route,
+            route_prompt_snapshots=route_prompt_snapshots,
+            processing_profile=processing_profile,
         )
     finally:
         end_case_usage_capture(usage_token)
@@ -370,6 +384,9 @@ async def _process_account_customer_reply_impl(
     source: str,
     message_source_id: str | None = None,
     zendesk_side_effects_enabled: bool = True,
+    precomputed_route: dict[str, Any] | None = None,
+    route_prompt_snapshots: dict[str, Any] | None = None,
+    processing_profile: str = "production",
 ) -> dict[str, Any]:
     import asyncio
 
@@ -578,6 +595,7 @@ async def _process_account_customer_reply_impl(
                 ),
                 close_after_publish=True,
                 reply_intent="account_suspension_handoff_and_close",
+                    processing_profile=processing_profile,
             )
         except Exception as exc:
             suspension_workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
@@ -686,7 +704,16 @@ async def _process_account_customer_reply_impl(
     automation_attempt: dict[str, Any] | None = None
     handler_continued = False
     route_result = None
-    if prior_classification.get("handler_binding_status") == "active" and prior_handler:
+    if precomputed_route is not None:
+        route_payload = dict(precomputed_route)
+        classification = dict(route_payload.pop("classification", {}) or {})
+        route_result = SimpleNamespace(
+            decision=SimpleNamespace(**route_payload),
+            classification=classification,
+            prompt_snapshots=dict(route_prompt_snapshots or {}),
+            stage_attempts=list(route_payload.get("stage_attempts") or []),
+        )
+    elif prior_classification.get("handler_binding_status") == "active" and prior_handler:
         candidate_attempt = build_automation_attempt(prior_handler, prior_action)
         candidate_collected = dict(candidate_attempt["collected_fields"])
         candidate_missing = list(candidate_attempt["missing_fields"])
@@ -944,6 +971,7 @@ async def _process_account_customer_reply_impl(
                     if reply_ready and followup_action == "account_suspension"
                     else None
                 ),
+                processing_profile=processing_profile,
             )
         except Exception as exc:
             billing_ticket = await _record_execution_failure(
@@ -973,6 +1001,7 @@ async def _process_account_customer_reply_impl(
                     trigger_message_created_at=timestamp,
                     draft_content=fallback.answer,
                     reply_intent=ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+                    processing_profile=processing_profile,
                 )
             except Exception as exc:
                 billing_ticket = await _record_execution_failure(

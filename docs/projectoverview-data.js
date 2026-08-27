@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-27T07:24:38Z",
-  "source_base_commit": "54e8235d7fce78e84cd8289b45abc185410f0740",
-  "registry_digest": "778ea9c17a1bc6bb030ff40052edc32a0a9653ab4328571a2b23a90471f4812a",
+  "generated_at": "2026-08-27T09:15:15Z",
+  "source_base_commit": "5540c80a82ece87a8e74a7a1f66792d8737e27c5",
+  "registry_digest": "0a6ad7683402d4053356762ce642a789c605e33d045630858a8ecf5d59761919",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1803,6 +1803,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Stage 0 AWS and runtime preflight",
           "command": "Read-only AWS CLI, DNS, repository, CloudWatch and EC2 container inventory 2026-08-26",
           "details": "确认 account 891612554546/us-east-1；SupportPortal RDS与 zacBot均在 default VPC vpc-0125f57b2ec2f0423，六个 subnet全部 public且无 NAT；stellarix.space由 Cloudflare管理，support.stellarix.space当前解析到 zacBot；AWS尚无匹配 ACM、OIDC、ECS/ECR/ALB/ElastiCache/EFS/Secrets资源。14天 EC2 CPU平均约4.7%、峰值约71%，据此确定 API 0.5vCPU/1GiB、Worker 0.5vCPU/1GiB、RAG API 1vCPU/2GiB的单副本初始值，切流前必须压测。"
+        },
+        {
+          "type": "document",
+          "label": "Stage 2 ECS runtime release implementation",
+          "command": "codex/ecs-production-runtime-release local implementation 2026-08-27",
+          "details": "新增 /automation/{preproduction|production}异步 Intake API、RDS durable Execution/Step/Event/Job/Delivery/Heartbeat store、独立 Route/Persona Worker与 Automation Worker；Zendesk Ticket ID作为 Case身份，旧 /production代码和 Nginx映射未修改。"
+        },
+        {
+          "type": "test",
+          "label": "ECS runtime and legacy contract verification",
+          "command": "targeted pytest suite plus temporary local PostgreSQL integration",
+          "details": "280项综合回归与19项子测试通过且无 warning；真实 PostgreSQL migration、并发幂等、Route到Processing原子交接、job lease续租、delivery、release一致性 heartbeat和 outcome_unknown终态路径通过。旧 build_automation_release.sh及其测试保持逐字兼容，新 ECS builder使用独立入口。Docker在当前主机不可用，因此三份真实 OCI artifact构建保留为用户手工 gate。"
         }
       ],
       "source_refs": [
@@ -5866,16 +5878,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → Staging 的顺序重构 Automation 环境。迁移阶段 1 在 support.stellarix.space/automation/production建立成本优先的 ECS Production，现有 EC2 /production长期保留为 n8n可切回的 backup；迁移阶段 2 再建立 ECS Preproduction并以同 digest晋升；迁移阶段 3 最后在现有 EC2 上建立允许 rerun/reset的独立 Staging。此前 EC2 split runtime及公网路径已下线，不会恢复旧 orchestration。",
-      "next_action": "迁移阶段 1 Stage 1：拆除 worker对 backend.main的依赖，建立 production-safe worker/RAG镜像、Prompt/manifest provenance与真实 worker heartbeat；同时补齐 /automation/production/account及相关 /api路径对现有 /production request body/业务语义的兼容，并统一要求 X-N8n-Request-Token。Stage 0已完成 AWS/VPC/RDS/DNS/IAM/负载盘点；后续基础设施采用 Cloudflare + shared ALB、public-subnet单副本且无 NAT的成本优先方案。",
+      "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Stage 2 release由独立 API、Route Worker和 Automation Worker组成，使用 RDS durable Jobs和远端 RAG，不部署项目内 RAG服务。",
+      "next_action": "Stage 2代码与本地契约已完成，等待用户在具备 Docker Buildx的主机从干净 commit手工构建 api/route/worker OCI release，确认 Prompt Release并将 artifact上传 supportportal-preproduction。随后进入 Stage 3 ECS Foundation；本任务不部署 EC2/AWS、不修改 n8n/Cloudflare，也不切流。",
       "acceptance_criteria": [
-        "release builder 从干净 commit 构建 linux/amd64 的 route、production-safe API、production-safe worker与所需 RAG镜像；安全镜像的文件系统、OpenAPI和 UI均不包含 rerun/reset，worker不再使用包含测试代码的完整 APP_RUNTIME_IMAGE。",
-        "ECR repository启用 immutable tag与扫描；每个 production-safe release manifest持久化 commit、route/API/worker/RAG image digest和 prompt_release_id，已发布 digest禁止重新 build或覆盖。",
-        "迁移阶段 1 的 Terraform只建立共享 ECR/IAM/观测基础和 ECS Production所需的 Fargate、shared ALB、ACM、单节点 ElastiCache、Secrets Manager、CloudWatch与 EFS token cache；Cloudflare将 support.stellarix.space指向 ALB，/automation/production进入 ECS、default及 /production继续进入 EC2。成本优先阶段 Task在现有 public subnet以 public IP出站且不创建 NAT，应用端口只允许最小 security group来源；schema bootstrap使用不进入长期 task的独立 DDL凭据。",
-        "ECS Production使用独立 Service、RDS schema、Redis endpoint、queue/channel、Secrets、日志和入口；API task与同 release Route sidecar共同部署，worker具有可验证 heartbeat。当前测试阶段 API、worker和 RAG desired count均为1，blue/green部署只在切换窗口短暂增加 candidate task。",
-        "迁移阶段 1 不等待 Preproduction或 Staging：Production green task set依次通过 schema/Prompt同步、task健康、worker heartbeat、ALB target和 build provenance门禁；ECS endpoint上线后再确认 live n8n workflow并筛选少量测试 Case完成真实行为与外部 readback验收，通过后才将新 Case从 /production切到 /automation/production。",
-        "ECS Production切换后，EC2 /production及其独立 schema/Redis/worker长期保持为 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回 /production，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
-        "迁移阶段 2 建立与 Production隔离但配置同构的 ECS Preproduction，包括独立 Service、RDS schema、Redis、queue/channel、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
+        "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
+        "ECR使用 supportportal-preproduction与 supportportal-production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
+        "ECS Foundation只建立当前 release实际需要的 ECR/IAM/Fargate/ALB/ACM/Secrets Manager/CloudWatch与必要 token存储；supportcenter.stellarix.space进入 ECS ALB，support.stellarix.space与 /production继续由现有 EC2承载。schema bootstrap使用不进入长期 task的独立 DDL凭据。",
+        "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker只分类与固定 Persona，Automation Worker执行 AI、远端 RAG与外部动作；角色之间通过隔离 RDS schema内的 durable Jobs交接，不依赖 Redis/SQS或 EC2 runtime。",
+        "Release先以 role tag上传 supportportal-preproduction并按 digest部署 Preproduction，通过 schema/Prompt、API readiness、Route/Worker heartbeat、远端 RAG、Zendesk/邮件/Slack与外部 readback门禁后，才复制相同 OCI manifest到 supportportal-production；晋升过程禁止 rebuild。",
+        "ECS Production切换后，support.stellarix.space/production及其独立 schema/Redis/worker长期保持为 EC2 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回该 endpoint，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
+        "Preproduction与 Production使用隔离的 ECS Service、RDS schema、job namespace、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
         "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
         "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
         "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
@@ -5936,19 +5948,37 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Stage 0 AWS and runtime preflight",
           "command": "Read-only AWS CLI, DNS, repository, CloudWatch and EC2 container inventory 2026-08-26",
           "details": "确认 account 891612554546/us-east-1；SupportPortal RDS与 zacBot均在 default VPC vpc-0125f57b2ec2f0423，六个 subnet全部 public且无 NAT；stellarix.space由 Cloudflare管理，support.stellarix.space当前解析到 zacBot；AWS尚无匹配 ACM、OIDC、ECS/ECR/ALB/ElastiCache/EFS/Secrets资源。14天 EC2 CPU平均约4.7%、峰值约71%，据此确定 API 0.5vCPU/1GiB、Worker 0.5vCPU/1GiB、RAG API 1vCPU/2GiB的单副本初始值，切流前必须压测。"
+        },
+        {
+          "type": "document",
+          "label": "Stage 2 ECS runtime release implementation",
+          "command": "codex/ecs-production-runtime-release local implementation 2026-08-27",
+          "details": "新增 /automation/{preproduction|production}异步 Intake API、RDS durable Execution/Step/Event/Job/Delivery/Heartbeat store、独立 Route/Persona Worker与 Automation Worker；Zendesk Ticket ID作为 Case身份，旧 /production代码和 Nginx映射未修改。"
+        },
+        {
+          "type": "test",
+          "label": "ECS runtime and legacy contract verification",
+          "command": "targeted pytest suite plus temporary local PostgreSQL integration",
+          "details": "280项综合回归与19项子测试通过且无 warning；真实 PostgreSQL migration、并发幂等、Route到Processing原子交接、job lease续租、delivery、release一致性 heartbeat和 outcome_unknown终态路径通过。旧 build_automation_release.sh及其测试保持逐字兼容，新 ECS builder使用独立入口。Docker在当前主机不可用，因此三份真实 OCI artifact构建保留为用户手工 gate。"
         }
       ],
       "source_refs": [
         "backend/Dockerfile.automation",
         "deployment/docker-compose.single-host.yml",
-        "deployment/build_automation_release.sh",
+        "deployment/build_automation_ecs_release.sh",
+        "deployment/promote_automation_release.sh",
+        "deployment/automation_ecs_entrypoint.sh",
+        "backend/automation_ecs_api.py",
+        "backend/automation_ecs_route_worker.py",
+        "backend/automation_ecs_worker.py",
         "deployment/deploy_automation_production_blue_green.sh",
         "scripts/workflow/start_local_split_environments.sh",
         "docs/deploy_automation_release.md",
+        "docs/deploy_automation_ecs_release.md",
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-08-26",
+      "updated_at": "2026-08-27",
       "history": [
         {
           "at": "2026-08-25",
@@ -5989,6 +6019,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "progress",
           "summary": "Stage 0完成只读 preflight：确认 AWS/VPC/RDS/subnet/DNS/ACM/IAM/OIDC/现有服务、secret names、接口差异与初始容量；下一步进入 production-safe runtime、接口兼容、heartbeat和 provenance实现。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "replanned",
+          "summary": "Release拓扑收敛为 API、Route Worker和 Automation Worker三个长运行角色，以隔离 RDS durable Jobs交接并使用远端 RAG；ECR按环境使用 supportportal-preproduction与 supportportal-production，Preproduction验收后复制相同 manifest/digest到 Production，禁止 rebuild。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "progress",
+          "summary": "Stage 2本地实现与 review完成：新增异步 Intake/Execution trace、独立 Worker heartbeat和job lease续租、production-safe角色镜像、OCI Release Manifest与完整 layer promotion tooling；旧 EC2 release builder保持兼容。本任务未部署 AWS/EC2、未修改 n8n/Cloudflare、未切流。"
         }
       ],
       "legacy_refs": [
@@ -12862,7 +12902,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
         "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
-        "/automation/staging、/automation/preproduction、/automation/production 提供三套独立 Route/Automation 执行环境与控制台 UI（staging 对齐 /account 模板、preproduction/production 对齐 /production 模板）：Execution token 门、执行历史列表（状态过滤+计数、Case 搜索、分页）、详情视图（meta、问答时间线、delivery ledger）、rerun 真实现（staging/preproduction）与 reset（staging 清空执行记录）；执行与查询 API 强制 Bearer token，Production 镜像与 UI 物理排除 rerun，旧 /account 与 /production 入口保留。",
+        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。同一组环境中立 OCI manifest 经 Preproduction 验收后按 digest 晋升 Production；最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime。现有 EC2 `/production`、旧 release builder 与 n8n workflow 保持不变。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

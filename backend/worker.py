@@ -15,18 +15,36 @@ from uuid import uuid4
 
 import psycopg
 
-from backend.main import (
-    _record_ticket_agent_runtime_events,
-    _run_client_ticket_review_agent,
-    build_query_task,
-    build_client_sync_event,
-    ensure_ticket_defaults,
-    now_iso,
-    resolve_support_message,
-    asset_repository,
-    asset_storage,
-    ticket_repository,
-)
+if str(os.getenv("AUTOMATION_ECS_ACCOUNT_ONLY") or "").strip() == "1":
+    ticket_repository: Any = None
+    asset_repository: Any = None
+    asset_storage: Any = None
+
+    def now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _full_runtime_unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("general ticket processing is unavailable in the Account-only ECS Worker")
+
+    _record_ticket_agent_runtime_events = _full_runtime_unavailable
+    _run_client_ticket_review_agent = _full_runtime_unavailable
+    build_query_task = _full_runtime_unavailable
+    build_client_sync_event = _full_runtime_unavailable
+    ensure_ticket_defaults = _full_runtime_unavailable
+    resolve_support_message = _full_runtime_unavailable
+else:
+    from backend.main import (
+        _record_ticket_agent_runtime_events,
+        _run_client_ticket_review_agent,
+        build_query_task,
+        build_client_sync_event,
+        ensure_ticket_defaults,
+        now_iso,
+        resolve_support_message,
+        asset_repository,
+        asset_storage,
+        ticket_repository,
+    )
 from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.account_failure_alerts import notify_account_failure
 from backend.services.account_admin import (
@@ -2429,61 +2447,66 @@ def _drain_production_automation_classification_emails(*, limit: int = 20) -> No
             )
 
 
+def process_account_automation_once() -> None:
+    """Run one Account-only reply/delivery cycle without Redis ticket consumers."""
+    processing_profile = str(
+        os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging"
+    ).strip().lower()
+    if processing_profile == "production":
+        reconcile_account_human_review_queue_mismatches(
+            repository=ticket_repository,
+            processing_profile=processing_profile,
+            limit=25,
+            timestamp=now_iso(),
+        )
+        _drain_production_automation_classification_emails(limit=20)
+    _process_claimed_account_reply_jobs(
+        from_status=ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        to_status=ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+        due_only=False,
+        limit=5,
+    )
+    _process_claimed_account_reply_jobs(
+        from_status=ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+        to_status=ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+        due_only=True,
+        limit=10,
+    )
+    if _account_reply_legacy_poller_enabled_from_env():
+        _process_claimed_account_reply_jobs(
+            from_status=ACCOUNT_REPLY_PERSONA_QUEUED,
+            to_status=ACCOUNT_REPLY_PERSONA_PREPARING,
+            due_only=False,
+            limit=5,
+        )
+        _process_claimed_account_reply_jobs(
+            from_status=ACCOUNT_REPLY_PERSONA_SCHEDULED,
+            to_status=ACCOUNT_REPLY_PERSONA_PUBLISHING,
+            due_only=True,
+            limit=10,
+        )
+        _process_claimed_account_reply_jobs(
+            from_status="queued",
+            to_status="preparing",
+            due_only=False,
+            limit=5,
+        )
+        _process_claimed_account_reply_jobs(
+            from_status="scheduled",
+            to_status="publishing",
+            due_only=True,
+            limit=10,
+        )
+    _drain_production_zendesk_comment_deliveries(limit=20)
+    _drain_account_slack_deliveries(limit=20)
+    _drain_engineer_slack_events(limit=20)
+
+
 def _run_account_reply_poller(interval_seconds: float) -> None:
     LOGGER.info("Account reply poller started with interval_seconds=%s.", interval_seconds)
     while not SHUTTING_DOWN:
         try:
-            processing_profile = str(
-                os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging"
-            ).strip().lower()
-            if processing_profile == "production":
-                reconcile_account_human_review_queue_mismatches(
-                    repository=ticket_repository,
-                    processing_profile=processing_profile,
-                    limit=25,
-                    timestamp=now_iso(),
-                )
-                _drain_production_automation_classification_emails(limit=20)
-            _process_claimed_account_reply_jobs(
-                from_status=ACCOUNT_REPLY_PERSONA_V8_QUEUED,
-                to_status=ACCOUNT_REPLY_PERSONA_V8_PREPARING,
-                due_only=False,
-                limit=5,
-            )
-            _process_claimed_account_reply_jobs(
-                from_status=ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
-                to_status=ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
-                due_only=True,
-                limit=10,
-            )
-            if _account_reply_legacy_poller_enabled_from_env():
-                _process_claimed_account_reply_jobs(
-                    from_status=ACCOUNT_REPLY_PERSONA_QUEUED,
-                    to_status=ACCOUNT_REPLY_PERSONA_PREPARING,
-                    due_only=False,
-                    limit=5,
-                )
-                _process_claimed_account_reply_jobs(
-                    from_status=ACCOUNT_REPLY_PERSONA_SCHEDULED,
-                    to_status=ACCOUNT_REPLY_PERSONA_PUBLISHING,
-                    due_only=True,
-                    limit=10,
-                )
-                _process_claimed_account_reply_jobs(
-                    from_status="queued",
-                    to_status="preparing",
-                    due_only=False,
-                    limit=5,
-                )
-                _process_claimed_account_reply_jobs(
-                    from_status="scheduled",
-                    to_status="publishing",
-                    due_only=True,
-                    limit=10,
-                )
-            _drain_production_zendesk_comment_deliveries(limit=20)
-            _drain_account_slack_deliveries(limit=20)
-            _drain_engineer_slack_events(limit=20)
+            process_account_automation_once()
         except Exception:
             LOGGER.exception("Account reply poller failed")
         sleep_until = time.time() + max(interval_seconds, 1.0)

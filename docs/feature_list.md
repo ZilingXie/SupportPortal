@@ -52,7 +52,7 @@
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - /production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。
 - /account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。
-- /automation/staging、/automation/preproduction、/automation/production 提供三套独立 Route/Automation 执行环境与控制台 UI（staging 对齐 /account 模板、preproduction/production 对齐 /production 模板）：Execution token 门、执行历史列表（状态过滤+计数、Case 搜索、分页）、详情视图（meta、问答时间线、delivery ledger）、rerun 真实现（staging/preproduction）与 reset（staging 清空执行记录）；执行与查询 API 强制 Bearer token，Production 镜像与 UI 物理排除 rerun，旧 /account 与 /production 入口保留。
+- 新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。同一组环境中立 OCI manifest 经 Preproduction 验收后按 digest 晋升 Production；最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime。现有 EC2 `/production`、旧 release builder 与 n8n workflow 保持不变。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成

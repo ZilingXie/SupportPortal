@@ -189,6 +189,49 @@ class CommentTriggerTest(unittest.TestCase):
         )
         self.assertEqual(repository.synced, [])
 
+    def test_precomputed_route_does_not_call_route_model_again(self):
+        repository = _FakeRepository()
+        repository.get_active_engineer_case = lambda *_args, **_kwargs: None
+        route = {
+            "route_family": "human_review",
+            "execution_action": "human_review_required",
+            "route": "human_review_required",
+            "scope_label": "human_review",
+            "reason": "route worker decision",
+            "confidence": 0.9,
+            "matched_signals": [],
+            "semantic_intent": None,
+            "automation_eligibility": "not_eligible",
+            "policy_decision": "human_review",
+            "not_automated_reason": "route worker decision",
+            "risk_flags": [],
+            "evidence_spans": [],
+            "router_source": "layered",
+            "classification": {},
+        }
+        with patch.object(
+            reply_module,
+            "process_account_customer_reply",
+            new_callable=AsyncMock,
+            return_value={},
+        ) as process:
+            result = __import__("asyncio").run(
+                reply_module.process_zendesk_comment_trigger(
+                    repository=repository,
+                    account_case=repository.account_case,
+                    snapshot=self._snapshot(),
+                    trigger_comment_id="c1",
+                    precomputed_route=route,
+                    route_prompt_snapshots={"route": {"version": "4"}},
+                )
+            )
+        self.assertEqual(result["trigger_status"], "processed")
+        self.assertEqual(process.await_args.kwargs["precomputed_route"], route)
+        self.assertEqual(
+            process.await_args.kwargs["route_prompt_snapshots"],
+            {"route": {"version": "4"}},
+        )
+
     def test_engineer_case_branch_records_customer_context_and_only_notifies_slack(self):
         repository = _FakeRepository()
         repository.account_case["automation_status"] = "not_automated"
@@ -663,36 +706,31 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         repository.save_ticket = lambda ticket, new_messages=None: None
         repository.save_account_case = lambda case: None
         repository.save_account_route_execution = lambda execution: None
-        not_routed = NS(
-            decision=NS(
-                execution_action="human_review_required",
-                route="human_review_required",
-                route_family="human_review",
-                scope_label="account",
-                reason="outside",
-                confidence=0.9,
-                matched_signals=[],
-                semantic_intent=None,
-                automation_eligibility=None,
-                policy_decision=None,
-                not_automated_reason="outside",
-                risk_flags=[],
-                evidence_spans=[],
-                router_source="mock",
-            ),
-            classification={},
-            prompt_snapshots={},
-            stage_attempts=None,
-        )
+        precomputed_route = {
+            "execution_action": "human_review_required",
+            "route": "human_review_required",
+            "route_family": "human_review",
+            "scope_label": "account",
+            "reason": "outside",
+            "confidence": 0.9,
+            "matched_signals": [],
+            "semantic_intent": None,
+            "automation_eligibility": None,
+            "policy_decision": None,
+            "not_automated_reason": "outside",
+            "risk_flags": [],
+            "evidence_spans": [],
+            "router_source": "mock",
+            "classification": {},
+        }
         with patch(
             "backend.services.automation_account_reply_sync.decide_account_route",
-            return_value=not_routed,
+            side_effect=AssertionError("precomputed Route must be authoritative"),
         ), patch(
             "backend.services.account_admin.route_execution_from_decision",
             return_value={"ticket_id": "123"},
         ), patch(
             "backend.services.automation_account_reply_sync._apply_ownership_gate",
-            new_callable=AsyncMock,
             return_value=True,
         ), patch(
             "backend.services.automation_account_reply_sync.should_run_reply_rag_fallback",
@@ -713,6 +751,7 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
                     message="customer follow-up",
                     source="zendesk-comment",
                     message_source_id="c9",
+                    precomputed_route=precomputed_route,
                 )
             )
         self.assertIn("messages", outcome)
