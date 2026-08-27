@@ -473,7 +473,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v15")
+        self.assertEqual(result.prompt_version, "automation-persona-v16")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -814,19 +814,29 @@ class AutomationPersonaTests(unittest.TestCase):
                 with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
                     validate_account_reply_contract(invalid_reply, facts)
 
-    def test_completion_contract_requires_positive_enablement_and_closure(self) -> None:
+    def test_completion_contract_requires_contextual_acknowledgement_and_full_close_guidance(self) -> None:
         facts = {
             "behavior": "enablement",
             "reply_intent": "enablement_completed_and_close",
+            "completion_acknowledgement": "additional_information",
         }
         validate_account_reply_contract(
-            "The feature is enabled, and this ticket is closing.",
+            "Thanks for providing the additional information. We have now enabled Media Relay. "
+            "We will mark this case as archived now. If you have any further questions or concerns, "
+            "please feel free to open a new ticket.",
             facts,
             close_after_publish=True,
         )
         for invalid_reply in (
-            "The feature is not enabled, but this ticket is closing.",
-            "The feature is enabled, but this ticket will not close.",
+            "Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay is enabled. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay is enabled. This case is archived.",
+            "Thanks for providing the additional information. Media Relay is not enabled. This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Will Media Relay be enabled? This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay will be enabled tomorrow. This case will be archived tomorrow. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay is not enabled. Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay is enabled. This case will be archived tomorrow. This case is archived now. If you have questions, please open a new ticket.",
         ):
             with self.subTest(invalid_reply=invalid_reply):
                 with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
@@ -835,6 +845,60 @@ class AutomationPersonaTests(unittest.TestCase):
                         facts,
                         close_after_publish=True,
                     )
+
+    def test_completion_patience_contract_rejects_invented_additional_information(self) -> None:
+        facts = {
+            "behavior": "enablement",
+            "reply_intent": "enablement_completed_and_close",
+            "completion_acknowledgement": "patience",
+        }
+        validate_account_reply_contract(
+            "Thank you for your patience. Media Relay is now enabled. We are archiving this case now. "
+            "If you have further questions, you can open a new ticket.",
+            facts,
+            close_after_publish=True,
+        )
+        with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
+            validate_account_reply_contract(
+                "Thank you for your patience and for providing the additional information. Media Relay is now "
+                "enabled. We are archiving this case now. If you have further questions, you can open a new ticket.",
+                facts,
+                close_after_publish=True,
+            )
+
+    def test_completion_prompt_carries_additional_information_archive_and_new_ticket_policy(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thanks for providing the additional information. We have now enabled Media Relay. "
+                "We will mark this case as archived now. If you have any further questions or concerns, "
+                "please feel free to open a new ticket."
+            ),
+            model_name="persona-model",
+        )
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="enablement_completed_and_close",
+            known_information={"requested_feature": "media_relay"},
+            customer_name="Ziling",
+        )
+        facts["completion_acknowledgement"] = "additional_information"
+
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                account_scope=True,
+            )
+
+        self.assertTrue(result.content.startswith("Hi, Ziling\n\n"))
+        self.assertEqual(result.prompt_version, "automation-persona-v16")
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("providing the additional information", system_prompt)
+        self.assertIn("archived now", system_prompt)
+        self.assertIn("open a new ticket", system_prompt)
 
     def test_conflicting_intents_and_legacy_fraud_close_are_rejected(self) -> None:
         with self.assertRaisesRegex(AutomationPersonaError, "account_reply_intent_conflict"):

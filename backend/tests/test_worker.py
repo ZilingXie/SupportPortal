@@ -3159,10 +3159,61 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertTrue(payload["internal_resolution"])
         self.assertEqual(payload["automation_delivery_key"], "enablement-delivery-1")
         self.assertEqual(payload["reply_facts"]["reply_intent"], "enablement_completed_and_close")
+        self.assertEqual(payload["reply_facts"]["completion_acknowledgement"], "patience")
         commit = repository.commit_automation_reply_result.call_args.kwargs
         self.assertIsNone(commit["assistant_message"])
         self.assertNotIn("close_after_publish", commit)
         self.assertEqual(commit["account_case_updates"]["automation_status"], "automation")
+
+    def test_enablement_completion_acknowledges_customer_information_after_missing_request(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-TK-ENABLEMENT-FOLLOWUP",
+            "billing_ticket_id": "AC-TK-ENABLEMENT-FOLLOWUP",
+            "client_ticket_id": "TK-ENABLEMENT-FOLLOWUP",
+            "automation_handler": "enablement",
+            "automation_status": "automation",
+            "processing_profile": "production",
+            "collected_fields": {"requested_feature": "media_relay"},
+            "internal_email_payload": {"delivery_key": "enablement-delivery-followup"},
+        }
+        repository.get_ticket.return_value = {
+            "ticket_id": "TK-ENABLEMENT-FOLLOWUP",
+            "messages": [
+                {"role": "customer", "content": "Please enable Media Relay."},
+                {
+                    "role": "assistant",
+                    "content": "Could you please provide your App ID?",
+                    "reply_intent": "request_missing_information",
+                },
+                {"role": "customer", "content": "Here is the App ID."},
+            ],
+        }
+        repository.save_account_reply_job.side_effect = lambda job: job
+        reply = types.SimpleNamespace(
+            message_id="enablement-msg-followup",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-FOLLOWUP",
+            body_text="Media Relay has been enabled successfully.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "classify_enablement_completion"
+        ) as classifier:
+            handled = worker.handle_enablement_request_reply(reply)
+
+        classifier.assert_not_called()
+        self.assertEqual(handled, "completed")
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(
+            saved_job["payload"]["reply_facts"]["completion_acknowledgement"],
+            "additional_information",
+        )
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "TK-ENABLEMENT-FOLLOWUP", updated_at=unittest.mock.ANY
+        )
 
     def test_enablement_non_completion_reply_does_not_close(self) -> None:
         repository = Mock()
@@ -5552,6 +5603,68 @@ class WorkerResilienceTests(unittest.TestCase):
             job["payload"]["persona_prompt_version"],
             worker.AUTOMATION_PERSONA_PROMPT_VERSION,
         )
+        repository.publish_account_reply.assert_called_once()
+
+    def test_unpublished_enablement_completion_v15_needs_v16_persona_render(self) -> None:
+        job = {
+            "job_id": "account-reply-enablement-completion-v15",
+            "ticket_id": "TK-ENABLEMENT-COMPLETION-V15",
+            "trigger_message_created_at": "2026-08-27T00:00:00+00:00",
+            "status": worker.ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+            "claimed_at": "2026-08-27T00:03:00+00:00",
+            "attempt_count": 0,
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                },
+                "reply_intent": "enablement_completed_and_close",
+                "close_after_publish": True,
+                "internal_resolution": True,
+                "generated_content": "Media Relay is enabled. This ticket is closing.",
+                "persona_prompt_version": "automation-persona-v15",
+                "persona_key": "sid-bright",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm and precise."},
+            },
+        }
+        ticket = {
+            "ticket_id": job["ticket_id"],
+            "messages": [
+                {"role": "customer", "content": "Please enable Media Relay."},
+                {
+                    "role": "assistant",
+                    "content": "Please provide your App ID.",
+                    "reply_intent": "request_missing_information",
+                },
+                {"role": "customer", "content": "Here is the App ID."},
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.update_claimed_account_reply_job.return_value = job
+        repository.publish_account_reply.return_value = {"status": "published"}
+        rendered = types.SimpleNamespace(
+            content=(
+                "Hi, Customer\n\nThanks for providing the additional information. Media Relay is now enabled. "
+                "We are archiving this case now. If you have further questions, you can open a new ticket."
+            ),
+            model="persona-model",
+            prompt_version="automation-persona-v16",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ) as render:
+            worker._publish_account_reply_job(job)
+
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v16")
+        self.assertEqual(
+            render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
+            "additional_information",
+        )
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v16")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:

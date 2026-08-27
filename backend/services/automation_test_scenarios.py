@@ -35,6 +35,11 @@ from typing import Any, Callable
 
 import psycopg
 
+from backend.services.automation_persona import (
+    AutomationPersonaError,
+    validate_account_reply_contract,
+)
+
 # imaplib does not know the non-standard RFC2971 ID command; 163 Coremail
 # refuses SELECT/SEARCH (NO) unless it is sent before login.
 imaplib.Commands["ID"] = ("NONAUTH", "AUTH", "SELECTED")
@@ -426,6 +431,63 @@ class ScenarioEngine:
         if not ok:
             raise AssertionError(f"unexpected reply job: intent={intent} status={job['status']}")
 
+    def wait_completion_reply_contract(
+        self,
+        ctx: ScenarioContext,
+        *,
+        acknowledgement: str,
+        step: str,
+    ) -> None:
+        since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+
+        def probe():
+            rows = self.db_query(
+                "SELECT jobs.status, jobs.payload->>'reply_intent' AS reply_intent, "
+                "(jobs.payload->>'close_after_publish') AS close_after_publish, messages.content "
+                "FROM support_account_reply_jobs jobs "
+                "JOIN support_ticket_messages messages ON messages.ticket_id = jobs.ticket_id "
+                "AND messages.meta->>'account_reply_job_id' = jobs.job_id "
+                "WHERE jobs.ticket_id = %s AND jobs.created_at >= %s "
+                "ORDER BY jobs.created_at DESC, messages.created_at DESC, messages.id DESC LIMIT 1",
+                (ctx.client_ticket_id, since),
+            )
+            if not rows:
+                return None
+            job = rows[0]
+            if job["status"] in {"published", "failed", "manual_attention", "cancelled"}:
+                return job
+            return None
+
+        job = self.wait_for(
+            "published enablement completion reply",
+            probe,
+            self.turn_timeout_min * 60,
+        )
+        intent = str(job.get("reply_intent") or "")
+        try:
+            if intent != "enablement_completed_and_close" or job["status"] != "published":
+                raise AssertionError(
+                    f"unexpected reply job: intent={intent} status={job['status']}"
+                )
+            validate_account_reply_contract(
+                str(job.get("content") or ""),
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "completion_acknowledgement": acknowledgement,
+                },
+                close_after_publish=True,
+            )
+        except (AssertionError, AutomationPersonaError) as exc:
+            self.record(ctx, step, False, str(exc))
+            raise AssertionError(f"invalid completion reply: {exc}") from exc
+        self.record(
+            ctx,
+            step,
+            True,
+            f"intent={intent} status={job['status']} acknowledgement={acknowledgement}",
+        )
+
     def reply_intent_count(self, ctx: ScenarioContext, reply_intent: str) -> int:
         rows = self.db_query(
             "SELECT COUNT(*) AS intent_count FROM support_account_reply_jobs "
@@ -593,8 +655,10 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
         self.wait_manual_approval(ctx, "Media Relay")
-        self.wait_reply_intent(
-            ctx, {"enablement_completed_and_close"}, "completion reply published"
+        self.wait_completion_reply_contract(
+            ctx,
+            acknowledgement="patience",
+            step="completion reply contract published",
         )
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
@@ -615,8 +679,10 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
         self.wait_manual_approval(ctx, "Media Relay")
-        self.wait_reply_intent(
-            ctx, {"enablement_completed_and_close"}, "completion reply published"
+        self.wait_completion_reply_contract(
+            ctx,
+            acknowledgement="additional_information",
+            step="completion reply contract published",
         )
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 

@@ -4082,3 +4082,29 @@ For each new entry, record:
   - Final approval requires the current Guardrail version, so an old Slack approval button cannot publish a pre-change draft.
 - Verification:
   - Customer composer, Persona, Guardrail, prompts, Zendesk public write, Slack action, Worker delivery, Account Automation, Client runtime, RAG, routing, and investigation suites cover unsigned output, named greetings, duplicate-greeting removal, stale approvals, and fail-closed legacy delivery.
+
+## 2026-08-27 - Enablement completion acknowledgement and archive contract (p2-121)
+
+- Area or subsystem:
+  - Account Automation Enablement completion reply generation and publication validation.
+- Prompt version:
+  - `automation-persona-v15` -> `automation-persona-v16`; model configuration is unchanged.
+- Reason:
+  - Case 13061 passed Persona v15 but produced only a terse enablement confirmation and closing statement because the prompt and publication contract did not require contextual acknowledgement, customer-facing archive wording, or future-contact guidance.
+- Affected files or config:
+  - `backend/worker.py`
+  - `backend/services/automation_persona.py`
+  - `backend/services/automation_test_scenarios.py`
+  - Corresponding Worker, Persona, version-fence, and scripted scenario tests.
+- Prompt and fact changes:
+  - Enablement completion facts now include `completion_acknowledgement=additional_information` when an Assistant `request_missing_information` message is followed by a customer message; otherwise they use `patience`.
+  - Completed Enablement replies must acknowledge that context, confirm the feature is already enabled, say that the current Case will be archived now, and direct future questions or concerns to a new ticket.
+  - Customer-facing `archived` wording is explicitly independent of the delivery pipeline's internal Zendesk `target_status=solved` state.
+- Publication contract:
+  - Missing acknowledgement, enabled, archive, or new-ticket guidance is rejected. Negative, interrogative, future enablement, and delayed archival wording is rejected.
+  - A `patience` reply cannot claim that the customer provided additional information.
+  - Contract failures retain the existing retry-exhaustion and Human Review behavior; no deterministic reply template or fallback was added.
+  - Unpublished v15 Persona payloads are regenerated through the existing prompt-version fence. Already published replies and historical Case 13061 are unchanged.
+- Verification:
+  - Persona, Worker, scripted Automation scenario, and Account reply version-fence suites: 184 passed with 43 subtests passed.
+  - Live E1/E2, deployment, container restart, and Zendesk readback were intentionally not run at the user's request.
