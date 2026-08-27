@@ -102,8 +102,8 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
         "scope_label": "backend_operation",
         "execution_action": "enablement",
-        "route_family": AUTOMATED_ROUTE_FAMILY,
-        "tooling_profile": "deterministic_enablement_intake",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
         "backend_operation_subcategory": "enablement",
     },
     {
@@ -154,8 +154,9 @@ VALID_ROUTE_TUPLES: list[dict[str, str]] = [
     {
         "scope_label": "enablement",
         "execution_action": "enablement",
-        "route_family": AUTOMATED_ROUTE_FAMILY,
-        "tooling_profile": "deterministic_enablement_intake",
+        "route_family": "human_review",
+        "tooling_profile": "classification_only",
+        "backend_operation_subcategory": "enablement",
     },
     {
         "scope_label": "quota",
@@ -279,6 +280,8 @@ def validate_route_correction(
             route_family=match["route_family"],
             execution_action=match["execution_action"],
         )
+    if match["route_family"] not in {AUTOMATED_ROUTE_FAMILY, "billing_automation"}:
+        metadata.update({"route_status": "not_automated", "automation_handler": None})
     return {
         "scope_label": match.get("canonical_scope_label", match["scope_label"]),
         "execution_action": match["execution_action"],

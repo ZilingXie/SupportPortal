@@ -14,8 +14,11 @@ def _route_result(
     *,
     action: str = "account_suspension",
     agora_route: str = "account_billing",
+    target: str | None = None,
 ) -> AccountRouteResult:
-    is_backend_automation = agora_route == "backend_operation" and action in {"enablement", "quota"}
+    is_backend_automation = agora_route == "backend_operation" and (
+        action == "quota" or (action == "enablement" and target == "media_relay")
+    )
     is_account_billing_automation = agora_route == "account_billing" and action == "fraud_account"
     decision_action = action if is_backend_automation or is_account_billing_automation else "human_review_required"
     decision_scope = action if is_backend_automation else "account_billing" if agora_route == "account_billing" else "backend_operation"
@@ -35,6 +38,7 @@ def _route_result(
         "automation_subcategory": None,
         "account_billing_subcategory": action if agora_route == "account_billing" else None,
         "backend_operation_subcategory": action if agora_route == "backend_operation" else None,
+        "backend_operation": {"target": target} if target else None,
         "route_target": "human_review",
         "route_reason_code": f"registered_{action}",
         "stage_confidences": {
@@ -248,26 +252,61 @@ class AccountCaseRerouteTests(unittest.TestCase):
             "Account & Billing / Detailed Invoice",
         )
 
-    def test_backend_operation_handlers_are_automated_and_unregistered_is_human_review(self) -> None:
-        for action in ("enablement", "quota"):
-            with self.subTest(action=action):
-                result = reroute_account_case(
-                    {
-                        "account_case_id": "AC-1",
-                        "billing_ticket_id": "AC-1",
-                        "client_ticket_id": "1",
-                        "title": action,
-                        "question": f"Please process {action}.",
-                    },
-                    route_agent=Mock(
-                        return_value=_route_result(action=action, agora_route="backend_operation")
-                    ),
+    def test_backend_operation_handlers_require_supported_target(self) -> None:
+        media_relay = reroute_account_case(
+            {
+                "account_case_id": "AC-1",
+                "billing_ticket_id": "AC-1",
+                "client_ticket_id": "1",
+                "title": "Media Relay enablement",
+                "question": "Please enable Media Relay.",
+            },
+            route_agent=Mock(
+                return_value=_route_result(
+                    action="enablement",
+                    agora_route="backend_operation",
+                    target="media_relay",
                 )
+            ),
+        )
+        self.assertEqual(media_relay.account_case["route_status"], "automated")
+        self.assertEqual(media_relay.account_case["automation_handler"], "enablement")
 
-                self.assertEqual(result.account_case["category"], "backend_operation")
-                self.assertEqual(result.account_case["subcategory"], action)
-                self.assertEqual(result.account_case["route_status"], "automated")
-                self.assertEqual(result.account_case["automation_handler"], action)
+        unsupported_enablement = reroute_account_case(
+            {
+                "account_case_id": "AC-2",
+                "billing_ticket_id": "AC-2",
+                "client_ticket_id": "2",
+                "title": "Cloud Recording enablement",
+                "question": "Please enable Cloud Recording.",
+            },
+            route_agent=Mock(
+                return_value=_route_result(
+                    action="enablement",
+                    agora_route="backend_operation",
+                    target="cloud_recording",
+                )
+            ),
+        )
+        self.assertEqual(unsupported_enablement.account_case["category"], "backend_operation")
+        self.assertEqual(unsupported_enablement.account_case["subcategory"], "enablement")
+        self.assertEqual(unsupported_enablement.account_case["route_status"], "not_automated")
+        self.assertIsNone(unsupported_enablement.account_case["automation_handler"])
+
+        quota = reroute_account_case(
+            {
+                "account_case_id": "AC-3",
+                "billing_ticket_id": "AC-3",
+                "client_ticket_id": "3",
+                "title": "Quota increase",
+                "question": "Please increase our quota.",
+            },
+            route_agent=Mock(
+                return_value=_route_result(action="quota", agora_route="backend_operation")
+            ),
+        )
+        self.assertEqual(quota.account_case["route_status"], "not_automated")
+        self.assertIsNone(quota.account_case["automation_handler"])
 
         unregistered = reroute_account_case(
             {

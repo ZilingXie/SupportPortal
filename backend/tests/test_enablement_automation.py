@@ -10,6 +10,7 @@ from backend.services.enablement_automation import (
     customer_visible_enablement_information,
     detect_enablement_route,
     detect_registered_enablement_route,
+    is_supported_enablement_feature,
     send_enablement_internal_email,
 )
 from backend.services.llm_factory import LlmInvocationError
@@ -79,6 +80,7 @@ class EnablementAutomationTests(unittest.TestCase):
             "Cross Channel Media Relay Activation",
             "Channel Media Relay Enable",
             "Please enable Medial Relay service from your end.",
+            "Please enable Media Rele service from your end.",
         ):
             with self.subTest(message=message):
                 match = detect_enablement_route(message)
@@ -108,6 +110,8 @@ class EnablementAutomationTests(unittest.TestCase):
             "I want to enable media relay.",
             "We need to activate Cross Channel Media Relay.",
             "Please provision Media Relay for our account.",
+            "Please enable medial relay from your end.",
+            "Please enable media rele from your end.",
         ):
             with self.subTest(message=message):
                 match = detect_registered_enablement_route(message)
@@ -121,10 +125,34 @@ class EnablementAutomationTests(unittest.TestCase):
             "Media Relay fails with server no response. Why?",
             "How much does Media Relay enablement cost?",
             "I want to enable Cloud Recording.",
+            "Please enable Media Relay and Cloud Recording.",
+            "Please enable media realy from your end.",
             "Please enable a feature for us.",
         ):
             with self.subTest(message=message):
                 self.assertIsNone(detect_registered_enablement_route(message))
+
+    def test_supported_feature_target_requires_a_complete_bounded_match(self) -> None:
+        for target in (
+            "media_relay",
+            "Cross Channel Media Relay",
+            "channel_media_relay",
+            "medial relay",
+            "media rele",
+        ):
+            with self.subTest(target=target):
+                self.assertTrue(is_supported_enablement_feature(target))
+
+        for target in (
+            "faceunity_ar_filter_extension",
+            "cloud_recording",
+            "media_realy",
+            "medial rele",
+            "Media Relay and Cloud Recording",
+            "",
+        ):
+            with self.subTest(target=target):
+                self.assertFalse(is_supported_enablement_feature(target))
 
     def test_missing_or_invalid_app_id_only_requests_app_id(self) -> None:
         for message in (

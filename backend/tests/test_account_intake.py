@@ -452,7 +452,13 @@ def _fake_account_route_stage(
         )
         backend_operation = None
         if route == "backend_operation":
-            target = "quota" if any(marker in text for marker in ("concurrency", "quota", "capacity")) else "media_relay"
+            target = (
+                "quota"
+                if any(marker in text for marker in ("concurrency", "quota", "capacity"))
+                else "cloud_recording"
+                if "cloud recording" in text
+                else "media_relay"
+            )
             backend_operation = {
                 "action": "review_and_increase" if target == "quota" else "enable",
                 "target": target,
@@ -2602,6 +2608,74 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(email_payload["recipient_config_key"], "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL")
         self.assertIn("[Enablement Request]", email_payload["subject"])
         self.assertIn(payload["ticket_id"], email_payload["body"])
+
+    def test_production_non_media_relay_enablement_creates_engineer_case_without_automation_side_effects(self) -> None:
+        assignment = Mock()
+        assignment.dispatch_case.return_value = {"engineer_case_id": "cloud-recording-1"}
+        with patch.dict(
+            os.environ,
+            {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"},
+            clear=False,
+        ), patch.object(
+            self.repository, "resolve_account_persona", wraps=self.repository.resolve_account_persona
+        ) as resolve_persona, patch.object(
+            main, "extract_enablement_fields"
+        ) as extract_fields, patch.object(
+            main, "_apply_production_ownership_gate"
+        ) as ownership_gate, patch.object(
+            main, "_send_enablement_internal_email_attempt", AsyncMock()
+        ) as send_email, patch.object(
+            main, "_create_account_reply_job"
+        ) as create_reply_job, patch.object(
+            main, "_engineer_assignment_service", return_value=assignment
+        ), patch.object(
+            main, "dispatch_event", AsyncMock()
+        ):
+            response = self.client.post(
+                "/account",
+                json={
+                    "ticket_id": "TK-CLOUD-RECORDING-001",
+                    "external_id": "cloud-recording",
+                    "title": "Enable Cloud Recording",
+                    "question": "Please enable Cloud Recording from your end.",
+                    "customer_email": "customer@example.com",
+                    "source": "api",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "not_automated")
+        self.assertEqual(payload["route"], "human_review_required")
+        self.assertEqual(payload["route_family"], "human_review")
+        self.assertEqual(payload["category"], "backend_operation")
+        self.assertEqual(payload["subcategory"], "enablement")
+        self.assertEqual(payload["route_status"], "not_automated")
+        self.assertIsNone(payload["automation_handler"])
+        self.assertEqual(payload["execution_reason_code"], None)
+        self.assertEqual(payload["engineer_case_id"], "cloud-recording-1")
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        self.assertIsNone(payload["ai_reply_status"])
+        self.assertEqual(
+            payload["route_classification"]["route_reason_code"],
+            "unsupported_enablement_feature",
+        )
+        self.assertEqual(
+            payload["route_classification"]["secondary_label"],
+            "Backend Operation / Enablement",
+        )
+        self.assertIsNone(payload["route_classification"]["handler_binding_status"])
+        self.assertEqual(len(self.repository.list_ticket_engineer_cases("cloud-recording")), 1)
+        self.assertEqual(
+            self.repository.list_account_automation_classification_emails(statuses=("queued",)),
+            [],
+        )
+        resolve_persona.assert_not_called()
+        extract_fields.assert_not_called()
+        ownership_gate.assert_not_called()
+        send_email.assert_not_awaited()
+        create_reply_job.assert_not_called()
+        assignment.dispatch_case.assert_called_once_with("cloud-recording-1", reason="round_robin")
 
     def test_account_intake_persona_unavailable_persists_human_review_without_automation_side_effects(self) -> None:
         unhandled_client = TestClient(main.app, raise_server_exceptions=False)
@@ -5452,7 +5526,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         enablement_payload = enablement.json()
         self.assertEqual(enablement_payload["category"], "backend_operation")
         self.assertEqual(enablement_payload["subcategory"], "enablement")
-        self.assertEqual(enablement_payload["route_status"], "automated")
+        self.assertEqual(enablement_payload["route_family"], "human_review")
+        self.assertEqual(enablement_payload["route_status"], "not_automated")
+        self.assertEqual(enablement_payload["automation_status"], "not_automated")
+        self.assertIsNone(enablement_payload["automation_handler"])
         self.assertEqual(enablement_payload["primary_label"], "Agora")
         self.assertEqual(enablement_payload["secondary_label"], "Backend Operation / Enablement")
 

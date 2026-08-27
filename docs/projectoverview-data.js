@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-27T04:03:30Z",
-  "source_base_commit": "132bd6edcff5081f9378f7b4d4bb955174ec1710",
-  "registry_digest": "cc1532ad059f8c4121bdb0c26e1a12e84d1f5fd20ba8f6fdfabd963efd7f7472",
+  "generated_at": "2026-08-27T07:24:38Z",
+  "source_base_commit": "54e8235d7fce78e84cd8289b45abc185410f0740",
+  "registry_digest": "778ea9c17a1bc6bb030ff40052edc32a0a9653ab4328571a2b23a90471f4812a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1035,6 +1035,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 572,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/572",
           "label": "PR #572"
+        },
+        {
+          "type": "decision",
+          "label": "Media Relay only automation boundary",
+          "command": "Approved behavior scope 2026-08-27",
+          "details": "Enablement target 使用完整匹配，仅 canonical Media Relay、Cross/Channel Media Relay、medial relay 与 media rele 获得 automated 资格；混合或其他 target 进入 human_review。Case 13067 与所有历史数据均排除，不修改、不重跑、不补发。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement routing and Production intake regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_enablement_automation backend.tests.test_account_route_pipeline backend.tests.test_route_correction backend.tests.test_account_case_reroute backend.tests.test_account_intake backend.tests.test_automation_account_intake backend.tests.test_production_automation_classification_email backend.tests.test_automation_production_runtime_contract",
+          "details": "279 项全绿。覆盖 Media Relay 与两个明确拼写变体、拒绝未批准的组合拼写、混合和其他 target、legacy automation 兼容分支、targetless Route correction、reroute、Fraud/Account Suspension 邻接回归，以及 Production Cloud Recording 保留 Backend Operation / Enablement 分类、创建 Engineer Case，同时不调用字段提取、Persona、Ownership gate、内部邮件或 reply job，也不排队分类通知邮件。"
         }
       ],
       "source_refs": [
@@ -1056,8 +1068,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "p2-08"
       ],
       "status": "active",
-      "task_count": 11,
-      "done_count": 10,
+      "task_count": 12,
+      "done_count": 11,
       "blocked_count": 0
     },
     {
@@ -5988,6 +6000,68 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
       "function_id": "ecs-environment-migration"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-54",
+      "title": "Enablement Automation 仅支持 Media Relay",
+      "status": "done",
+      "owner": "codex",
+      "summary": "将 Enablement 分类与自动化资格分离：仅 Media Relay（含明确允许的 medial relay、media rele 拼写变体）进入 Automation；其他具名 Enablement 仍保留 Backend Operation / Enablement 分类，但按 not_automated 进入 Engineer Case，且不绑定 handler、不触发内部邮件、Persona、回复任务或分类通知。",
+      "next_action": "已完成目标级资格门禁、Production intake、副作用、Route correction 与 reroute 验证；后续仅观察 Production 新 Case 行为，不处理历史 Case。",
+      "acceptance_criteria": [
+        "Media Relay、Cross Channel Media Relay、medial relay 和 media rele 分类为 Backend Operation / Enablement，并保持 automated Enablement 执行。",
+        "FaceUnity、Cloud Recording 等其他具名 Enablement 仍分类为 Backend Operation / Enablement，但持久化 route_status=not_automated、automation_handler=null，并进入 Engineer Case。",
+        "非 Media Relay Enablement 不执行字段提取、Persona 分配、Ownership gate、内部邮件、Automation reply job 或 Production Automation 分类通知。",
+        "人工 Route correction 在没有目标证据时只能将 Enablement 记录为 classification-only / not_automated，不能绕过 Media Relay 白名单。",
+        "Media Relay how-to、SDK 配置、故障、价格问题及 Fraud、Account Suspension 的既有行为不变。",
+        "不修改、不重跑、不补发 Case 13067 或任何历史 Case。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Media Relay only automation boundary",
+          "command": "Approved behavior scope 2026-08-27",
+          "details": "Enablement target 使用完整匹配，仅 canonical Media Relay、Cross/Channel Media Relay、medial relay 与 media rele 获得 automated 资格；混合或其他 target 进入 human_review。Case 13067 与所有历史数据均排除，不修改、不重跑、不补发。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement routing and Production intake regression",
+          "command": ".venv/bin/python -m unittest backend.tests.test_enablement_automation backend.tests.test_account_route_pipeline backend.tests.test_route_correction backend.tests.test_account_case_reroute backend.tests.test_account_intake backend.tests.test_automation_account_intake backend.tests.test_production_automation_classification_email backend.tests.test_automation_production_runtime_contract",
+          "details": "279 项全绿。覆盖 Media Relay 与两个明确拼写变体、拒绝未批准的组合拼写、混合和其他 target、legacy automation 兼容分支、targetless Route correction、reroute、Fraud/Account Suspension 邻接回归，以及 Production Cloud Recording 保留 Backend Operation / Enablement 分类、创建 Engineer Case，同时不调用字段提取、Persona、Ownership gate、内部邮件或 reply job，也不排队分类通知邮件。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/enablement_automation.py",
+        "backend/services/account_route_pipeline.py",
+        "backend/services/route_correction.py",
+        "backend/services/automation_account_intake.py"
+      ],
+      "created_at": "2026-08-27",
+      "updated_at": "2026-08-27",
+      "history": [
+        {
+          "at": "2026-08-27",
+          "event": "created",
+          "summary": "用户确认 Enablement Automation 仅支持 Media Relay；允许 medial relay 和 media rele 两个明确拼写变体，不采用通用模糊匹配，并排除 Case 13067 与历史数据修正。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "completed",
+          "summary": "完成 Media Relay target 白名单、non-automated metadata、targetless Route correction fail-closed 与 Production intake/Engineer Case 副作用验证；未触碰 Case 13067 或历史数据。"
+        },
+        {
+          "at": "2026-08-27",
+          "event": "reviewed",
+          "summary": "实现审查修复两个边界：拒绝未批准的 medial rele 组合拼写，并让 legacy automation/enablement 分支执行同一 Media Relay target gate；最终 279 项目标测试通过。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "case-route"
     },
     {
       "schema_version": 2,
