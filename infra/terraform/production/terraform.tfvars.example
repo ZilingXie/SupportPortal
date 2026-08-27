@@ -1,0 +1,35 @@
+aws_region   = "us-east-1"
+project_name = "supportportal"
+environment  = "production"
+
+vpc_id                 = "vpc-0125f57b2ec2f0423"
+public_subnet_ids      = []
+rds_security_group_id  = "sg-0e9c3bd50e371fbf4"
+domain_name            = "supportcenter.stellarix.space"
+
+# Keep false for Foundation-only apply. Enable only after the release thread
+# publishes all three immutable image digests and the secrets are populated.
+enable_services      = false
+enable_https_listener = false
+
+# After ACM DNS validation, set enable_https_listener=true. An existing issued
+# certificate ARN may be supplied instead of using the Terraform-managed one.
+acm_certificate_arn = ""
+
+# Foundation uses one cost-first Redis node. Set false if the approved runtime
+# design does not require Redis; do not remove the ECS SG boundary.
+enable_redis       = true
+redis_node_type    = "cache.t3.micro"
+redis_engine_version = "7.1"
+
+desired_count = 1
+assign_public_ip = true
+
+# These remain empty until the release manifest exists.
+api_image    = ""
+route_image  = ""
+worker_image = ""
+release_id   = "unreleased"
+
+github_repository = "ZilingXie/SupportPortal"
+github_branch     = "main"
