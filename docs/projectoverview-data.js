@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-27T09:17:26Z",
-  "source_base_commit": "deb72a9695f143bf04ada4aba0d2023353e75691",
-  "registry_digest": "a6e1c12b31179a609e5200ff142495a8d03f907666f3d0814da5a162db5ead7f",
+  "generated_at": "2026-08-28T02:57:55Z",
+  "source_base_commit": "73303042ae6179ea5560f9be5cd7597a0b3bd2d1",
+  "registry_digest": "9c3cf61c8344ca4f6240850a633be11acc8120eaf42dbcff541488ae8e978993",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -721,6 +721,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Enablement and Persona targeted suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_automation_persona.py backend/tests/test_support_router_enablement.py backend/tests/test_enablement_field_extractor.py -q",
+          "details": "85 passed,69 subtests passed。覆盖别名 canonical 归一三种拼写变体、cross streaming 缩写不误收、确定性路由命中 media_relay、内部邮件 Feature 显示 Media Relay、13085 同款投影无标识符、note 脱敏、Media Relay 回复合规通过 completion 合同、有 canonical 名时 raw 措辞仍拒绝、无 canonical 名时客户措辞允许。既有测试 test_extractor_redacts_identifiers_email_and_raw_feature_label 的 known_information 补上生产必有的 requested_feature 键以保持原意。"
+        },
+        {
+          "type": "test",
+          "label": "Worker, intake, classifier, fence, routing and reroute suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_route_pipeline.py backend/tests/test_enablement_repair.py backend/tests/test_automation_account_intake.py backend/tests/test_production_automation_classification_email.py backend/tests/test_account_automation_ownership.py backend/tests/test_account_full_reroute.py backend/tests/test_account_case_reroute.py backend/tests/test_recover_account_rerun.py backend/tests/test_account_rerun_atomic.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_automation_routing.py backend/tests/test_internal_email_template.py backend/tests/test_internal_email_payload.py -q",
+          "details": "493 passed(worker 306 + scenarios/route 60 + 高相关 127),4 个既有 FastAPI lifecycle deprecation warnings。两个 main 基线既有失败与本次无关且已在 root 复验:test_rerun_automated_account_cases.py 收集期 ImportError(DEFAULT_PERSONA_SIGNATURE,root 同样失败)、test_recover_account_rerun.py::test_apply_recovery_persona_unavailable_marks_reset_case_human_review 的 category 断言(root 同样失败)。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -826,7 +838,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 20,
+      "task_count": 21,
       "done_count": 12,
       "blocked_count": 0
     },
@@ -7666,6 +7678,65 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-27",
           "event": "reviewed",
           "summary": "Owner review 修复常见否定缩写误判并收紧 Case 13068 证据措辞；复跑目标套件和 Project Overview 检查通过，无剩余 review finding。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-123",
+      "title": "Enablement 功能别名 canonical 归一，消除 Persona forbidden_value 死锁",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Case AC-13085 的 enablement_completed_and_close 回复在 automation_persona 阶段连续 4 次命中 automation_persona_forbidden_value 并升级 Human Review。根因是结构性死锁：字段抽取 LLM 把客户措辞 cross platform streaming 落库为 requested_feature（用户已确认该措辞就是 Media Relay），显示名映射查不到 canonical 名，于是原始措辞被列入 forbidden 值，同时投影层又拿不出任何合法功能名，而 completion 合同强制明确说明功能已启用——Persona 唯一可用的功能名恰好是禁词，重试无反馈必然全败。本任务将 cross platform streaming 别名归一到 media_relay（正则分支 + 显示名解析改走 canonical），收窄 forbidden 的 raw label 条件（无 canonical 替代名时不再禁客户措辞），并对齐 completion 链路卫生：内部 resolution note 先脱敏再进 facts.source_facts，enablement 投影剥掉 ticket_id/account_case_id/customer_email 标识符。标识符拦截、有 canonical 名时禁错误拼写、未知功能不静默纠正等既有契约保持不变。AC-13085 本身不重跑、不重置、不补发。",
+      "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后观察后续同类工单自动关单。",
+      "acceptance_criteria": [
+        "canonical_enablement_feature 将 cross platform streaming / cross_platform_streaming / Cross-Platform Streaming 归一为 media_relay,is_supported_enablement_feature 相应为 True。",
+        "13085 同款 collected_fields 的 enablement 投影返回 requested_feature_name=Media Relay;submission_confirmation 与 completion 分支的 known_information 均不含 ticket_id/account_case_id/customer_email。",
+        "_forbidden_values 仅在 canonical 显示名存在且与原始措辞不同时禁原始措辞;显示名缺失时不再禁,标识符值与三条标识符正则拦截不变。",
+        "completion 链路的 note 在进入 source_facts 前经过 forbidden 值脱敏(App ID、邮箱、Ticket 号替换为 [redacted]),与 extractor 链路对齐。",
+        "AC-13085 同款输入的 render_automation_reply 单测中,Persona 输出 Media Relay 合规通过;有 canonical 名时输出原始措辞仍被拒绝。",
+        "既有测试零回归(重点:unknown-feature 泛指、cross_channel display、forbidden app_id、completion contract 系列);不新增配置项、开关、兼容层。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Enablement and Persona targeted suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_automation_persona.py backend/tests/test_support_router_enablement.py backend/tests/test_enablement_field_extractor.py -q",
+          "details": "85 passed,69 subtests passed。覆盖别名 canonical 归一三种拼写变体、cross streaming 缩写不误收、确定性路由命中 media_relay、内部邮件 Feature 显示 Media Relay、13085 同款投影无标识符、note 脱敏、Media Relay 回复合规通过 completion 合同、有 canonical 名时 raw 措辞仍拒绝、无 canonical 名时客户措辞允许。既有测试 test_extractor_redacts_identifiers_email_and_raw_feature_label 的 known_information 补上生产必有的 requested_feature 键以保持原意。"
+        },
+        {
+          "type": "test",
+          "label": "Worker, intake, classifier, fence, routing and reroute suites",
+          "command": "rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_route_pipeline.py backend/tests/test_enablement_repair.py backend/tests/test_automation_account_intake.py backend/tests/test_production_automation_classification_email.py backend/tests/test_account_automation_ownership.py backend/tests/test_account_full_reroute.py backend/tests/test_account_case_reroute.py backend/tests/test_recover_account_rerun.py backend/tests/test_account_rerun_atomic.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_rerun_recovery.py backend/tests/test_automation_routing.py backend/tests/test_internal_email_template.py backend/tests/test_internal_email_payload.py -q",
+          "details": "493 passed(worker 306 + scenarios/route 60 + 高相关 127),4 个既有 FastAPI lifecycle deprecation warnings。两个 main 基线既有失败与本次无关且已在 root 复验:test_rerun_automated_account_cases.py 收集期 ImportError(DEFAULT_PERSONA_SIGNATURE,root 同样失败)、test_recover_account_rerun.py::test_apply_recovery_persona_unavailable_marks_reset_case_human_review 的 category 断言(root 同样失败)。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/enablement_automation.py",
+        "backend/services/automation_persona.py",
+        "backend/worker.py",
+        "backend/tests/test_enablement_automation.py",
+        "backend/tests/test_automation_persona.py",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-08-28",
+      "updated_at": "2026-08-28",
+      "history": [
+        {
+          "at": "2026-08-28",
+          "event": "created",
+          "summary": "只读调查确认 AC-13085 四连败根因为 canonical 显示名缺失导致的功能名死锁;用户确认 cross platform streaming 即 Media Relay 并批准三层修复方案。"
+        },
+        {
+          "at": "2026-08-28",
+          "event": "updated",
+          "summary": "实现别名 canonical 归一(正则分支+两处显示名解析走 canonical)、forbidden raw label 条件收窄、completion note 脱敏与 enablement 投影剥标识符;AC-13085 复现测试与既有套件通过,两个失败为 main 基线既有问题。"
         }
       ],
       "legacy_refs": [],

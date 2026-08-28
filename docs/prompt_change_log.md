@@ -12,6 +12,16 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-28 - Enablement feature alias canonicalization and Persona forbidden-value deadlock fix (p2-123)
+
+- Area or subsystem: Enablement Account Automation feature normalization, internal-email feature label, Persona facts projection, and the completion-reply forbidden-value gate.
+- Prompt or model version: prompt text and model configuration unchanged; `automation-persona-v17` behavior boundary widened only for feature wording.
+- Summary: the customer wording "cross platform streaming" (confirmed to mean Media Relay) now canonicalizes to `media_relay`, so the Enablement display name resolves to "Media Relay" in the customer-visible facts projection and the internal handoff email subject/Feature field. The forbidden-value gate keeps banning the raw feature label only when a canonical display name exists to replace it; without one the customer's own wording is allowed. Enablement completion notes are redacted against the forbidden values before entering `source_facts`, and the Enablement facts projection now strips `ticket_id`, `account_case_id`, and `customer_email` for every intent, matching the non-Enablement projection.
+- Reason: production Case AC-13085 failed `automation_persona_forbidden_value` on all four attempts and escalated to Human Review. The field-extraction model stored the customer wording as `requested_feature`, no canonical display name resolved, the raw wording became a forbidden value while the projection removed every legal feature name, and the completion contract forced the Persona to name the enabled feature - a deterministic deadlock.
+- Affected files or config: `backend/services/enablement_automation.py`, `backend/services/automation_persona.py`, `backend/worker.py`.
+- Expected behavior change: Media Relay enablement requests phrased as cross platform streaming route, display, and reply as Media Relay; unknown feature wordings no longer deadlock the completion reply (the Persona may refer generically or reuse the customer wording); identifier redaction for App IDs, emails, and ticket references is unchanged and now also applied to completion notes before the Persona sees them.
+- Verification: AC-13085 replay unit tests cover canonical alias normalization, identifier-free projections, note sanitization, a Persona reply using "Media Relay" passing the completion contract, the raw wording still rejected when a canonical name exists, and customer wording allowed when it does not; enablement/persona/worker/intake/reroute suites passed 578 tests with two pre-existing baseline failures on `main` unrelated to this change.
+
 ## 2026-08-26 - Engineer customer-comment AI trigger boundary (p2-68, p2-113)
 
 - Area or subsystem: Production Non automated Engineer Case Zendesk comment sync and Slack collaboration.

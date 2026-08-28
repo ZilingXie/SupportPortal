@@ -75,7 +75,10 @@ def _forbidden_values(known_information: dict[str, Any] | None) -> list[str]:
         )
         or ""
     ).strip()
-    if raw_feature_label and raw_feature_label.casefold() != display_name.casefold():
+    # The raw label is only forbidden when a canonical display name exists to
+    # replace it; without one it is the customer's own wording and banning it
+    # leaves the Persona no legal way to name the request.
+    if display_name and raw_feature_label and raw_feature_label.casefold() != display_name.casefold():
         values.append(raw_feature_label)
     app_ids = known.get("app_ids")
     if isinstance(app_ids, list):
@@ -91,6 +94,14 @@ def _sanitize_internal_resolution(source_text: str, forbidden_values: list[str])
     sanitized = _EMAIL_RE.sub("[redacted]", sanitized)
     sanitized = _SUPPORT_ID_RE.sub("[redacted]", sanitized)
     return sanitized
+
+
+def sanitize_enablement_completion_note(
+    note: str,
+    known_information: dict[str, Any] | None,
+) -> str:
+    """Redact internal identifiers from an internal resolution note before Persona use."""
+    return _sanitize_internal_resolution(note, _forbidden_values(known_information))
 
 
 def _assert_no_forbidden_values(value: Any, forbidden_values: list[str], *, error_code: str) -> None:

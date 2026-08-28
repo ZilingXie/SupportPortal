@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from backend.services.enablement_automation import (
     build_enablement_automation_result,
     build_enablement_customer_followup,
+    canonical_enablement_feature,
     customer_visible_enablement_information,
     detect_enablement_route,
     detect_registered_enablement_route,
@@ -153,6 +154,52 @@ class EnablementAutomationTests(unittest.TestCase):
         ):
             with self.subTest(target=target):
                 self.assertFalse(is_supported_enablement_feature(target))
+
+    def test_cross_platform_streaming_alias_normalizes_to_media_relay(self) -> None:
+        # AC-13085 wording: the customer asked to enable cross platform streaming,
+        # which is the Media Relay feature.
+        for feature in ("cross platform streaming", "cross_platform_streaming", "Cross-Platform Streaming"):
+            with self.subTest(feature=feature):
+                self.assertEqual(canonical_enablement_feature(feature), "media_relay")
+
+        self.assertTrue(is_supported_enablement_feature("cross platform streaming"))
+        self.assertFalse(is_supported_enablement_feature("cross streaming"))
+
+        message = (
+            "Dear team, Please enable cross platform streaming for my app id - "
+            "4ba4eb7eae1449b0922909dcb247633d"
+        )
+        match = detect_registered_enablement_route(message)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.requested_feature, "media_relay")
+
+        result = build_enablement_automation_result(
+            message=message,
+            ticket_id="13085",
+            account_case_id="AC-13085",
+            customer_email="kaber5201@gmail.com",
+        )
+        assert result.internal_email is not None
+        self.assertIn("Feature: Media Relay", result.internal_email["body"])
+        self.assertIn("Media Relay", result.internal_email["subject"])
+        self.assertNotIn("cross platform streaming", result.internal_email["subject"])
+
+    def test_ac13085_collected_fields_project_to_media_relay_without_identifiers(self) -> None:
+        collected = {
+            "app_id": "4ba4eb7eae1449b0922909dcb247633d",
+            "requested_feature": "cross_platform_streaming",
+            "requested_feature_label": "cross platform streaming",
+            "ticket_id": "13085",
+            "account_case_id": "AC-13085",
+            "customer_email": "kaber5201@gmail.com",
+        }
+        for intent in ("submission_confirmation", "enablement_completed_and_close"):
+            with self.subTest(intent=intent):
+                self.assertEqual(
+                    customer_visible_enablement_information(collected, reply_intent=intent),
+                    {"requested_feature_name": "Media Relay"},
+                )
 
     def test_missing_or_invalid_app_id_only_requests_app_id(self) -> None:
         for message in (

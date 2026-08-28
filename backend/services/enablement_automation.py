@@ -81,7 +81,8 @@ _FEATURE_ACTION_TITLE_PATTERNS = (
     re.compile(r"^(?P<feature>[a-z0-9][a-z0-9+&./ _-]{1,100}?)\s+enable$", re.IGNORECASE),
 )
 _MEDIA_RELAY_TARGET_RE = re.compile(
-    r"(?:(?:cross|channel|cross[- _]channel)[ _]+)?(?:media[ _]+relay|medial[ _]+relay|media[ _]+rele)",
+    r"(?:(?:cross|channel|cross[- _]channel)[ _]+)?"
+    r"(?:media[ _]+relay|medial[ _]+relay|media[ _]+rele|cross[ _-]+platform[ _-]+streaming)",
     re.IGNORECASE,
 )
 _DETERMINISTIC_ENABLEMENT_BLOCKER_RE = re.compile(
@@ -132,8 +133,11 @@ def customer_visible_enablement_information(
     fields = dict(collected_fields or {})
     fields.pop("app_id", None)
     fields.pop("requested_feature_label", None)
+    fields.pop("ticket_id", None)
+    fields.pop("account_case_id", None)
+    fields.pop("customer_email", None)
 
-    feature_key = _clean_text(fields.pop("requested_feature", "")).lower()
+    feature_key = canonical_enablement_feature(fields.pop("requested_feature", ""))
     display_name = _ENABLEMENT_FEATURE_DISPLAY_NAMES.get(feature_key)
     if display_name:
         fields["requested_feature_name"] = display_name
@@ -467,7 +471,7 @@ def _build_internal_email(
     zendesk_ticket_url: str | None = None,
 ) -> dict[str, str]:
     raw_feature_label = collected_fields["requested_feature_label"]
-    feature_key = _clean_text(collected_fields.get("requested_feature")).lower()
+    feature_key = canonical_enablement_feature(collected_fields.get("requested_feature"))
     feature_label = _ENABLEMENT_FEATURE_DISPLAY_NAMES.get(feature_key) or raw_feature_label
     app_id = collected_fields["app_id"]
     rendered = render_internal_handoff_email(
