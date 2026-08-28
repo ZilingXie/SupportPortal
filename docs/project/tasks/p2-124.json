@@ -1,0 +1,56 @@
+{
+ "schema_version": 2,
+ "task_id": "p2-124",
+ "title": "Enablement/Quota 内部回复未完成分支补投递，消除过时确认话术覆盖",
+ "status": "active",
+ "owner": "zac",
+ "summary": "Case AC-13089 实测根因：内部执行人回复 [Enablement Request] 邮件说明 App ID 不正确后，轮询与完成分类器均正常（completed=False），_handle_non_billing_automation_reply 未完成分支也正确生成了客户跟进回复（App ID 不正确请提供正确的），但该分支只经 commit_automation_reply_result 记账（消息表/事件/case 字段），未排投递任务，正确的回复从未到达 Zendesk；随后 case 创建时排定的 submission_confirmation job（production 6-10 分钟随机延迟）发布时经 publish_account_reply 无条件覆盖 case.customer_reply，客户最终只看到过时缓冲话术。本任务把未完成分支改为照 _queue_enablement_completion_reply_job 模式排标准 reply job（intent=resolution_update、internal_resolution=True、不关单），排 job 前 cancel_pending_account_reply_jobs 会同时取消 pending 的 submission_confirmation，两个缺陷一处收口。quota handler 共用此函数同步受益；完成分支（Enabled→公开评论+solved 关单）行为零变化。billing invoice 分支不在本任务范围。",
+ "next_action": "实现与目标测试已完成,待 finalize 合并与官方栈 live 复刻 13089 验证。",
+ "acceptance_criteria": [
+  "人回复内部邮件为非完成内容（如 appid 不对）时，排 reply_intent=resolution_update 的 persona_v8 reply job（internal_resolution=True、无 close_after_publish），经标准管线发布为 Zendesk 公开评论，工单不关单（非 solved/resolved）。",
+  "排 followup job 前 cancel_pending_account_reply_jobs 被调用：pending 的 submission_confirmation job 被置 cancelled，不再发布、不再覆盖 case.customer_reply。",
+  "commit_automation_reply_result 落 {handler}_internal_resolution_received 与 {handler}_customer_followup_job_queued 双事件，automation_status=customer_notified。",
+  "完成分支（Enabled）行为零变化：照旧排 enablement_completed_and_close job、公开评论+solved 关单。",
+  "quota 未完成回复走同一投递路径（共函数语义完整，不另开口子）。",
+  "既有测试零回归；billing invoice 分支不动。"
+ ],
+ "blockers": [],
+ "evidence": [
+  {
+   "type": "test",
+   "label": "Worker suite (targeted + full)",
+   "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py -q",
+   "details": "115 passed, 17 subtests passed。含新增 test_enablement_followup_job_publishes_without_closing_and_retires_submission（InMemory 端到端:播种 pending submission job → 人回复 appid 不对 → submission 置 cancelled、followup job persona_v8_queued、note 脱敏进 facts、prepare+publish → assistant 消息仅 1 条且内容为 App ID 跟进、ticket 保持 open 非 resolved、case.customer_reply 更新为跟进内容、delivery is_public=True target_status=None solve_ticket=False）；改造 test_enablement_non_completion_reply_does_not_close（排 job+cancel+双事件断言）、test_handle_quota_request_reply_notifies_customer_and_keeps_automated_route（quota 同路径）、canonical feature key 测试（facts 投影断言 requested_feature_name=Media Relay 且剥 app_id/raw label）、签名拒绝测试拆为 handle 排队 + publish 侧拒绝（manual_attention）；billing-only 收窄 persona render failure 测试与 InMemory fence 测试改新语义。"
+  },
+  {
+   "type": "test",
+   "label": "Peripheral regression suites",
+   "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_enablement_automation.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_version_fence.py backend/tests/test_quota_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_account_intake.py -q 以及 TICKET_DB_DSN=... pytest backend/tests/test_account_zendesk_internal_comment_service.py test_account_slack_n8n.py test_enablement_repair.py test_automation_routing.py test_account_automation_ownership.py test_support_router_enablement.py -q",
+   "details": "286 passed + 78 subtests；66 passed + 3 subtests。完成分支（Enabled→关单）与 submission_confirmation 系列既有测试全部保持通过。"
+  }
+ ],
+ "source_refs": [
+  "backend/worker.py",
+  "backend/services/account_reply_jobs.py",
+  "backend/tests/test_worker.py"
+ ],
+ "created_at": "2026-08-28",
+ "updated_at": "2026-08-28",
+ "history": [
+  {
+   "at": "2026-08-28",
+   "event": "created",
+   "summary": "AC-13089 全链路诊断（DB 事件账本/Zendesk audits/worker 日志/163 与 agently 邮箱/EC2 poller 状态）定位两个缺陷：未完成分支只记账不投递、延迟 submission_confirmation 覆盖 customer_reply；用户批准修复。"
+  },
+  {
+   "at": "2026-08-28",
+   "event": "updated",
+   "summary": "新增 _queue_internal_followup_reply_job（照 completion 模板：resolution_update intent、internal_resolution 豁免、note 脱敏、persona pin、cancel pending 后 save persona_v8_queued job、双事件 commit），未完成分支改为排队投递并删除同步渲染路径；签名/contract 校验由 job 管线承接。测试 115+286+66 全绿。"
+  }
+ ],
+ "legacy_refs": [],
+ "legacy_ids": [],
+ "phase_id": "phase-1",
+ "module_id": "account-automation",
+ "function_id": "automation-execution-loop"
+}

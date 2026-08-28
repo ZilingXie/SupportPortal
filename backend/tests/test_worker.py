@@ -3002,6 +3002,8 @@ class WorkerResilienceTests(unittest.TestCase):
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
+        repository.save_account_reply_job.side_effect = lambda job: job
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ACC-2",
             "billing_ticket_id": "AC-TK-ACC-2",
@@ -3025,22 +3027,23 @@ class WorkerResilienceTests(unittest.TestCase):
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "_render_case_persona_reply",
-            return_value="Hi Customer,\n\nThe request is complete.",
-        ) as render, patch.object(
-            worker,
             "classify_enablement_completion",
             return_value=_classifier_regex_fallback(),
         ):
             self.assertTrue(worker.handle_enablement_request_reply(reply))
 
-        self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature"], "media_relay")
-        self.assertEqual(render.call_args.kwargs["known_information"]["requested_feature_label"], "channel media rele")
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        known_information = saved_job["payload"]["reply_facts"]["known_information"]
+        self.assertEqual(known_information["requested_feature_name"], "Media Relay")
+        self.assertNotIn("app_id", known_information)
+        self.assertNotIn("requested_feature_label", known_information)
 
     def test_handle_enablement_request_reply_rejects_signed_generated_content(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
+        repository.save_account_reply_job.side_effect = lambda job: job
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ACC-2",
             "billing_ticket_id": "AC-TK-ACC-2",
@@ -3066,10 +3069,7 @@ class WorkerResilienceTests(unittest.TestCase):
             received_at="2026-07-24T00:00:00Z",
         )
 
-        generated_reply = "Hi there,\n\nPlease add a payment method before activation.\n\nBest Regards,\nSid"
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "_render_case_persona_reply", return_value=generated_reply,
-        ), patch.object(
             worker,
             "classify_enablement_completion",
             return_value=_classifier_regex_fallback(),
@@ -3077,13 +3077,66 @@ class WorkerResilienceTests(unittest.TestCase):
             handled = worker.handle_automation_request_reply(reply)
 
         self.assertTrue(handled)
+        # Signature rejection moved to the publication pipeline: the handler
+        # only queues the follow-up job and never renders customer content.
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(saved_job["payload"]["reply_intent"], "resolution_update")
         commit = repository.commit_automation_reply_result.call_args.kwargs
         self.assertIsNone(commit["assistant_message"])
-        self.assertEqual(commit["account_case_updates"]["automation_status"], "human_review_required")
-        self.assertEqual(commit["account_case_updates"]["policy_decision"], "automation_persona_human_review")
-        self.assertEqual(len(commit["events"]), 1)
-        event_payload = commit["events"][0]["payload"]
-        self.assertEqual(event_payload["automation_reply_message_id"], "enablement-msg-1")
+        self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
+
+    def test_publish_rejects_signed_internal_followup_content(self) -> None:
+        job = {
+            "job_id": "account-reply-signed-followup",
+            "ticket_id": "TK-SIGNED-FOLLOWUP",
+            "trigger_message_created_at": "2026-07-24T00:00:00+00:00",
+            "status": "publishing",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "resolution_update",
+                },
+                "generated_content": (
+                    "Hi there,\n\nPlease add a payment method before activation.\n\nBest Regards,\nSid"
+                ),
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+                "internal_resolution": True,
+                "reply_intent": "resolution_update",
+            },
+        }
+        ticket = {
+            "ticket_id": "TK-SIGNED-FOLLOWUP",
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please enable Media Relay.",
+                    "created_at": "2026-07-24T00:00:00+00:00",
+                }
+            ],
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = ticket
+        repository.get_account_case_by_ticket_id.return_value = None
+        transitioned_job = copy.deepcopy(job)
+        transitioned_job.update(
+            status="manual_attention",
+            payload={
+                **copy.deepcopy(job["payload"]),
+                "persona_render_status": "human_review",
+            },
+            updated_at="2026-07-24T00:01:00+00:00",
+        )
+        repository.transition_claimed_account_reply_to_human_review.return_value = transitioned_job
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker._publish_account_reply_job(job)
+
+        repository.publish_account_reply.assert_not_called()
+        self.assertEqual(job["status"], "manual_attention")
 
     def test_reply_with_missing_ticket_is_dismissed_at_claim(self) -> None:
         repository = Mock()
@@ -3237,6 +3290,8 @@ class WorkerResilienceTests(unittest.TestCase):
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
+        repository.save_account_reply_job.side_effect = lambda job: job
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ENABLEMENT-NOT-DONE",
             "billing_ticket_id": "AC-TK-ENABLEMENT-NOT-DONE",
@@ -3256,10 +3311,6 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "_render_case_persona_reply",
-            return_value="Hi Customer,\n\nWe are still investigating this request.",
-        ), patch.object(
-            worker,
             "classify_enablement_completion",
             return_value=EnablementCompletionClassification(
                 completed=False, source="regex_fallback", failure_reason="invocation_failed"
@@ -3268,9 +3319,27 @@ class WorkerResilienceTests(unittest.TestCase):
             handled = worker.handle_enablement_request_reply(reply)
 
         self.assertEqual(handled, "completed")
+        # The non-completion resolution must be queued as a standard reply job
+        # (delivered as a public comment without closing) instead of only being
+        # recorded locally, and it must retire the pending submission job so
+        # the stale boilerplate cannot override it.
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "TK-ENABLEMENT-NOT-DONE", updated_at=unittest.mock.ANY
+        )
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        payload = saved_job["payload"]
+        self.assertEqual(payload["reply_intent"], "resolution_update")
+        self.assertIsNot(payload.get("close_after_publish"), True)
+        self.assertTrue(payload["internal_resolution"])
+        self.assertEqual(payload["reply_facts"]["reply_intent"], "resolution_update")
+        self.assertEqual(saved_job["status"], worker.ACCOUNT_REPLY_PERSONA_V8_QUEUED)
         commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertIsNone(commit["assistant_message"])
         self.assertNotIn("close_after_publish", commit)
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
+        event_types = [event["event_type"] for event in commit["events"]]
+        self.assertIn("enablement_internal_resolution_received", event_types)
+        self.assertIn("enablement_customer_followup_job_queued", event_types)
 
     def test_enablement_completion_llm_classifier_upgrades_non_english_reply(self) -> None:
         repository = Mock()
@@ -3358,6 +3427,8 @@ class WorkerResilienceTests(unittest.TestCase):
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
+        repository.resolve_account_persona.return_value = None
+        repository.save_account_reply_job.side_effect = lambda job: job
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-12512",
             "billing_ticket_id": "AC-12512",
@@ -3377,17 +3448,23 @@ class WorkerResilienceTests(unittest.TestCase):
             subject="Re: [Quota Request] RTC, RTM, Chat - Ticket 12512",
             body_text="The requested limits are approved for the event window.",
         )
-        generated_reply = "Hi there,\n\nThe requested limits are approved for the event window."
 
-        with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "_render_case_persona_reply", return_value=generated_reply,
-        ):
+        with patch.object(worker, "ticket_repository", repository):
             handled = worker.handle_automation_request_reply(reply)
 
         self.assertTrue(handled)
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(saved_job["payload"]["reply_intent"], "resolution_update")
+        self.assertTrue(saved_job["payload"]["internal_resolution"])
+        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
+            "12512", updated_at=unittest.mock.ANY
+        )
         commit = repository.commit_automation_reply_result.call_args.kwargs
+        self.assertIsNone(commit["assistant_message"])
         self.assertEqual(commit["account_case_updates"]["automation_status"], "customer_notified")
-        self.assertEqual(commit["assistant_message"]["source"], "quota_reply_email")
+        event_types = [event["event_type"] for event in commit["events"]]
+        self.assertIn("quota_internal_resolution_received", event_types)
+        self.assertIn("quota_customer_followup_job_queued", event_types)
         self.assertEqual(len(commit["events"]), 2)
 
     def test_handle_enablement_request_reply_is_idempotent(self) -> None:
@@ -4705,6 +4782,9 @@ class WorkerResilienceTests(unittest.TestCase):
                 render.assert_not_called()
 
     def test_internal_followups_persona_render_failure_persist_generic_human_review(self) -> None:
+        # Enablement/Quota non-completion replies now flow through the reply
+        # job pipeline, whose render-failure escalation is covered by the
+        # prepare/publish human-review suites; billing still renders inline.
         cases = (
             (
                 "billing",
@@ -4717,34 +4797,6 @@ class WorkerResilienceTests(unittest.TestCase):
                     "route": "fraud_account",
                     "route_family": "automated",
                     "execution_action": "fraud_account",
-                },
-            ),
-            (
-                "enablement",
-                worker.handle_enablement_request_reply,
-                "Re: [Enablement Request] Media Relay - Ticket TK-PERSONA-RENDER-ENABLEMENT",
-                {
-                    "billing_ticket_id": "AC-TK-PERSONA-RENDER-ENABLEMENT",
-                    "account_case_id": "AC-TK-PERSONA-RENDER-ENABLEMENT",
-                    "client_ticket_id": "TK-PERSONA-RENDER-ENABLEMENT",
-                    "route": "enablement",
-                    "route_family": "automated",
-                    "execution_action": "enablement",
-                    "collected_fields": {"app_id": "alpha"},
-                },
-            ),
-            (
-                "quota",
-                worker.handle_quota_request_reply,
-                "Re: [Quota Request] RTC - Ticket TK-PERSONA-RENDER-QUOTA",
-                {
-                    "billing_ticket_id": "AC-TK-PERSONA-RENDER-QUOTA",
-                    "account_case_id": "AC-TK-PERSONA-RENDER-QUOTA",
-                    "client_ticket_id": "TK-PERSONA-RENDER-QUOTA",
-                    "route": "quota",
-                    "route_family": "automated",
-                    "execution_action": "quota",
-                    "collected_fields": {"products": ["rtc"]},
                 },
             ),
         )
@@ -5414,36 +5466,184 @@ class WorkerResilienceTests(unittest.TestCase):
             body_text="The feature is ready.",
         )
 
-        def reset_after_render(**_kwargs):
-            repository.reset_account_rerun_state(
-                ticket_id,
-                reset_at="2026-03-22T00:02:00+00:00",
-                rerun_job_id="account-rerun-outlook-reset-fence",
-                reset_mode=ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
-                clear_persona_assignment=True,
-            )
-            return "Hi Customer,\n\nThe feature is ready.\n\nBest Regards,\nSid"
-
         with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker,
-            "_render_case_persona_reply",
-            side_effect=reset_after_render,
-        ), patch.object(
             worker,
             "classify_enablement_completion",
             return_value=_classifier_regex_fallback(),
         ):
             outcome = worker.handle_enablement_request_reply(reply)
 
-        self.assertEqual(outcome, "in_progress")
+        self.assertEqual(outcome, "completed")
         stored_ticket = repository.get_ticket(ticket_id)
         assert stored_ticket is not None
+        # The handler only queues the follow-up job: no assistant message is
+        # written locally, and the case keeps no customer_reply until the job
+        # publishes. Reset/rerun races are fenced by the job claim checks in
+        # the prepare/publish pipeline instead of the handler.
         self.assertEqual([message["role"] for message in stored_ticket["messages"]], ["customer"])
         stored_case = repository.get_account_case_by_ticket_id(ticket_id)
         assert stored_case is not None
         self.assertFalse(stored_case.get("customer_reply"))
-        self.assertNotEqual(stored_case.get("automation_status"), "customer_notified")
-        self.assertEqual(repository.list_ticket_events(ticket_id), [])
+        self.assertEqual(stored_case.get("automation_status"), "customer_notified")
+        event_types = [event["event_type"] for event in repository.list_ticket_events(ticket_id)]
+        self.assertIn("enablement_internal_resolution_received", event_types)
+        self.assertIn("enablement_customer_followup_job_queued", event_types)
+
+    def test_enablement_followup_job_publishes_without_closing_and_retires_submission(self) -> None:
+        ticket_id = "TK-FOLLOWUP-PUBLISH"
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable media relay for my appid 13234hdfiuehfihfe",
+                        "created_at": "2026-08-28T02:23:42+00:00",
+                    }
+                ],
+            }
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-FOLLOWUP-PUBLISH",
+                "billing_ticket_id": "AC-FOLLOWUP-PUBLISH",
+                "client_ticket_id": ticket_id,
+                "title": "Enablement request",
+                "question": "Please enable media relay.",
+                "automation_handler": "enablement",
+                "automation_status": "automation",
+                "route_status": "automated",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "13089",
+                "customer_email": "customer@example.com",
+                "collected_fields": {
+                    "app_id": "13234hdfiuehfihfe",
+                    "requested_feature": "media_relay",
+                    "requested_feature_label": "media relay",
+                },
+                "internal_email_payload": {"delivery_key": "enablement:AC-FOLLOWUP-PUBLISH:v1"},
+            }
+        )
+        submission_job = repository.save_account_reply_job(
+            {
+                "job_id": "account-reply-submission-pending",
+                "ticket_id": ticket_id,
+                "trigger_message_created_at": "2026-03-21T23:50:00+00:00",
+                "status": worker.ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+                "scheduled_for": "2026-03-22T00:10:00+00:00",
+                "payload": {
+                    "draft_content": "",
+                    "reply_facts": {"behavior": "enablement", "reply_intent": "submission_confirmation"},
+                    "reply_pipeline": worker.ACCOUNT_REPLY_PERSONA_PIPELINE,
+                    "visibility": "account_only",
+                    "reply_intent": "submission_confirmation",
+                },
+                "attempt_count": 0,
+                "claimed_at": None,
+                "published_at": None,
+                "created_at": "2026-03-21T23:55:00+00:00",
+                "updated_at": "2026-03-21T23:55:00+00:00",
+            }
+        )
+        reply = types.SimpleNamespace(
+            message_id="followup-msg-1",
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-FOLLOWUP-PUBLISH",
+            body_text="This appid is not correct, check with the cx to double check the appid",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "classify_enablement_completion",
+            return_value=_classifier_regex_fallback(),
+        ):
+            outcome = worker.handle_enablement_request_reply(reply)
+
+        self.assertEqual(outcome, "completed")
+        # The stale submission confirmation must be retired so the delayed
+        # boilerplate cannot publish over the substantive follow-up.
+        retired_submission = repository.get_account_reply_job("account-reply-submission-pending")
+        assert retired_submission is not None
+        self.assertEqual(retired_submission["status"], "cancelled")
+        followup_job = repository.get_latest_account_reply_job(ticket_id)
+        self.assertIsNotNone(followup_job)
+        assert followup_job is not None
+        self.assertNotEqual(followup_job["job_id"], submission_job["job_id"])
+        self.assertEqual(followup_job["status"], worker.ACCOUNT_REPLY_PERSONA_V8_QUEUED)
+        self.assertEqual(followup_job["payload"]["reply_intent"], "resolution_update")
+        self.assertIsNot(followup_job["payload"].get("close_after_publish"), True)
+        # The internal note must be sanitized before it becomes Persona facts.
+        self.assertNotIn(
+            "13234hdfiuehfihfe",
+            str(followup_job["payload"]["reply_facts"].get("source_facts")),
+        )
+
+        rendered = types.SimpleNamespace(
+            content=(
+                "Hi there,\n\nThe App ID provided for the Media Relay enablement "
+                "request is not correct. Please double-check and provide the "
+                "correct App ID."
+            ),
+            model="test-model",
+            prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+        )
+        followup_job["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING
+        repository.save_account_reply_job(followup_job)
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply", return_value=rendered
+        ):
+            worker._prepare_account_reply_job(followup_job)
+
+        prepared = repository.get_account_reply_job(str(followup_job["job_id"]))
+        assert prepared is not None
+        self.assertEqual(prepared["status"], worker.ACCOUNT_REPLY_PERSONA_V8_SCHEDULED)
+        self.assertIn("App ID provided", str(prepared["payload"].get("generated_content")))
+
+        prepared["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PUBLISHING
+        repository.save_account_reply_job(prepared)
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=_ownership_assigned(),
+        ), patch.object(
+            worker,
+            "deliver_account_ai_message_as_internal_comment",
+            return_value=_zendesk_result(comment_id="comment-followup"),
+        ) as deliver:
+            worker._publish_account_reply_job(prepared)
+
+        published = repository.get_account_reply_job(str(followup_job["job_id"]))
+        assert published is not None
+        self.assertEqual(published["status"], "published")
+        stored_ticket = repository.get_ticket(ticket_id)
+        assert stored_ticket is not None
+        assistant_messages = [
+            message for message in stored_ticket["messages"] if message.get("role") == "assistant"
+        ]
+        self.assertEqual(len(assistant_messages), 1)
+        self.assertIn("App ID provided", assistant_messages[0]["content"])
+        # A resolution_update reply never closes the ticket.
+        self.assertNotEqual(stored_ticket.get("status"), "resolved")
+        stored_case = repository.get_account_case_by_ticket_id(ticket_id)
+        assert stored_case is not None
+        self.assertIn("App ID provided", str(stored_case.get("customer_reply")))
+        deliveries = [
+            delivery
+            for delivery in repository.list_account_zendesk_comment_deliveries(
+                statuses=("queued", "pending", "sending", "delivered")
+            )
+            if delivery.get("account_case_id") == "AC-FOLLOWUP-PUBLISH"
+        ]
+        self.assertEqual(len(deliveries), 1)
+        self.assertTrue(deliveries[0]["is_public"])
+        self.assertIsNone(deliveries[0]["target_status"])
+        self.assertEqual(
+            deliver.call_args.kwargs.get("solve_ticket"),
+            False,
+        )
 
     def test_internal_reply_renders_with_persisted_persona_assignment(self) -> None:
         account_case = {
