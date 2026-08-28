@@ -63,25 +63,25 @@ variable "enable_https_listener" {
 }
 
 variable "enable_services" {
-  description = "Create ECS API and Worker services. Keep false until the approved release digests are available."
+  description = "Create ECS API, Route and Worker services. Keep false until the approved release digests are available."
   type        = bool
   default     = false
 }
 
 variable "api_image" {
-  description = "Immutable API image reference, normally an ECR digest."
+  description = "Immutable API image reference in supportportal-production, pinned by ECR digest."
   type        = string
   default     = ""
 }
 
 variable "route_image" {
-  description = "Immutable Route image reference, normally an ECR digest."
+  description = "Immutable Route image reference in supportportal-production, pinned by ECR digest."
   type        = string
   default     = ""
 }
 
 variable "worker_image" {
-  description = "Immutable Worker image reference, normally an ECR digest."
+  description = "Immutable Worker image reference in supportportal-production, pinned by ECR digest."
   type        = string
   default     = ""
 }
@@ -90,6 +90,30 @@ variable "release_id" {
   description = "Release manifest ID injected into task environment."
   type        = string
   default     = "unreleased"
+}
+
+variable "git_commit" {
+  description = "Full Git commit captured by the Release Manifest."
+  type        = string
+  default     = ""
+}
+
+variable "build_time" {
+  description = "UTC OCI build time captured by the Release Manifest."
+  type        = string
+  default     = ""
+}
+
+variable "prompt_release_id" {
+  description = "Active Prompt Release ID captured by the Release Manifest."
+  type        = string
+  default     = ""
+}
+
+variable "zendesk_side_effects_enabled" {
+  description = "Enable real Zendesk writes for controlled Production Case testing and cutover."
+  type        = bool
+  default     = false
 }
 
 variable "api_cpu" {
@@ -102,6 +126,18 @@ variable "api_memory" {
   description = "API Fargate memory in MiB."
   type        = string
   default     = "1024"
+}
+
+variable "route_cpu" {
+  description = "Route Worker Fargate CPU units."
+  type        = string
+  default     = "256"
+}
+
+variable "route_memory" {
+  description = "Route Worker Fargate memory in MiB."
+  type        = string
+  default     = "512"
 }
 
 variable "worker_cpu" {
@@ -117,7 +153,7 @@ variable "worker_memory" {
 }
 
 variable "desired_count" {
-  description = "Initial desired count for API and Worker services."
+  description = "Initial desired count for API, Route and Worker services."
   type        = number
   default     = 1
 

@@ -628,23 +628,29 @@ def _run_billing_reply_poller(interval_seconds: float) -> None:
     LOGGER.info("Automation reply poller started with interval_seconds=%s.", interval_seconds)
     while not SHUTTING_DOWN:
         try:
-            replies = poll_automation_request_replies(
-                handler=handle_automation_request_reply,
-                max_messages=_billing_reply_poll_max_messages_from_env(),
-                subject_prefixes=(
-                    namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
-                    namespaced_internal_email_subject(ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),
-                    namespaced_internal_email_subject(QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX),
-                ),
-            )
-            if replies:
-                LOGGER.info("Automation reply poller handled %s reply message(s).", len(replies))
+            process_automation_request_replies_once()
         except Exception as exc:
             LOGGER.warning("Automation reply poller failed: %s", exc)
         sleep_until = time.time() + max(interval_seconds, 1.0)
         while not SHUTTING_DOWN and time.time() < sleep_until:
             time.sleep(min(1.0, max(0.0, sleep_until - time.time())))
     LOGGER.info("Automation reply poller stopped.")
+
+
+def process_automation_request_replies_once() -> list[Any]:
+    """Consume one bounded Billing, Enablement, and Quota Outlook reply batch."""
+    replies = poll_automation_request_replies(
+        handler=handle_automation_request_reply,
+        max_messages=_billing_reply_poll_max_messages_from_env(),
+        subject_prefixes=(
+            namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
+            namespaced_internal_email_subject(ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),
+            namespaced_internal_email_subject(QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX),
+        ),
+    )
+    if replies:
+        LOGGER.info("Automation reply poller handled %s reply message(s).", len(replies))
+    return replies
 
 
 def _run_engineer_assignment_poller(interval_seconds: float) -> None:

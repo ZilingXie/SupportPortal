@@ -56,3 +56,14 @@ def test_pruned_sources_are_copied_from_a_sibling_stage_into_final_image() -> No
     assert "FROM runtime-base AS role-files" in dockerfile
     assert "FROM runtime-base AS final" in dockerfile
     assert "COPY --from=role-files /app /app" in dockerfile
+
+
+def test_ecs_images_drop_host_python_cache_artifacts() -> None:
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+    for pattern in ("**/__pycache__", "**/*.pyc", "**/*.pyo", "**/*.pyd"):
+        assert pattern in dockerignore
+
+    dockerfile = (ROOT / "backend/Dockerfile.automation").read_text(encoding="utf-8")
+    assert "find /app -type f" in dockerfile
+    assert "-name '*.pyc'" in dockerfile
+    assert "-name '__pycache__'" in dockerfile

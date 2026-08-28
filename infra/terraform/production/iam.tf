@@ -122,7 +122,7 @@ data "aws_iam_policy_document" "github_release" {
       "ecr:DescribeImages",
       "ecr:GetDownloadUrlForLayer",
     ]
-    resources = [for repository in aws_ecr_repository.runtime : repository.arn]
+    resources = [aws_ecr_repository.runtime.arn]
   }
 
   statement {

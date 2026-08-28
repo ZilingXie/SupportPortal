@@ -10,8 +10,8 @@ output "public_subnet_ids" {
   value = local.public_subnet_ids
 }
 
-output "ecr_repository_urls" {
-  value = { for key, repository in aws_ecr_repository.runtime : key => repository.repository_url }
+output "ecr_repository_url" {
+  value = aws_ecr_repository.runtime.repository_url
 }
 
 output "ecs_cluster_name" {
@@ -93,4 +93,8 @@ output "api_service_name" {
 
 output "worker_service_name" {
   value = var.enable_services ? aws_ecs_service.worker[0].name : null
+}
+
+output "route_service_name" {
+  value = var.enable_services ? aws_ecs_service.route[0].name : null
 }

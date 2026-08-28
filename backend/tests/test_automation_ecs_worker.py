@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, Mock
 
-from backend.automation_ecs_worker import AutomationWorker
+from backend.automation_ecs_worker import AccountBackgroundCycle, AutomationWorker
 from backend.services.automation_ecs_contracts import JobKind
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
@@ -124,3 +124,40 @@ def test_idle_worker_drains_account_reply_and_delivery_cycle() -> None:
     worker = AutomationWorker(settings, store, AsyncMock(), background_cycle=cycle)
     assert worker.process_once() is False
     cycle.assert_called_once_with()
+
+
+def test_background_cycle_polls_outlook_on_schedule_and_drains_account_jobs() -> None:
+    account_cycle = Mock()
+    outlook_cycle = Mock(return_value=[])
+    clock = Mock(side_effect=[100.0, 101.0, 130.0])
+    cycle = AccountBackgroundCycle(
+        account_cycle=account_cycle,
+        outlook_cycle=outlook_cycle,
+        outlook_enabled=lambda: True,
+        outlook_interval_seconds=lambda: 30.0,
+        clock=clock,
+    )
+
+    cycle()
+    cycle()
+    cycle()
+
+    assert account_cycle.call_count == 3
+    assert outlook_cycle.call_count == 2
+
+
+def test_background_cycle_isolates_outlook_and_account_failures() -> None:
+    account_cycle = Mock(side_effect=RuntimeError("account failed"))
+    outlook_cycle = Mock(side_effect=RuntimeError("outlook failed"))
+    cycle = AccountBackgroundCycle(
+        account_cycle=account_cycle,
+        outlook_cycle=outlook_cycle,
+        outlook_enabled=lambda: True,
+        outlook_interval_seconds=lambda: 300.0,
+        clock=lambda: 100.0,
+    )
+
+    cycle()
+
+    outlook_cycle.assert_called_once_with()
+    account_cycle.assert_called_once_with()

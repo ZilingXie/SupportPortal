@@ -23,21 +23,24 @@ locals {
     local.public_subnet_ids_by_az[availability_zone][0]
   ]
 
-  ecr_repositories = {
-    api    = "${local.name_prefix}-api"
-    route  = "${local.name_prefix}-route"
-    worker = "${local.name_prefix}-worker"
-  }
+  ecr_repository_name = local.name_prefix
 
   runtime_secret_names = {
     ticket_db_dsn               = "${local.name_prefix}/ticket-db-dsn"
     migration_db_dsn            = "${local.name_prefix}/migration-db-dsn"
+    automation_intake_token     = "${local.name_prefix}/automation-intake-token"
     n8n_request_token           = "${local.name_prefix}/n8n-request-token"
     rag_service_url             = "${local.name_prefix}/rag-service-url"
     rag_service_token           = "${local.name_prefix}/rag-service-shared-token"
-    route_service_token         = "${local.name_prefix}/route-service-token"
     zendesk_basic_auth          = "${local.name_prefix}/zendesk-basic-auth"
+    zendesk_ai_assignee_email   = "${local.name_prefix}/zendesk-ai-assignee-email"
+    zendesk_fraud_assignee_id   = "${local.name_prefix}/zendesk-fraud-review-assignee-id"
     openai_api_key              = "${local.name_prefix}/openai-api-key"
+    account_slack_webhook_url   = "${local.name_prefix}/account-slack-n8n-webhook-url"
+    account_slack_status_url    = "${local.name_prefix}/account-slack-n8n-status-url"
+    engineer_slack_access_token = "${local.name_prefix}/engineer-slack-access-token"
+    engineer_slack_team_id      = "${local.name_prefix}/engineer-slack-team-id"
+    engineer_slack_channel_id   = "${local.name_prefix}/engineer-slack-channel-id"
     billing_graph_tenant_id     = "${local.name_prefix}/billing-graph-tenant-id"
     billing_graph_client_id     = "${local.name_prefix}/billing-graph-client-id"
     billing_graph_client_secret = "${local.name_prefix}/billing-graph-client-secret"
@@ -50,57 +53,100 @@ locals {
 
   redis_auth_token = try(random_password.redis_auth[0].result, "")
 
+  image_digests = {
+    api    = try(split("@", var.api_image)[1], "unreleased")
+    route  = try(split("@", var.route_image)[1], "unreleased")
+    worker = try(split("@", var.worker_image)[1], "unreleased")
+  }
+
   base_environment = [
     {
       name  = "AUTOMATION_ENVIRONMENT"
-      value = "production"
+      value = var.environment
     },
     {
-      name  = "AUTOMATION_RESOURCE_ID"
-      value = "production"
+      name  = "AUTOMATION_BASE_PATH"
+      value = "/automation/${var.environment}"
     },
     {
       name  = "AUTOMATION_DB_RESOURCE_ID"
-      value = "production"
+      value = local.name_prefix
     },
     {
       name  = "AUTOMATION_DB_SCHEMA"
       value = "supportportal_production"
     },
     {
-      name  = "AUTOMATION_DB_TABLE"
-      value = "automation_executions_production"
+      name  = "AUTOMATION_JOB_NAMESPACE"
+      value = "supportportal-production"
     },
     {
-      name  = "AUTOMATION_QUEUE_NAME"
-      value = "automation.production"
+      name  = "TICKET_DB_SCHEMA"
+      value = "supportportal_production"
     },
     {
-      name  = "AUTOMATION_EVENT_CHANNEL"
-      value = "automation.events.production"
-    },
-    {
-      name  = "ROUTE_SERVICE_URL"
-      value = "http://127.0.0.1:8100"
-    },
-    {
-      name  = "APP_BUILD_REF"
+      name  = "AUTOMATION_RELEASE_ID"
       value = var.release_id
     },
     {
+      name  = "PROMPT_RELEASE_ID"
+      value = var.prompt_release_id
+    },
+    {
+      name  = "APP_BUILD_REF"
+      value = var.git_commit
+    },
+    {
       name  = "APP_BUILD_TIME"
-      value = "terraform-foundation"
+      value = var.build_time
+    },
+    {
+      name  = "PROMPT_RELEASE_REQUIRED"
+      value = "true"
+    },
+    {
+      name  = "RUNTIME_SCHEMA_MODE"
+      value = "check"
     },
   ]
 
   api_secrets = [
     {
-      name      = "TICKET_DB_DSN"
+      name      = "AUTOMATION_DB_DSN"
       valueFrom = aws_secretsmanager_secret.runtime["ticket_db_dsn"].arn
     },
     {
+      name      = "AUTOMATION_INTAKE_SHARED_TOKEN"
+      valueFrom = aws_secretsmanager_secret.runtime["automation_intake_token"].arn
+    },
+  ]
+
+  role_db_secrets = [
+    {
       name      = "AUTOMATION_DB_DSN"
       valueFrom = aws_secretsmanager_secret.runtime["ticket_db_dsn"].arn
+    },
+    {
+      name      = "TICKET_DB_DSN"
+      valueFrom = aws_secretsmanager_secret.runtime["ticket_db_dsn"].arn
+    },
+  ]
+
+  route_secrets = concat(local.role_db_secrets, [
+    {
+      name      = "OPENAI_API_KEY"
+      valueFrom = aws_secretsmanager_secret.runtime["openai_api_key"].arn
+    },
+  ])
+
+  worker_secrets = concat(local.role_db_secrets, [
+    {
+      name      = "zendesk_basic_auth"
+      valueFrom = aws_secretsmanager_secret.runtime["zendesk_basic_auth"].arn
+    },
+    {
+      name      = "OPENAI_API_KEY"
+      valueFrom = aws_secretsmanager_secret.runtime["openai_api_key"].arn
     },
     {
       name      = "n8n_request_token"
@@ -115,48 +161,48 @@ locals {
       valueFrom = aws_secretsmanager_secret.runtime["rag_service_token"].arn
     },
     {
-      name      = "ROUTE_SERVICE_TOKEN"
-      valueFrom = aws_secretsmanager_secret.runtime["route_service_token"].arn
+      name      = "ZENDESK_AI_ASSIGNEE_EMAIL"
+      valueFrom = aws_secretsmanager_secret.runtime["zendesk_ai_assignee_email"].arn
     },
     {
-      name      = "zendesk_basic_auth"
-      valueFrom = aws_secretsmanager_secret.runtime["zendesk_basic_auth"].arn
+      name      = "ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["zendesk_fraud_assignee_id"].arn
     },
     {
-      name      = "OPENAI_API_KEY"
-      valueFrom = aws_secretsmanager_secret.runtime["openai_api_key"].arn
+      name      = "ACCOUNT_SLACK_N8N_WEBHOOK_URL"
+      valueFrom = aws_secretsmanager_secret.runtime["account_slack_webhook_url"].arn
     },
-  ]
-
-  worker_secrets = concat(
-    local.api_secrets,
-    var.enable_redis ? [
-      {
-        name      = "REDIS_URL"
-        valueFrom = aws_secretsmanager_secret.redis_url[0].arn
-      },
-      {
-        name      = "AUTOMATION_REDIS_URL"
-        valueFrom = aws_secretsmanager_secret.redis_url[0].arn
-      },
-    ] : [],
-    [
-      {
-        name      = "BILLING_AUTOMATION_GRAPH_TENANT_ID"
-        valueFrom = aws_secretsmanager_secret.runtime["billing_graph_tenant_id"].arn
-      },
-      {
-        name      = "BILLING_AUTOMATION_GRAPH_CLIENT_ID"
-        valueFrom = aws_secretsmanager_secret.runtime["billing_graph_client_id"].arn
-      },
-      {
-        name      = "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET"
-        valueFrom = aws_secretsmanager_secret.runtime["billing_graph_client_secret"].arn
-      },
-      {
-        name      = "BILLING_AUTOMATION_GRAPH_USERNAME"
-        valueFrom = aws_secretsmanager_secret.runtime["billing_graph_username"].arn
-      },
-    ],
-  )
+    {
+      name      = "ACCOUNT_SLACK_N8N_STATUS_URL"
+      valueFrom = aws_secretsmanager_secret.runtime["account_slack_status_url"].arn
+    },
+    {
+      name      = "ENGINEER_SLACK_ACCESS_TOKEN"
+      valueFrom = aws_secretsmanager_secret.runtime["engineer_slack_access_token"].arn
+    },
+    {
+      name      = "ENGINEER_SLACK_TEAM_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["engineer_slack_team_id"].arn
+    },
+    {
+      name      = "ENGINEER_SLACK_CHANNEL_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["engineer_slack_channel_id"].arn
+    },
+    {
+      name      = "BILLING_AUTOMATION_GRAPH_TENANT_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["billing_graph_tenant_id"].arn
+    },
+    {
+      name      = "BILLING_AUTOMATION_GRAPH_CLIENT_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["billing_graph_client_id"].arn
+    },
+    {
+      name      = "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET"
+      valueFrom = aws_secretsmanager_secret.runtime["billing_graph_client_secret"].arn
+    },
+    {
+      name      = "BILLING_AUTOMATION_GRAPH_USERNAME"
+      valueFrom = aws_secretsmanager_secret.runtime["billing_graph_username"].arn
+    },
+  ])
 }

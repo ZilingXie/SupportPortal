@@ -30,6 +30,13 @@ api_image    = ""
 route_image  = ""
 worker_image = ""
 release_id   = "unreleased"
+git_commit   = ""
+build_time   = ""
+prompt_release_id = ""
+
+# Keep false until the controlled Production Case test is ready to write back
+# to Zendesk. This does not affect the EC2 /production backup.
+zendesk_side_effects_enabled = false
 
 github_repository = "ZilingXie/SupportPortal"
 github_branch     = "main"
