@@ -97,6 +97,9 @@ def _load_worker_module():
     fake_main.asset_storage = Mock()
 
     module = importlib.util.module_from_spec(spec)
+    # Register under the spec name so the conftest alert stub can find this
+    # instance through sys.modules (patching backend.worker misses it).
+    sys.modules["backend.tests._worker_under_test"] = module
     with patch.dict(sys.modules, {"backend.main": fake_main}):
         spec.loader.exec_module(module)
     return module
