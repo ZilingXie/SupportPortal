@@ -86,6 +86,7 @@ from backend.services.automation_persona import (
     assert_no_trailing_automation_signature,
     extract_automation_resolution_facts,
     render_automation_reply,
+    sanitize_enablement_completion_note,
     validate_account_reply_contract,
 )
 from backend.services.enablement_completion_classifier import (
@@ -3228,11 +3229,12 @@ def _queue_enablement_completion_reply_job(
         "account_case_id": str(case_id),
         "customer_email": str(account_case.get("customer_email") or "").strip(),
     }
+    sanitized_note = sanitize_enablement_completion_note(note, enriched_information)
     reply_facts = build_automation_reply_facts(
         behavior=handler,
         reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
         known_information=enriched_information,
-        source_facts=[note],
+        source_facts=[sanitized_note],
         resolution_status="completed",
         customer_name=str(account_case.get("customer_name") or ""),
     )

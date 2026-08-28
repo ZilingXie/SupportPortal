@@ -13,6 +13,7 @@ from backend.services.automation_persona import (
     customer_first_name,
     extract_automation_resolution_facts,
     render_automation_reply,
+    sanitize_enablement_completion_note,
     validate_account_reply_contract,
 )
 from backend.services.detailed_invoice_field_extractor import extract_detailed_invoice_fields
@@ -84,6 +85,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 known_information={
                     "app_id": "abcdefabcdefabcdefabcdefabcdefab", "ticket_id": "12555",
                     "account_case_id": "AC-12555", "customer_email": "customer@example.com",
+                    "requested_feature": "media_relay",
                     "requested_feature_label": "channel media rele",
                 },
             )
@@ -109,6 +111,145 @@ class AutomationPersonaTests(unittest.TestCase):
                     reply_facts=facts,
                     persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
                 )
+
+    _AC13085_NOTE = (
+        "It's enabled\n"
+        "Subject: [Enablement Request] cross platform streaming - Ticket 13085\n"
+        "Ticket ID\n13085\n"
+        "App ID\n4ba4eb7eae1449b0922909dcb247633d\n"
+        "Customer email\nkaber5201@gmail.com\n"
+        "Requested feature\nFeature\ncross platform streaming"
+    )
+
+    def _ac13085_completion_facts(self) -> dict:
+        enriched = {
+            "app_id": "4ba4eb7eae1449b0922909dcb247633d",
+            "requested_feature": "cross_platform_streaming",
+            "requested_feature_label": "cross platform streaming",
+            "ticket_id": "13085",
+            "account_case_id": "AC-13085",
+            "customer_email": "kaber5201@gmail.com",
+        }
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="enablement_completed_and_close",
+            known_information=enriched,
+            source_facts=[sanitize_enablement_completion_note(self._AC13085_NOTE, enriched)],
+            resolution_status="completed",
+            customer_name="Kaber",
+        )
+        facts["completion_acknowledgement"] = "patience"
+        return facts
+
+    def test_ac13085_completion_note_is_sanitized_before_persona(self) -> None:
+        sanitized = sanitize_enablement_completion_note(
+            self._AC13085_NOTE,
+            {
+                "app_id": "4ba4eb7eae1449b0922909dcb247633d",
+                "requested_feature": "cross_platform_streaming",
+                "requested_feature_label": "cross platform streaming",
+                "ticket_id": "13085",
+                "account_case_id": "AC-13085",
+                "customer_email": "kaber5201@gmail.com",
+            },
+        )
+        for forbidden in (
+            "4ba4eb7eae1449b0922909dcb247633d",
+            "kaber5201@gmail.com",
+            "13085",
+            "cross platform streaming",
+        ):
+            self.assertNotIn(forbidden, sanitized)
+        self.assertIn("It's enabled", sanitized)
+        self.assertIn("[redacted]", sanitized)
+
+    def test_ac13085_completion_reply_renders_with_canonical_feature_name(self) -> None:
+        facts = self._ac13085_completion_facts()
+        self.assertEqual(facts["known_information"], {"requested_feature_name": "Media Relay"})
+        self.assertNotIn("4ba4eb7eae1449b0922909dcb247633d", facts["source_facts"][0])
+
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thanks for your patience. Media Relay is now enabled on your project. "
+                "We are archiving this ticket now. If you have any further questions, "
+                "please open a new ticket."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+        self.assertIn("Media Relay", result.content)
+        user_prompt = invoke.call_args.kwargs["user_prompt"]
+        self.assertIn("Media Relay", user_prompt)
+        for forbidden in ("4ba4eb7eae1449b0922909dcb247633d", "kaber5201@gmail.com", "AC-13085"):
+            self.assertNotIn(forbidden, user_prompt)
+
+    def test_ac13085_completion_reply_rejects_raw_feature_label_with_canonical_name(self) -> None:
+        facts = self._ac13085_completion_facts()
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thanks for your patience. cross platform streaming is now enabled on your project. "
+                "We are archiving this ticket now. If you have any further questions, "
+                "please open a new ticket."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_forbidden_value"):
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+
+    def test_unknown_feature_completion_reply_allows_customer_wording(self) -> None:
+        enriched = {
+            "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+            "requested_feature": "new_backend_switch",
+            "requested_feature_label": "new backand swtich",
+            "ticket_id": "13099",
+            "account_case_id": "AC-13099",
+            "customer_email": "customer@example.com",
+        }
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="enablement_completed_and_close",
+            known_information=enriched,
+            source_facts=[sanitize_enablement_completion_note("It's enabled. Ticket 13099", enriched)],
+            resolution_status="completed",
+            customer_name="Maya",
+        )
+        facts["completion_acknowledgement"] = "patience"
+        self.assertEqual(facts["known_information"], {})
+
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thanks for your patience. The new backand swtich feature is now enabled on your project. "
+                "We are archiving this ticket now. If you have any further questions, "
+                "please open a new ticket."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+        self.assertIn("new backand swtich", result.content)
 
     def test_render_rag_fallback_restates_provided_answer_with_policy(self) -> None:
         facts = {
