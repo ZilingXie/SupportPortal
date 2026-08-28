@@ -73,6 +73,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
+    ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
     ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
     normalize_account_reply_contract,
     is_account_reply_persona_preparing_status,
@@ -3336,6 +3337,171 @@ def _queue_enablement_completion_reply_job(
     return "completed" if committed else "in_progress"
 
 
+def _queue_internal_followup_reply_job(
+    *,
+    reply_key: str,
+    owner_token: str,
+    account_case: dict[str, Any],
+    client_ticket_id: str,
+    note: str,
+    known_information: dict[str, Any],
+    message_id: str,
+    handler: str,
+) -> str:
+    """Queue a non-completion internal resolution as a standard Account reply job.
+
+    The internal reply (e.g. "the App ID is not correct") must reach the
+    customer as a public Zendesk comment without closing the ticket, so it
+    flows through the normal publication pipeline like the completion job.
+    Cancelling pending jobs first also retires a not-yet-published
+    submission_confirmation, preventing the stale boilerplate from overriding
+    this substantive follow-up in the case record.
+    """
+    timestamp = now_iso()
+    source = f"{handler}_reply_email"
+    case_id = (
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    )
+    # The follow-up is triggered by the internal resolution email, not by a
+    # customer message: it carries its own unique trigger timestamp and an
+    # internal_resolution marker that exempts it from the customer-currency
+    # publication gate. Reusing the customer trigger would collide with the
+    # submission job for the same customer message.
+    trigger_message_created_at = timestamp
+    try:
+        persona_assignment = ticket_repository.resolve_account_persona(client_ticket_id)
+    except AccountPersonaUnavailableError as exc:
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=str(exc),
+            timestamp=timestamp,
+            policy_decision="account_persona_unavailable_human_review",
+        )
+        manual_event = {
+            "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+            "account_case_id": case_id, "automation_reply_message_id": message_id,
+            "reason": str(account_case.get("not_automated_reason") or str(exc)),
+            "created_at": timestamp, "source": source,
+        }
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=None, account_case_updates=account_case,
+            events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+            completed_at=timestamp,
+        )
+        ticket_repository.save_account_case(account_case)
+        return "completed" if committed else "in_progress"
+    enriched_information = {
+        **dict(known_information or {}),
+        "ticket_id": client_ticket_id,
+        "account_case_id": str(case_id),
+        "customer_email": str(account_case.get("customer_email") or "").strip(),
+    }
+    sanitized_note = sanitize_enablement_completion_note(note, enriched_information)
+    reply_facts = build_automation_reply_facts(
+        behavior=handler,
+        reply_intent=ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
+        known_information=enriched_information,
+        source_facts=[sanitized_note],
+        resolution_status="completed",
+        customer_name=str(account_case.get("customer_name") or ""),
+    )
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    try:
+        normalized_facts, _intent, _close = normalize_account_reply_contract(
+            reply_facts,
+            reply_intent=ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
+            close_after_publish=False,
+        )
+    except AccountReplyContractError as exc:
+        _mark_account_case_for_human_review(
+            account_case,
+            reason=str(exc),
+            timestamp=timestamp,
+            policy_decision="automation_persona_human_review",
+        )
+        manual_event = {
+            "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
+            "account_case_id": case_id, "automation_reply_message_id": message_id,
+            "reason": str(exc),
+            "created_at": timestamp, "source": source,
+        }
+        committed = ticket_repository.commit_automation_reply_result(
+            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+            assistant_message=None, account_case_updates=account_case,
+            events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
+            completed_at=timestamp,
+        )
+        ticket_repository.save_account_case(account_case)
+        return "completed" if committed else "in_progress"
+    reply_payload: dict[str, Any] = {
+        "draft_content": "",
+        "reply_facts": normalized_facts,
+        "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
+        "asked_field_keys": [],
+        "visibility": "account_only",
+        "internal_resolution": True,
+        "close_after_publish": False,
+        "reply_intent": ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
+        "automation_delivery_key": str(
+            (account_case.get("internal_email_payload") or {}).get("delivery_key") or ""
+        ),
+    }
+    if persona_assignment:
+        reply_payload.update(
+            {
+                "persona_key": persona_assignment.get("persona_key"),
+                "persona_version": persona_assignment.get("version"),
+                "effective_prompt": dict(persona_assignment.get("content") or {}),
+            }
+        )
+    ticket_repository.cancel_pending_account_reply_jobs(
+        client_ticket_id, updated_at=timestamp
+    )
+    job = ticket_repository.save_account_reply_job(
+        {
+            "job_id": f"account-reply-{uuid4().hex}",
+            "ticket_id": client_ticket_id,
+            "trigger_message_created_at": trigger_message_created_at,
+            "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+            "scheduled_for": (
+                datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+                + timedelta(seconds=delay_seconds)
+            ).isoformat(),
+            "payload": reply_payload,
+            "attempt_count": 0,
+            "claimed_at": None,
+            "published_at": None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+    )
+    resolution_event = {
+        "event": f"{handler}_internal_resolution_received", "account_case_id": case_id,
+        "ticket_id": client_ticket_id, "note": note, "created_at": timestamp,
+        "source": source, "automation_reply_message_id": message_id,
+    }
+    queued_event = {
+        "event": f"{handler}_customer_followup_job_queued", "account_case_id": case_id,
+        "ticket_id": client_ticket_id, "reply_job_id": str(job.get("job_id") or ""),
+        "created_at": timestamp, "source": source,
+        "automation_reply_message_id": message_id,
+    }
+    committed = ticket_repository.commit_automation_reply_result(
+        reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
+        assistant_message=None,
+        account_case_updates={"automation_status": "customer_notified", "updated_at": timestamp},
+        events=[{"event_type": resolution_event["event"], "payload": resolution_event},
+                {"event_type": queued_event["event"], "payload": queued_event}],
+        completed_at=timestamp,
+    )
+    return "completed" if committed else "in_progress"
+
+
 def _queue_billing_completion_reply_job(
     *,
     reply_key: str,
@@ -3574,59 +3740,16 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                 handler=handler,
                 completion_source=completion_source or "regex",
             )
-        reply_intent = "resolution_update"
-        customer_reply = _render_case_persona_reply(
-            ticket_id=client_ticket_id, case=account_case, behavior=handler,
-            reply_intent=reply_intent, known_information=known_information,
-            source_facts=[note], resolution_status="completed",
-            save_case=ticket_repository.save_account_case, persist_failure=False,
+        return _queue_internal_followup_reply_job(
+            reply_key=reply_key,
+            owner_token=owner_token,
+            account_case=account_case,
+            client_ticket_id=client_ticket_id,
+            note=note,
+            known_information=known_information,
+            message_id=message_id,
+            handler=handler,
         )
-        try:
-            assert_no_trailing_automation_signature(customer_reply)
-        except AutomationPersonaError as exc:
-            _mark_account_case_for_human_review(
-                account_case,
-                reason=str(exc),
-                timestamp=now_iso(),
-                policy_decision="automation_persona_human_review",
-            )
-            customer_reply = ""
-        timestamp = now_iso()
-        source = f"{handler}_reply_email"
-        case_id = account_case.get("account_case_id") or account_case.get("billing_ticket_id")
-        if not customer_reply:
-            manual_event = {
-                "event": "automation_persona_human_review", "ticket_id": client_ticket_id,
-                "account_case_id": case_id, "automation_reply_message_id": message_id,
-                "reason": str(account_case.get("not_automated_reason") or "automation_persona_human_review"),
-                "created_at": timestamp, "source": source,
-            }
-            committed = ticket_repository.commit_automation_reply_result(
-                reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
-                assistant_message=None, account_case_updates=account_case,
-                events=[{"event_type": "automation_persona_human_review", "payload": manual_event}],
-                completed_at=timestamp,
-            )
-            return "completed" if committed else "in_progress"
-        assistant_message = {"role": "assistant", "content": customer_reply, "created_at": timestamp,
-                             "content_format": "plaintext", "source": source}
-        resolution_name = f"{handler}_internal_resolution_received"
-        followup_name = f"{handler}_customer_followup_generated"
-        resolution_event = {"event": resolution_name, "account_case_id": case_id, "ticket_id": client_ticket_id,
-                            "note": note, "created_at": timestamp, "source": source,
-                            "automation_reply_message_id": message_id}
-        followup_event = {"event": followup_name, "account_case_id": case_id, "ticket_id": client_ticket_id,
-                          "customer_reply": customer_reply, "created_at": timestamp, "source": source,
-                          "automation_reply_message_id": message_id}
-        committed = ticket_repository.commit_automation_reply_result(
-            reply_key, owner_token=owner_token, ticket_id=client_ticket_id,
-            assistant_message=assistant_message,
-            account_case_updates={"automation_status": "customer_notified", "customer_reply": customer_reply,
-                                  "updated_at": timestamp},
-            events=[{"event_type": resolution_name, "payload": resolution_event},
-                    {"event_type": followup_name, "payload": followup_event}], completed_at=timestamp,
-        )
-        return "completed" if committed else "in_progress"
     except Exception as exc:
         _fail_automation_reply(reply_key, owner_token, exc)
         raise
