@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-28T04:13:09Z",
-  "source_base_commit": "20e89dd5cfa693f246e0ab2410995993f5122ba6",
-  "registry_digest": "7f8e02e83022389635592e782c3442d99cf0571c02dbd7971ebac9bf1c40fc4b",
+  "generated_at": "2026-08-28T04:44:05Z",
+  "source_base_commit": "74b0663537c1d3df310e62d70371b578db5cd3db",
+  "registry_digest": "2e2e8698ef6a558d6cb7fdd21eebbcf5b530bbfa4324ca0e2dfdb5dcf3ceab2b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -744,6 +744,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "286 passed + 78 subtests；66 passed + 3 subtests。完成分支（Enabled→关单）与 submission_confirmation 系列既有测试全部保持通过。"
         },
         {
+          "type": "deployment",
+          "label": "Official-stack restart + live replication of AC-13089 (Zendesk ticket 13095)",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "官方栈重启（root main，当时 SHA 20e89dd 后随 #985 前进至 74b0663，用户侧重启部署 74b0663537c1，/health.app_build.ref=74b0663537c1 匹配当时 root main）。live 复刻：Zendesk 建单 13095（media relay+合法 appid）→ n8n/EC2 intake 正常（内部邮件 sent、submission job 排定、assignee 就位）→ staging 库播种同 ticket case → 163 发内部回复 'This appid is not correct...'（[staging][Enablement Request] 前缀）→ 本地新代码处理：claim completed、排 resolution_update job（persona_v8_scheduled、internal_resolution=true、production 延迟约 7 分钟）→ 04:34:57 发布公开评论（明确告知 App ID 不正确请核对）且工单保持 pending 不关单、delivery is_public=true target_status=None delivered。对照：EC2 旧代码 staging worker 抢先处理同一消息时只落 enablement_customer_followup_generated 事件、无 job 无投递（bug 现场复现）。第二幕：回复 'Media Relay is enabled for this app.' → 判定完成 → 排 enablement_completed_and_close job → 首次渲染 LLM 随机性失败 completion 合同升级 human review（fail-closed 正确行为）→ 复位重试渲染通过 → 恢复 ownership（human review 终态标记为验证场景人工复位）→ 公开评论 'Media Relay is already enabled' + Zendesk solved 关单、delivery target_status=solved delivered。staging 测试数据已清理（7 表 0 残留）。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -851,7 +857,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 22,
-      "done_count": 12,
+      "done_count": 13,
       "blocked_count": 0
     },
     {
@@ -7766,10 +7772,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-124",
       "title": "Enablement/Quota 内部回复未完成分支补投递，消除过时确认话术覆盖",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "Case AC-13089 实测根因：内部执行人回复 [Enablement Request] 邮件说明 App ID 不正确后，轮询与完成分类器均正常（completed=False），_handle_non_billing_automation_reply 未完成分支也正确生成了客户跟进回复（App ID 不正确请提供正确的），但该分支只经 commit_automation_reply_result 记账（消息表/事件/case 字段），未排投递任务，正确的回复从未到达 Zendesk；随后 case 创建时排定的 submission_confirmation job（production 6-10 分钟随机延迟）发布时经 publish_account_reply 无条件覆盖 case.customer_reply，客户最终只看到过时缓冲话术。本任务把未完成分支改为照 _queue_enablement_completion_reply_job 模式排标准 reply job（intent=resolution_update、internal_resolution=True、不关单），排 job 前 cancel_pending_account_reply_jobs 会同时取消 pending 的 submission_confirmation，两个缺陷一处收口。quota handler 共用此函数同步受益；完成分支（Enabled→公开评论+solved 关单）行为零变化。billing invoice 分支不在本任务范围。",
-      "next_action": "实现与目标测试已完成,待 finalize 合并与官方栈 live 复刻 13089 验证。",
+      "next_action": "",
       "acceptance_criteria": [
         "人回复内部邮件为非完成内容（如 appid 不对）时，排 reply_intent=resolution_update 的 persona_v8 reply job（internal_resolution=True、无 close_after_publish），经标准管线发布为 Zendesk 公开评论，工单不关单（非 solved/resolved）。",
         "排 followup job 前 cancel_pending_account_reply_jobs 被调用：pending 的 submission_confirmation job 被置 cancelled，不再发布、不再覆盖 case.customer_reply。",
@@ -7791,6 +7797,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Peripheral regression suites",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_enablement_automation.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_version_fence.py backend/tests/test_quota_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_account_intake.py -q 以及 TICKET_DB_DSN=... pytest backend/tests/test_account_zendesk_internal_comment_service.py test_account_slack_n8n.py test_enablement_repair.py test_automation_routing.py test_account_automation_ownership.py test_support_router_enablement.py -q",
           "details": "286 passed + 78 subtests；66 passed + 3 subtests。完成分支（Enabled→关单）与 submission_confirmation 系列既有测试全部保持通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official-stack restart + live replication of AC-13089 (Zendesk ticket 13095)",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "官方栈重启（root main，当时 SHA 20e89dd 后随 #985 前进至 74b0663，用户侧重启部署 74b0663537c1，/health.app_build.ref=74b0663537c1 匹配当时 root main）。live 复刻：Zendesk 建单 13095（media relay+合法 appid）→ n8n/EC2 intake 正常（内部邮件 sent、submission job 排定、assignee 就位）→ staging 库播种同 ticket case → 163 发内部回复 'This appid is not correct...'（[staging][Enablement Request] 前缀）→ 本地新代码处理：claim completed、排 resolution_update job（persona_v8_scheduled、internal_resolution=true、production 延迟约 7 分钟）→ 04:34:57 发布公开评论（明确告知 App ID 不正确请核对）且工单保持 pending 不关单、delivery is_public=true target_status=None delivered。对照：EC2 旧代码 staging worker 抢先处理同一消息时只落 enablement_customer_followup_generated 事件、无 job 无投递（bug 现场复现）。第二幕：回复 'Media Relay is enabled for this app.' → 判定完成 → 排 enablement_completed_and_close job → 首次渲染 LLM 随机性失败 completion 合同升级 human review（fail-closed 正确行为）→ 复位重试渲染通过 → 恢复 ownership（human review 终态标记为验证场景人工复位）→ 公开评论 'Media Relay is already enabled' + Zendesk solved 关单、delivery target_status=solved delivered。staging 测试数据已清理（7 表 0 残留）。"
         }
       ],
       "source_refs": [
@@ -7810,6 +7822,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-28",
           "event": "updated",
           "summary": "新增 _queue_internal_followup_reply_job（照 completion 模板：resolution_update intent、internal_resolution 豁免、note 脱敏、persona pin、cancel pending 后 save persona_v8_queued job、双事件 commit），未完成分支改为排队投递并删除同步渲染路径；签名/contract 校验由 job 管线承接。测试 115+286+66 全绿。"
+        },
+        {
+          "at": "2026-08-28",
+          "event": "updated",
+          "summary": "PR#984 合并（main 20e89dd）；官方栈重启 + live 复刻 AC-13089（ticket 13095）全链通过：未完成回复→公开跟进评论不关单、Enabled→公开评论+solved 关单；发现并绕过两个环境因素（EC2 staging 旧代码 worker 60s 抢处理需删 claim 后本地抢先 poll；completion 首渲染 LLM 随机性失败按设计升级 human review 后复位重试通过）。任务置 done。"
         }
       ],
       "legacy_refs": [],
