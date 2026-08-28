@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-28T04:44:05Z",
-  "source_base_commit": "74b0663537c1d3df310e62d70371b578db5cd3db",
-  "registry_digest": "2e2e8698ef6a558d6cb7fdd21eebbcf5b530bbfa4324ca0e2dfdb5dcf3ceab2b",
+  "generated_at": "2026-08-28T05:54:49Z",
+  "source_base_commit": "03658c64a89baafb3dd4ca5c2a2d463b4305b6eb",
+  "registry_digest": "880bbc6bb3e75d5207a4cea5046fd4a811291d00e9228bd56a81a8703205ca0e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -751,6 +751,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Worker suite (full) + peripheral regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py -q 以及 pytest backend/tests/test_account_intake.py backend/tests/test_enablement_automation.py backend/tests/test_automation_persona.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_reply_version_fence.py -q",
+          "details": "115 passed + 17 subtests；261 passed + 78 subtests。端到端用例新增断言 followup facts 的 resolution_status 为 None；detailed_invoice/completion 分支的 resolution_status=completed 未动。"
+        },
+        {
+          "type": "deployment",
+          "label": "AC-13096 live evidence driving the fix",
+          "command": "EC2 app_build.ref=03658c64a89b（p2-124 后版本）+ Zendesk ticket 13096",
+          "details": "链路层全对（resolution_update job 自动排队发布、不关单、delivery delivered、note 脱敏正常），但渲染内容误报 completed——定位为 facts 构造的 fallback 语义错误（本任务修复对象）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -856,7 +868,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 22,
+      "task_count": 23,
       "done_count": 13,
       "blocked_count": 0
     },
@@ -7827,6 +7839,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-28",
           "event": "updated",
           "summary": "PR#984 合并（main 20e89dd）；官方栈重启 + live 复刻 AC-13089（ticket 13095）全链通过：未完成回复→公开跟进评论不关单、Enabled→公开评论+solved 关单；发现并绕过两个环境因素（EC2 staging 旧代码 worker 60s 抢处理需删 claim 后本地抢先 poll；completion 首渲染 LLM 随机性失败按设计升级 human review 后复位重试通过）。任务置 done。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-125",
+      "title": "修复 resolution_update 跟进回复误报 resolution_status=completed",
+      "status": "active",
+      "owner": "zac",
+      "summary": "AC-13096 实测暴露 p2-124 引入的语义缺陷：_queue_internal_followup_reply_job 构造 facts 时沿用旧同步路径的 resolution_status=\"completed\" fallback，但旧路径会被 extract_automation_resolution_facts 抽取的实际状态覆盖（fallback 从未真正生效），而 job 管线没有 extract 步骤，Persona 被 facts 里断言的 completed 误导，把 'The appid is incorrect' 的内部 note 渲染成 'Your Media Relay enablement request has been completed'（AC-13095 当时输出勉强带上 App ID 信息属 LLM 随机性，13096 证明为系统性问题）。修复：排队时不向 resolution_update facts 断言完成状态（resolution_status 传 None），让 Persona 依据脱敏后的 source_facts（内部 note）自行表达；contract 不强制该字段，投递链路不变。",
+      "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后在 13096 或新工单复测渲染内容。",
+      "acceptance_criteria": [
+        "resolution_update job 的 reply_facts.resolution_status 为 null（不断言完成状态），其余 facts/payload 结构与投递链路不变。",
+        "端到端测试断言新 facts 无 resolution_status，且由 source_facts 主导语义。",
+        "完成分支（enablement_completed_and_close 的 resolution_status=completed）不变。",
+        "既有测试零回归。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Worker suite (full) + peripheral regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py -q 以及 pytest backend/tests/test_account_intake.py backend/tests/test_enablement_automation.py backend/tests/test_automation_persona.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_reply_version_fence.py -q",
+          "details": "115 passed + 17 subtests；261 passed + 78 subtests。端到端用例新增断言 followup facts 的 resolution_status 为 None；detailed_invoice/completion 分支的 resolution_status=completed 未动。"
+        },
+        {
+          "type": "deployment",
+          "label": "AC-13096 live evidence driving the fix",
+          "command": "EC2 app_build.ref=03658c64a89b（p2-124 后版本）+ Zendesk ticket 13096",
+          "details": "链路层全对（resolution_update job 自动排队发布、不关单、delivery delivered、note 脱敏正常），但渲染内容误报 completed——定位为 facts 构造的 fallback 语义错误（本任务修复对象）。"
+        }
+      ],
+      "source_refs": [
+        "backend/worker.py",
+        "backend/tests/test_worker.py"
+      ],
+      "created_at": "2026-08-28",
+      "updated_at": "2026-08-28",
+      "history": [
+        {
+          "at": "2026-08-28",
+          "event": "created",
+          "summary": "AC-13096（EC2 03658c64a89b 新代码）live 验证：链路全对（job 自动排队发布、不关单、delivery delivered、脱敏正常），但渲染内容误报 completed——resolution_status fallback 语义错误定位。"
         }
       ],
       "legacy_refs": [],

@@ -5580,6 +5580,11 @@ class WorkerResilienceTests(unittest.TestCase):
             "13234hdfiuehfihfe",
             str(followup_job["payload"]["reply_facts"].get("source_facts")),
         )
+        # A non-completion follow-up must not assert a resolution status: the
+        # sanitized note is the only authoritative state source (AC-13096
+        # rendered "request has been completed" for "the appid is incorrect"
+        # when the legacy fallback leaked into the facts).
+        self.assertIsNone(followup_job["payload"]["reply_facts"].get("resolution_status"))
 
         rendered = types.SimpleNamespace(
             content=(

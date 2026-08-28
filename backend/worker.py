@@ -3405,7 +3405,13 @@ def _queue_internal_followup_reply_job(
         reply_intent=ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
         known_information=enriched_information,
         source_facts=[sanitized_note],
-        resolution_status="completed",
+        # The internal note is the only authoritative state source here: the
+        # legacy inline-render fallback asserted "completed" because the LLM
+        # extraction used to overwrite it, but the job pipeline has no
+        # extraction step, so a hardcoded status would mislead the Persona
+        # (AC-13096 rendered "request has been completed" for "the appid is
+        # incorrect"). Leave it unset and let the sanitized note speak.
+        resolution_status=None,
         customer_name=str(account_case.get("customer_name") or ""),
     )
     delay_seconds = account_reply_delay_seconds_for_profile(
