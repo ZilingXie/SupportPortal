@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-28T15:31:24Z",
-  "source_base_commit": "13a14b8589a95c26d621af5e1c9030063a26b999",
-  "registry_digest": "3f442ded3c1126c314e10dba731cf4831bf80078762cb5625e11cd289f7f1201",
+  "generated_at": "2026-08-28T15:50:55Z",
+  "source_base_commit": "0d5b22d2832a1de98444d615d6954167d63d8b77",
+  "registry_digest": "f1b2aaa8a98e4a5998ab65663c838ec49ecd49f3622b91dbb797316c2032aab1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1892,7 +1892,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account parity release contracts",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py",
-          "details": "423 passed、28 subtests passed；覆盖新三角色、Account intake与后续reply/delivery、Billing/Enablement/Quota Outlook单次poll、远端RAG client与executor、旧/production contract、Podman builder和amd64 Manifest gate。PR #991的惰性conftest隔离已合入，测试未触发真实邮件或RAG外呼。"
+          "details": "424 passed、28 subtests passed；覆盖新三角色、Account intake与后续reply/delivery、Billing/Enablement/Quota Outlook单次poll、远端RAG client与executor、旧/production contract、Podman builder、amd64 Manifest gate和host Python cache物理排除。PR #991的惰性conftest隔离已合入，测试未触发真实邮件或RAG外呼。"
         },
         {
           "type": "test",
@@ -6054,7 +6054,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Account parity release contracts",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py",
-          "details": "423 passed、28 subtests passed；覆盖新三角色、Account intake与后续reply/delivery、Billing/Enablement/Quota Outlook单次poll、远端RAG client与executor、旧/production contract、Podman builder和amd64 Manifest gate。PR #991的惰性conftest隔离已合入，测试未触发真实邮件或RAG外呼。"
+          "details": "424 passed、28 subtests passed；覆盖新三角色、Account intake与后续reply/delivery、Billing/Enablement/Quota Outlook单次poll、远端RAG client与executor、旧/production contract、Podman builder、amd64 Manifest gate和host Python cache物理排除。PR #991的惰性conftest隔离已合入，测试未触发真实邮件或RAG外呼。"
         },
         {
           "type": "test",
@@ -6138,7 +6138,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-28",
           "event": "account_parity_release_hardening",
-          "summary": "Account parity release补齐Outlook内部回复消费与PR#991测试隔离；Terraform改为独立API/Route/Worker task、prefixed health、完整provenance和supportportal-production环境仓库digest引用；Slack Engineer Case入向链路延期。423项回归、28项子测试及隔离Terraform validate通过，尚未push/deploy/cutover。"
+          "summary": "Account parity release补齐Outlook内部回复消费与PR#991测试隔离；Terraform改为独立API/Route/Worker task、prefixed health、完整provenance和supportportal-production环境仓库digest引用；真实OCI gate发现并阻止host Python cache泄漏，镜像增加递归ignore与最终bytecode清理；Slack Engineer Case入向链路延期。424项回归、28项子测试及隔离Terraform validate通过，尚未push/deploy/cutover。"
         }
       ],
       "legacy_refs": [

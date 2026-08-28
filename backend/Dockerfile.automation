@@ -118,6 +118,8 @@ RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
     fi && \
     chmod 0755 /app/automation_ecs_entrypoint.sh && \
     rm -rf /tmp/backend-src && \
+    find /app -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.pyd' \) -delete && \
+    find /app -depth -type d -name '__pycache__' -exec rm -rf '{}' + && \
     if [ "${AUTOMATION_IMAGE_ROLE}" = "ecs-api" ]; then \
       python -c 'import backend.automation_ecs_api'; \
     elif [ "${AUTOMATION_IMAGE_ROLE}" = "ecs-route" ]; then \
