@@ -2,10 +2,10 @@
  "schema_version": 2,
  "task_id": "p2-125",
  "title": "修复 resolution_update 跟进回复误报 resolution_status=completed",
- "status": "active",
+ "status": "done",
  "owner": "zac",
  "summary": "AC-13096 实测暴露 p2-124 引入的语义缺陷：_queue_internal_followup_reply_job 构造 facts 时沿用旧同步路径的 resolution_status=\"completed\" fallback，但旧路径会被 extract_automation_resolution_facts 抽取的实际状态覆盖（fallback 从未真正生效），而 job 管线没有 extract 步骤，Persona 被 facts 里断言的 completed 误导，把 'The appid is incorrect' 的内部 note 渲染成 'Your Media Relay enablement request has been completed'（AC-13095 当时输出勉强带上 App ID 信息属 LLM 随机性，13096 证明为系统性问题）。修复：排队时不向 resolution_update facts 断言完成状态（resolution_status 传 None），让 Persona 依据脱敏后的 source_facts（内部 note）自行表达；contract 不强制该字段，投递链路不变。",
- "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后在 13096 或新工单复测渲染内容。",
+ "next_action": "",
  "acceptance_criteria": [
   "resolution_update job 的 reply_facts.resolution_status 为 null（不断言完成状态），其余 facts/payload 结构与投递链路不变。",
   "端到端测试断言新 facts 无 resolution_status，且由 source_facts 主导语义。",
@@ -25,6 +25,12 @@
    "label": "AC-13096 live evidence driving the fix",
    "command": "EC2 app_build.ref=03658c64a89b（p2-124 后版本）+ Zendesk ticket 13096",
    "details": "链路层全对（resolution_update job 自动排队发布、不关单、delivery delivered、note 脱敏正常），但渲染内容误报 completed——定位为 facts 构造的 fallback 语义错误（本任务修复对象）。"
+  },
+  {
+   "type": "deployment",
+   "label": "AC-13099 post-fix live verification",
+   "command": "EC2 app_build.ref=39457ab09863（PR#987 后版本）+ Zendesk ticket 13099",
+   "details": "用户部署 PR#987 后新开工单 13099（media relay，乱码 appid）并回复内部邮件 'The appid is incorrect'：followup job 的 reply_facts.resolution_status 为空（修复生效），06:27:18 全自动发布公开评论 'The App ID provided is incorrect, so we can't proceed with enabling Media Relay yet. Please provide the correct App ID, and I'll continue coordinating the review once it's received.'——语义与内部 note 一致、明确请客户提供正确 App ID、不再误报完成；工单保持 pending 不关单，两条 delivery 均 delivered。"
   }
  ],
  "source_refs": [
@@ -38,6 +44,11 @@
    "at": "2026-08-28",
    "event": "created",
    "summary": "AC-13096（EC2 03658c64a89b 新代码）live 验证：链路全对（job 自动排队发布、不关单、delivery delivered、脱敏正常），但渲染内容误报 completed——resolution_status fallback 语义错误定位。"
+  },
+  {
+   "at": "2026-08-28",
+   "event": "updated",
+   "summary": "PR#987 合并（facts 构造改 resolution_status=None，note 为唯一状态来源）；用户部署 39457ab09863 后 AC-13099 live 复测通过：跟进评论正确说 App ID 不对并请客户提供正确的 App ID、不关单。任务置 done。"
   }
  ],
  "legacy_refs": [],
