@@ -131,6 +131,40 @@ class EngineerSlackContractTests(unittest.TestCase):
         self.assertNotIn("team", serialized.lower())
         self.assertNotIn("thread_ts", serialized.lower())
 
+    def test_root_event_neutralizes_slack_control_sequences_in_customer_text(self) -> None:
+        event = build_engineer_case_opened_event(
+            account_case={
+                "account_case_id": "AC-99999",
+                "zendesk_ticket_id": "99999",
+                "title": " <@U123TEST> iOS & audio ",
+                "question": (
+                    " <!channel> <!here> <!everyone> 안녕하세요 <capture> "
+                    "`synthetic-session-id` "
+                ),
+                "not_automated_reason": "technical_request",
+            },
+            engineer_case={"engineer_case_id": "99999-1"},
+        )
+
+        self.assertEqual(event["case_title"], "<@U123TEST> iOS & audio")
+        self.assertEqual(
+            event["problem"],
+            (
+                "<!channel> <!here> <!everyone> 안녕하세요 <capture> "
+                "`synthetic-session-id`"
+            ),
+        )
+        self.assertEqual(
+            event["message_text"],
+            (
+                "&lt;@U123TEST&gt; iOS &amp; audio\n"
+                "&lt;!channel&gt; &lt;!here&gt; &lt;!everyone&gt; 안녕하세요 "
+                "&lt;capture&gt; `synthetic-session-id`\n"
+                "zendesk: https://agoraio.zendesk.com/agent/tickets/99999\n"
+                "route reason: technical_request"
+            ),
+        )
+
     def test_thread_event_never_accepts_destination_fields(self) -> None:
         event = build_engineer_case_thread_event(
             event_id="engineer-slack:12874-1:ai:2",
@@ -180,6 +214,7 @@ class EngineerSlackContractTests(unittest.TestCase):
             "Bearer " + DIRECT_ENV["ENGINEER_SLACK_ACCESS_TOKEN"],
         )
         self.assertEqual(payload["channel"], "C-TEST")
+        self.assertEqual(payload["text"], event["message_text"])
         self.assertNotIn("thread_ts", payload)
         self.assertTrue(payload["client_msg_id"])
         self.assertEqual(result["slack_message_ts"], "100.200")
