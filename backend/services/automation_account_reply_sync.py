@@ -306,6 +306,7 @@ async def process_zendesk_comment_trigger(
             precomputed_route=precomputed_route,
             route_prompt_snapshots=route_prompt_snapshots,
             processing_profile=expected_profile,
+            customer_name_hint=str(getattr(trigger_comment, "author_name", None) or "").strip() or None,
         )
     except ReplySyncError as exc:
         failure_payload = {
@@ -346,6 +347,7 @@ async def process_account_customer_reply(
     precomputed_route: dict[str, Any] | None = None,
     route_prompt_snapshots: dict[str, Any] | None = None,
     processing_profile: str = "production",
+    customer_name_hint: str | None = None,
 ) -> dict[str, Any]:
     from backend.services.llm_usage_capture import (
         begin_case_usage_capture,
@@ -365,6 +367,7 @@ async def process_account_customer_reply(
             precomputed_route=precomputed_route,
             route_prompt_snapshots=route_prompt_snapshots,
             processing_profile=processing_profile,
+            customer_name_hint=customer_name_hint,
         )
     finally:
         end_case_usage_capture(usage_token)
@@ -387,6 +390,7 @@ async def _process_account_customer_reply_impl(
     precomputed_route: dict[str, Any] | None = None,
     route_prompt_snapshots: dict[str, Any] | None = None,
     processing_profile: str = "production",
+    customer_name_hint: str | None = None,
 ) -> dict[str, Any]:
     import asyncio
 
@@ -999,7 +1003,24 @@ async def _process_account_customer_reply_impl(
                     repository=repository,
                     ticket_id=client_ticket_id,
                     trigger_message_created_at=timestamp,
-                    draft_content=fallback.answer,
+                    # The RAGFlow answer is core technical content: the persona
+                    # render voices the customer reply and the references are
+                    # appended deterministically before publication.
+                    reply_facts={
+                        "behavior": "rag_fallback_answer",
+                        "reply_intent": ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+                        "provided_answer": fallback.answer,
+                        "references": list(fallback.references),
+                        # Greeting name lookup: the account case carries the
+                        # intake name, the Zendesk comment author name covers
+                        # cases whose intake form omitted it, and an empty
+                        # value lets the persona fall back to "Customer".
+                        "customer_first_name": str(
+                            billing_ticket.get("customer_name")
+                            or customer_name_hint
+                            or ""
+                        ).strip(),
+                    },
                     reply_intent=ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
                     processing_profile=processing_profile,
                 )

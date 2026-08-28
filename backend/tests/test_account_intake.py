@@ -7389,6 +7389,7 @@ class AccountIntakeApiTests(unittest.TestCase):
                 "title": "Feature enablement",
                 "question": "Please enable Media Relay from your end.",
                 "customer_email": "customer@example.com",
+                "customer_name": "Ziling Xie",
             },
         ).json()
         self._publish_latest_account_reply(created["ticket_id"])
@@ -7425,6 +7426,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(facts["reply_intent"], "rag_fallback_answer")
         self.assertEqual(facts["behavior"], "rag_fallback_answer")
         self.assertEqual(facts["references"], ["https://docs.agora.io/en/get-started"])
+        # The greeting name comes from the account case, not the ticket
+        # requester (which is always an email address).
+        self.assertEqual(facts["customer_first_name"], "Ziling Xie")
         self.assertEqual(job["payload"]["reply_intent"], "rag_fallback_answer")
         self.assertEqual(job["payload"]["reply_pipeline"], "automation_persona_v8")
 
