@@ -61,7 +61,7 @@ resource "terraform_data" "service_validation" {
         startswith(image, "${aws_ecr_repository.runtime.repository_url}@sha256:") &&
         can(regex("@sha256:[0-9a-f]{64}$", image))
       ])
-      error_message = "All services must use supportportal-production ECR references pinned by sha256 digest."
+      error_message = "All services must use supportportal/production ECR references pinned by sha256 digest."
     }
 
     precondition {

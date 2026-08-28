@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-SOURCE_REPOSITORY="supportportal-preproduction"
-TARGET_REPOSITORY="supportportal-production"
+SOURCE_REPOSITORY="supportportal/preproduction"
+TARGET_REPOSITORY="supportportal/production"
 MANIFEST_PATH=""
 PROMOTION_RECORD=""
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
@@ -19,8 +19,8 @@ Usage:
   ./deployment/promote_automation_release.sh --manifest <release-manifest.json> --region <region> [options]
 
 Options:
-  --source-repository <name>   Default: supportportal-preproduction
-  --target-repository <name>   Default: supportportal-production
+  --source-repository <name>   Default: supportportal/preproduction
+  --target-repository <name>   Default: supportportal/production
   --registry-id <account-id>   Optional AWS account registry id
   --promotion-record <path>    Default: next to Release Manifest
 

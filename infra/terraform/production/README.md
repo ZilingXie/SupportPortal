@@ -16,7 +16,7 @@ putting Cloudflare credentials in Terraform state.
 
 The default apply creates the platform resources only:
 
-- one immutable, scan-on-push `supportportal-production` ECR repository; API,
+- one immutable, scan-on-push `supportportal/production` ECR repository; API,
   Route and Worker remain separate images identified by role tag and digest;
 - ECS cluster and Fargate roles;
 - public ALB, target group and `/automation/production*` listener rule;
@@ -34,7 +34,7 @@ independent Fargate tasks: the Intake API runs
 `backend.automation_ecs_api:create_app --factory`, the Route Worker runs
 `backend.automation_ecs_route_worker`, and the Automation Worker runs
 `backend.automation_ecs_worker`. All task definitions require `X86_64` and
-images in `supportportal-production` pinned as `repository@sha256:digest`.
+images in `supportportal/production` pinned as `repository@sha256:digest`.
 
 The stack uses the existing VPC `vpc-0125f57b2ec2f0423` and discovers public
 subnets when `public_subnet_ids` is empty. It assigns public IPs to Fargate
@@ -90,7 +90,7 @@ config containing account-specific state details.
    Production Case test, then set `enable_services=true`.
 
 This root is currently a verifiable configuration source only. Review and
-import any manually created `supportportal-production` repository into state
+import the manually created `supportportal/production` repository into state
 before a future apply; do not apply a state transition that would delete
 existing role repositories or release images.
 

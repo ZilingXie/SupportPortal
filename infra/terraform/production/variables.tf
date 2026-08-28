@@ -69,19 +69,19 @@ variable "enable_services" {
 }
 
 variable "api_image" {
-  description = "Immutable API image reference in supportportal-production, pinned by ECR digest."
+  description = "Immutable API image reference in supportportal/production, pinned by ECR digest."
   type        = string
   default     = ""
 }
 
 variable "route_image" {
-  description = "Immutable Route image reference in supportportal-production, pinned by ECR digest."
+  description = "Immutable Route image reference in supportportal/production, pinned by ECR digest."
   type        = string
   default     = ""
 }
 
 variable "worker_image" {
-  description = "Immutable Worker image reference in supportportal-production, pinned by ECR digest."
+  description = "Immutable Worker image reference in supportportal/production, pinned by ECR digest."
   type        = string
   default     = ""
 }

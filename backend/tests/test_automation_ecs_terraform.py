@@ -77,7 +77,9 @@ def test_one_environment_repository_and_digest_only_service_images() -> None:
     ecr = _read("ecr.tf")
     data = _read("data.tf")
     assert "for_each" not in ecr
-    assert "ecr_repository_name = local.name_prefix" in _read("locals.tf")
+    assert 'ecr_repository_name = "${var.project_name}/${var.environment}"' in _read(
+        "locals.tf"
+    )
     assert "aws_ecr_repository.runtime.repository_url}@sha256:" in data
-    assert "supportportal-production ECR references pinned by sha256 digest" in data
+    assert "supportportal/production ECR references pinned by sha256 digest" in data
     assert 'trimspace(var.release_id) != "unreleased"' in data
