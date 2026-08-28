@@ -1,0 +1,53 @@
+{
+ "schema_version": 2,
+ "task_id": "p2-126",
+ "title": "修复 rag_fallback 称呼落空与自动化问候格式，附本地 RAG 对比评估",
+ "status": "active",
+ "owner": "zac",
+ "summary": "AC-13099 实测（客户问 where can i find the correct appid?）暴露称呼缺陷：rag_fallback 的 reply_facts 不读 account case 的 customer_name（13099 的 customer_name 实际有值 Ziling Xie）——API 路径（main.py）用 canonical ticket.requester 当 customer_first_name，而 requester 恒为邮箱（含 @ 被 customer_first_name 拒绝）必然落 'Customer'；分栈评论路径（automation_account_reply_sync.py）构造 reply job 时传了不存在的 draft_content 参数（TypeError 被吞进 account_reply_job_creation_failed，该 answer 分支从未成功过，属隐藏死分支）。本任务把两条 rag_fallback 路径的称呼来源统一为回查链（billing_ticket.customer_name → 评论快照 author_name hint → 兜底），修复分栈死分支为完整 reply_facts 构造，并把自动化 persona 链路问候从 'Hi, X' 改为 'Hi X'（用户指定格式，prompt 版本 v17→v18，仅自动化链路，composer 等其他链路不动）。另附只读对比评估：同一问题用项目自带本地 RAG（/internal/rag/query official_only）vs 当前 RAGFlow 检索旁路对比 citations 质量，切换与否由用户看报告后另行决定（本次不切链路）。",
+ "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后 live 复测称呼与问候格式。",
+ "acceptance_criteria": [
+  "rag_fallback 两条构造路径（API 与分栈评论）的 customer_first_name 优先取 account case 的 customer_name，其次回查评论快照 author_name，均无才落 Customer 兜底。",
+  "13099 同款场景（customer_name 空 + 评论 author_name 有值）不再出现 'Hi, Customer'。",
+  "自动化 persona 链路所有 AI 回复问候为 'Hi Ziling'（无逗号），AUTOMATION_PERSONA_PROMPT_VERSION bump v18，docs/prompt_change_log.md 记录。",
+  "composer/billing 门禁/engineer prompt 等其他链路格式不变；rag_fallback fail-closed/References/citations 契约不变。",
+  "本地 RAG vs RAGFlow 同题对比报告交付（citations 对照与结论）。",
+  "既有测试零回归。"
+ ],
+ "blockers": [],
+ "evidence": [
+  {
+   "type": "test",
+   "label": "Persona/worker/intake/comment-sync suites",
+   "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_intake.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_completion_classifier.py -q 以及 TICKET_DB_DSN=... pytest backend/tests/test_automation_comment_sync.py -q",
+   "details": "390 passed + 123 subtests；20 passed。新增 test_split_reply_rag_answer_greeting_uses_case_name_then_comment_hint（case 名优先于评论 hint、hint 填补 intake 缺名）；intake rag 用例断言 facts 用 case 名 Ziling Xie 而非 requester 邮箱；问候断言 13 处更新为无逗号 v18；版本 fence 用例适配 v18。"
+  },
+  {
+   "type": "deployment",
+   "label": "Local RAG vs RAGFlow same-question comparison (read-only)",
+   "command": "EC2 容器内 ragflow-docs-search search.py 'where can i find the correct appid?' --top-k 6 --json --no-rerank；本地 rag_api POST /internal/rag/query（official_only）；staging 库 docagent_chunks_bge_m3_1024 ILIKE 验证",
+   "details": "RAGFlow top6 全为 API 参考页（iOS appId 属性×3/cocos globals/stream-authentication/get-ban-rule-list，相似度 0.607-0.641），无一篇直接回答在哪里找——13099 引用偏差的根源；答案靠 get-ban-rule-list 内一句 'Copy from the Agora Console' 拼出。本地知识库确认有标准答案 chunk（official/manage-agora-account.md 的 Get the App ID 小节）且 BM25+向量+重排理论上命中更好，但本地全链（query understanding+agentic 检索+外部重排+生成）实测 480s 仍超时，远超兜底 120s 预算——直接切换不可行。结论：保持 RAGFlow；改进引用质量的最便宜路径是在共享 KB 侧补充/上调 Get the App ID 指南页（上游数据侧），本地化需先建轻量检索快路径（另立任务）。"
+  }
+ ],
+ "source_refs": [
+  "backend/main.py",
+  "backend/services/automation_account_reply_sync.py",
+  "backend/services/automation_persona.py",
+  "backend/tests/test_automation_persona.py",
+  "backend/tests/test_worker.py"
+ ],
+ "created_at": "2026-08-28",
+ "updated_at": "2026-08-28",
+ "history": [
+  {
+   "at": "2026-08-28",
+   "event": "created",
+   "summary": "AC-13099 RAG 兜底回复称呼 'Hi, Customer' 追踪定位两条构造路径均不读 case customer_name + 13099 上游 n8n 未带名字；用户批准回查链修复 + 问候去逗号（仅自动化链路）+ 本地 RAG 只读对比评估。"
+  }
+ ],
+ "legacy_refs": [],
+ "legacy_ids": [],
+ "phase_id": "phase-1",
+ "module_id": "account-automation",
+ "function_id": "automation-execution-loop"
+}

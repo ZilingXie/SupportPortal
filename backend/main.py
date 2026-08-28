@@ -6953,6 +6953,7 @@ async def _process_zendesk_comment_trigger(
             message=str(trigger_comment.body or "").strip(),
             source="zendesk-comment",
             message_source_id=trigger_comment_id,
+            customer_name_hint=str(getattr(trigger_comment, "author_name", None) or "").strip() or None,
         )
     except HTTPException as exc:
         failure_payload = {
@@ -10113,6 +10114,7 @@ async def _process_account_customer_reply(
     message: str,
     source: str,
     message_source_id: str | None = None,
+    customer_name_hint: str | None = None,
 ) -> dict[str, Any]:
     usage_capture, usage_token = begin_case_usage_capture(billing_ticket_id=billing_ticket_id)
     try:
@@ -10121,6 +10123,7 @@ async def _process_account_customer_reply(
             message=message,
             source=source,
             message_source_id=message_source_id,
+            customer_name_hint=customer_name_hint,
         )
     finally:
         end_case_usage_capture(usage_token)
@@ -10134,6 +10137,7 @@ async def _process_account_customer_reply_impl(
     message: str,
     source: str,
     message_source_id: str | None = None,
+    customer_name_hint: str | None = None,
 ) -> dict[str, Any]:
     billing_ticket = await _load_account_billing_ticket(billing_ticket_id)
 
@@ -10881,7 +10885,17 @@ async def _process_account_customer_reply_impl(
                         "reply_intent": ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
                         "provided_answer": fallback.answer,
                         "references": list(fallback.references),
-                        "customer_first_name": str(canonical_ticket.get("requester") or "").strip(),
+                        # Greeting name lookup: the account case carries the
+                        # intake name, the Zendesk comment author name covers
+                        # cases whose intake form omitted it, and the ticket
+                        # requester (an email) is rejected downstream so the
+                        # persona falls back to "Customer".
+                        "customer_first_name": str(
+                            billing_ticket.get("customer_name")
+                            or customer_name_hint
+                            or canonical_ticket.get("requester")
+                            or ""
+                        ).strip(),
                     },
                 )
             except Exception as exc:

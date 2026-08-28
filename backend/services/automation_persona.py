@@ -38,7 +38,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v17"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v18"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v2"
 
@@ -865,7 +865,7 @@ def render_automation_reply(
     intent = str(facts.get("reply_intent") or "").strip().lower()
     if intent == ENGINEER_GUIDED_REPLY_INTENT and first_name == "Customer":
         raise AutomationPersonaError("automation_persona_guided_customer_name_missing")
-    greeting = f"Hi, {first_name}"
+    greeting = f"Hi {first_name}"
     deterministic_missing_information = _uses_deterministic_missing_information(facts)
     missing_information_policy = (
         "For request_missing_information, write only one brief, warm acknowledgement paragraph. Do not name, "

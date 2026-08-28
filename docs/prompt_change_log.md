@@ -12,6 +12,16 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-28 - Persona greeting format and RAG fallback greeting name lookup (p2-126)
+
+- Area or subsystem: Automation Persona greeting rendering and Account reply RAG fallback reply facts.
+- Prompt or model version: `automation-persona-v17` → `automation-persona-v18`.
+- Summary: the deterministic Persona greeting changed from `Hi, {first_name}` to `Hi {first_name}` (no comma) across all automation replies, and the `rag_fallback_answer` reply facts now resolve the greeting name via account case `customer_name` → Zendesk comment `author_name` hint → empty (persona "Customer" fallback). The split-stack RAG fallback branch also now builds full reply facts (previously it passed a nonexistent `draft_content` argument and always failed into `account_reply_job_creation_failed`).
+- Reason: production Case AC-13099's RAG fallback reply greeted "Hi, Customer" because the API path filled `customer_first_name` from the ticket requester (always an email address, rejected downstream) and the split-stack path never passed a name source; the user also requested the comma-free greeting format.
+- Affected files or config: `backend/services/automation_persona.py`, `backend/main.py`, `backend/services/automation_account_reply_sync.py`.
+- Expected behavior change: automation replies greet "Hi Ziling" (no comma); RAG fallback replies use the customer's real name whenever the account case or the triggering Zendesk comment provides one; the split-stack RAG answer branch creates persona-pipeline jobs instead of failing.
+- Verification: persona/worker suites updated to v18 (162 passed); comment-sync suite covers the name lookup chain (case name wins over comment hint, hint fills when case name is absent, 20 passed); intake suite asserts the RAG facts carry the case name (239 passed across intake/fence/enablement/reroute).
+
 ## 2026-08-28 - Enablement feature alias canonicalization and Persona forbidden-value deadlock fix (p2-123)
 
 - Area or subsystem: Enablement Account Automation feature normalization, internal-email feature label, Persona facts projection, and the completion-reply forbidden-value gate.
