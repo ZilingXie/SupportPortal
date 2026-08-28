@@ -12,6 +12,8 @@ MANIFEST_PATH=""
 COMMIT_REF=""
 BUILD_TIME=""
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-}"
+BUILDER="${AUTOMATION_RELEASE_BUILDER:-auto}"
+PODMAN_BUILD_TAGS=()
 
 log() { printf '[release] %s\n' "$*"; }
 fail() { printf '[release] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -25,6 +27,8 @@ Options:
       --release-id <id>          Default: rYYYYMMDD-<7-character commit>
       --prompt-release-id <id>   Active Prompt Release captured in provenance
       --manifest <path>          Default: .deployments/releases/<id>/release-manifest.json
+      --builder <auto|docker|podman>
+                                 Default: auto (Docker Buildx, then Podman)
   -h, --help                     Show help
 
 Builds api, route, and worker exactly once as linux/amd64 OCI layouts. The
@@ -45,6 +49,7 @@ parse_args() {
       --release-id) [[ $# -ge 2 ]] || fail "--release-id requires a value"; RELEASE_ID="$2"; shift 2 ;;
       --prompt-release-id) [[ $# -ge 2 ]] || fail "--prompt-release-id requires a value"; PROMPT_RELEASE_ID="$2"; shift 2 ;;
       --manifest) [[ $# -ge 2 ]] || fail "--manifest requires a path"; MANIFEST_PATH="$2"; shift 2 ;;
+      --builder) [[ $# -ge 2 ]] || fail "--builder requires a value"; BUILDER="$2"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1 (use --help)" ;;
     esac
@@ -55,23 +60,73 @@ build_role() {
   local role="$1"
   local output="$2"
   log "Building ${role} as linux/amd64 OCI layout"
-  docker buildx build \
-    --pull \
+  if [[ "${BUILDER}" == "docker" ]]; then
+    docker buildx build \
+      --pull \
+      --platform linux/amd64 \
+      --provenance=false \
+      --build-arg "AUTOMATION_IMAGE_ROLE=ecs-${role}" \
+      --build-arg "APP_BUILD_REF=${COMMIT_REF}" \
+      --build-arg "APP_BUILD_TIME=${BUILD_TIME}" \
+      --file "${DOCKERFILE}" \
+      --tag "supportportal-local:${role}-${RELEASE_ID}" \
+      --output "type=oci,dest=${output}" \
+      "${PROJECT_ROOT}"
+    return
+  fi
+
+  local podman_tag="localhost/supportportal-release-build:${role}-${RELEASE_ID}-$$"
+  PODMAN_BUILD_TAGS+=("${podman_tag}")
+  podman build \
+    --pull=always \
     --platform linux/amd64 \
-    --provenance=false \
+    --format oci \
     --build-arg "AUTOMATION_IMAGE_ROLE=ecs-${role}" \
     --build-arg "APP_BUILD_REF=${COMMIT_REF}" \
     --build-arg "APP_BUILD_TIME=${BUILD_TIME}" \
     --file "${DOCKERFILE}" \
-    --tag "supportportal-local:${role}-${RELEASE_ID}" \
-    --output "type=oci,dest=${output}" \
+    --tag "${podman_tag}" \
     "${PROJECT_ROOT}"
+  podman save --format oci-archive --output "${output}" "${podman_tag}"
+}
+
+cleanup() {
+  local tag
+  [[ "${BUILDER}" == "podman" ]] || return 0
+  for tag in "${PODMAN_BUILD_TAGS[@]}"; do
+    podman image rm "${tag}" >/dev/null 2>&1 || true
+  done
+}
+
+select_builder() {
+  case "${BUILDER}" in
+    auto)
+      if command -v docker >/dev/null 2>&1 && docker buildx version >/dev/null 2>&1; then
+        BUILDER="docker"
+      elif command -v podman >/dev/null 2>&1; then
+        BUILDER="podman"
+      else
+        fail "Docker Buildx or Podman is required"
+      fi
+      ;;
+    docker)
+      require_cmd docker
+      docker buildx version >/dev/null 2>&1 || fail "Docker buildx is required"
+      ;;
+    podman)
+      require_cmd podman
+      podman version >/dev/null 2>&1 || fail "Podman is not available"
+      ;;
+    *) fail "Invalid builder: ${BUILDER}" ;;
+  esac
+  log "Using ${BUILDER} builder"
 }
 
 main() {
   parse_args "$@"
-  require_cmd docker
   require_cmd git
+  select_builder
+  trap cleanup EXIT
   if [[ -z "${PYTHON_BIN}" && -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
     PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
   fi
@@ -85,7 +140,6 @@ main() {
   PYTHON_BIN="${PYTHON_BIN:-python3}"
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] \
     || fail "Python runtime not found: ${PYTHON_BIN}"
-  docker buildx version >/dev/null 2>&1 || fail "Docker buildx is required"
   [[ -f "${DOCKERFILE}" ]] || fail "Dockerfile not found: ${DOCKERFILE}"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=all)" ]] \
     || fail "Working tree is not clean; build from a clean commit"

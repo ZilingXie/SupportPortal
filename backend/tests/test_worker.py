@@ -4120,6 +4120,37 @@ class WorkerResilienceTests(unittest.TestCase):
             self.assertEqual(worker._billing_reply_poll_interval_from_env(), 11.0)
             self.assertEqual(worker._billing_reply_poll_max_messages_from_env(), 9)
 
+    def test_process_automation_request_replies_once_covers_all_internal_subjects(self) -> None:
+        replies = [object()]
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATION_REPLY_POLL_MAX_MESSAGES": "",
+                "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES": "",
+            },
+            clear=False,
+        ), patch.object(
+            worker, "poll_automation_request_replies", return_value=replies
+        ) as poll:
+            observed = worker.process_automation_request_replies_once()
+
+        self.assertIs(observed, replies)
+        self.assertEqual(poll.call_args.kwargs["max_messages"], 25)
+        self.assertEqual(
+            poll.call_args.kwargs["subject_prefixes"],
+            (
+                worker.namespaced_internal_email_subject(
+                    worker.BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX
+                ),
+                worker.namespaced_internal_email_subject(
+                    worker.ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX
+                ),
+                worker.namespaced_internal_email_subject(
+                    worker.QUOTA_INTERNAL_EMAIL_SUBJECT_PREFIX
+                ),
+            ),
+        )
+
     def test_start_billing_reply_poller_starts_daemon_thread_when_enabled(self) -> None:
         started_threads = []
 

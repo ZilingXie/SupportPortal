@@ -56,8 +56,22 @@ resource "terraform_data" "service_validation" {
     }
 
     precondition {
-      condition     = !var.enable_services || var.enable_redis
-      error_message = "The initial Production Worker requires the Redis foundation when services are enabled."
+      condition = !var.enable_services || alltrue([
+        for image in [var.api_image, var.route_image, var.worker_image] :
+        startswith(image, "${aws_ecr_repository.runtime.repository_url}@sha256:") &&
+        can(regex("@sha256:[0-9a-f]{64}$", image))
+      ])
+      error_message = "All services must use supportportal-production ECR references pinned by sha256 digest."
+    }
+
+    precondition {
+      condition = !var.enable_services || alltrue([
+        trimspace(var.release_id) != "" && trimspace(var.release_id) != "unreleased",
+        can(regex("^[0-9a-f]{40}$", var.git_commit)),
+        trimspace(var.build_time) != "",
+        trimspace(var.prompt_release_id) != "",
+      ])
+      error_message = "Release ID, full Git commit, build time and Prompt Release ID are required."
     }
   }
 }

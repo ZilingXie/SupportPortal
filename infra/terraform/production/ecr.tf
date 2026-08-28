@@ -1,7 +1,5 @@
 resource "aws_ecr_repository" "runtime" {
-  for_each = local.ecr_repositories
-
-  name                 = each.value
+  name                 = local.ecr_repository_name
   image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
@@ -14,8 +12,7 @@ resource "aws_ecr_repository" "runtime" {
 }
 
 resource "aws_ecr_lifecycle_policy" "runtime" {
-  for_each   = aws_ecr_repository.runtime
-  repository = each.value.name
+  repository = aws_ecr_repository.runtime.name
 
   policy = jsonencode({
     rules = [

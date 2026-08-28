@@ -22,7 +22,12 @@
   release-manifest.json
 ```
 
-脚本要求 Docker Buildx，构建平台固定为 `linux/amd64`。每个角色只执行一次 build；脚本不登录 registry、不 push、不 deploy。重复路径会 fail closed，防止覆盖既有 release artifact。
+脚本优先使用 Docker Buildx；Docker不可用时可自动使用 Podman，也可显式传
+`--builder docker|podman`。两条路径都把构建平台固定为 `linux/amd64`，Podman
+路径先构建本地临时镜像再导出 `oci-archive`并清理临时 tag。每个角色只执行
+一次 build；脚本不登录 registry、不 push、不 deploy。重复路径会 fail closed，
+防止覆盖既有 release artifact。Manifest validator会拒绝非单一
+`linux/amd64`的 artifact。
 
 重新验证 bundle：
 
@@ -39,7 +44,6 @@
 AUTOMATION_ENVIRONMENT=preproduction|production
 AUTOMATION_BASE_PATH=/automation/<environment>
 AUTOMATION_DB_DSN=<runtime coordination DSN>
-AUTOMATION_DB_MIGRATION_DSN=<bootstrap-only DSN>
 AUTOMATION_DB_SCHEMA=<environment-specific schema>
 AUTOMATION_DB_RESOURCE_ID=<resource identity>
 AUTOMATION_JOB_NAMESPACE=<environment-specific namespace>
@@ -50,11 +54,12 @@ APP_BUILD_REF=<full commit>
 APP_BUILD_TIME=<manifest build_time>
 PROMPT_RELEASE_ID=<manifest prompt release>
 TICKET_DB_DSN=<environment Account schema runtime DSN>
-TICKET_DB_MIGRATION_DSN=<bootstrap-only Account DSN>
 TICKET_DB_SCHEMA=<environment Account schema>
-RAG_SERVICE_URL=<verified remote RAG base URL>
-RAG_SERVICE_SHARED_TOKEN=<secret>
 ```
+
+Route和Worker额外获得`TICKET_DB_DSN`；远端RAG URL/token只注入Worker。
+`AUTOMATION_DB_MIGRATION_DSN`与`TICKET_DB_MIGRATION_DSN`只属于一次性bootstrap
+task，不得进入三个长运行task definition。
 
 API额外要求：
 
@@ -67,6 +72,11 @@ Worker是否允许 Zendesk副作用由环境显式控制：
 
 ```text
 AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED=0|1
+AUTOMATION_REPLY_POLL_ENABLED=true
+AUTOMATION_REPLY_POLL_INTERVAL_SECONDS=300
+INTERNAL_EMAIL_SUBJECT_NAMESPACE=[automation]
+RAG_SERVICE_URL=<verified remote RAG base URL>
+RAG_SERVICE_SHARED_TOKEN=<secret>
 ```
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。

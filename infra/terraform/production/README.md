@@ -16,7 +16,8 @@ putting Cloudflare credentials in Terraform state.
 
 The default apply creates the platform resources only:
 
-- immutable, scan-on-push ECR repositories for API, Route and Worker;
+- one immutable, scan-on-push `supportportal-production` ECR repository; API,
+  Route and Worker remain separate images identified by role tag and digest;
 - ECS cluster and Fargate roles;
 - public ALB, target group and `/automation/production*` listener rule;
 - CloudWatch log groups;
@@ -26,12 +27,14 @@ The default apply creates the platform resources only:
 - versioned, private S3 release-manifest bucket;
 - GitHub Actions OIDC provider and restricted release role.
 
-`enable_services` defaults to `false`. Do not enable it until the other
-thread's Production runtime and immutable release digests are available and
-the Secrets Manager values have been populated. The optional task definitions
-and services use API port `8000`, Route sidecar port `8100`, and Worker command
-`python -m backend.worker`; adjust only after the approved runtime contract is
-merged.
+`enable_services` defaults to `false`. Do not enable it until the Account
+parity Release Manifest and immutable release digests are available and the
+Secrets Manager values have been populated. The optional services are three
+independent Fargate tasks: the Intake API runs
+`backend.automation_ecs_api:create_app --factory`, the Route Worker runs
+`backend.automation_ecs_route_worker`, and the Automation Worker runs
+`backend.automation_ecs_worker`. All task definitions require `X86_64` and
+images in `supportportal-production` pinned as `repository@sha256:digest`.
 
 The stack uses the existing VPC `vpc-0125f57b2ec2f0423` and discovers public
 subnets when `public_subnet_ids` is empty. It assigns public IPs to Fargate
@@ -41,13 +44,11 @@ the ALB. ALB and target 5xx alarms are created without notification actions
 because no alert destination has been configured. The optional ECS
 running-task alarm is created only when `enable_container_insights=true`.
 
-The ALB listener matches `/automation/production*` but forwards the original
-URI unchanged. The AWS provider version used here does not configure an ALB
-URL-rewrite transform, so the approved Production runtime must expose the
-prefixed compatibility routes (for example,
-`/automation/production/v1/cases`). The target health check remains
-`/health`; keep that endpoint available in the task even when the public
-compatibility routes are prefixed.
+The ALB listener matches `/automation/production*` and forwards the original
+URI unchanged. The Intake API exposes the prefixed contract directly. Both
+the ALB and container health check use
+`/automation/production/health/live`; readiness remains a separate check that
+also requires matching Route/Worker heartbeats and release provenance.
 
 ## Bootstrap
 
@@ -79,11 +80,19 @@ config containing account-specific state details.
    certificate status to become `ISSUED`.
 6. Re-apply with `enable_https_listener=true`.
 7. Populate the runtime secrets out of band. Never put their values in Git,
-   Terraform variables or logs.
+   Terraform variables, task definitions, Release Manifests or logs. Long-lived
+   tasks receive only the runtime DSN; the migration DSN remains bootstrap-only.
 8. Verify the EFS mount and Worker token-cache path during the first task
    startup; the EFS filesystem is not shared with the EC2 backup.
-9. Only after the Production release manifest exists, set the three immutable
-   image references and `enable_services=true`.
+9. Only after the Production Release Manifest exists, set the three immutable
+   digest references plus `release_id`, `git_commit`, `build_time` and
+   `prompt_release_id`. Enable Zendesk side effects only for the controlled
+   Production Case test, then set `enable_services=true`.
+
+This root is currently a verifiable configuration source only. Review and
+import any manually created `supportportal-production` repository into state
+before a future apply; do not apply a state transition that would delete
+existing role repositories or release images.
 
 No command in this directory changes `support.stellarix.space`, the existing
 EC2 deployment, n8n workflows, or any customer-facing Case.

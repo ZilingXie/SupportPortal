@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Event
@@ -169,6 +170,29 @@ class AccountBusinessProcessor:
 
 
 @dataclass
+class AccountBackgroundCycle:
+    account_cycle: Callable[[], None]
+    outlook_cycle: Callable[[], list[Any]]
+    outlook_enabled: Callable[[], bool]
+    outlook_interval_seconds: Callable[[], float]
+    clock: Callable[[], float] = time.monotonic
+    next_outlook_poll_at: float = 0.0
+
+    def __call__(self) -> None:
+        now = self.clock()
+        if self.outlook_enabled() and now >= self.next_outlook_poll_at:
+            self.next_outlook_poll_at = now + max(self.outlook_interval_seconds(), 1.0)
+            try:
+                self.outlook_cycle()
+            except Exception:
+                LOGGER.exception("Automation Outlook reply cycle failed")
+        try:
+            self.account_cycle()
+        except Exception:
+            LOGGER.exception("Account reply/delivery cycle failed")
+
+
+@dataclass
 class AutomationWorker:
     settings: AutomationEcsSettings
     store: AutomationEcsStore
@@ -290,11 +314,17 @@ def run_automation_worker() -> int:
     from backend import worker as account_worker
 
     account_worker.ticket_repository = repository
+    background_cycle = AccountBackgroundCycle(
+        account_cycle=account_worker.process_account_automation_once,
+        outlook_cycle=account_worker.process_automation_request_replies_once,
+        outlook_enabled=account_worker._billing_reply_poller_enabled_from_env,
+        outlook_interval_seconds=account_worker._billing_reply_poll_interval_from_env,
+    )
     worker = AutomationWorker(
         settings=settings,
         store=store,
         processor=AccountBusinessProcessor(repository, environment=settings.environment),
-        background_cycle=account_worker.process_account_automation_once,
+        background_cycle=background_cycle,
     )
     stopping = Event()
     heartbeat = WorkerHeartbeat(

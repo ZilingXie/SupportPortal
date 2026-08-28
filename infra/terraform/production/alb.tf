@@ -28,7 +28,7 @@ resource "aws_lb_target_group" "api" {
 
   health_check {
     enabled             = true
-    path                = "/health"
+    path                = "/automation/production/health/live"
     protocol            = "HTTP"
     matcher             = "200-399"
     interval            = 30

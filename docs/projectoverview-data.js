@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-28T07:37:41Z",
-  "source_base_commit": "0300d1731c3ce16dc44e6f0e318c2caf24685544",
-  "registry_digest": "ee0f24917545c167ad6d5f7dedcb0053ccf669670eda29691b1150a1bd4d5494",
+  "generated_at": "2026-08-28T15:31:24Z",
+  "source_base_commit": "13a14b8589a95c26d621af5e1c9030063a26b999",
+  "registry_digest": "3f442ded3c1126c314e10dba731cf4831bf80078762cb5625e11cd289f7f1201",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1887,6 +1887,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS runtime and legacy contract verification",
           "command": "targeted pytest suite plus temporary local PostgreSQL integration",
           "details": "280项综合回归与19项子测试通过且无 warning；真实 PostgreSQL migration、并发幂等、Route到Processing原子交接、job lease续租、delivery、release一致性 heartbeat和 outcome_unknown终态路径通过。旧 build_automation_release.sh及其测试保持逐字兼容，新 ECS builder使用独立入口。Docker在当前主机不可用，因此三份真实 OCI artifact构建保留为用户手工 gate。"
+        },
+        {
+          "type": "test",
+          "label": "Account parity release contracts",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py",
+          "details": "423 passed、28 subtests passed；覆盖新三角色、Account intake与后续reply/delivery、Billing/Enablement/Quota Outlook单次poll、远端RAG client与executor、旧/production contract、Podman builder和amd64 Manifest gate。PR #991的惰性conftest隔离已合入，测试未触发真实邮件或RAG外呼。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Terraform launch contract",
+          "command": "podman run hashicorp/terraform:1.9.8 fmt; isolated terraform init -backend=false && terraform validate",
+          "details": "配置有效：API使用automation_ecs_api factory和prefixed live health；Route、Worker为独立Fargate service；三者强制X86_64并使用supportportal-production@sha256引用、runtime DSN和完整release/image/Prompt provenance；长期task不注入migration DSN。未执行plan或apply。"
         }
       ],
       "source_refs": [
@@ -5955,8 +5967,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Stage 2 release由独立 API、Route Worker和 Automation Worker组成，使用 RDS durable Jobs和远端 RAG，不部署项目内 RAG服务。",
-      "next_action": "Stage 2代码与本地契约已完成，等待用户在具备 Docker Buildx的主机从干净 commit手工构建 api/route/worker OCI release，确认 Prompt Release并将 artifact上传 supportportal-preproduction。随后进入 Stage 3 ECS Foundation；本任务不部署 EC2/AWS、不修改 n8n/Cloudflare，也不切流。",
+      "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。当前 Stage 2 收敛为 Account parity release：独立 API、Route Worker和 Automation Worker使用 RDS durable Jobs与远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
+      "next_action": "从当前干净 source commit用 Podman固定linux/amd64构建api/route/worker OCI archive并验证Manifest、digest、平台和物理文件排除；完成后只保留本地artifact供复核，不push ECR、不部署ECS、不修改DNS/n8n，也不重启EC2 /production。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal-preproduction与 supportportal-production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6037,6 +6049,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS runtime and legacy contract verification",
           "command": "targeted pytest suite plus temporary local PostgreSQL integration",
           "details": "280项综合回归与19项子测试通过且无 warning；真实 PostgreSQL migration、并发幂等、Route到Processing原子交接、job lease续租、delivery、release一致性 heartbeat和 outcome_unknown终态路径通过。旧 build_automation_release.sh及其测试保持逐字兼容，新 ECS builder使用独立入口。Docker在当前主机不可用，因此三份真实 OCI artifact构建保留为用户手工 gate。"
+        },
+        {
+          "type": "test",
+          "label": "Account parity release contracts",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py",
+          "details": "423 passed、28 subtests passed；覆盖新三角色、Account intake与后续reply/delivery、Billing/Enablement/Quota Outlook单次poll、远端RAG client与executor、旧/production contract、Podman builder和amd64 Manifest gate。PR #991的惰性conftest隔离已合入，测试未触发真实邮件或RAG外呼。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Terraform launch contract",
+          "command": "podman run hashicorp/terraform:1.9.8 fmt; isolated terraform init -backend=false && terraform validate",
+          "details": "配置有效：API使用automation_ecs_api factory和prefixed live health；Route、Worker为独立Fargate service；三者强制X86_64并使用supportportal-production@sha256引用、runtime DSN和完整release/image/Prompt provenance；长期task不注入migration DSN。未执行plan或apply。"
         }
       ],
       "source_refs": [
@@ -6048,6 +6072,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/automation_ecs_api.py",
         "backend/automation_ecs_route_worker.py",
         "backend/automation_ecs_worker.py",
+        "backend/worker.py",
+        "infra/terraform/production/ecs.tf",
+        "infra/terraform/production/locals.tf",
+        "infra/terraform/production/alb.tf",
         "deployment/deploy_automation_production_blue_green.sh",
         "scripts/workflow/start_local_split_environments.sh",
         "docs/deploy_automation_release.md",
@@ -6055,7 +6083,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-08-27",
+      "updated_at": "2026-08-28",
       "history": [
         {
           "at": "2026-08-25",
@@ -6106,6 +6134,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-27",
           "event": "progress",
           "summary": "Stage 2本地实现与 review完成：新增异步 Intake/Execution trace、独立 Worker heartbeat和job lease续租、production-safe角色镜像、OCI Release Manifest与完整 layer promotion tooling；旧 EC2 release builder保持兼容。本任务未部署 AWS/EC2、未修改 n8n/Cloudflare、未切流。"
+        },
+        {
+          "at": "2026-08-28",
+          "event": "account_parity_release_hardening",
+          "summary": "Account parity release补齐Outlook内部回复消费与PR#991测试隔离；Terraform改为独立API/Route/Worker task、prefixed health、完整provenance和supportportal-production环境仓库digest引用；Slack Engineer Case入向链路延期。423项回归、28项子测试及隔离Terraform validate通过，尚未push/deploy/cutover。"
         }
       ],
       "legacy_refs": [

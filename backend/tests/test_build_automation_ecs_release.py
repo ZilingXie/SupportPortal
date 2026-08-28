@@ -48,6 +48,7 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         self._git("add .")
         self._git("commit -m initial")
         self._install_fake_docker()
+        self._install_fake_podman()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -113,6 +114,52 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         )
         (self.fake_bin / "docker").chmod(0o755)
 
+    def _install_fake_podman(self) -> None:
+        self._write(
+            self.fake_bin,
+            "podman",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import io
+                import json
+                import os
+                import sys
+                import tarfile
+                from pathlib import Path
+
+                state = Path(os.environ["RELEASE_TEST_STATE"])
+                args = sys.argv[1:]
+                with (state / "podman_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(args) + "\\n")
+                if args == ["version"] or args[:1] == ["build"] or args[:2] == ["image", "rm"]:
+                    sys.exit(0)
+                if args[:1] == ["save"]:
+                    destination = Path(args[args.index("--output") + 1])
+                    tag = args[-1]
+                    role = next(value for value in ("api", "route", "worker") if f":{value}-" in tag)
+                    digit = {"api": "1", "route": "2", "worker": "3"}[role]
+                    payload = json.dumps({
+                        "schemaVersion": 2,
+                        "manifests": [{
+                            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                            "digest": "sha256:" + digit * 64,
+                            "size": 123,
+                            "platform": {"os": "linux", "architecture": "amd64"},
+                        }],
+                    }).encode()
+                    with tarfile.open(destination, "w") as archive:
+                        info = tarfile.TarInfo("index.json")
+                        info.size = len(payload)
+                        archive.addfile(info, io.BytesIO(payload))
+                    sys.exit(0)
+                print(f"unexpected podman invocation: {args}", file=sys.stderr)
+                sys.exit(1)
+                """
+            ),
+        )
+        (self.fake_bin / "podman").chmod(0o755)
+
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment["PATH"] = f"{self.fake_bin}:{environment['PATH']}"
@@ -159,6 +206,27 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         self.assertIn("Working tree is not clean", result.stdout + result.stderr)
         calls = [json.loads(line) for line in (self.state_dir / "docker_calls.jsonl").read_text().splitlines()]
         self.assertFalse(any(call[:2] == ["buildx", "build"] for call in calls))
+
+    def test_podman_builds_and_saves_three_amd64_oci_archives(self) -> None:
+        result = self._run(
+            "--builder", "podman",
+            "--release-id", "release-podman",
+            "--prompt-release-id", "prompt-42",
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        calls = [
+            json.loads(line)
+            for line in (self.state_dir / "podman_calls.jsonl").read_text().splitlines()
+        ]
+        builds = [call for call in calls if call[:1] == ["build"]]
+        saves = [call for call in calls if call[:1] == ["save"]]
+        removals = [call for call in calls if call[:2] == ["image", "rm"]]
+        self.assertEqual(len(builds), 3)
+        self.assertEqual(len(saves), 3)
+        self.assertEqual(len(removals), 3)
+        self.assertTrue(all("--platform" in call and "linux/amd64" in call for call in builds))
+        self.assertTrue(all("oci-archive" in call for call in saves))
 
 
 if __name__ == "__main__":

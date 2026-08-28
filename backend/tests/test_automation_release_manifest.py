@@ -12,7 +12,7 @@ from backend.scripts import automation_release
 from backend.services.automation_release_manifest import read_manifest
 
 
-def _layout(path: Path, digit: str) -> None:
+def _layout(path: Path, digit: str, *, architecture: str = "amd64") -> None:
     payload = json.dumps(
         {
             "schemaVersion": 2,
@@ -21,7 +21,7 @@ def _layout(path: Path, digit: str) -> None:
                     "mediaType": "application/vnd.oci.image.manifest.v1+json",
                     "digest": "sha256:" + digit * 64,
                     "size": 123,
-                    "platform": {"os": "linux", "architecture": "amd64"},
+                    "platform": {"os": "linux", "architecture": architecture},
                 }
             ],
         }
@@ -67,4 +67,17 @@ def test_manifest_rejects_missing_role_or_mutable_image_reference(tmp_path: Path
         "--output", str(tmp_path / "manifest.json"), "--component", "api", str(layout),
     ]
     with pytest.raises(ValidationError, match="api, route, and worker"):
+        automation_release.run(args)
+
+
+def test_manifest_rejects_non_amd64_oci_layout(tmp_path: Path) -> None:
+    layout = tmp_path / "api.oci.tar"
+    _layout(layout, "a", architecture="arm64")
+    args = [
+        "create", "--release-id", "r1", "--git-commit", "abcdef1",
+        "--build-time", "2026-08-27T10:00:00Z", "--prompt-release-id", "p1",
+        "--output", str(tmp_path / "manifest.json"), "--component", "api", str(layout),
+    ]
+
+    with pytest.raises(ValueError, match="must be linux/amd64"):
         automation_release.run(args)
