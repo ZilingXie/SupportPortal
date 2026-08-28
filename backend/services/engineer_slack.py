@@ -37,6 +37,10 @@ def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
+def _escape_slack_untrusted_text(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def build_engineer_case_opened_event(
     *,
     account_case: dict[str, Any],
@@ -62,7 +66,10 @@ def build_engineer_case_opened_event(
         if zendesk_ticket_id
         else None
     )
-    message_lines = [title, problem]
+    message_lines = [
+        _escape_slack_untrusted_text(title),
+        _escape_slack_untrusted_text(problem),
+    ]
     if zendesk_url:
         message_lines.append(f"zendesk: {zendesk_url}")
     if route_reason:

@@ -5,9 +5,10 @@
   "status": "active",
   "owner": "unassigned",
   "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。Zendesk status sync 对绑定 Case thread 发送状态变化通知，不触发 AI 或客户交付。n8n 只负责固定 Team/Channel/thread 的入站控制。",
-  "next_action": "在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
+  "next_action": "由用户部署 Slack mention neutralization 后，以新的 Production Non automated 测试工单确认客户正文中的 Slack user/broadcast token 只显示为普通文本且不产生通知；同时在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
   "acceptance_criteria": [
     "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
+    "Production Non automated Case 的客户标题和问题即使包含 Slack user/channel/broadcast token，也只作为普通文本显示且不触发 mention 通知。",
     "Production Non automated Engineer Case 的真实 Zendesk status transition 只队列一条 `Ticket's Status has been changed from XXX to XXX.` Slack thread 通知；重复或 stale status 不新增事件，solved/closed 仍关闭 Engineer Case。",
     "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
     "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。"
@@ -63,13 +64,18 @@
       "type": "test",
       "summary": "Zendesk status transitions for Production Non automated Engineer Cases now queue an exact status-change Slack event atomically with the in-memory/PostgreSQL projection, preserve stale/replay idempotency, and avoid a second closure notification for solved cases; targeted and worker/investigation regressions passed 270 tests, 22 subtests.",
       "ref": "backend/tests/test_account_zendesk_status_sync.py, backend/tests/test_account_zendesk_status_sync_postgres.py, backend/tests/test_automation_comment_sync.py, backend/tests/test_engineer_slack.py, backend/tests/test_worker.py, backend/tests/test_investigation_flow.py"
+    },
+    {
+      "type": "test",
+      "summary": "Engineer Slack root messages now neutralize Slack user and broadcast control tokens only in the rendered customer title/problem while preserving the structured source text, Zendesk URL, route reason, thread workflow and direct-post contract; targeted Slack and Production intake regression passed 189 tests and 14 subtests.",
+      "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_account_intake.py"
     }
   ],
   "source_refs": [
     "docs/roadmap.html#lanes"
   ],
   "created_at": "2026-08-16",
-  "updated_at": "2026-08-27",
+  "updated_at": "2026-08-28",
   "history": [
     {
       "at": "2026-08-16",
@@ -130,6 +136,11 @@
       "at": "2026-08-27",
       "event": "zendesk_status_slack_notification",
       "summary": "Production Non automated Case 的 Zendesk status transition 通过现有 status endpoint 入队固定文案 Slack thread 通知；重复/stale 不重复，solved/closed 保留 Engineer Case 关闭且不再额外发送 closure 文案。"
+    },
+    {
+      "at": "2026-08-28",
+      "event": "slack_mentions_neutralized",
+      "summary": "Production Non automated root message 对客户标题和问题中的 Slack user/channel/broadcast token 做出站转义，避免上游 `<@U...>` 在固定协作频道触发真实 mention；结构化原文和系统生成内容保持不变。"
     }
   ],
   "legacy_refs": [
