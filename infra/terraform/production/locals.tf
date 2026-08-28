@@ -23,7 +23,7 @@ locals {
     local.public_subnet_ids_by_az[availability_zone][0]
   ]
 
-  ecr_repository_name = local.name_prefix
+  ecr_repository_name = "${var.project_name}/${var.environment}"
 
   runtime_secret_names = {
     ticket_db_dsn               = "${local.name_prefix}/ticket-db-dsn"

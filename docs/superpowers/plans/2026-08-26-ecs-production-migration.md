@@ -134,8 +134,8 @@ Execution query必须显示 environment、release/build/image/schema/Prompt prov
 ECR仓库按环境划分：
 
 ```text
-supportportal-preproduction
-supportportal-production
+supportportal/preproduction
+supportportal/production
 ```
 
 每个 release包含三个 immutable role tag：
@@ -179,11 +179,11 @@ Preproduction验收后，`deployment/promote_automation_release.sh`按 digest读
 
 ### Stage 4：Preproduction，待执行
 
-将一次构建的 OCI manifests上传 `supportportal-preproduction`，按 digest部署 `/automation/preproduction`，完成 schema/Prompt/heartbeat/远端 RAG和受控 Zendesk/邮件/Slack readback。
+将一次构建的 OCI manifests上传 `supportportal/preproduction`，按 digest部署 `/automation/preproduction`，完成 schema/Prompt/heartbeat/远端 RAG和受控 Zendesk/邮件/Slack readback。
 
 ### Stage 5：Production，待执行
 
-在 Preproduction证据通过后复制相同 manifests到 `supportportal-production`，验证 digest一致，再按 digest部署 `/automation/production`。此时仍不修改现有 `/production`。
+在 Preproduction证据通过后复制相同 manifests到 `supportportal/production`，验证 digest一致，再按 digest部署 `/automation/production`。此时仍不修改现有 `/production`。
 
 ### Stage 6：EC2 Staging，待执行
 

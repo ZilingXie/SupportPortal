@@ -102,7 +102,7 @@ python -m backend.scripts.automation_ecs_bootstrap check
 目标 repository：
 
 ```text
-supportportal-preproduction
+supportportal/preproduction
 ```
 
 role tag严格来自 Manifest：
@@ -124,7 +124,7 @@ ECR digest == release-manifest.json component digest
 Preproduction ECS task definition使用：
 
 ```text
-<account>.dkr.ecr.<region>.amazonaws.com/supportportal-preproduction@sha256:<digest>
+<account>.dkr.ecr.<region>.amazonaws.com/supportportal/preproduction@sha256:<digest>
 ```
 
 禁止使用 tag作为 task definition image引用。
@@ -142,15 +142,15 @@ Preproduction真实验收与外部 readback完成后，由用户执行：
 
 脚本要求本机已有 `aws`与 `crane`，并会使用当前 AWS身份登录 ECR。脚本：
 
-1. 按 Manifest digest从 `supportportal-preproduction`读取原始 OCI manifest。
-2. 通过 registry-to-registry copy将原始 manifest及其 layers以同一 role tag写入 `supportportal-production`，不 build。
+1. 按 Manifest digest从 `supportportal/preproduction`读取原始 OCI manifest。
+2. 通过 registry-to-registry copy将原始 manifest及其 layers以同一 role tag写入 `supportportal/production`，不 build。
 3. 验证每个 Production digest与 Manifest完全相等。
 4. 生成单独的 `promotion-record.json`，不修改 Release Manifest。
 
 Production task definition使用：
 
 ```text
-<account>.dkr.ecr.<region>.amazonaws.com/supportportal-production@sha256:<digest>
+<account>.dkr.ecr.<region>.amazonaws.com/supportportal/production@sha256:<digest>
 ```
 
 ## n8n Cutover Input
