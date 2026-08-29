@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-29T14:51:18Z",
-  "source_base_commit": "919efbef3c43e70439928e816525b92bad9f369c",
-  "registry_digest": "6d0474dc0f8f10001d8651998710e4e8217a98769f0e7f7f69738d5aee420502",
+  "generated_at": "2026-08-29T15:30:48Z",
+  "source_base_commit": "e6cffca7c5555c8f025626188aaf6f45b92252a7",
+  "registry_digest": "914f7ef95b53972cb0a202a60523b95df141f266d9fb30c54b1a7b8f88f08f2c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1917,6 +1917,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Account parity OCI release r20260828-c24afb5",
           "command": "./deployment/build_automation_ecs_release.sh --builder podman --release-id r20260828-c24afb5 --prompt-release-id pr-2bc7aaccb8b0 --manifest ../../.deployments/releases/r20260828-c24afb5/release-manifest.json; ../../.venv/bin/python -m backend.scripts.automation_release validate --manifest ../../.deployments/releases/r20260828-c24afb5/release-manifest.json",
           "details": "真实OCI artifact已从干净source c24afb54b80a13ebd345d67c3af13d3df1473043构建并保存在.deployments/releases/r20260828-c24afb5：API sha256:1b1e197939fb001acc55a12ed5b574417d3dbdeed0941fc709f1f64ec21566c8、Route sha256:c35515693eae6a57fb684287c03f902da0c40376ec6f3662575e1c294615375a、Worker sha256:3c4f0390273248cadf1acd45c39a9d22717cd6fcbb753fcce5e8f5a6d00c5614。三者均为单一linux/amd64，Prompt Release为pr-2bc7aaccb8b0；Podman load后的digest/config/provenance与Manifest一致，最终文件系统不存在backend.main、旧automation_production_runtime、tests、rerun/reset、本地rag_api/rag_worker、.env、__pycache__或Python bytecode，角色入口import通过。首次r20260828-0d5b22d因发现host bytecode已判废并删除；本次未push/deploy/cutover。"
+        },
+        {
+          "type": "test",
+          "label": "Readiness-fixed Account parity OCI release r20260829-e6cffca",
+          "command": "./deployment/build_automation_ecs_release.sh --builder podman --release-id r20260829-e6cffca --prompt-release-id pr-2bc7aaccb8b0; .venv/bin/python -m backend.scripts.automation_release validate --manifest .deployments/releases/r20260829-e6cffca/release-manifest.json; Podman load/inspect/filesystem/import/readiness probes",
+          "details": "从干净main e6cffca7c5555c8f025626188aaf6f45b92252a7构建三份单一linux/amd64 OCI：API sha256:e1d432e7fb322a62dca9f4374e7039b791ac59141fec43b78b84adb45635efa2、Route sha256:fe0a114816cb90811e92b848997b8f3857b4e6182bf1c3215ef7618028b9f32b、Worker sha256:3d8cdbb4d2112c8001cb3c716c70c4408d7131798345c55c29ca3081d74dcb60，Prompt Release为唯一active的pr-2bc7aaccb8b0。Manifest二次验证、Podman digest/config/provenance、角色entrypoint/import与filesystem排除门禁均通过；新API镜像内PostgreSQL-shaped timezone-aware datetime readiness探针返回受控503、missing_roles仅worker且last_seen_at为字符串。19项release/source契约测试通过；未push ECR、未更新 ECS、未修改DNS/n8n或EC2 backup。"
         },
         {
           "type": "test",
@@ -5992,7 +5998,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。当前 Stage 2 收敛为 Account parity release：独立 API、Route Worker和 Automation Worker使用 RDS durable Jobs与远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
-      "next_action": "基于合并后的 commit 构建并发布新的 Account parity release，更新 API Task Definition/Service 后启动 Route/Worker；要求 /health/ready 对真实 PostgreSQL heartbeat 返回受控 200/503 且不再出现 500，再继续 DNS/n8n 和受控 Account Case 验收。EC2 /production 保持不变作为 backup。",
+      "next_action": "将已验证的 r20260829-e6cffca 三角色 OCI 按 immutable role tag 上传 supportportal/production，并只读回查 ECR digest 与 Release Manifest 一致；随后注册新的 API Task Definition revision、更新 API Service，确认 /health/live 为 200 且 /health/ready 在 Route/Worker 尚未启动时返回受控 503 而不是 500。再分别启动 Route/Worker并验证一致 provenance heartbeat；DNS、n8n与 EC2 /production 保持不变。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6106,6 +6112,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Readiness-fixed Account parity OCI release r20260829-e6cffca",
+          "command": "./deployment/build_automation_ecs_release.sh --builder podman --release-id r20260829-e6cffca --prompt-release-id pr-2bc7aaccb8b0; .venv/bin/python -m backend.scripts.automation_release validate --manifest .deployments/releases/r20260829-e6cffca/release-manifest.json; Podman load/inspect/filesystem/import/readiness probes",
+          "details": "从干净main e6cffca7c5555c8f025626188aaf6f45b92252a7构建三份单一linux/amd64 OCI：API sha256:e1d432e7fb322a62dca9f4374e7039b791ac59141fec43b78b84adb45635efa2、Route sha256:fe0a114816cb90811e92b848997b8f3857b4e6182bf1c3215ef7618028b9f32b、Worker sha256:3d8cdbb4d2112c8001cb3c716c70c4408d7131798345c55c29ca3081d74dcb60，Prompt Release为唯一active的pr-2bc7aaccb8b0。Manifest二次验证、Podman digest/config/provenance、角色entrypoint/import与filesystem排除门禁均通过；新API镜像内PostgreSQL-shaped timezone-aware datetime readiness探针返回受控503、missing_roles仅worker且last_seen_at为字符串。19项release/source契约测试通过；未push ECR、未更新 ECS、未修改DNS/n8n或EC2 backup。"
+        },
+        {
+          "type": "test",
           "label": "Live ECR repository contract alignment",
           "command": "aws ecr describe-repositories --repository-names supportportal/production --region us-east-1; pytest test_automation_ecs_terraform.py test_automation_promotion_tool.py; Terraform 1.9.8 isolated init -backend=false && validate",
           "details": "只读AWS readback确认现有supportportal/production仓库为IMMUTABLE、scan-on-push、AES256、标签完整且当前为空；ECS cluster supportportal-production为ACTIVE且无service/task。Terraform repository URL、digest precondition、promotion默认值和部署文档已对齐supportportal/production；未来Preproduction使用supportportal/preproduction。5项定向测试、promotion shell syntax、Terraform fmt/init/validate与diff check通过；未创建仓库、未push镜像、未部署ECS。"
@@ -6202,6 +6214,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-29",
           "event": "ecs_api_readiness_serialization_fixed",
           "summary": "ECS API 在 heartbeat response boundary 使用 FastAPI JSON encoder 统一 PostgreSQL 原生 datetime 与内存 ISO 字符串；PostgreSQL-shaped 回归和 ECS API/Store/Route/Worker 契约共 32 项通过，等待基于合并 commit 重建并部署 Account parity release。"
+        },
+        {
+          "at": "2026-08-29",
+          "event": "account_parity_release_rebuilt_after_readiness_fix",
+          "summary": "从合并后的e6cffca7构建并独立复核r20260829-e6cffca三角色linux/amd64 OCI，固定active Prompt Release pr-2bc7aaccb8b0；Manifest、digest、provenance、filesystem排除、角色import与新API镜像datetime readiness门禁通过。下一步为上传ECR并仅更新ECS API，尚未修改AWS运行时、DNS、n8n或EC2 backup。"
         }
       ],
       "legacy_refs": [
