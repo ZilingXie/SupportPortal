@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -81,6 +83,22 @@ def test_readiness_fails_without_both_fresh_worker_roles() -> None:
         response = client.get("/automation/production/health/ready")
     assert response.status_code == 503
     assert response.json()["missing_roles"] == ["worker"]
+
+
+def test_readiness_serializes_postgres_datetime_heartbeat() -> None:
+    client, store = _client()
+    heartbeat = {
+        "worker_id": "route-1",
+        "role": "route",
+        "provenance": _settings("route").provenance().model_dump(mode="json"),
+        "last_seen_at": datetime.now(timezone.utc),
+    }
+    with patch.object(store, "list_heartbeats", return_value=[heartbeat]):
+        with client:
+            response = client.get("/automation/production/health/ready")
+    assert response.status_code == 503
+    assert response.json()["missing_roles"] == ["worker"]
+    assert response.json()["worker_heartbeats"][0]["last_seen_at"].endswith("+00:00")
 
 
 def test_readiness_rejects_heartbeat_from_a_different_release() -> None:

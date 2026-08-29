@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-28T16:39:45Z",
-  "source_base_commit": "4583bf3c0126e0244e71cafb351904e4fbd1e201",
-  "registry_digest": "11d67d2a1a4175fd8890a75ecdac171c67b800212dca2ff5e90ff57e3dc557f0",
+  "generated_at": "2026-08-29T14:51:18Z",
+  "source_base_commit": "919efbef3c43e70439928e816525b92bad9f369c",
+  "registry_digest": "6d0474dc0f8f10001d8651998710e4e8217a98769f0e7f7f69738d5aee420502",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1821,6 +1821,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS API readiness datetime serialization blocker",
+          "command": "Live ALB /automation/production/health/ready and CloudWatch readback 2026-08-29",
+          "details": "ECS API Service、Task 与 Target Group 均健康，两个 ALB 节点的 /health/live 均为 200；真实 PostgreSQL heartbeat 的 last_seen_at 为 datetime，ready 的 503 JSONResponse 直接序列化该值并触发 TypeError，公网 /health/ready 返回 500。"
+        },
+        {
+          "type": "test",
+          "label": "ECS readiness PostgreSQL datetime regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py",
+          "details": "32 passed、2 skipped；新增 PostgreSQL-shaped timezone-aware datetime heartbeat 回归，验证 missing Worker 时返回受控 503 与 ISO timestamp，不再抛 JSON 序列化异常。两项 PostgreSQL 集成用例因未配置专用 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。"
         },
         {
           "type": "decision",
@@ -5980,7 +5992,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。当前 Stage 2 收敛为 Account parity release：独立 API、Route Worker和 Automation Worker使用 RDS durable Jobs与远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
-      "next_action": "由用户将已验证的 r20260828-c24afb5 三角色 OCI artifact上传到现有 supportportal/production ECR并做 digest readback；随后按 digest部署，完成 schema/bootstrap、远端RAG、邮件、Zendesk readback与Account Case受控验收。上传或部署前不修改DNS/n8n，也不重启EC2 /production。",
+      "next_action": "基于合并后的 commit 构建并发布新的 Account parity release，更新 API Task Definition/Service 后启动 Route/Worker；要求 /health/ready 对真实 PostgreSQL heartbeat 返回受控 200/503 且不再出现 500，再继续 DNS/n8n 和受控 Account Case 验收。EC2 /production 保持不变作为 backup。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -5996,6 +6008,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "ECS API readiness datetime serialization blocker",
+          "command": "Live ALB /automation/production/health/ready and CloudWatch readback 2026-08-29",
+          "details": "ECS API Service、Task 与 Target Group 均健康，两个 ALB 节点的 /health/live 均为 200；真实 PostgreSQL heartbeat 的 last_seen_at 为 datetime，ready 的 503 JSONResponse 直接序列化该值并触发 TypeError，公网 /health/ready 返回 500。"
+        },
+        {
+          "type": "test",
+          "label": "ECS readiness PostgreSQL datetime regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py",
+          "details": "32 passed、2 skipped；新增 PostgreSQL-shaped timezone-aware datetime heartbeat 回归，验证 missing Worker 时返回受控 503 与 ISO timestamp，不再抛 JSON 序列化异常。两项 PostgreSQL 集成用例因未配置专用 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。"
+        },
         {
           "type": "decision",
           "label": "Earlier all-ECS migration architecture (superseded)",
@@ -6168,6 +6192,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-29",
           "event": "ecr_repository_contract_aligned",
           "summary": "按live AWS资源将环境仓库契约从连字符名称对齐为supportportal/production与supportportal/preproduction；保留supportportal-production作为ECS cluster、资源前缀和Automation job namespace。既有Account parity OCI artifact保持repository-independent，无需重建；尚未push/deploy/cutover。"
+        },
+        {
+          "at": "2026-08-29",
+          "event": "ecs_api_readiness_serialization_blocker",
+          "summary": "首次 ECS API Service 联调确认 live/ALB/Target Group 健康，但 PostgreSQL heartbeat 的 datetime 在 readiness 503 响应中无法 JSON 序列化并返回 500；暂停 Route/Worker 与 DNS，先修复并重建 Account parity release。"
+        },
+        {
+          "at": "2026-08-29",
+          "event": "ecs_api_readiness_serialization_fixed",
+          "summary": "ECS API 在 heartbeat response boundary 使用 FastAPI JSON encoder 统一 PostgreSQL 原生 datetime 与内存 ISO 字符串；PostgreSQL-shaped 回归和 ECS API/Store/Route/Worker 契约共 32 项通过，等待基于合并 commit 重建并部署 Account parity release。"
         }
       ],
       "legacy_refs": [

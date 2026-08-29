@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from backend.services.automation_ecs_contracts import AutomationIntakeEvent, IntakeReceipt
@@ -90,7 +91,7 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status_code=503, detail="coordination schema unavailable") from exc
         now = datetime.now(timezone.utc)
-        heartbeats = coordination_store.list_heartbeats()
+        heartbeats = jsonable_encoder(coordination_store.list_heartbeats())
         try:
             max_age_seconds = max(
                 1.0,
