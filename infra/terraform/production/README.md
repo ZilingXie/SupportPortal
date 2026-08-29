@@ -23,7 +23,8 @@ The default apply creates the platform resources only:
 - CloudWatch log groups;
 - production runtime Secret Manager names without secret values;
 - one cost-first TLS Redis node and its generated AUTH token;
-- encrypted EFS access point mounted by the Worker for the mutable Graph token cache;
+- encrypted One Zone EFS access point mounted by the Worker for the mutable
+  Graph token cache;
 - versioned, private S3 release-manifest bucket;
 - GitHub Actions OIDC provider and restricted release role.
 
@@ -43,6 +44,11 @@ accepts traffic from the ALB security group; the Worker is not attached to
 the ALB. ALB and target 5xx alarms are created without notification actions
 because no alert destination has been configured. The optional ECS
 running-task alarm is created only when `enable_container_insights=true`.
+
+The cost-first EFS file system is One Zone in `efs_availability_zone_name`
+(`us-east-1b` by default). Only the EFS-dependent Worker is pinned to that
+Availability Zone; API, Route and ALB retain the multi-AZ subnet set. The
+selected public subnet list must include the configured EFS Availability Zone.
 
 The ALB listener matches `/automation/production*` and forwards the original
 URI unchanged. The Intake API exposes the prefixed contract directly. Both
@@ -82,8 +88,8 @@ config containing account-specific state details.
 7. Populate the runtime secrets out of band. Never put their values in Git,
    Terraform variables, task definitions, Release Manifests or logs. Long-lived
    tasks receive only the runtime DSN; the migration DSN remains bootstrap-only.
-8. Verify the EFS mount and Worker token-cache path during the first task
-   startup; the EFS filesystem is not shared with the EC2 backup.
+8. Verify the One Zone EFS mount, Worker subnet and token-cache path during the
+   first task startup; the EFS filesystem is not shared with the EC2 backup.
 9. Only after the Production Release Manifest exists, set the three immutable
    digest references plus `release_id`, `git_commit`, `build_time` and
    `prompt_release_id`. Enable Zendesk side effects only for the controlled

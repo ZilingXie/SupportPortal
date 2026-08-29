@@ -38,6 +38,17 @@ variable "public_subnet_ids" {
   }
 }
 
+variable "efs_availability_zone_name" {
+  description = "Availability Zone for the cost-first One Zone EFS token cache and its Worker tasks."
+  type        = string
+  default     = "us-east-1b"
+
+  validation {
+    condition     = trimspace(var.efs_availability_zone_name) != ""
+    error_message = "efs_availability_zone_name must not be empty."
+  }
+}
+
 variable "rds_security_group_id" {
   description = "Existing RDS security group to which ECS access is added."
   type        = string

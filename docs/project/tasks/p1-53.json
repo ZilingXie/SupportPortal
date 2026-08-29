@@ -4,8 +4,8 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Account parity release使用独立 API、Route Worker和 Automation Worker，以 RDS durable Jobs交接并调用远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。r20260829-e6cffca三角色镜像已上传 Production ECR，API revision 2已单副本运行并通过 live/release/受控 readiness门禁，Route/Worker尚未启动。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
-  "next_action": "分别启动 r20260829-e6cffca 的 Route Worker和 Automation Worker，确认两者使用匹配的 release、commit、image、build与 Prompt provenance持续写入新鲜 heartbeat，使 /automation/production/health/ready从受控503转为200；随后使用受控测试 Case完成 Account intake、异步处理、远端RAG、内部邮件回复、Zendesk/comment/status与delivery readback验收。supportcenter.stellarix.space尚无DNS记录，DNS与n8n切换继续保持暂停，EC2 /production不变。",
+  "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Account parity release r20260829-e6cffca使用独立 API、Route Worker和 Automation Worker，以 RDS durable Jobs交接并调用远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。公网 DNS、HTTPS、ALB、API revision 2与 Route revision 3均已验证，Graph/EFS、RDS、Zendesk、Slack及 release provenance只读门禁通过；但正式 RAG参数仍指向仅 EC2 Compose可解析的 http://rag_api:8020。为避免后台周期持续失败，Automation Worker revision 2保持0副本，/health/ready按契约返回503，因此 /automation/production尚未上线。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
+  "next_action": "提供可从 us-east-1 Fargate访问、兼容 Bearer鉴权与 /internal/rag/query契约的远端 RAG base URL，并更新 /supportportal/production/rag-service-url；随后用 Automation Worker revision 2重跑无客户数据的 RAG health与合成查询探针。仅在探针通过后将 Worker恢复为1，确认 API/Route/Worker为1/1/0、当前 heartbeat新鲜且provenance_mismatches为空、/health/ready连续至少15分钟为200、CloudWatch无持续错误且业务队列计数不增长。n8n切换和首个真实 Case继续由用户另行执行，EC2 /production保持不变。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -19,8 +19,16 @@
     "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
     "GitHub Actions使用 AWS OIDC而非长期 access key，Terraform identity与更窄的 release identity分离，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
   ],
-  "blockers": [],
+  "blockers": [
+    "正式 SSM参数 /supportportal/production/rag-service-url 当前仍为 EC2 Docker Compose内部地址 http://rag_api:8020，Fargate DNS解析失败；AWS内未发现其他已配置的兼容远端 endpoint。Automation Worker必须保持0，readiness保持503，直到用户提供真实可达的远端 RAG base URL并通过无客户数据探针。"
+  ],
   "evidence": [
+    {
+      "type": "deployment",
+      "label": "ECS zero-traffic go-live gates and remote RAG blocker",
+      "command": "AWS ECS/ECR/SSM/ELB/CloudWatch readback, formal Worker revision 2 dependency probes, Graph seven-day read-only scan, and public DNS/TLS/health checks 2026-08-30",
+      "details": "当前 API revision 2为1/1/0、Route revision 3为1/1/0且deployment completed，Automation Worker revision 2安全保持0/0/0；ALB Target Group仅一个172.31.17.86:8000 healthy target。1.1.1.1与8.8.8.8均解析supportcenter.stellarix.space到Production ALB，HTTP 301跳转HTTPS且证书校验通过；/health/live=200、/health/release=200并返回r20260829-e6cffca、完整e6cffca7 commit、API digest与pr-2bc7aaccb8b0，/health/ready=503且missing_roles仅worker，当前Route heartbeat新鲜且provenance_mismatches=[]。EFS Graph seed权限0600，Graph /me与Inbox只读访问成功；完整分页最近7天共190封、[automation]匹配0、未读匹配0。正式Worker探针通过RDS runtime/schema、八张可执行队列表全0、Zendesk identity、Slack auth.test及Worker digest/provenance；ECR manifest/config/全部layer存在，后续两次Fargate拉取成功。远端RAG探针因SSM值http://rag_api:8020在Fargate无法解析而失败，故未启动Worker。最近15分钟CloudWatch中ERROR、Traceback、failed均为0；未认证Intake返回401。临时SSM参数已删除，supportportal-production-worker-graph-bootstrap:1已注销为INACTIVE；未创建真实Case，未修改n8n、Cloudflare或EC2 /production。"
+    },
     {
       "type": "deployment",
       "label": "Account parity release ECR publish and ECS API revision 2",
@@ -237,6 +245,11 @@
       "at": "2026-08-30",
       "event": "account_parity_release_api_deployed",
       "summary": "r20260829-e6cffca三角色OCI已按immutable role tag上传supportportal/production并通过digest回读；仅将API Service滚动更新到revision 2，live/release返回200且provenance匹配，Route/Worker未启动时ready按契约返回受控503。supportcenter.stellarix.space仍未配置DNS，n8n与EC2 /production保持不变。"
+    },
+    {
+      "at": "2026-08-30",
+      "event": "ecs_zero_traffic_go_live_blocked_by_remote_rag",
+      "summary": "DNS、TLS、ALB、API、Route、Graph/EFS、RDS、Zendesk、Slack、release provenance与空队列门禁均已验证；但正式RAG参数仍是仅EC2 Compose可解析的http://rag_api:8020，Fargate探针在DNS解析处失败。已将Automation Worker保持0并保留readiness 503，清理临时Graph seed参数及bootstrap Task Definition；未创建真实Case、未修改n8n或EC2 backup，不以部分健康宣称上线。"
     }
   ],
   "legacy_refs": [

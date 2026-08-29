@@ -83,3 +83,35 @@ def test_one_environment_repository_and_digest_only_service_images() -> None:
     assert "aws_ecr_repository.runtime.repository_url}@sha256:" in data
     assert "supportportal/production ECR references pinned by sha256 digest" in data
     assert 'trimspace(var.release_id) != "unreleased"' in data
+
+
+def test_one_zone_efs_pins_only_the_worker_to_the_matching_subnet() -> None:
+    variables = _read("variables.tf")
+    locals_source = _read("locals.tf")
+    efs = _read("efs.tf")
+    ecs = _read("ecs.tf")
+    alb = _read("alb.tf")
+    data = _read("data.tf")
+
+    api_service = ecs.split('resource "aws_ecs_service" "api" {', 1)[1].split(
+        'resource "aws_ecs_service" "route" {', 1
+    )[0]
+    route_service = ecs.split('resource "aws_ecs_service" "route" {', 1)[1].split(
+        'resource "aws_ecs_service" "worker" {', 1
+    )[0]
+    worker_service = ecs.split('resource "aws_ecs_service" "worker" {', 1)[1]
+
+    assert 'variable "efs_availability_zone_name"' in variables
+    assert 'default     = "us-east-1b"' in variables
+    assert "local.public_subnet_ids_by_az[var.efs_availability_zone_name][0]" in locals_source
+    assert "availability_zone_name = var.efs_availability_zone_name" in efs
+    assert "efs_mount_target_subnets = local.efs_subnet_id == \"\" ? {}" in locals_source
+    assert "(var.efs_availability_zone_name) = local.efs_subnet_id" in locals_source
+    assert "for_each = local.efs_mount_target_subnets" in efs
+    assert "subnet_id       = each.value" in efs
+    assert "for_each = local.public_subnet_ids_by_az" not in efs
+    assert "subnets          = local.public_subnet_ids" in api_service
+    assert "subnets          = local.public_subnet_ids" in route_service
+    assert "subnets          = [local.efs_subnet_id]" in worker_service
+    assert "subnets                    = local.public_subnet_ids" in alb
+    assert "The One Zone EFS availability zone must contain a selected public subnet." in data
