@@ -73,5 +73,10 @@ resource "terraform_data" "service_validation" {
       ])
       error_message = "Release ID, full Git commit, build time and Prompt Release ID are required."
     }
+
+    precondition {
+      condition     = local.efs_subnet_id != ""
+      error_message = "The One Zone EFS availability zone must contain a selected public subnet."
+    }
   }
 }

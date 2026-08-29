@@ -4,6 +4,7 @@ environment  = "production"
 
 vpc_id                 = "vpc-0125f57b2ec2f0423"
 public_subnet_ids      = []
+efs_availability_zone_name = "us-east-1b"
 rds_security_group_id  = "sg-0e9c3bd50e371fbf4"
 domain_name            = "supportcenter.stellarix.space"
 

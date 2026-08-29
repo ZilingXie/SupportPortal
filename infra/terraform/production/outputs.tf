@@ -72,6 +72,14 @@ output "efs_file_system_id" {
   value = aws_efs_file_system.automation.id
 }
 
+output "efs_availability_zone_name" {
+  value = var.efs_availability_zone_name
+}
+
+output "efs_worker_subnet_id" {
+  value = local.efs_subnet_id
+}
+
 output "efs_access_point_id" {
   value = aws_efs_access_point.automation.id
 }

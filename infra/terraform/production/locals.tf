@@ -17,11 +17,21 @@ locals {
     subnet.availability_zone => subnet.id...
   }
 
-  # AWS ALB and EFS each accept only one subnet per Availability Zone.
+  # The ALB accepts one subnet per Availability Zone.
   public_subnet_ids = [
     for availability_zone in sort(keys(local.public_subnet_ids_by_az)) :
     local.public_subnet_ids_by_az[availability_zone][0]
   ]
+
+  # The cost-first EFS file system is One Zone, so only the EFS-dependent
+  # Worker may run in the matching subnet. API and Route remain multi-AZ.
+  efs_subnet_id = try(
+    local.public_subnet_ids_by_az[var.efs_availability_zone_name][0],
+    "",
+  )
+  efs_mount_target_subnets = local.efs_subnet_id == "" ? {} : {
+    (var.efs_availability_zone_name) = local.efs_subnet_id
+  }
 
   ecr_repository_name = "${var.project_name}/${var.environment}"
 

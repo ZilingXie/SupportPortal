@@ -313,7 +313,7 @@ resource "aws_ecs_service" "worker" {
   }
 
   network_configuration {
-    subnets          = local.public_subnet_ids
+    subnets          = [local.efs_subnet_id]
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = var.assign_public_ip
   }
