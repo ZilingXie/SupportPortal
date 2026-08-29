@@ -140,6 +140,43 @@
     .map-node { margin-bottom: 8px; padding: 9px; border-left: 3px solid var(--blue); background: rgba(35, 104, 162, .07); }
     .map-node strong { display: block; font-size: 13px; }
     .map-node code { display: block; margin-top: 4px; color: var(--muted); font: 10px var(--mono); word-break: break-word; }
+    .architecture-diagram { display: grid; gap: 12px; }
+    .architecture-lane { display: grid; grid-template-columns: minmax(165px, .75fr) 34px minmax(0, 2.25fr); align-items: stretch; gap: 10px; }
+    .architecture-source, .architecture-target, .architecture-service, .architecture-data { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .8); }
+    .architecture-source { display: flex; flex-direction: column; justify-content: center; padding: 14px; border-left: 4px solid var(--orange); }
+    .architecture-source strong, .architecture-target strong, .architecture-service strong, .architecture-data strong { display: block; font-size: 14px; }
+    .architecture-source span, .architecture-target span, .architecture-service span, .architecture-data span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .architecture-arrow { display: grid; place-items: center; color: var(--orange); font-size: 22px; font-weight: 800; }
+    .architecture-target { padding: 14px; border-left: 4px solid var(--blue); }
+    .architecture-target-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+    .architecture-target-head code { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; text-align: right; }
+    .architecture-services { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 11px; }
+    .architecture-service { padding: 10px; background: rgba(35, 104, 162, .07); }
+    .architecture-service span { margin-top: 3px; }
+    .architecture-target.preproduction { border-left-color: var(--violet); }
+    .architecture-target.preproduction .architecture-service { background: rgba(117, 96, 181, .08); }
+    .architecture-target.staging { border-left-color: var(--green); }
+    .architecture-target.staging .architecture-service { background: rgba(47, 139, 87, .08); }
+    .architecture-support { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .architecture-data { min-height: 92px; padding: 13px; border-top: 3px solid var(--line-strong); }
+    .architecture-data.primary { border-top-color: var(--blue); }
+    .architecture-data.security { border-top-color: var(--violet); }
+    .architecture-data.observability { border-top-color: var(--orange); }
+    .architecture-data.external { border-top-color: var(--green); }
+    .architecture-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .architecture-legend { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 2px; }
+    .architecture-legend .chip { border: 1px solid var(--line); }
+    .cost-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .8); }
+    .cost-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; }
+    .cost-table th, .cost-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; line-height: 1.5; }
+    .cost-table th { color: var(--muted); background: var(--surface-soft); font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .cost-table tr:last-child td { border-bottom: 0; }
+    .cost-table td:first-child { min-width: 165px; color: var(--ink); font-weight: 700; }
+    .cost-table td:last-child { min-width: 145px; color: #925014; font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+    .deployment-status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .deployment-status { padding: 13px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .6); }
+    .deployment-status strong { display: block; margin-bottom: 5px; font-size: 13px; }
+    .deployment-status p { margin: 0; color: #50483d; font-size: 12px; line-height: 1.55; }
     .edge-list { margin: 0; padding-left: 20px; }
     .edge-list li { margin-bottom: 7px; color: #50483d; font-size: 12px; line-height: 1.45; }
     .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -165,6 +202,7 @@
     code { font-family: var(--mono); font-size: .9em; }
     @media (max-width: 1050px) {
       .map-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .architecture-support { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 720px) {
       .project-head { padding: 18px 15px 0; }
@@ -178,6 +216,11 @@
       .timeline-card { grid-template-columns: 1fr; gap: 7px; }
       .manual-grid, .report-grid, .map-grid { grid-template-columns: 1fr; }
       .board { grid-template-columns: repeat(5, minmax(240px, 1fr)); }
+      .architecture-lane { grid-template-columns: 1fr; gap: 5px; }
+      .architecture-arrow { min-height: 24px; transform: rotate(90deg); }
+      .architecture-services, .architecture-support, .deployment-status-grid { grid-template-columns: 1fr; }
+      .architecture-target-head { display: block; }
+      .architecture-target-head code { display: block; margin-top: 5px; text-align: left; }
       .meeting-row { align-items: flex-start; flex-direction: column; gap: 9px; }
       .meeting-row-meta { justify-content: flex-start; }
       .meeting-task-button { grid-template-columns: 1fr; gap: 5px; }
@@ -228,6 +271,7 @@
         <section class="tab-panel" id="panel-human-events" role="tabpanel" aria-labelledby="tab-human-events"></section>
         <section class="tab-panel" id="panel-functions" role="tabpanel" aria-labelledby="tab-functions"></section>
         <section class="tab-panel" id="panel-system-map" role="tabpanel" aria-labelledby="tab-system-map"></section>
+        <section class="tab-panel" id="panel-deployment-architecture" role="tabpanel" aria-labelledby="tab-deployment-architecture"></section>
         <section class="tab-panel" id="panel-manual" role="tabpanel" aria-labelledby="tab-manual"></section>
         <section class="tab-panel" id="panel-report" role="tabpanel" aria-labelledby="tab-report"></section>
         <footer class="footer">
@@ -267,6 +311,7 @@
         { id: "human-events", label: "会议记录" },
         { id: "functions", label: "功能模块" },
         { id: "system-map", label: "系统地图" },
+        { id: "deployment-architecture", label: "部署架构" },
         { id: "manual", label: "用户手册" },
         { id: "report", label: "汇报模式" }
       ];
@@ -413,10 +458,15 @@
         document.getElementById("panel-system-map").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">05 / Architecture</div><h2>系统地图</h2><p>展示功能模块到 UI、API、Service、Storage、External 和 Tests 的可读架构关系。</p></div></div><div class="notice">架构快照基于 commit ${escapeHtml(String(DATA.source_base_commit || "").slice(0, 8))}；代码关系变化后重新生成 Overview。</div><div class="map-grid">${layerCards}</div><article class="map-card" style="margin-top:12px"><h3>连接关系</h3><ol class="edge-list">${edges || "<li>暂无关系。</li>"}</ol></article>`;
       }
 
+      function renderDeploymentArchitecture() {
+        const panel = document.getElementById("panel-deployment-architecture");
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">06 / Deployment</div><h2>部署架构</h2><p>迁移完成后的运行拓扑：ECS 承载 Production 与 Preproduction，现有 EC2 承载 Staging；Production 的 EC2 /production 入口保留为 backup。</p></div></div><div class="notice"><strong>一眼看懂：</strong>生产请求进入 <code>supportcenter.stellarix.space/automation/production</code>，由 HTTPS、ALB 和 ECS Production 处理；n8n 只把筛选后的测试 Case 送到 ECS Preproduction。当前采用 cost-first 单副本，属于可扩展的高可用目标拓扑，尚未开启多副本自动故障切换。</div><div class="architecture-diagram"><div class="architecture-lane"><div class="architecture-source"><strong>请求来源</strong><span>n8n · Zendesk events · 运维人员</span></div><div class="architecture-arrow" aria-hidden="true">→</div><div class="architecture-target"><div class="architecture-target-head"><strong>专用生产域名</strong><code>supportcenter.stellarix.space</code></div><span>ACM TLS 证书终止；ALB 只转发 <code>/automation/production*</code> 和未来的环境路径。</span><div class="architecture-services"><div class="architecture-service"><strong>DNS + ACM</strong><span>稳定 HTTPS 入口</span></div><div class="architecture-service"><strong>Application Load Balancer</strong><span>健康检查与流量转发</span></div><div class="architecture-service"><strong>路由边界</strong><span><code>/automation/production</code></span></div></div></div></div><div class="architecture-lane"><div class="architecture-source"><strong>ECS Production</strong><span>主生产环境 · 独立 schema / namespace</span></div><div class="architecture-arrow" aria-hidden="true">→</div><div class="architecture-target"><div class="architecture-target-head"><strong>Production Fargate Service</strong><code>API · Route Worker · Automation Worker</code></div><span>三个长运行角色通过 RDS 中的 durable Execution、Job、Delivery、Heartbeat 交接，不依赖 EC2 runtime。</span><div class="architecture-services"><div class="architecture-service"><strong>API</strong><span>Intake、查询、健康检查</span></div><div class="architecture-service"><strong>Route Worker</strong><span>Persona / Route 分发</span></div><div class="architecture-service"><strong>Automation Worker</strong><span>Account 自动化与邮件回复</span></div></div></div></div><div class="architecture-lane"><div class="architecture-source"><strong>ECS Preproduction</strong><span>上线前最终测试 · n8n 控制测试 Case</span></div><div class="architecture-arrow" aria-hidden="true">→</div><div class="architecture-target preproduction"><div class="architecture-target-head"><strong>Preproduction Fargate Service</strong><code>与 Production 同镜像契约</code></div><span>代码、入口和依赖保持生产一致，只隔离 environment、数据库 schema、job namespace、release 和输入 Case。</span><div class="architecture-services"><div class="architecture-service"><strong>API</strong><span>接收最终测试请求</span></div><div class="architecture-service"><strong>Route Worker</strong><span>验证生产路由</span></div><div class="architecture-service"><strong>Automation Worker</strong><span>消费测试 Case</span></div></div></div></div><div class="architecture-lane"><div class="architecture-source"><strong>EC2 Staging</strong><span>本地开发后的共享测试入口</span></div><div class="architecture-arrow" aria-hidden="true">→</div><div class="architecture-target staging"><div class="architecture-target-head"><strong>现有 EC2 Staging</strong><code>测试专用，不晋升到 ECS</code></div><span>可包含 <code>rerun/reset</code> 等辅助能力；验证通过后构建 Production / Preproduction release image。</span><div class="architecture-services"><div class="architecture-service"><strong>Staging API</strong><span>快速验证改动</span></div><div class="architecture-service"><strong>测试辅助功能</strong><span>rerun / reset</span></div><div class="architecture-service"><strong>共享测试入口</strong><span>供人工或 n8n 验证</span></div></div></div></div></div><div class="architecture-support"><div class="architecture-data primary"><strong>RDS PostgreSQL</strong><span>持久化 Ticket、Account、Execution、Job、Delivery 数据；环境以 schema / namespace 隔离。</span></div><div class="architecture-data primary"><strong>AWS Valkey</strong><span>缓存与短期状态；当前为加密的单节点 cost-first 配置。</span></div><div class="architecture-data primary"><strong>EFS</strong><span>共享 Graph token cache；通过 access point 挂载到需要的 ECS task。</span></div><div class="architecture-data security"><strong>SSM Parameter Store</strong><span>SecureString 注入 DSN、token、Valkey URL 等运行时机密，不写入镜像。</span></div><div class="architecture-data security"><strong>IAM</strong><span>ECS execution/task role 提供最小权限，控制拉取镜像、读参数和访问 AWS 资源。</span></div><div class="architecture-data observability"><strong>CloudWatch Logs</strong><span>集中保存 API、Route、Worker 和 bootstrap 日志；当前保留 7 天。</span></div><div class="architecture-data external"><strong>远端 RAG</strong><span>由外部 RAG endpoint 提供检索；本项目 ECS 不部署 <code>rag_api</code> / <code>rag_worker</code>。</span></div><div class="architecture-data external"><strong>Zendesk · Graph · Slack</strong><span>外部业务依赖；通过运行时凭据和 delivery ledger 保留处理可追踪性。</span></div></div><div class="architecture-legend"><span class="chip">蓝色：ECS / 共享数据层</span><span class="chip">紫色：Preproduction 隔离</span><span class="chip">绿色：Staging / 测试</span><span class="chip">橙色：入口与可观测性</span></div><p class="architecture-note">故障边界：<code>support.stellarix.space/production</code> 仍指向未修改的 EC2 backup。需要回退时，由 n8n 停止或取消 ECS 生产工作流并切回 backup；两套入口使用不同域名，不要求 DNS 即时切换。</p><div class="deployment-status-grid"><article class="deployment-status"><strong>已建立的 AWS 基础设施</strong><p>ECS cluster、ALB、ACM 证书、Valkey、EFS、SSM 参数、IAM role、CloudWatch log group 已配置。</p></article><article class="deployment-status"><strong>当前发布状态</strong><p>Production release 已上传 ECR 并按 digest 固定；ECS service/task 尚未作为线上运行态宣告，部署仍需完成验证。</p></article><article class="deployment-status"><strong>高可用边界</strong><p>拓扑支持后续跨 AZ、多副本和滚动发布；当前每个 ECS role 先运行 1 个 task，以成本优先。</p></article></div><h3 style="margin-top:25px">AWS 组件与预计月费</h3><p class="section-copy">估算口径：<code>us-east-1</code>、每月 730 小时、Linux x86 Fargate On-Demand、Production 和 Preproduction 各 1 个 API / Route / Worker。实际账单会随 task 规格、存储量、日志量和流量变化。</p><div class="cost-table-wrap"><table class="cost-table"><thead><tr><th>组件</th><th>为什么使用</th><th>预计月费</th></tr></thead><tbody><tr><td>ECS Fargate</td><td>运行 Production 与 Preproduction 的 API、Route Worker、Automation Worker；免维护 EC2 容器主机，便于独立发布。</td><td>约 $90</td></tr><tr><td>Application Load Balancer</td><td>提供 HTTPS 入口、健康检查和路径转发；让容器替换时保持稳定 endpoint。</td><td>约 $16–25 + 少量 LCU</td></tr><tr><td>AWS Valkey</td><td>承载缓存和短期状态；托管服务减少自行维护 Redis 容器的运维面。</td><td>约 $12–15</td></tr><tr><td>RDS PostgreSQL</td><td>持久化 Ticket、Account 自动化和 delivery ledger；继续复用现有数据库。</td><td>增量约 $0</td></tr><tr><td>ECR</td><td>保存 immutable、scan-on-push 的环境 release image，并用 digest 保证部署内容可复核。</td><td>通常 &lt; $1</td></tr><tr><td>EFS</td><td>为需要跨 task 保留的 Graph token cache 提供共享加密文件系统。</td><td>1 GB 约 $0.30</td></tr><tr><td>CloudWatch Logs</td><td>集中查看 ECS API、Worker、bootstrap 日志，支持故障定位和发布验证。</td><td>低流量约 $0.5–2</td></tr><tr><td>SSM Parameter Store</td><td>以 SecureString 注入 DSN、token、Valkey URL；避免凭据进入镜像和代码仓库。</td><td>Standard 参数基本 $0</td></tr><tr><td>ACM</td><td>为 <code>supportcenter.stellarix.space</code> 提供托管 TLS 证书。</td><td>$0</td></tr><tr><td>IAM</td><td>控制 ECS 拉取镜像、读取参数和访问 AWS 资源的最小权限边界。</td><td>$0</td></tr><tr><td>VPC / Subnet / Security Group</td><td>隔离 ALB、ECS、RDS、Valkey、EFS 的网络访问边界。</td><td>$0；当前无 NAT Gateway</td></tr><tr><td>EC2 Staging</td><td>承载测试专用环境和 rerun/reset 等辅助能力，避免把测试功能带入生产镜像。</td><td>按现有 EC2 账单</td></tr><tr><td>n8n / 远端 RAG / Zendesk / Graph / Slack</td><td>提供工作流编排、检索和外部业务集成；不属于 AWS 组件。</td><td>按各自服务合同</td></tr></tbody></table></div><div class="notice" style="margin-top:15px"><strong>目标架构月费：</strong>两个 ECS 环境各 1 副本时约 <code>$120–135 / 月</code>，不含现有 RDS、EC2、外部服务和实际流量；若每个 ECS role 扩展为 2 个 task，Fargate 部分约翻倍，整体约 <code>$210–225 / 月起</code>。</div>`;
+      }
+
       function renderManual() {
         const sections = (DATA.manual?.sections || []).map((section) => `<article class="manual-card"><div class="section-kicker">${escapeHtml(section.audience || "项目使用")}</div><h3>${escapeHtml(section.title)}</h3><p><strong>入口：</strong><code>${escapeHtml(section.entrypoint || "")}</code></p><ul>${(section.steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul><p style="margin-top:10px"><strong>依据：</strong>${(section.source_refs || []).map(sourceMarkup).join(" · ")}</p></article>`).join("");
         const features = (DATA.features || []).map((section) => `<details class="aggregate-card"><summary><strong>${escapeHtml(section.title)}</strong><span class="chip">已完成 ${(section.completed || []).length} · 未完成 ${(section.planned || []).length}</span></summary><div class="aggregate-body"><h4>已完成能力</h4><ul>${(section.completed || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul><h4 style="margin-top:12px">未完成能力</h4><ul>${(section.planned || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul></div></details>`).join("");
-        document.getElementById("panel-manual").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">06 / Handbook</div><h2>用户手册</h2><p>这里回答“怎么使用项目”和“AI 下一步怎么开工”。产品能力继续从 feature list 读取，维护规则从 registry README 和项目规则读取。</p></div></div><div class="manual-grid">${sections}</div><h3 style="margin-top:25px">产品能力目录</h3><div class="aggregate-list">${features}</div>`;
+        document.getElementById("panel-manual").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Handbook</div><h2>用户手册</h2><p>这里回答“怎么使用项目”和“AI 下一步怎么开工”。产品能力继续从 feature list 读取，维护规则从 registry README 和项目规则读取。</p></div></div><div class="manual-grid">${sections}</div><h3 style="margin-top:25px">产品能力目录</h3><div class="aggregate-list">${features}</div>`;
       }
 
       function renderReport() {
@@ -427,7 +477,7 @@
         const recentTasks = phaseTasks().filter((task) => new Date(task.updated_at || 0).getTime() >= cutoff);
         const blocked = phaseTasks().filter((task) => task.status === "blocked");
         const active = phaseTasks().filter((task) => ["active", "review"].includes(task.status));
-        document.getElementById("panel-report").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Briefing</div><h2>汇报模式</h2><p>这是从当前 Phase 的 Function、Task、PR 和 Meeting 派生的汇报视图。</p></div><div class="panel-tools"><button class="filter-button ${days === 7 ? "active" : ""}" data-report-days="7" type="button">最近 7 天</button><button class="filter-button ${days === 30 ? "active" : ""}" data-report-days="30" type="button">最近 30 天</button></div></div><div class="report-grid"><article class="report-card"><strong class="report-number">${prs.length}</strong><p class="report-copy">窗口内 PR</p><p class="freshness">${prs.slice(0, 3).map((pr) => `#${escapeHtml(pr.number)} ${escapeHtml(pr.title)}`).join("<br>") || "暂无"}</p></article><article class="report-card"><strong class="report-number">${recentTasks.length}</strong><p class="report-copy">窗口内更新 Task</p><p class="freshness">${recentTasks.filter((task) => task.status === "done").length} 个完成 · ${recentTasks.filter((task) => task.status !== "done").length} 个未完成</p></article><article class="report-card ${blocked.length ? "risk" : ""}"><strong class="report-number">${blocked.length}</strong><p class="report-copy">当前阻塞 Task</p><p class="freshness">${blocked.slice(0, 3).map((task) => `${escapeHtml(idLabel(task.task_id))} ${escapeHtml(task.title)}`).join("<br>") || "当前没有阻塞 Task"}</p></article></div><article class="report-card" style="margin-top:12px"><div class="report-head"><div><h3>Phase 健康度</h3><p class="report-copy">当前阶段：${escapeHtml(phase?.title || state.phase)}</p></div><span class="chip status-${escapeHtml(phase?.status || "active")}">${escapeHtml(phase?.status === "done" ? "完成" : phase?.status === "active" ? "进行中" : "未开始")}</span></div><ul class="edge-list">${(phase?.exit_criteria || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p class="freshness">汇报窗口：${days} 天 · 数据生成：${escapeHtml(DATA.generated_at || "未记录")}</p></article><article class="report-card" style="margin-top:12px"><h3>下一步</h3><ul class="edge-list">${active.slice(0, 8).map((task) => `<li><strong>${escapeHtml(idLabel(task.task_id))}</strong> ${escapeHtml(task.next_action || task.title)}</li>`).join("") || "<li>暂无进行中或验收中 Task。</li>"}</ul></article>`;
+        document.getElementById("panel-report").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">08 / Briefing</div><h2>汇报模式</h2><p>这是从当前 Phase 的 Function、Task、PR 和 Meeting 派生的汇报视图。</p></div><div class="panel-tools"><button class="filter-button ${days === 7 ? "active" : ""}" data-report-days="7" type="button">最近 7 天</button><button class="filter-button ${days === 30 ? "active" : ""}" data-report-days="30" type="button">最近 30 天</button></div></div><div class="report-grid"><article class="report-card"><strong class="report-number">${prs.length}</strong><p class="report-copy">窗口内 PR</p><p class="freshness">${prs.slice(0, 3).map((pr) => `#${escapeHtml(pr.number)} ${escapeHtml(pr.title)}`).join("<br>") || "暂无"}</p></article><article class="report-card"><strong class="report-number">${recentTasks.length}</strong><p class="report-copy">窗口内更新 Task</p><p class="freshness">${recentTasks.filter((task) => task.status === "done").length} 个完成 · ${recentTasks.filter((task) => task.status !== "done").length} 个未完成</p></article><article class="report-card ${blocked.length ? "risk" : ""}"><strong class="report-number">${blocked.length}</strong><p class="report-copy">当前阻塞 Task</p><p class="freshness">${blocked.slice(0, 3).map((task) => `${escapeHtml(idLabel(task.task_id))} ${escapeHtml(task.title)}`).join("<br>") || "当前没有阻塞 Task"}</p></article></div><article class="report-card" style="margin-top:12px"><div class="report-head"><div><h3>Phase 健康度</h3><p class="report-copy">当前阶段：${escapeHtml(phase?.title || state.phase)}</p></div><span class="chip status-${escapeHtml(phase?.status || "active")}">${escapeHtml(phase?.status === "done" ? "完成" : phase?.status === "active" ? "进行中" : "未开始")}</span></div><ul class="edge-list">${(phase?.exit_criteria || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p class="freshness">汇报窗口：${days} 天 · 数据生成：${escapeHtml(DATA.generated_at || "未记录")}</p></article><article class="report-card" style="margin-top:12px"><h3>下一步</h3><ul class="edge-list">${active.slice(0, 8).map((task) => `<li><strong>${escapeHtml(idLabel(task.task_id))}</strong> ${escapeHtml(task.next_action || task.title)}</li>`).join("") || "<li>暂无进行中或验收中 Task。</li>"}</ul></article>`;
         document.querySelectorAll("[data-report-days]").forEach((button) => button.addEventListener("click", () => { state.reportDays = Number(button.dataset.reportDays); renderReport(); }));
       }
 
@@ -514,7 +564,7 @@
           document.body.innerHTML = `<div class="notice error" style="margin:30px">Project Overview 数据缺失。请先运行 <code>python3 scripts/generate_project_overview.py --write</code>。</div>`;
           return;
         }
-        renderHeader(); renderPhaseSwitch(); renderTabs(); renderDynamic(); renderBoard(); renderMeetings(); renderFunctions(); renderSystemMap(); renderManual(); renderReport();
+        renderHeader(); renderPhaseSwitch(); renderTabs(); renderDynamic(); renderBoard(); renderMeetings(); renderFunctions(); renderSystemMap(); renderDeploymentArchitecture(); renderManual(); renderReport();
         document.getElementById("reportButton").addEventListener("click", () => { location.hash = "#report"; routeHash(); });
         window.addEventListener("hashchange", routeHash);
         routeHash();
