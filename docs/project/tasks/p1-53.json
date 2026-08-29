@@ -4,8 +4,8 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。当前 Stage 2 收敛为 Account parity release：独立 API、Route Worker和 Automation Worker使用 RDS durable Jobs与远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
-  "next_action": "将已验证的 r20260829-e6cffca 三角色 OCI 按 immutable role tag 上传 supportportal/production，并只读回查 ECR digest 与 Release Manifest 一致；随后注册新的 API Task Definition revision、更新 API Service，确认 /health/live 为 200 且 /health/ready 在 Route/Worker 尚未启动时返回受控 503 而不是 500。再分别启动 Route/Worker并验证一致 provenance heartbeat；DNS、n8n与 EC2 /production 保持不变。",
+  "summary": "按 Stage 0盘点、Stage 1设计、Stage 2本地 release、Stage 3 ECS Foundation、Stage 4 Preproduction验收、Stage 5同 digest晋升 Production、Stage 6 EC2 Staging、Stage 7切流的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Account parity release使用独立 API、Route Worker和 Automation Worker，以 RDS durable Jobs交接并调用远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。r20260829-e6cffca三角色镜像已上传 Production ECR，API revision 2已单副本运行并通过 live/release/受控 readiness门禁，Route/Worker尚未启动。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
+  "next_action": "分别启动 r20260829-e6cffca 的 Route Worker和 Automation Worker，确认两者使用匹配的 release、commit、image、build与 Prompt provenance持续写入新鲜 heartbeat，使 /automation/production/health/ready从受控503转为200；随后使用受控测试 Case完成 Account intake、异步处理、远端RAG、内部邮件回复、Zendesk/comment/status与delivery readback验收。supportcenter.stellarix.space尚无DNS记录，DNS与n8n切换继续保持暂停，EC2 /production不变。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -21,6 +21,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "deployment",
+      "label": "Account parity release ECR publish and ECS API revision 2",
+      "command": "ECR native multipart/put-image plus aws ecr/ecs/elbv2/acm readback and ALB-host health checks 2026-08-30",
+      "details": "supportportal/production的三个immutable role tag均与Release Manifest精确一致：API sha256:e1d432e7fb322a62dca9f4374e7039b791ac59141fec43b78b84adb45635efa2、Route sha256:fe0a114816cb90811e92b848997b8f3857b4e6182bf1c3215ef7618028b9f32b、Worker sha256:3d8cdbb4d2112c8001cb3c716c70c4408d7131798345c55c29ca3081d74dcb60，media type均为OCI image manifest。supportportal-production-api:2只替换API digest及五个release provenance值，其余Task Definition字段和六个tag与revision 1一致；Service最终为单一revision 2、desired/running/pending=1/1/0、Task RUNNING/HEALTHY、Target Group单一healthy target。ACM/ELB readback确认supportcenter.stellarix.space证书为ISSUED且已绑定；因该域名尚无DNS A记录，健康探测改用ALB hostname传输并保留production Host，transport hostname不匹配所以仅该探测使用-k。/health/live返回200，/health/release返回r20260829-e6cffca、完整e6cffca7 commit、匹配digest/build time与pr-2bc7aaccb8b0，/health/ready因未启动Route/Worker返回受控503和missing_roles，而非500。未启动Route/Worker，未修改DNS、n8n或EC2 /production。"
+    },
     {
       "type": "deployment",
       "label": "ECS API readiness datetime serialization blocker",
@@ -150,7 +156,7 @@
     "docs/integrations/n8n/automation_environments_cutover.md"
   ],
   "created_at": "2026-08-25",
-  "updated_at": "2026-08-29",
+  "updated_at": "2026-08-30",
   "history": [
     {
       "at": "2026-08-25",
@@ -226,6 +232,11 @@
       "at": "2026-08-29",
       "event": "account_parity_release_rebuilt_after_readiness_fix",
       "summary": "从合并后的e6cffca7构建并独立复核r20260829-e6cffca三角色linux/amd64 OCI，固定active Prompt Release pr-2bc7aaccb8b0；Manifest、digest、provenance、filesystem排除、角色import与新API镜像datetime readiness门禁通过。下一步为上传ECR并仅更新ECS API，尚未修改AWS运行时、DNS、n8n或EC2 backup。"
+    },
+    {
+      "at": "2026-08-30",
+      "event": "account_parity_release_api_deployed",
+      "summary": "r20260829-e6cffca三角色OCI已按immutable role tag上传supportportal/production并通过digest回读；仅将API Service滚动更新到revision 2，live/release返回200且provenance匹配，Route/Worker未启动时ready按契约返回受控503。supportcenter.stellarix.space仍未配置DNS，n8n与EC2 /production保持不变。"
     }
   ],
   "legacy_refs": [
