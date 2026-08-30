@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-30T06:49:13Z",
-  "source_base_commit": "bbc7f309cce13cdab4b08eac170dff5d5da5c394",
-  "registry_digest": "2c6ca8d67cdc838addbe115424d9ece1d2131ffc4bfe52f47345083294914c9b",
+  "generated_at": "2026-08-30T13:18:29Z",
+  "source_base_commit": "ad56ac582dac3e4fb09e63e73928fd386376df6b",
+  "registry_digest": "8cb758b6e481e07419d838be8fa6fbcdec0bd893712eb712508bb4c9985b0025",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1833,6 +1833,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Account parity Production zero-traffic go-live",
           "command": "Immutable ECR/task-definition readback, formal Fargate dependency probe 3c9c7b1a3d6e4f4d911c9eb127d1d352, 16-sample stability observation, final count probe de55f1eff2e0401abfd21358d4d82c78, and public DNS/TLS/ALB/auth verification 2026-08-30",
           "details": "release r20260830-42e0ff3基于commit 42e0ff3af084bc8b37ae8b2e0e37b50ec07e2533和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:fcd07f13516bb3b728c5b795b667b3516312e510bb8332d005ba6e282568b7be、sha256:12f52752961f45ab0d413e7024d806cd0d8e59a3606c74efad3f5471824ebc4e、sha256:963f78ff2cc9bdb4b2275656affaa43031e1d752bf45c35c2b2e1ee09ee9b11b。API:3、Route:4、Worker:3的Service deployment均COMPLETED且desired/running/pending=1/1/0；当前Route/Worker heartbeat新鲜、provenance_mismatches=[]。正式Fargate探针通过RAGFlow认证检索与grounded generation并只返回可信docs.agora.io citation；Graph /me与最近7天Inbox完整分页读取成功，共192封且[automation]/未读匹配均为0；EFS token cache为0600；RDS runtime/schema/Prompt/heartbeat、Zendesk identity和Slack auth通过。9张业务表在依赖探针前后及最终独立计数探针中均为0。公网live/release/ready均为200，未认证Intake为401，认证空payload为422；16个一分钟样本持续993.5秒且覆盖3个Outlook poll窗口，ECS始终1/1/0、CloudWatch error count始终为0。1.1.1.1、8.8.8.8与本机解析到同一ALB，HTTP 301跳转HTTPS，OpenSSL证书链和hostname校验通过；Target Group仅172.31.42.31:8000且healthy。临时Graph bootstrap参数无残留，supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n未修改。ECR当前Worker扫描仍有4 Critical、15 High、6 Medium、1 Low基础镜像finding，与前一release相同，记录为后续镜像加固风险而非本次RAGFlow上线回退。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Account parity Production Persona ordering fix release",
+          "command": "ECR digest/task-definition readback, ECS API/Route/Worker rolling deployment, public DNS/TLS/ALB/auth checks, 16 one-minute zero-traffic samples, CloudWatch and PostgreSQL count readback 2026-08-30",
+          "details": "release r20260830-ad56ac5基于commit ad56ac582dac3e4fb09e63e73928fd386376df6b和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:d77ebf27065ab5d5cdb471a209841fca125f74a254384d29211f7420c74df566、sha256:460f982fb0859c11b5c71ce6dade59bb27a03e24e085e64e2cdaa877af2daa79、sha256:1bd41e4e9c1374df67fe367d08bb9cf3e886a077d81a2c330af07f9e1049a08e，均为单一linux/amd64 OCI manifest。Task Definition为API:4、Route:5、Worker:4，三个Service deployment均COMPLETED且desired/running/pending=1/1/0；实际运行task digest与Manifest一致，Worker固定在EFS所在us-east-1b subnet。当前Route/Worker heartbeat age均小于1秒且provenance_mismatches=[]，API release、commit、image digest、Prompt Release全部匹配。公网live/release/ready均为200；HTTP 301跳转HTTPS，1.1.1.1、8.8.8.8与本机解析到同一ALB，TLS证书SAN覆盖supportcenter.stellarix.space，Target Group仅新API target healthy。缺失Authorization返回401；使用正式SSM intake token的Authorization Bearer请求返回空payload 422。16个一分钟样本约16分钟全部保持200与1/1/0；最近15分钟CloudWatch ERROR、Traceback、Exception均为0。部署前后及中途PostgreSQL计数保持automation_executions=1、automation_jobs=1、automation_intake_events=1、automation_delivery_ledger=0，未创建新Case或Delivery；临时bootstrap参数无残留且supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n、Cloudflare、DNS记录和EC2 /production未修改。Persona FK修复已部署，等待用户创建新的受控Case验证完整Account processing。"
         },
         {
           "type": "test",
@@ -6033,8 +6039,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker分别使用 Task Definition 3、4、3，三者均为1/1/0且固定到release r20260830-42e0ff3的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。n8n首个受控Case暴露ticket.created在父Ticket持久化前写入Persona assignment的外键顺序缺陷；代码已改为Route仅完成分类与Processing交接，Persona由Account Processing在save_ticket后固定，原失败Execution保持human_review且不重放，等待从合并commit构建并部署修复release后由用户创建新Case验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
-      "next_action": "合并ticket.created Route/Persona外键顺序修复，从合并后的main构建并部署同一release/commit/Prompt provenance的API、Route与Worker镜像，验证三Service 1/1/0、readiness与heartbeat后，由用户创建新的受控Account Case完成Execution/Job/Delivery、Zendesk、Outlook及必要外部readback验收；不得重放原失败Execution或outcome_unknown。新Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
+      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker当前分别使用 Task Definition 4、5、4，三者均为1/1/0且固定到release r20260830-ad56ac5的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。n8n首个受控Case暴露ticket.created在父Ticket持久化前写入Persona assignment的外键顺序缺陷；代码已改为Route仅完成分类与Processing交接，Persona由Account Processing在save_ticket后固定，修复release已部署并通过16分钟零流量稳定观察，原失败Execution保持human_review且不重放，等待用户创建新Case验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
+      "next_action": "由用户创建一个新的受控 Account Case，完成 Execution/Job/Delivery、Zendesk、Outlook及必要外部 readback验收；不得重放或修改 Ticket 13141 的失败 Execution，也不得重试 outcome_unknown。新Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6061,6 +6067,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Account parity Production zero-traffic go-live",
           "command": "Immutable ECR/task-definition readback, formal Fargate dependency probe 3c9c7b1a3d6e4f4d911c9eb127d1d352, 16-sample stability observation, final count probe de55f1eff2e0401abfd21358d4d82c78, and public DNS/TLS/ALB/auth verification 2026-08-30",
           "details": "release r20260830-42e0ff3基于commit 42e0ff3af084bc8b37ae8b2e0e37b50ec07e2533和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:fcd07f13516bb3b728c5b795b667b3516312e510bb8332d005ba6e282568b7be、sha256:12f52752961f45ab0d413e7024d806cd0d8e59a3606c74efad3f5471824ebc4e、sha256:963f78ff2cc9bdb4b2275656affaa43031e1d752bf45c35c2b2e1ee09ee9b11b。API:3、Route:4、Worker:3的Service deployment均COMPLETED且desired/running/pending=1/1/0；当前Route/Worker heartbeat新鲜、provenance_mismatches=[]。正式Fargate探针通过RAGFlow认证检索与grounded generation并只返回可信docs.agora.io citation；Graph /me与最近7天Inbox完整分页读取成功，共192封且[automation]/未读匹配均为0；EFS token cache为0600；RDS runtime/schema/Prompt/heartbeat、Zendesk identity和Slack auth通过。9张业务表在依赖探针前后及最终独立计数探针中均为0。公网live/release/ready均为200，未认证Intake为401，认证空payload为422；16个一分钟样本持续993.5秒且覆盖3个Outlook poll窗口，ECS始终1/1/0、CloudWatch error count始终为0。1.1.1.1、8.8.8.8与本机解析到同一ALB，HTTP 301跳转HTTPS，OpenSSL证书链和hostname校验通过；Target Group仅172.31.42.31:8000且healthy。临时Graph bootstrap参数无残留，supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n未修改。ECR当前Worker扫描仍有4 Critical、15 High、6 Medium、1 Low基础镜像finding，与前一release相同，记录为后续镜像加固风险而非本次RAGFlow上线回退。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Account parity Production Persona ordering fix release",
+          "command": "ECR digest/task-definition readback, ECS API/Route/Worker rolling deployment, public DNS/TLS/ALB/auth checks, 16 one-minute zero-traffic samples, CloudWatch and PostgreSQL count readback 2026-08-30",
+          "details": "release r20260830-ad56ac5基于commit ad56ac582dac3e4fb09e63e73928fd386376df6b和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:d77ebf27065ab5d5cdb471a209841fca125f74a254384d29211f7420c74df566、sha256:460f982fb0859c11b5c71ce6dade59bb27a03e24e085e64e2cdaa877af2daa79、sha256:1bd41e4e9c1374df67fe367d08bb9cf3e886a077d81a2c330af07f9e1049a08e，均为单一linux/amd64 OCI manifest。Task Definition为API:4、Route:5、Worker:4，三个Service deployment均COMPLETED且desired/running/pending=1/1/0；实际运行task digest与Manifest一致，Worker固定在EFS所在us-east-1b subnet。当前Route/Worker heartbeat age均小于1秒且provenance_mismatches=[]，API release、commit、image digest、Prompt Release全部匹配。公网live/release/ready均为200；HTTP 301跳转HTTPS，1.1.1.1、8.8.8.8与本机解析到同一ALB，TLS证书SAN覆盖supportcenter.stellarix.space，Target Group仅新API target healthy。缺失Authorization返回401；使用正式SSM intake token的Authorization Bearer请求返回空payload 422。16个一分钟样本约16分钟全部保持200与1/1/0；最近15分钟CloudWatch ERROR、Traceback、Exception均为0。部署前后及中途PostgreSQL计数保持automation_executions=1、automation_jobs=1、automation_intake_events=1、automation_delivery_ledger=0，未创建新Case或Delivery；临时bootstrap参数无残留且supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n、Cloudflare、DNS记录和EC2 /production未修改。Persona FK修复已部署，等待用户创建新的受控Case验证完整Account processing。"
         },
         {
           "type": "test",
@@ -6316,6 +6328,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-30",
           "event": "ecs_ticket_created_persona_fk_order_fixed",
           "summary": "n8n首个受控Case确认Route在support_tickets父记录创建前调用Persona resolver会触发外键失败并阻止Processing Job；修复将ticket.created Persona固定延迟到Account Processing现有save_ticket之后，同时保留ticket.updated/comment.created的既有Route行为。真实PostgreSQL随机schema与ECS/Account/legacy回归通过，原失败Execution保持human_review且不重放，等待从合并main构建三角色同provenance release并部署。"
+        },
+        {
+          "at": "2026-08-30",
+          "event": "ecs_ticket_created_persona_fk_order_release_deployed",
+          "summary": "从main@ad56ac5构建并部署r20260830-ad56ac5；API:4、Route:5、Worker:4均稳定1/1/0，实际task digest与Manifest一致，当前Route/Worker heartbeat匹配且readiness持续200。16分钟零流量观察、Bearer鉴权401/422、CloudWatch错误计数、PostgreSQL业务计数、DNS/TLS/ALB和EC2 backup readback全部通过；未重放Ticket 13141，等待用户创建新的受控Account Case完成业务链路验收。"
         }
       ],
       "legacy_refs": [
