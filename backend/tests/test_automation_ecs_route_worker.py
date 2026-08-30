@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from backend.automation_ecs_route_worker import RouteWorker
-from backend.services.automation_ecs_contracts import JobKind
+from backend.services.automation_ecs_contracts import IntakeEventType, JobKind
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
 
@@ -34,11 +34,11 @@ def _decision() -> SimpleNamespace:
     )
 
 
-def _worker(decider: Mock | None = None):
+def _worker(decider: Mock | None = None, *, event=None):
     settings = _settings("route")
     store = InMemoryAutomationEcsStore(settings)
     store.migrate()
-    receipt = store.accept_intake(_event(), _settings("api").provenance())
+    receipt = store.accept_intake(event or _event(), _settings("api").provenance())
     persona = Mock(return_value={"persona_key": "account-default", "version": 3, "content": {}})
     worker = RouteWorker(
         settings=settings,
@@ -49,17 +49,33 @@ def _worker(decider: Mock | None = None):
     return worker, store, receipt, persona
 
 
-def test_route_worker_classifies_assigns_persona_and_queues_processing() -> None:
+def test_route_worker_defers_ticket_created_persona_and_queues_processing() -> None:
     worker, store, receipt, persona = _worker()
     assert worker.process_once() is True
-    persona.assert_called_once_with("123")
+    persona.assert_not_called()
     execution = store.get_execution(receipt.execution_id)
     assert execution is not None
     assert execution["status"] == "processing_pending"
     assert execution["route"]["execution_action"] == "enablement"
-    assert execution["persona"]["version"] == 3
-    assert store.claim_job(JobKind.PROCESSING, worker_id="worker-1", lease_seconds=30) is not None
+    assert execution["persona"] is None
+    processing = store.claim_job(JobKind.PROCESSING, worker_id="worker-1", lease_seconds=30)
+    assert processing is not None
+    assert processing.payload["persona"] is None
     assert store.list_heartbeats()[0]["role"] == "route"
+
+
+def test_route_worker_preserves_persona_resolution_for_ticket_updated() -> None:
+    event = _event("zendesk:ticket:123:updated").model_copy(
+        update={"event_type": IntakeEventType.TICKET_UPDATED}
+    )
+    worker, store, receipt, persona = _worker(event=event)
+
+    assert worker.process_once() is True
+
+    persona.assert_called_once_with("123")
+    execution = store.get_execution(receipt.execution_id)
+    assert execution is not None
+    assert execution["persona"]["version"] == 3
 
 
 def test_route_failure_is_terminal_human_review_without_processing_job() -> None:

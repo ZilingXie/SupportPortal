@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from uuid import uuid4
 
 import psycopg
 import pytest
 from psycopg import sql
 
+from backend.automation_ecs_route_worker import RouteWorker
+from backend.repositories.ticket_repository import PostgresTicketRepository
 from backend.services.automation_ecs_contracts import DeliveryStatus, JobKind
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_store import PostgresAutomationEcsStore
+from backend.tests.test_automation_ecs_route_worker import _decision
 from backend.tests.test_automation_ecs_store import _event
 
 
@@ -106,3 +110,41 @@ def test_postgres_route_processing_delivery_and_heartbeat(store: PostgresAutomat
     assert execution is not None
     assert execution["status"] == "outcome_unknown"
     assert store.claim_job(JobKind.PROCESSING, worker_id="worker-3", lease_seconds=30) is None
+
+
+def test_ticket_created_route_does_not_resolve_persona_before_ticket_parent(
+    store: PostgresAutomationEcsStore,
+) -> None:
+    repository = PostgresTicketRepository(
+        dsn=DSN,
+        migration_dsn=DSN,
+        schema=store.settings.db_schema,
+    )
+    repository.initialize()
+    try:
+        assert repository.get_ticket("123") is None
+        receipt = store.accept_intake(_event(), store.settings.provenance())
+        worker = RouteWorker(
+            settings=replace(
+                store.settings,
+                service_role="route",
+                runtime_identity="route-test",
+            ),
+            store=store,
+            persona_resolver=repository.resolve_account_persona,
+            route_decider=lambda *args, **kwargs: _decision(),
+        )
+
+        assert worker.process_once() is True
+
+        execution = store.get_execution(receipt.execution_id)
+        assert execution is not None
+        assert execution["status"] == "processing_pending"
+        assert execution["persona"] is None
+        assert repository.get_ticket("123") is None
+        assert repository.get_account_persona_assignment("123") is None
+        processing = store.claim_job(JobKind.PROCESSING, worker_id="worker-1", lease_seconds=30)
+        assert processing is not None
+        assert processing.payload["persona"] is None
+    finally:
+        repository.close()
