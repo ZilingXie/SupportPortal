@@ -4,10 +4,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from backend.services.rag_executor import (
+    build_ragflow_worker_executor,
     build_sync_rag_executor,
     build_worker_rag_executor,
     normalize_rag_failure,
 )
+from backend.services.ragflow_docs_search_skill import RagflowDocsSearchError
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_service_client import (
     RagServiceError,
@@ -193,6 +195,104 @@ class TestBuildWorkerRagExecutor(unittest.TestCase):
         evidence = result.evidence_summary or {}
         diagnostics = evidence.get("diagnostics") if isinstance(evidence, dict) else {}
         self.assertEqual(diagnostics.get("rag_failure_kind"), "http")
+
+
+class TestBuildRagflowWorkerExecutor(unittest.TestCase):
+    def test_grounded_answer_maps_sources_and_provider_diagnostics(self):
+        client = MagicMock()
+        client.query.return_value = {
+            "decision": "answer",
+            "answer": "Use a project App ID.",
+            "citations": [
+                {"source_url": "https://docs.agora.io/en/get-started/manage-agora-account"},
+                {"source_url": "https://docs.agora.io/en/get-started/manage-agora-account"},
+            ],
+        }
+        executor = build_ragflow_worker_executor(client, timeout_seconds=90.0)
+
+        result = executor(
+            message="What is an App ID?",
+            request_id="ragflow-1",
+            ticket_id="T1",
+            customer_id="C1",
+            ticket_context=[{"role": "customer", "content": "I am creating a project."}],
+        )
+
+        self.assertEqual(result.reason, "grounded_answer")
+        self.assertFalse(result.needs_engineer_guidance)
+        self.assertEqual(
+            result.sources,
+            ["https://docs.agora.io/en/get-started/manage-agora-account"],
+        )
+        self.assertEqual(len(result.citations), 2)
+        self.assertEqual(result.evidence_summary["diagnostics"]["rag_provider"], "ragflow_docs_search")
+        self.assertEqual(client.query.call_args.kwargs["timeout_seconds"], 90.0)
+
+    def test_insufficient_evidence_preserves_escalation_reason(self):
+        client = MagicMock()
+        client.query.return_value = {
+            "decision": "escalate",
+            "answer": "",
+            "reason": "insufficient_evidence",
+        }
+        result = build_ragflow_worker_executor(client, timeout_seconds=90.0)(message="unknown")
+
+        self.assertEqual(result.reason, "insufficient_evidence")
+        self.assertTrue(result.needs_engineer_guidance)
+        self.assertEqual(result.answer, INSUFFICIENT_EVIDENCE_REPLY)
+
+    def test_timeout_maps_to_processing_timeout_and_preserves_failure_kind(self):
+        client = MagicMock()
+        client.query.side_effect = RagflowDocsSearchError("timeout")
+        result = build_ragflow_worker_executor(client, timeout_seconds=90.0)(message="question")
+
+        self.assertEqual(result.reason, "rag_processing_timeout")
+        self.assertTrue(result.needs_engineer_guidance)
+        self.assertEqual(result.evidence_summary["diagnostics"]["rag_failure_kind"], "timeout")
+
+    def test_other_failures_fail_closed_with_stable_diagnostics(self):
+        for failure_kind in (
+            "configuration",
+            "authentication",
+            "access",
+            "execution",
+            "search",
+            "generation",
+            "invalid_search_response",
+            "invalid_generation_response",
+        ):
+            with self.subTest(failure_kind=failure_kind):
+                client = MagicMock()
+                client.query.side_effect = RagflowDocsSearchError(failure_kind)
+                result = build_ragflow_worker_executor(client, timeout_seconds=90.0)(message="question")
+                self.assertEqual(result.reason, "rag_unavailable")
+                self.assertTrue(result.needs_engineer_guidance)
+                self.assertEqual(
+                    result.evidence_summary["diagnostics"]["rag_failure_kind"],
+                    failure_kind,
+                )
+
+    def test_non_mapping_response_fails_closed(self):
+        client = MagicMock()
+        client.query.return_value = []
+        result = build_ragflow_worker_executor(client, timeout_seconds=90.0)(message="question")
+
+        self.assertEqual(result.reason, "rag_unavailable")
+        self.assertEqual(result.evidence_summary["diagnostics"]["rag_failure_kind"], "invalid_response")
+
+    def test_unexpected_client_failure_fails_closed_without_error_text(self):
+        client = MagicMock()
+        client.query.side_effect = RuntimeError("sensitive upstream detail")
+
+        with self.assertLogs("backend.services.rag_executor", level="WARNING") as logs:
+            result = build_ragflow_worker_executor(client, timeout_seconds=90.0)(message="question")
+
+        self.assertEqual(result.reason, "rag_unavailable")
+        self.assertEqual(
+            result.evidence_summary["diagnostics"]["rag_failure_kind"],
+            "unexpected_RuntimeError",
+        )
+        self.assertNotIn("sensitive upstream detail", "\n".join(logs.output))
 
 
 if __name__ == "__main__":

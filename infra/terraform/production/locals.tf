@@ -163,11 +163,11 @@ locals {
       valueFrom = aws_secretsmanager_secret.runtime["n8n_request_token"].arn
     },
     {
-      name      = "RAG_SERVICE_URL"
+      name      = "RAGFLOW_BASE_URL"
       valueFrom = aws_secretsmanager_secret.runtime["rag_service_url"].arn
     },
     {
-      name      = "RAG_SERVICE_SHARED_TOKEN"
+      name      = "RAGFLOW_API_KEY"
       valueFrom = aws_secretsmanager_secret.runtime["rag_service_token"].arn
     },
     {

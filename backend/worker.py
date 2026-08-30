@@ -192,7 +192,8 @@ from backend.services.client_ticket_agent_runtime import (
 from backend.services.product_selection import resolve_support_product_context
 from backend.services.prompt_runtime import initialize_prompt_runtime
 from backend.services.runtime_schema import check_runtime_schema, runtime_schema_check_enabled
-from backend.services.rag_executor import build_worker_rag_executor
+from backend.services.rag_executor import build_ragflow_worker_executor, build_worker_rag_executor
+from backend.services.ragflow_docs_search_skill import RagflowDocsSearchSkillClient
 from backend.services.rag_service_client import (
     RagServiceClient,
     RagServiceError,
@@ -3980,6 +3981,11 @@ class _WorkerRagCancelled(RuntimeError):
 
 
 def _build_current_worker_rag_executor():
+    if str(os.getenv("AUTOMATION_ECS_ACCOUNT_ONLY") or "").strip() == "1":
+        return build_ragflow_worker_executor(
+            RagflowDocsSearchSkillClient(),
+            timeout_seconds=_worker_rag_timeout_seconds(),
+        )
     return build_worker_rag_executor(
         rag_service_client,
         timeout_seconds=_worker_rag_timeout_seconds(),
