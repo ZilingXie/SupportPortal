@@ -31,6 +31,16 @@ def test_ecs_images_physically_exclude_legacy_and_local_rag_entrypoints() -> Non
             assert forbidden in block
 
 
+def test_ecs_worker_retains_vendored_ragflow_skill() -> None:
+    dockerfile = (ROOT / "backend/Dockerfile.automation").read_text(encoding="utf-8")
+    worker = _role_block("ecs-worker", "production")
+    skill_root = ROOT / "backend/skills/ragflow-docs-search"
+    assert (skill_root / "SKILL.md").is_file()
+    assert (skill_root / "scripts/search.py").is_file()
+    assert "/app/backend/skills/ragflow-docs-search" not in worker
+    assert "COPY backend /tmp/backend-src/backend" in dockerfile
+
+
 def test_ecs_entrypoint_exposes_only_three_long_running_roles() -> None:
     entrypoint = (ROOT / "deployment/automation_ecs_entrypoint.sh").read_text(encoding="utf-8")
     assert "backend.automation_ecs_api:create_app --factory" in entrypoint

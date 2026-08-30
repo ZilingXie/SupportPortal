@@ -5080,3 +5080,24 @@ For each new entry, record:
   - `rtk ../../.venv/bin/python -m pytest backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_worker.py -q` (`325 passed`, `66 subtests passed`).
   - `rtk ../../.venv/bin/python -m py_compile backend/services/ragflow_docs_search_skill.py backend/services/account_reply_rag_fallback.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py` (exit 0).
   - `rtk git diff --check` (exit 0).
+
+## 2026-08-30 - ECS Account Worker uses the approved remote RAGFlow contract (p1-53)
+
+- Summary:
+  - Added an ECS Account Worker executor for the existing `RagflowDocsSearchSkillClient`; grounded answers reuse the shared ticket-answer mapper and copy trusted citation URLs into `sources`.
+  - Selected that executor only when `AUTOMATION_ECS_ACCOUNT_ONLY=1`. The EC2 `/production` Worker continues to use the existing `RagServiceClient` and `/internal/rag/query` contract.
+  - Mapped RAGFlow timeout, configuration, authentication, access, execution, search, generation, invalid-response, and unexpected client-boundary failures into the existing fail-closed engineer-guidance result while preserving `rag_provider` and a safe failure kind in diagnostics.
+  - Updated the ECS Worker secret names to `RAGFLOW_BASE_URL` and `RAGFLOW_API_KEY`; the stored URL/token resources remain secret-backed and are not embedded into images or manifests.
+- Reason:
+  - The approved remote ticket-agent service is a restricted `ragflow-docs-search` retrieval contract, not a compatible deployment of SupportPortal's `/internal/rag/query` API. Fargate could not use the old EC2 Compose hostname.
+- Affected files/config:
+  - `backend/services/rag_executor.py`
+  - `backend/worker.py`
+  - `infra/terraform/production/locals.tf`
+  - Focused RAG, Worker selection, ECS Terraform, and image contract tests
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, index, or backfill changes.
+  - No customer data was sent during automated verification. The runtime token remains injected from the configured AWS secret store and is not logged.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py` (`446 passed`, `44 subtests passed`).
+  - `rtk git diff --check` (exit 0).

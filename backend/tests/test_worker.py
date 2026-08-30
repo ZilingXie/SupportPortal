@@ -1187,6 +1187,43 @@ class WorkerResilienceTests(unittest.TestCase):
         rag_mock.assert_called_once()
         health_mock.assert_called_once()
 
+    def test_ecs_account_worker_selects_ragflow_executor(self) -> None:
+        expected_executor = Mock()
+        ragflow_client = Mock()
+        with patch.dict(os.environ, {"AUTOMATION_ECS_ACCOUNT_ONLY": "1"}, clear=False), patch.object(
+            worker,
+            "RagflowDocsSearchSkillClient",
+            return_value=ragflow_client,
+        ), patch.object(
+            worker,
+            "build_ragflow_worker_executor",
+            return_value=expected_executor,
+        ) as ragflow_builder, patch.object(worker, "build_worker_rag_executor") as legacy_builder:
+            executor = worker._build_current_worker_rag_executor()
+
+        self.assertIs(executor, expected_executor)
+        ragflow_builder.assert_called_once_with(ragflow_client, timeout_seconds=90.0)
+        legacy_builder.assert_not_called()
+
+    def test_non_ecs_worker_keeps_legacy_rag_service_executor(self) -> None:
+        expected_executor = Mock()
+        with patch.dict(os.environ, {"AUTOMATION_ECS_ACCOUNT_ONLY": ""}, clear=False), patch.object(
+            worker,
+            "build_worker_rag_executor",
+            return_value=expected_executor,
+        ) as legacy_builder, patch.object(worker, "build_ragflow_worker_executor") as ragflow_builder:
+            executor = worker._build_current_worker_rag_executor()
+
+        self.assertIs(executor, expected_executor)
+        legacy_builder.assert_called_once_with(
+            worker.rag_service_client,
+            timeout_seconds=90.0,
+            max_wait_seconds=300.0,
+            recovery_window_seconds=210.0,
+            recovery_poll_interval_seconds=1.0,
+        )
+        ragflow_builder.assert_not_called()
+
     def test_worker_rag_executor_preserves_recovered_insufficient_evidence_reason(self) -> None:
         recovered = worker.RagTicketAnswerDetail(
             answer="RAG completed but could not verify a customer-safe grounded answer from the available schema evidence.",

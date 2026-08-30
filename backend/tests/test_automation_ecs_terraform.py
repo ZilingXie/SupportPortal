@@ -63,13 +63,15 @@ def test_worker_receives_account_mail_rag_and_delivery_contracts() -> None:
     for name in (
         "TICKET_DB_DSN",
         "AUTOMATION_DB_DSN",
-        "RAG_SERVICE_URL",
-        "RAG_SERVICE_SHARED_TOKEN",
+        "RAGFLOW_BASE_URL",
+        "RAGFLOW_API_KEY",
         "zendesk_basic_auth",
         "ENGINEER_SLACK_ACCESS_TOKEN",
         "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET",
     ):
         assert name in locals_source
+    assert 'name      = "RAG_SERVICE_URL"' not in locals_source
+    assert 'name      = "RAG_SERVICE_SHARED_TOKEN"' not in locals_source
     assert 'value = var.zendesk_side_effects_enabled ? "1" : "0"' in ecs
 
 

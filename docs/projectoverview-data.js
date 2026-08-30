@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-29T17:37:22Z",
-  "source_base_commit": "e214288afe24e1e11f0dc35bb50474ad70b98cba",
-  "registry_digest": "15f3d7cca94d7cbc6cd76a26b973e32e97a4840ca78c17a4ac842e56566d9f59",
+  "generated_at": "2026-08-30T03:33:08Z",
+  "source_base_commit": "3ad108e7afe801dc7c1719fb0edc2c5d78bd11d2",
+  "registry_digest": "0344f0c8fe2aac3edb2baec72018e33b16715ef0fe0530fa46678b5a627f434c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1821,6 +1821,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Account Worker RAGFlow transport integration",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py",
+          "details": "446 passed、44 subtests passed；ECS Account-only Worker选择RAGFlow受限检索与grounded generation，可信citation URL同步进入sources；timeout、配置/认证/访问/检索/生成/无效响应与未知client-boundary异常均fail closed，不记录异常正文并保留provider/failure诊断。非ECS Worker继续选择原有RagServiceClient。Terraform Worker secret名称改为RAGFLOW_BASE_URL/RAGFLOW_API_KEY，Worker镜像保留vendored skill且继续排除项目内rag_api/rag_worker。测试未执行真实邮件、RAG或客户侧外呼。"
+        },
+        {
+          "type": "deployment",
+          "label": "Remote RAGFlow contract and credentialed retrieval gate",
+          "command": "Authenticated upstream integration-guide readback, SSM metadata/value-shape check, vendored Git blob comparison, and credentialed synthetic retrieval 2026-08-30",
+          "details": "权威契约为https://knowledge.convoai.club/kb/ticket-agent下的受限POST /api/v1/retrieval与只读document metadata接口，不兼容旧/internal/rag/query。/supportportal/production/rag-service-url已更新为该base URL，rag-service-shared-token为非空SecureString；无客户数据合成检索返回3条非空passage，引用host仅docs.agora.io与api-ref.agora.io。vendored SKILL.md与scripts/search.py的Git blob与上游main一致；检查未输出token、passage或答案正文。"
         },
         {
           "type": "deployment",
@@ -6009,8 +6021,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Account parity release r20260829-e6cffca使用独立 API、Route Worker和 Automation Worker，以 RDS durable Jobs交接并调用远端 RAG；Worker同时消费 Account reply/delivery jobs和 Billing、Enablement、Quota Outlook内部回复。公网 DNS、HTTPS、ALB、API revision 2与 Route revision 3均已验证，Graph/EFS、RDS、Zendesk、Slack及 release provenance只读门禁通过；但正式 RAG参数仍指向仅 EC2 Compose可解析的 http://rag_api:8020。为避免后台周期持续失败，Automation Worker revision 2保持0副本，/health/ready按契约返回503，因此 /automation/production尚未上线。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
-      "next_action": "提供可从 us-east-1 Fargate访问、兼容 Bearer鉴权与 /internal/rag/query契约的远端 RAG base URL，并更新 /supportportal/production/rag-service-url；随后用 Automation Worker revision 2重跑无客户数据的 RAG health与合成查询探针。仅在探针通过后将 Worker恢复为1，确认 API/Route/Worker为1/1/0、当前 heartbeat新鲜且provenance_mismatches为空、/health/ready连续至少15分钟为200、CloudWatch无持续错误且业务队列计数不增长。n8n切换和首个真实 Case继续由用户另行执行，EC2 /production保持不变。",
+      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Account parity runtime使用独立 API、Route Worker和 Automation Worker，以 RDS durable Jobs交接；ECS Account Worker已改为调用受限只读的远端 ragflow-docs-search，而 EC2 /production继续使用原有 RagServiceClient。公网 DNS、HTTPS、ALB、API与 Route、Graph/EFS、RDS、Zendesk、Slack及既有 release provenance门禁已验证；Automation Worker继续保持0副本，等待基于新合并 commit构建同 provenance的三角色 release并通过 Fargate RAGFlow探针，所以 /health/ready仍按契约返回503，/automation/production尚未上线。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
+      "next_action": "从合并后的干净 main构建并验证新的 linux/amd64 API、Route、Worker OCI release，上传 supportportal/production并注册同一 release/commit/Prompt provenance的 Task Definition revisions。Worker保持0，先使用新 Worker revision运行无客户数据的 Fargate RAGFlow合成检索与生成探针；通过后将 Worker恢复为1，确认 API/Route/Worker为1/1/0、当前 heartbeat新鲜且provenance_mismatches为空、/health/ready连续至少15分钟为200、CloudWatch无持续错误且业务表计数不增长。n8n切换和首个真实 Case继续由用户另行执行，EC2 /production保持不变。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6024,10 +6036,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
         "GitHub Actions使用 AWS OIDC而非长期 access key，Terraform identity与更窄的 release identity分离，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
       ],
-      "blockers": [
-        "正式 SSM参数 /supportportal/production/rag-service-url 当前仍为 EC2 Docker Compose内部地址 http://rag_api:8020，Fargate DNS解析失败；AWS内未发现其他已配置的兼容远端 endpoint。Automation Worker必须保持0，readiness保持503，直到用户提供真实可达的远端 RAG base URL并通过无客户数据探针。"
-      ],
+      "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "ECS Account Worker RAGFlow transport integration",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py",
+          "details": "446 passed、44 subtests passed；ECS Account-only Worker选择RAGFlow受限检索与grounded generation，可信citation URL同步进入sources；timeout、配置/认证/访问/检索/生成/无效响应与未知client-boundary异常均fail closed，不记录异常正文并保留provider/failure诊断。非ECS Worker继续选择原有RagServiceClient。Terraform Worker secret名称改为RAGFLOW_BASE_URL/RAGFLOW_API_KEY，Worker镜像保留vendored skill且继续排除项目内rag_api/rag_worker。测试未执行真实邮件、RAG或客户侧外呼。"
+        },
+        {
+          "type": "deployment",
+          "label": "Remote RAGFlow contract and credentialed retrieval gate",
+          "command": "Authenticated upstream integration-guide readback, SSM metadata/value-shape check, vendored Git blob comparison, and credentialed synthetic retrieval 2026-08-30",
+          "details": "权威契约为https://knowledge.convoai.club/kb/ticket-agent下的受限POST /api/v1/retrieval与只读document metadata接口，不兼容旧/internal/rag/query。/supportportal/production/rag-service-url已更新为该base URL，rag-service-shared-token为非空SecureString；无客户数据合成检索返回3条非空passage，引用host仅docs.agora.io与api-ref.agora.io。vendored SKILL.md与scripts/search.py的Git blob与上游main一致；检查未输出token、passage或答案正文。"
+        },
         {
           "type": "deployment",
           "label": "ECS zero-traffic go-live gates and remote RAG blocker",
@@ -6255,6 +6277,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-30",
           "event": "ecs_zero_traffic_go_live_blocked_by_remote_rag",
           "summary": "DNS、TLS、ALB、API、Route、Graph/EFS、RDS、Zendesk、Slack、release provenance与空队列门禁均已验证；但正式RAG参数仍是仅EC2 Compose可解析的http://rag_api:8020，Fargate探针在DNS解析处失败。已将Automation Worker保持0并保留readiness 503，清理临时Graph seed参数及bootstrap Task Definition；未创建真实Case、未修改n8n或EC2 backup，不以部分健康宣称上线。"
+        },
+        {
+          "at": "2026-08-30",
+          "event": "ecs_remote_ragflow_contract_integrated",
+          "summary": "用户将正式SSM URL更新为受限只读的ticket-agent RAGFlow endpoint并保存scoped token；真实合成检索、trusted-host和vendored source门禁通过。ECS Account Worker改为选择RAGFlow adapter，EC2默认RagServiceClient保持不变；446项测试与44项子测试通过。旧remote RAG blocker已解除，下一步为从合并commit构建新release、Fargate探针与Worker启动验收。"
         }
       ],
       "legacy_refs": [

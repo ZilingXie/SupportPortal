@@ -10,7 +10,12 @@ from backend.services.rag_service_client import (
     RagServiceError,
     RagTicketAnswerDetail,
     classify_rag_service_failure_kind,
+    map_rag_payload_to_ticket_answer_detail,
     with_rag_detail_diagnostics,
+)
+from backend.services.ragflow_docs_search_skill import (
+    RagflowDocsSearchError,
+    RagflowDocsSearchSkillClient,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -204,5 +209,91 @@ def build_worker_rag_executor(
                 exc,
             )
             return with_rag_detail_diagnostics(fallback, diagnostics)
+
+    return executor
+
+
+def build_ragflow_worker_executor(
+    ragflow_client: RagflowDocsSearchSkillClient,
+    *,
+    timeout_seconds: float,
+):
+    def executor(
+        *,
+        message: str,
+        ticket_id: str | None = None,
+        customer_id: str | None = None,
+        requester: str | None = None,
+        ticket_context: list[dict[str, str]] | None = None,
+        product: str | None = None,
+        request_id: str | None = None,
+        **kwargs: Any,
+    ) -> RagTicketAnswerDetail:
+        del requester, product, kwargs
+        try:
+            payload = ragflow_client.query(
+                question=message,
+                request_id=request_id or "",
+                ticket_id=ticket_id,
+                customer_id=customer_id,
+                ticket_context=ticket_context,
+                timeout_seconds=timeout_seconds,
+            )
+            if not isinstance(payload, dict):
+                raise RagflowDocsSearchError("invalid_response")
+        except Exception as exc:
+            failure_kind = (
+                exc.failure_kind
+                if isinstance(exc, RagflowDocsSearchError)
+                else f"unexpected_{type(exc).__name__}"
+            )
+            reason = "rag_processing_timeout" if failure_kind == "timeout" else "rag_unavailable"
+            LOGGER.warning(
+                "Worker RAGFlow call failed request_id=%s ticket_id=%s reason=%s failure_kind=%s",
+                request_id,
+                ticket_id,
+                reason,
+                failure_kind,
+            )
+            detail = RagTicketAnswerDetail(
+                answer=INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason=reason,
+            )
+            return with_rag_detail_diagnostics(
+                detail,
+                {
+                    "rag_provider": "ragflow_docs_search",
+                    "rag_failure_kind": failure_kind,
+                    "rag_timeout_seconds": timeout_seconds,
+                    "rag_recovered_from_live_detail": False,
+                },
+            )
+
+        citations = payload.get("citations") if isinstance(payload.get("citations"), list) else []
+        sources: list[str] = []
+        for citation in citations:
+            if not isinstance(citation, dict):
+                continue
+            source_url = str(citation.get("source_url") or "").strip()
+            if source_url and source_url not in sources:
+                sources.append(source_url)
+        normalized_payload = dict(payload)
+        normalized_payload["sources"] = sources
+        detail = map_rag_payload_to_ticket_answer_detail(
+            normalized_payload,
+            insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+        )
+        return with_rag_detail_diagnostics(
+            detail,
+            {
+                "rag_provider": "ragflow_docs_search",
+                "rag_timeout_seconds": timeout_seconds,
+                "rag_recovered_from_live_detail": False,
+            },
+        )
 
     return executor
