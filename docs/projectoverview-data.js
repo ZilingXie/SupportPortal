@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-30T03:33:08Z",
-  "source_base_commit": "3ad108e7afe801dc7c1719fb0edc2c5d78bd11d2",
-  "registry_digest": "0344f0c8fe2aac3edb2baec72018e33b16715ef0fe0530fa46678b5a627f434c",
+  "generated_at": "2026-08-30T04:57:06Z",
+  "source_base_commit": "42e0ff3af084bc8b37ae8b2e0e37b50ec07e2533",
+  "registry_digest": "151596a53411c15f28180f6a058fe815812555eb5a1e16fc61613e01a7293b0a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1821,6 +1821,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Account parity Production zero-traffic go-live",
+          "command": "Immutable ECR/task-definition readback, formal Fargate dependency probe 3c9c7b1a3d6e4f4d911c9eb127d1d352, 16-sample stability observation, final count probe de55f1eff2e0401abfd21358d4d82c78, and public DNS/TLS/ALB/auth verification 2026-08-30",
+          "details": "release r20260830-42e0ff3基于commit 42e0ff3af084bc8b37ae8b2e0e37b50ec07e2533和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:fcd07f13516bb3b728c5b795b667b3516312e510bb8332d005ba6e282568b7be、sha256:12f52752961f45ab0d413e7024d806cd0d8e59a3606c74efad3f5471824ebc4e、sha256:963f78ff2cc9bdb4b2275656affaa43031e1d752bf45c35c2b2e1ee09ee9b11b。API:3、Route:4、Worker:3的Service deployment均COMPLETED且desired/running/pending=1/1/0；当前Route/Worker heartbeat新鲜、provenance_mismatches=[]。正式Fargate探针通过RAGFlow认证检索与grounded generation并只返回可信docs.agora.io citation；Graph /me与最近7天Inbox完整分页读取成功，共192封且[automation]/未读匹配均为0；EFS token cache为0600；RDS runtime/schema/Prompt/heartbeat、Zendesk identity和Slack auth通过。9张业务表在依赖探针前后及最终独立计数探针中均为0。公网live/release/ready均为200，未认证Intake为401，认证空payload为422；16个一分钟样本持续993.5秒且覆盖3个Outlook poll窗口，ECS始终1/1/0、CloudWatch error count始终为0。1.1.1.1、8.8.8.8与本机解析到同一ALB，HTTP 301跳转HTTPS，OpenSSL证书链和hostname校验通过；Target Group仅172.31.42.31:8000且healthy。临时Graph bootstrap参数无残留，supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n未修改。ECR当前Worker扫描仍有4 Critical、15 High、6 Medium、1 Low基础镜像finding，与前一release相同，记录为后续镜像加固风险而非本次RAGFlow上线回退。"
         },
         {
           "type": "test",
@@ -6021,8 +6027,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。新的 ECS入口为 supportcenter.stellarix.space/automation/production；support.stellarix.space/production保持不变作为 EC2 backup。Account parity runtime使用独立 API、Route Worker和 Automation Worker，以 RDS durable Jobs交接；ECS Account Worker已改为调用受限只读的远端 ragflow-docs-search，而 EC2 /production继续使用原有 RagServiceClient。公网 DNS、HTTPS、ALB、API与 Route、Graph/EFS、RDS、Zendesk、Slack及既有 release provenance门禁已验证；Automation Worker继续保持0副本，等待基于新合并 commit构建同 provenance的三角色 release并通过 Fargate RAGFlow探针，所以 /health/ready仍按契约返回503，/automation/production尚未上线。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，不得宣称完整/production parity。",
-      "next_action": "从合并后的干净 main构建并验证新的 linux/amd64 API、Route、Worker OCI release，上传 supportportal/production并注册同一 release/commit/Prompt provenance的 Task Definition revisions。Worker保持0，先使用新 Worker revision运行无客户数据的 Fargate RAGFlow合成检索与生成探针；通过后将 Worker恢复为1，确认 API/Route/Worker为1/1/0、当前 heartbeat新鲜且provenance_mismatches为空、/health/ready连续至少15分钟为200、CloudWatch无持续错误且业务表计数不增长。n8n切换和首个真实 Case继续由用户另行执行，EC2 /production保持不变。",
+      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker分别使用 Task Definition 3、4、3，三者均为1/1/0且固定到release r20260830-42e0ff3的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。n8n尚未切换，support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
+      "next_action": "用户在n8n中配置https://supportcenter.stellarix.space/automation/production/v1/intake及正式Bearer token，发送首个受控Account Case，并按Execution/Job/Delivery、Zendesk、Outlook及必要外部readback完成端到端验收；验收期间保持EC2 /production不变且不重放outcome_unknown。首个Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6038,6 +6044,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "ECS Account parity Production zero-traffic go-live",
+          "command": "Immutable ECR/task-definition readback, formal Fargate dependency probe 3c9c7b1a3d6e4f4d911c9eb127d1d352, 16-sample stability observation, final count probe de55f1eff2e0401abfd21358d4d82c78, and public DNS/TLS/ALB/auth verification 2026-08-30",
+          "details": "release r20260830-42e0ff3基于commit 42e0ff3af084bc8b37ae8b2e0e37b50ec07e2533和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:fcd07f13516bb3b728c5b795b667b3516312e510bb8332d005ba6e282568b7be、sha256:12f52752961f45ab0d413e7024d806cd0d8e59a3606c74efad3f5471824ebc4e、sha256:963f78ff2cc9bdb4b2275656affaa43031e1d752bf45c35c2b2e1ee09ee9b11b。API:3、Route:4、Worker:3的Service deployment均COMPLETED且desired/running/pending=1/1/0；当前Route/Worker heartbeat新鲜、provenance_mismatches=[]。正式Fargate探针通过RAGFlow认证检索与grounded generation并只返回可信docs.agora.io citation；Graph /me与最近7天Inbox完整分页读取成功，共192封且[automation]/未读匹配均为0；EFS token cache为0600；RDS runtime/schema/Prompt/heartbeat、Zendesk identity和Slack auth通过。9张业务表在依赖探针前后及最终独立计数探针中均为0。公网live/release/ready均为200，未认证Intake为401，认证空payload为422；16个一分钟样本持续993.5秒且覆盖3个Outlook poll窗口，ECS始终1/1/0、CloudWatch error count始终为0。1.1.1.1、8.8.8.8与本机解析到同一ALB，HTTP 301跳转HTTPS，OpenSSL证书链和hostname校验通过；Target Group仅172.31.42.31:8000且healthy。临时Graph bootstrap参数无残留，supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n未修改。ECR当前Worker扫描仍有4 Critical、15 High、6 Medium、1 Low基础镜像finding，与前一release相同，记录为后续镜像加固风险而非本次RAGFlow上线回退。"
+        },
         {
           "type": "test",
           "label": "ECS Account Worker RAGFlow transport integration",
@@ -6282,6 +6294,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-30",
           "event": "ecs_remote_ragflow_contract_integrated",
           "summary": "用户将正式SSM URL更新为受限只读的ticket-agent RAGFlow endpoint并保存scoped token；真实合成检索、trusted-host和vendored source门禁通过。ECS Account Worker改为选择RAGFlow adapter，EC2默认RagServiceClient保持不变；446项测试与44项子测试通过。旧remote RAG blocker已解除，下一步为从合并commit构建新release、Fargate探针与Worker启动验收。"
+        },
+        {
+          "at": "2026-08-30",
+          "event": "account_parity_production_zero_traffic_live",
+          "summary": "从main@42e0ff3构建并部署r20260830-42e0ff3；API:3、Route:4、Worker:3均稳定1/1/0，正式Fargate依赖探针、Graph/RAGFlow/RDS/Zendesk/Slack、16样本稳定性观察、最终9表零增长、公网DNS/TLS/ALB/health/auth及临时资源清理全部通过。/automation/production现为Account parity零流量上线；n8n首个受控Case、Preproduction和EC2 Staging仍待完成，EC2 /production保持backup。"
         }
       ],
       "legacy_refs": [
