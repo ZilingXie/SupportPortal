@@ -23,6 +23,12 @@
   "evidence": [
     {
       "type": "test",
+      "label": "ECS stage_attempts serialization compatibility fix",
+      "command": ".venv/bin/pytest -q backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_comment_sync.py; python -m py_compile backend/services/account_admin.py backend/services/automation_account_intake.py backend/automation_ecs_route_worker.py backend/automation_ecs_worker.py; git diff --check",
+      "details": "修复 route_execution_from_decision 对原生 stage-attempt mapping、ECS automation-route-v1 名称列表和 JSON 字典记录的边界归一化；列表缺失的 failure/source/count/recovered 元数据从 classification 审计字段补齐，避免 dict(list_of_stage_names) ValueError。新增列表、JSON 记录及 ticket.created Account Intake 持久化回归；284 passed、20 subtests passed，py_compile 与 diff check 通过，测试未触发真实邮件、RAG、Zendesk 或 Slack 外呼。"
+    },
+    {
+      "type": "test",
       "label": "ECS ticket.created Route/Persona FK ordering regression",
       "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py; .venv/bin/pytest -q backend/tests/test_worker.py; AUTOMATION_ECS_TEST_POSTGRES_DSN=<isolated-test-dsn> .venv/bin/pytest -q backend/tests/test_automation_ecs_store_postgres.py::test_ticket_created_route_does_not_resolve_persona_before_ticket_parent",
       "details": "215项ECS/Account/旧production契约与11项子测试通过，118项legacy Worker与17项子测试通过；真实PostgreSQL随机schema回归确认无support_tickets父记录时Route仍完成classification并原子创建Processing Job，execution与payload的persona均为null，且未创建Persona assignment。ticket.updated继续保留Route-time Persona解析。测试未重放失败Execution，也未触发RAG、邮件、Slack或Zendesk业务写入。"

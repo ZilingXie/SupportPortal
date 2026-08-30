@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-30T13:18:29Z",
-  "source_base_commit": "ad56ac582dac3e4fb09e63e73928fd386376df6b",
-  "registry_digest": "8cb758b6e481e07419d838be8fa6fbcdec0bd893712eb712508bb4c9985b0025",
+  "generated_at": "2026-08-30T14:20:50Z",
+  "source_base_commit": "88e14e1e288a86da30b67519adb166606da91b9a",
+  "registry_digest": "8bddac419b0b80fee2f20f315b2901299bff108b864364f6ef616f280232b83b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1821,6 +1821,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "ECS stage_attempts serialization compatibility fix",
+          "command": ".venv/bin/pytest -q backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_comment_sync.py; python -m py_compile backend/services/account_admin.py backend/services/automation_account_intake.py backend/automation_ecs_route_worker.py backend/automation_ecs_worker.py; git diff --check",
+          "details": "修复 route_execution_from_decision 对原生 stage-attempt mapping、ECS automation-route-v1 名称列表和 JSON 字典记录的边界归一化；列表缺失的 failure/source/count/recovered 元数据从 classification 审计字段补齐，避免 dict(list_of_stage_names) ValueError。新增列表、JSON 记录及 ticket.created Account Intake 持久化回归；284 passed、20 subtests passed，py_compile 与 diff check 通过，测试未触发真实邮件、RAG、Zendesk 或 Slack 外呼。"
         },
         {
           "type": "test",
@@ -6056,6 +6062,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "ECS stage_attempts serialization compatibility fix",
+          "command": ".venv/bin/pytest -q backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_comment_sync.py; python -m py_compile backend/services/account_admin.py backend/services/automation_account_intake.py backend/automation_ecs_route_worker.py backend/automation_ecs_worker.py; git diff --check",
+          "details": "修复 route_execution_from_decision 对原生 stage-attempt mapping、ECS automation-route-v1 名称列表和 JSON 字典记录的边界归一化；列表缺失的 failure/source/count/recovered 元数据从 classification 审计字段补齐，避免 dict(list_of_stage_names) ValueError。新增列表、JSON 记录及 ticket.created Account Intake 持久化回归；284 passed、20 subtests passed，py_compile 与 diff check 通过，测试未触发真实邮件、RAG、Zendesk 或 Slack 外呼。"
+        },
         {
           "type": "test",
           "label": "ECS ticket.created Route/Persona FK ordering regression",
