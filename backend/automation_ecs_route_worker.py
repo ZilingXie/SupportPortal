@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from backend.repositories.ticket_repository import create_ticket_repository
 from backend.services.account_route_pipeline import decide_account_route
-from backend.services.automation_ecs_contracts import JobKind, RouteJobPayload
+from backend.services.automation_ecs_contracts import IntakeEventType, JobKind, RouteJobPayload
 from backend.services.automation_ecs_heartbeat import JobLeaseHeartbeat, WorkerHeartbeat
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_schema import check_account_runtime_schema
@@ -61,7 +61,7 @@ def _ticket_context(payload: RouteJobPayload) -> list[dict[str, str]]:
 class RouteWorker:
     settings: AutomationEcsSettings
     store: AutomationEcsStore
-    persona_resolver: Callable[[str], dict[str, Any]]
+    persona_resolver: Callable[[str], dict[str, Any] | None]
     route_decider: Callable[..., Any] = decide_account_route
     lease_seconds: int = 120
 
@@ -89,7 +89,9 @@ class RouteWorker:
                 current_ticket_status=event.ticket.status,
                 require_latest=True,
             )
-            persona = self.persona_resolver(event.ticket.id)
+            persona = None
+            if event.event_type != IntakeEventType.TICKET_CREATED:
+                persona = self.persona_resolver(event.ticket.id)
             lease.stop()
             self.store.complete_route(
                 job,

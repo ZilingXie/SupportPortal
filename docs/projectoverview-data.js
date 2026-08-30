@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-30T04:57:06Z",
-  "source_base_commit": "42e0ff3af084bc8b37ae8b2e0e37b50ec07e2533",
-  "registry_digest": "151596a53411c15f28180f6a058fe815812555eb5a1e16fc61613e01a7293b0a",
+  "generated_at": "2026-08-30T06:49:13Z",
+  "source_base_commit": "bbc7f309cce13cdab4b08eac170dff5d5da5c394",
+  "registry_digest": "2c6ca8d67cdc838addbe115424d9ece1d2131ffc4bfe52f47345083294914c9b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1821,6 +1821,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "ECS ticket.created Route/Persona FK ordering regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py; .venv/bin/pytest -q backend/tests/test_worker.py; AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cisolated-test-dsn> .venv/bin/pytest -q backend/tests/test_automation_ecs_store_postgres.py::test_ticket_created_route_does_not_resolve_persona_before_ticket_parent",
+          "details": "215项ECS/Account/旧production契约与11项子测试通过，118项legacy Worker与17项子测试通过；真实PostgreSQL随机schema回归确认无support_tickets父记录时Route仍完成classification并原子创建Processing Job，execution与payload的persona均为null，且未创建Persona assignment。ticket.updated继续保留Route-time Persona解析。测试未重放失败Execution，也未触发RAG、邮件、Slack或Zendesk业务写入。"
         },
         {
           "type": "deployment",
@@ -6027,13 +6033,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker分别使用 Task Definition 3、4、3，三者均为1/1/0且固定到release r20260830-42e0ff3的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。n8n尚未切换，support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
-      "next_action": "用户在n8n中配置https://supportcenter.stellarix.space/automation/production/v1/intake及正式Bearer token，发送首个受控Account Case，并按Execution/Job/Delivery、Zendesk、Outlook及必要外部readback完成端到端验收；验收期间保持EC2 /production不变且不重放outcome_unknown。首个Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
+      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker分别使用 Task Definition 3、4、3，三者均为1/1/0且固定到release r20260830-42e0ff3的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。n8n首个受控Case暴露ticket.created在父Ticket持久化前写入Persona assignment的外键顺序缺陷；代码已改为Route仅完成分类与Processing交接，Persona由Account Processing在save_ticket后固定，原失败Execution保持human_review且不重放，等待从合并commit构建并部署修复release后由用户创建新Case验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
+      "next_action": "合并ticket.created Route/Persona外键顺序修复，从合并后的main构建并部署同一release/commit/Prompt provenance的API、Route与Worker镜像，验证三Service 1/1/0、readiness与heartbeat后，由用户创建新的受控Account Case完成Execution/Job/Delivery、Zendesk、Outlook及必要外部readback验收；不得重放原失败Execution或outcome_unknown。新Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
         "ECS Foundation只建立当前 release实际需要的 ECR/IAM/Fargate/ALB/ACM/Secrets Manager/CloudWatch与必要 token存储；supportcenter.stellarix.space进入 ECS ALB，support.stellarix.space与 /production继续由现有 EC2承载。schema bootstrap使用不进入长期 task的独立 DDL凭据。",
-        "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker只分类与固定 Persona，Automation Worker执行 AI、远端 RAG与外部动作；角色之间通过隔离 RDS schema内的 durable Jobs交接，不依赖 Redis/SQS或 EC2 runtime。",
+        "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker完成分类且仅对已有父Ticket的后续事件读取Persona，Automation Worker在ticket.created Processing先持久化父Ticket再固定Persona并执行AI、远端RAG与外部动作；角色之间通过隔离RDS schema内的durable Jobs交接，不依赖Redis/SQS或EC2 runtime。",
         "Release先以 role tag上传 supportportal/preproduction并按 digest部署 Preproduction，通过 schema/Prompt、API readiness、Route/Worker heartbeat、远端 RAG、Zendesk/邮件/Slack与外部 readback门禁后，才复制相同 OCI manifest到 supportportal/production；晋升过程禁止 rebuild。",
         "ECS Production切换后，support.stellarix.space/production及其独立 schema/Redis/worker长期保持为 EC2 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回该 endpoint，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
         "Preproduction与 Production使用隔离的 ECS Service、RDS schema、job namespace、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
@@ -6044,6 +6050,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "ECS ticket.created Route/Persona FK ordering regression",
+          "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py; .venv/bin/pytest -q backend/tests/test_worker.py; AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cisolated-test-dsn> .venv/bin/pytest -q backend/tests/test_automation_ecs_store_postgres.py::test_ticket_created_route_does_not_resolve_persona_before_ticket_parent",
+          "details": "215项ECS/Account/旧production契约与11项子测试通过，118项legacy Worker与17项子测试通过；真实PostgreSQL随机schema回归确认无support_tickets父记录时Route仍完成classification并原子创建Processing Job，execution与payload的persona均为null，且未创建Persona assignment。ticket.updated继续保留Route-time Persona解析。测试未重放失败Execution，也未触发RAG、邮件、Slack或Zendesk业务写入。"
+        },
         {
           "type": "deployment",
           "label": "ECS Account parity Production zero-traffic go-live",
@@ -6299,6 +6311,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-30",
           "event": "account_parity_production_zero_traffic_live",
           "summary": "从main@42e0ff3构建并部署r20260830-42e0ff3；API:3、Route:4、Worker:3均稳定1/1/0，正式Fargate依赖探针、Graph/RAGFlow/RDS/Zendesk/Slack、16样本稳定性观察、最终9表零增长、公网DNS/TLS/ALB/health/auth及临时资源清理全部通过。/automation/production现为Account parity零流量上线；n8n首个受控Case、Preproduction和EC2 Staging仍待完成，EC2 /production保持backup。"
+        },
+        {
+          "at": "2026-08-30",
+          "event": "ecs_ticket_created_persona_fk_order_fixed",
+          "summary": "n8n首个受控Case确认Route在support_tickets父记录创建前调用Persona resolver会触发外键失败并阻止Processing Job；修复将ticket.created Persona固定延迟到Account Processing现有save_ticket之后，同时保留ticket.updated/comment.created的既有Route行为。真实PostgreSQL随机schema与ECS/Account/legacy回归通过，原失败Execution保持human_review且不重放，等待从合并main构建三角色同provenance release并部署。"
         }
       ],
       "legacy_refs": [
