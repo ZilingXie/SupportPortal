@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from backend.automation_ecs_route_worker import RouteWorker
+from backend.automation_ecs_route_worker import RouteWorker, _route_payload
 from backend.services.automation_ecs_contracts import IntakeEventType, JobKind
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
@@ -25,6 +25,11 @@ def _decision() -> SimpleNamespace:
         not_automated_reason=None,
         risk_flags=[],
         evidence_spans=[],
+        intent_router_attempted=True,
+        intent_router_confidence_threshold=0.82,
+        intent_router_fallback_reason="threshold_not_met",
+        intent_router_failure_type="provider_timeout",
+        intent_router_failure_source="intent_classifier",
     )
     return SimpleNamespace(
         decision=decision,
@@ -47,6 +52,16 @@ def _worker(decider: Mock | None = None, *, event=None):
         route_decider=decider or Mock(return_value=_decision()),
     )
     return worker, store, receipt, persona
+
+
+def test_route_payload_preserves_reply_routing_audit_contract() -> None:
+    payload = _route_payload(_decision())
+
+    assert payload["intent_router_attempted"] is True
+    assert payload["intent_router_confidence_threshold"] == 0.82
+    assert payload["intent_router_fallback_reason"] == "threshold_not_met"
+    assert payload["intent_router_failure_type"] == "provider_timeout"
+    assert payload["intent_router_failure_source"] == "intent_classifier"
 
 
 def test_route_worker_defers_ticket_created_persona_and_queues_processing() -> None:

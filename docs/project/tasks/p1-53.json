@@ -4,8 +4,8 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker当前分别使用 Task Definition 5、6、5，三者均为1/1/0且固定到release r20260830-50eec00的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。stage_attempts兼容修复已包含在本release，Route/Worker新heartbeat持续新鲜且provenance_mismatches=[]；等待用户创建新的受控Case验收完整Account processing。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与 Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
-  "next_action": "由用户创建一个新的受控 Account Case，完成 Execution/Job/Delivery、Zendesk、Outlook及必要外部 readback验收；不得重放或修改 Ticket 13141/13143 的失败 Execution，也不得重试 outcome_unknown。新Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
+  "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production上线：ECS API、Route Worker与 Automation Worker当前分别使用 Task Definition 6、7、6，三者均为1/1/0且运行release r20260831-c498dc9；公网live/release/ready与当前heartbeat均正常。n8n comment sync已能把完整Zendesk评论快照送入ECS，但Ticket 13155的首个comment.created执行暴露Route Worker持久化decision时遗漏intent-router审计字段，导致Automation Worker在Account reply route execution边界抛AttributeError。源码修复已补齐下游实际消费的五个字段，并以真实Route payload进入reply链的回归验证通过；旧Execution保持outcome_unknown且不重放，等待从合并main构建并部署新release后由用户创建新评论验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与 Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
+  "next_action": "将ECS comment route decision审计字段修复finalize到main，从合并commit构建并部署新的三角色immutable linux/amd64 release；确认API/Route/Worker 1/1/0、health与provenance后，由用户创建新的Zendesk评论完成Execution/Job/Delivery和Zendesk readback验收。不得重放或修改exec-aa84651d0003404bb38ca463075c09b7，也不得重试其outcome_unknown delivery。新评论通过后进入阶段2建立隔离的ECS Preproduction；阶段3再在现有EC2建立独立Staging。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -21,6 +21,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "ECS comment route decision audit contract regression",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py; git diff --check",
+      "details": "Route Worker持久化intent_router_attempted、intent_router_confidence_threshold、intent_router_fallback_reason、intent_router_failure_type与intent_router_failure_source；reply-chain回归使用真实_route_payload并取消route_execution_from_decision mock，确认阈值与fallback/failure审计字段成功进入Account route execution。260 passed、20 subtests passed，diff check通过；测试未触发真实邮件、RAG、Zendesk或Slack外呼。"
+    },
     {
       "type": "test",
       "label": "ECS stage_attempts serialization compatibility fix",
@@ -321,6 +327,11 @@
       "at": "2026-08-31",
       "event": "ecs_zendesk_delivery_backend_main_dependency_fixed",
       "summary": "修复Account Zendesk内部评论投递对backend.main的隐式依赖：无附件消息不再导入backend.main；附件路径改用显式asset repository/storage，缺少资产配置时以account_zendesk_comment_attachment_storage_unavailable/503 fail closed。Worker显式传递依赖，相关投递与ECS回归通过；13148失败delivery未重试或修改，等待新的受控Case验收。"
+    },
+    {
+      "at": "2026-08-31",
+      "event": "ecs_comment_route_decision_contract_fixed",
+      "summary": "n8n comment sync已成功持久化Ticket 13155完整评论快照，但首个comment.created执行确认ECS Route payload遗漏intent-router审计字段，并在Account reply route execution边界触发AttributeError。修复将下游实际消费的五个现有decision字段纳入持久化契约，真实payload reply-chain与ECS/Account回归共260项、20项子测试通过；原Execution保持outcome_unknown且不重放，等待从合并main构建新release部署。"
     }
   ],
   "legacy_refs": [
