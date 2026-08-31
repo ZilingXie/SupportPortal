@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T08:10:48Z",
-  "source_base_commit": "badbb5dc8f095695d7918354ab7ae8d8b996b90a",
-  "registry_digest": "9729af33cdd29de6f8f94d6467a8e8c866eeb4aa366491a806b5c03ceb85bc3c",
+  "generated_at": "2026-08-31T08:50:51Z",
+  "source_base_commit": "32daaa4930e7da6f7045f2bf834822cd4d2af8e9",
+  "registry_digest": "1fea6217262c862f6a9cb359a72e6b5b694fb24aa59bb2590ddf40261bb8fc8e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -781,6 +781,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Extractor + handoff + fence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_verification_automation.py -q 以及 pytest backend/tests/test_worker.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py -q",
+          "details": "15 passed（含新用例 test_e164_phone_number_is_not_treated_as_payment_card：13157 原文四字段回复进入 LLM、status 非 sensitive、redact 不脱敏 '+86' 电话、真卡号 4111... 仍 payment_card）；183 passed + 45 subtests（FraudReviewHandoffTests 七用例、既有 fails-closed、fence/persona/intake 回归零失败）。"
+        },
+        {
+          "type": "decision",
+          "label": "AC-13157 live diagnosis",
+          "command": "Zendesk audits + production support_ticket_events + reply_jobs + EC2 worker 日志 + automation_context.extraction_status='sensitive'",
+          "details": "完整因果链留档：客户 06:36 补齐 7 字段（含 +86 15112080608）→ 预检 Luhn 误判 payment_card → 熔断 human_review_required、无 reply job、handoff 从未执行（Zendesk assignee 从未变 suhrid）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -886,7 +898,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 24,
+      "task_count": 25,
       "done_count": 14,
       "blocked_count": 0
     },
@@ -8283,6 +8295,55 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-28",
           "event": "created",
           "summary": "AC-13099 RAG 兜底回复称呼 'Hi, Customer' 追踪定位两条构造路径均不读 case customer_name + 13099 上游 n8n 未带名字；用户批准回查链修复 + 问候去逗号（仅自动化链路）+ 本地 RAG 只读对比评估。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-127",
+      "title": "修复敏感数据预检对 E.164 电话号码的 Luhn 卡号误报，恢复 fraud handoff 闭环",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Case 13157（fraud_account）实测：客户按 AI 追问补齐 7 字段（含 Official contact number '+86 15112080608'）后无 AI 回复、case 转 human_review_required。根因是 account_verification_field_extractor（fraud_account 的字段提取器，prompt 版本 fraud-account-fields-v4）的 sensitive 预检：_CARD_CANDIDATE_RE 对 '+86' 后的连续数字串 8615112080608（13 位，中国手机号带国家码恰好落在卡号 13-19 位窗口）整体捕获且 Luhn 校验恰好通过（约 1/10 的带国家码手机号会命中），误判 payment_card → 提取熔断（LLM 不调用，fails closed）→ requires_human_review → 无回复 job、fraud handoff（回复客户+assign suhrid）从未执行。修复：_CARD_CANDIDATE_RE 的 lookbehind 从 (?\u003c!\\d) 收紧为 (?\u003c![\\d+])，E.164 电话形态（+ 后紧跟数字）不再成为卡号候选；detect 与 redact 共用该正则，一处覆盖预检/字段清洗/grounding/终审/follow-up 校验/prompt 脱敏全部 6 个调用点。sensitive 熔断是 handoff 主链唯一阻断点，修复后'字段齐→回复客户（fraud_handoff_confirmation）→assign suhrid→转 human_review（不关单）'的既有闭环自然恢复，handoff 代码零改动。不带 + 的 13 位连续数字仍按卡号候选熔断（fail-closed 保留）。",
+      "next_action": "实现与目标测试已完成,待 finalize 合并、本地官方栈重启与用户侧 EC2 部署后重放 13157 验证 handoff。",
+      "acceptance_criteria": [
+        "13157 同款输入（全字段回复含 'Official contact number +86 15112080608'）不再触发 sensitive 熔断，LLM 正常调用、提取继续。",
+        "detect_sensitive_payment_data 对 '+86 15112080608' 返回空；对真卡号 '4111 1111 1111 1111' 仍返回 payment_card；CVV/密码/银行账户 labeled 模式行为不变。",
+        "redact 不再把 '+86' 电话脱敏成 [REDACTED PAYMENT CARD]（contact_number 字段值可进入 LLM prompt）。",
+        "FraudReviewHandoffTests 全部用例与既有 sensitive fails-closed 用例零回归。",
+        "prompt_change_log 记录提取器 tooling 行为变化。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Extractor + handoff + fence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_verification_automation.py -q 以及 pytest backend/tests/test_worker.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py -q",
+          "details": "15 passed（含新用例 test_e164_phone_number_is_not_treated_as_payment_card：13157 原文四字段回复进入 LLM、status 非 sensitive、redact 不脱敏 '+86' 电话、真卡号 4111... 仍 payment_card）；183 passed + 45 subtests（FraudReviewHandoffTests 七用例、既有 fails-closed、fence/persona/intake 回归零失败）。"
+        },
+        {
+          "type": "decision",
+          "label": "AC-13157 live diagnosis",
+          "command": "Zendesk audits + production support_ticket_events + reply_jobs + EC2 worker 日志 + automation_context.extraction_status='sensitive'",
+          "details": "完整因果链留档：客户 06:36 补齐 7 字段（含 +86 15112080608）→ 预检 Luhn 误判 payment_card → 熔断 human_review_required、无 reply job、handoff 从未执行（Zendesk assignee 从未变 suhrid）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/account_verification_field_extractor.py",
+        "backend/tests/test_account_verification_automation.py"
+      ],
+      "created_at": "2026-08-31",
+      "updated_at": "2026-08-31",
+      "history": [
+        {
+          "at": "2026-08-31",
+          "event": "created",
+          "summary": "AC-13157 全链诊断（Zendesk audits/事件账本/reply_jobs/EC2 日志/automation_context）定位：客户补齐 7 字段后 sensitive 预检把 '+86 15112080608' 的 13 位数字串 Luhn 误判为卡号 → 熔断转人工，handoff 从未执行（Zendesk assignee 从未变 suhrid，实为用户预期行为未达）；用户确认预期=回复客户后 assign suhrid 并批准修复。"
         }
       ],
       "legacy_refs": [],
