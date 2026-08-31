@@ -125,9 +125,10 @@
 - Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
+- ECS `/automation/production/` 只读运行看板提供独立管理员 session、Execution 分页/筛选/详情、steps/jobs/delivery ledger、失败与 `outcome_unknown`、release provenance 和 API/Route/Worker heartbeat。
 
 ### 未完成
-- ECS `/automation/production/` 只读运行看板：独立管理员 session、Execution 分页/筛选/详情、steps/jobs/delivery ledger、失败与 `outcome_unknown`、release provenance 和 API/Route/Worker heartbeat；待 Production release 与只读验收完成后转已完成。
+- 待补充。
 
 ## RAG Dashboard
 
