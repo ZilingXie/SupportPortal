@@ -13,6 +13,9 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 
+from backend.services.account_internal_email_recipients import (
+    attach_account_internal_email_recipients,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     canonical_automation_subcategory,
@@ -302,6 +305,16 @@ def build_billing_automation_result(
 
 def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[str, str]:
     payload = dict(email_payload or {})
+    to_addresses = [
+        _clean_text(value)
+        for value in payload.get("to_addresses", [])
+        if _clean_text(value)
+    ] if isinstance(payload.get("to_addresses"), list) else []
+    cc_addresses = [
+        _clean_text(value)
+        for value in payload.get("cc_addresses", [])
+        if _clean_text(value)
+    ] if isinstance(payload.get("cc_addresses"), list) else []
     to_address = _clean_text(payload.get("to")) or DEFAULT_BILLING_INTERNAL_EMAIL
     from_address = _clean_text(payload.get("from")) or DEFAULT_BILLING_EMAIL_FROM
     subject = _clean_text(payload.get("subject"))
@@ -314,7 +327,7 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
     missing = [
         name
         for name, value in (
-            ("to", to_address),
+            ("to", to_addresses or to_address),
             ("from", from_address),
             ("subject", subject),
             ("body", send_body),
@@ -342,13 +355,17 @@ def send_billing_internal_email(email_payload: dict[str, Any] | None) -> dict[st
         }
     try:
         access_token = _acquire_graph_access_token(graph_config)
-        _send_graph_mail(
-            access_token=access_token,
-            to_address=to_address,
-            subject=subject,
-            body=send_body,
-            content_type=content_type,
-        )
+        send_kwargs: dict[str, Any] = {
+            "access_token": access_token,
+            "subject": subject,
+            "body": send_body,
+            "content_type": content_type,
+        }
+        if to_addresses:
+            send_kwargs.update({"to_addresses": to_addresses, "cc_addresses": cc_addresses})
+        else:
+            send_kwargs["to_address"] = to_address
+        _send_graph_mail(**send_kwargs)
     except FileNotFoundError as exc:
         return {
             "status": "skipped_config_missing",
@@ -584,7 +601,9 @@ def _post_form_json(url: str, form: dict[str, str]) -> dict[str, Any]:
 def _send_graph_mail(
     *,
     access_token: str,
-    to_address: str,
+    to_address: str | None = None,
+    to_addresses: list[str] | None = None,
+    cc_addresses: list[str] | None = None,
     subject: str,
     body: str,
     content_type: str = "Text",
@@ -592,10 +611,11 @@ def _send_graph_mail(
     send_graph_mail_with_token(
         access_token=access_token,
         to_address=to_address,
+        to_addresses=to_addresses,
         subject=subject,
         body=body,
         content_type=content_type,
-        cc_addresses=automation_internal_email_cc(),
+        cc_addresses=cc_addresses if cc_addresses is not None else automation_internal_email_cc(),
     )
 
 
@@ -1182,7 +1202,7 @@ def _build_internal_email(
         action_url=normalized_response_link,
         zendesk_ticket_url=zendesk_ticket_url,
     )
-    return {
+    payload: dict[str, Any] = {
         "to": to_address,
         "from": from_address,
         "subject": (
@@ -1192,6 +1212,9 @@ def _build_internal_email(
         ),
         **rendered,
     }
+    if action == BILLING_ACTION_ACCOUNT_SUSPENSION:
+        return attach_account_internal_email_recipients(payload, handler="account_suspension")
+    return payload
 
 
 def build_billing_internal_email_payload(
@@ -1204,7 +1227,7 @@ def build_billing_internal_email_payload(
     billing_ticket_id: str | None,
     response_link: str | None = None,
     zendesk_ticket_url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Render a persisted Billing-family handoff without re-running extraction."""
     return _build_internal_email(
         action=action,

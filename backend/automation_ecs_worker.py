@@ -15,6 +15,10 @@ from typing import Any, Callable, Protocol
 from fastapi.encoders import jsonable_encoder
 
 from backend.repositories.ticket_repository import create_ticket_repository
+from backend.services.account_internal_email_recipients import (
+    AccountInternalEmailRecipientError,
+    validate_ecs_account_internal_email_recipients,
+)
 from backend.services.account_zendesk_comments import normalize_snapshot
 from backend.services.automation_account_intake import run_production_account_intake
 from backend.services.automation_account_reply_sync import (
@@ -303,13 +307,22 @@ class AutomationWorker:
 
 def run_automation_worker() -> int:
     logging.basicConfig(level=logging.INFO)
+    os.environ["AUTOMATION_ECS_ACCOUNT_ONLY"] = "1"
+    try:
+        validate_ecs_account_internal_email_recipients()
+    except AccountInternalEmailRecipientError as exc:
+        LOGGER.error(
+            "Automation Worker recipient configuration failed code=%s config_key=%s",
+            exc.code,
+            exc.config_key,
+        )
+        return 1
     settings = AutomationEcsSettings.from_env("worker")
     store = create_automation_ecs_store(settings)
     repository = create_ticket_repository()
     store.check_schema()
     check_account_runtime_schema()
     initialize_prompt_runtime(repository, service_name="automation-worker")
-    os.environ["AUTOMATION_ECS_ACCOUNT_ONLY"] = "1"
     os.environ["ACCOUNT_DEFAULT_PROCESSING_PROFILE"] = settings.environment
     from backend import worker as account_worker
 

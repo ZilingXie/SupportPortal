@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T09:23:46Z",
-  "source_base_commit": "58643a238b05d42e2015cd54fa532531ab9bcaa8",
-  "registry_digest": "169c59613965cf2bf3a471fcbf482c7565b59764d3b379d347b671fad86d4ec9",
+  "generated_at": "2026-08-31T11:03:03Z",
+  "source_base_commit": "091b4af97e184e97ec9b23cf4dbdfad75238b798",
+  "registry_digest": "fadb87cab38d4b4c78dce7cc277bf9b3fa662545ac8b5728e99e5cd38b8dfcd8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -793,6 +793,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Recipient, Graph, Worker, Terraform and business contract regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_internal_email_recipients.py backend/tests/test_automation_email_cc.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_enablement_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_account_verification_automation.py -q",
+          "details": "79 passed + 46 subtests；覆盖严格 JSON、无地址值错误、ECS 三配置 startup gate、EC2 legacy 回退、三条 builder 收件人持久化、Graph 多 To/Cc 去重、发送重试复用持久化数组及 Worker-only Terraform wiring。"
+        },
+        {
+          "type": "test",
+          "label": "Account and ECS broad regression",
+          "command": "root .env + clear TICKET_WORKER_RAG_MAX_WAIT_SECONDS/TICKET_WORKER_RAG_RECOVERY_WINDOW_SECONDS; pytest test_worker/test_account_intake/test_automation_account_intake/test_account_rerun_fail_fast_resume/test_automation_ecs_api/test_automation_ecs_contracts/test_automation_ecs_images/test_rag_executor",
+          "details": "363 passed + 36 subtests；未清空两项 legacy RAG timing env 时唯一失败可在干净 root main 同样复现，确认不是本次回归。另有 internal_email_payload 16 passed + 4 subtests。"
+        },
+        {
+          "type": "test",
+          "label": "Terraform and Project Overview validation",
+          "command": "Terraform 1.9.8 arm64 container: fmt -check -recursive; init -backend=false; validate; python3 scripts/generate_project_overview.py --check",
+          "details": "Terraform format 通过、配置 valid；Project Overview 生成与校验通过。未运行 plan/apply。"
+        },
+        {
+          "type": "decision",
+          "label": "Implemented plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "确认参数值不进入源码、日志或 Manifest；SSM GetParameters 仅加入 execution role，三个参数仅注入 Worker；历史 Ticket 13166/13157 无重放路径；review 后无未处理 correctness/security finding。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -898,7 +922,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 25,
+      "task_count": 26,
       "done_count": 14,
       "blocked_count": 0
     },
@@ -8427,6 +8451,75 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "legacy_refs": [],
       "history": []
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-129",
+      "title": "ECS Account 内部邮件多收件人配置与显式路由",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Ticket 13166 暴露 ECS Worker 未注入 Enablement 内部邮件收件人，导致 App ID 收集完成后在 internal_email 阶段以 missing to 转人工。为 Enablement、Fraud Account 与 Account Suspension 增加严格的 SSM JSON To/Cc 配置，发送前持久化收件人并在 ECS Worker 启动时 fail closed；EC2 /production 继续兼容既有单地址环境变量。历史 Ticket 13166 与 13157 不重放、不重试、不修改。",
+      "next_action": "实现、owner review、定向/回归测试与 Terraform 静态校验已完成；finalize 合并并完成本地官方栈验证后，从干净 main 构建三角色 immutable release，创建三个 SSM String 参数并部署 ECS，再使用三个全新受控工单分别验证 Enablement、Fraud 与 Account Suspension。",
+      "acceptance_criteria": [
+        "ECS Production 的 Enablement、Fraud Account 与 Account Suspension 分别从独立 SSM String JSON 读取非空 To/Cc 数组；配置缺失、JSON 无效或地址无效时在任何 Graph 写入前 fail closed。",
+        "Graph sendMail 为每个标准化 To/Cc 生成独立 recipient，去重且不记录地址值；delivery claim 前持久化已解析 recipient，后续重试不受 SSM 修改影响。",
+        "EC2 /production 的既有 ENABLEMENT_AUTOMATION_INTERNAL_EMAIL、BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL、BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL 与 AUTOMATION_INTERNAL_EMAIL_CC 单地址契约保持兼容。",
+        "新 ECS release 从合并后的干净 main 构建并包含 PR #1007 与 PR #1008；API、Route、Worker 均为单一 linux/amd64、digest pinning 且 provenance 一致。",
+        "Ticket 13166、13157 以及既有失败或 outcome_unknown delivery 在部署前后保持不变；验收只使用三个全新工单。",
+        "三个新工单分别通过 Enablement 内部邮件、Fraud +86 提取与 Suhrid handoff、Account Suspension 联系确认与关闭闭环的 DB、Graph Sent Items、Zendesk 和 delivery ledger readback。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Recipient, Graph, Worker, Terraform and business contract regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_internal_email_recipients.py backend/tests/test_automation_email_cc.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_enablement_automation.py backend/tests/test_billing_automation_email.py backend/tests/test_account_verification_automation.py -q",
+          "details": "79 passed + 46 subtests；覆盖严格 JSON、无地址值错误、ECS 三配置 startup gate、EC2 legacy 回退、三条 builder 收件人持久化、Graph 多 To/Cc 去重、发送重试复用持久化数组及 Worker-only Terraform wiring。"
+        },
+        {
+          "type": "test",
+          "label": "Account and ECS broad regression",
+          "command": "root .env + clear TICKET_WORKER_RAG_MAX_WAIT_SECONDS/TICKET_WORKER_RAG_RECOVERY_WINDOW_SECONDS; pytest test_worker/test_account_intake/test_automation_account_intake/test_account_rerun_fail_fast_resume/test_automation_ecs_api/test_automation_ecs_contracts/test_automation_ecs_images/test_rag_executor",
+          "details": "363 passed + 36 subtests；未清空两项 legacy RAG timing env 时唯一失败可在干净 root main 同样复现，确认不是本次回归。另有 internal_email_payload 16 passed + 4 subtests。"
+        },
+        {
+          "type": "test",
+          "label": "Terraform and Project Overview validation",
+          "command": "Terraform 1.9.8 arm64 container: fmt -check -recursive; init -backend=false; validate; python3 scripts/generate_project_overview.py --check",
+          "details": "Terraform format 通过、配置 valid；Project Overview 生成与校验通过。未运行 plan/apply。"
+        },
+        {
+          "type": "decision",
+          "label": "Implemented plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "确认参数值不进入源码、日志或 Manifest；SSM GetParameters 仅加入 execution role，三个参数仅注入 Worker；历史 Ticket 13166/13157 无重放路径；review 后无未处理 correctness/security finding。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/internal_email_payload.py",
+        "backend/services/graph_mail.py",
+        "backend/services/account_internal_email_recipients.py",
+        "backend/services/automation_account_intake.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/automation_ecs_worker.py",
+        "infra/terraform/production/locals.tf",
+        "infra/terraform/production/iam.tf",
+        "backend/tests/test_account_internal_email_recipients.py"
+      ],
+      "created_at": "2026-08-31",
+      "updated_at": "2026-08-31",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-08-31",
+          "event": "created",
+          "summary": "只读诊断确认 13166 已完成 App ID 收集，但 ECS Worker revision 7 缺少 ENABLEMENT_AUTOMATION_INTERNAL_EMAIL，持久化 payload 的 to 为空并以 enablement_internal_email_retry/missing to 转人工；用户要求不重放旧工单，并批准三条链路的独立 SSM JSON To/Cc 配置。"
+        }
+      ]
     },
     {
       "schema_version": 2,

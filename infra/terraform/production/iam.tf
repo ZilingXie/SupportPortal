@@ -36,6 +36,13 @@ data "aws_iam_policy_document" "ecs_task_secrets" {
       var.enable_redis ? [aws_secretsmanager_secret.redis_auth[0].arn, aws_secretsmanager_secret.redis_url[0].arn] : [],
     )
   }
+
+  statement {
+    sid       = "ReadRuntimeParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = values(local.runtime_parameter_arns)
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_task_secrets" {

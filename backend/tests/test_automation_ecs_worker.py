@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+import os
+from unittest.mock import AsyncMock, Mock, patch
 
-from backend.automation_ecs_worker import AccountBackgroundCycle, AutomationWorker
+from backend.automation_ecs_worker import AccountBackgroundCycle, AutomationWorker, run_automation_worker
+from backend.services.account_internal_email_recipients import AccountInternalEmailRecipientError
 from backend.services.automation_ecs_contracts import JobKind
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
@@ -161,3 +163,19 @@ def test_background_cycle_isolates_outlook_and_account_failures() -> None:
 
     outlook_cycle.assert_called_once_with()
     account_cycle.assert_called_once_with()
+
+
+def test_worker_rejects_recipient_configuration_before_runtime_startup() -> None:
+    error = AccountInternalEmailRecipientError(
+        "account_internal_email_recipient_missing",
+        "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "configuration is required",
+    )
+    with patch.dict(os.environ, {"AUTOMATION_ECS_ACCOUNT_ONLY": ""}, clear=False), patch(
+        "backend.automation_ecs_worker.validate_ecs_account_internal_email_recipients",
+        side_effect=error,
+    ), patch("backend.automation_ecs_worker.AutomationEcsSettings.from_env") as settings:
+        result = run_automation_worker()
+
+    assert result == 1
+    settings.assert_not_called()

@@ -88,6 +88,23 @@ def test_worker_receives_account_mail_rag_and_delivery_contracts() -> None:
     assert 'value = var.zendesk_side_effects_enabled ? "1" : "0"' in ecs
 
 
+def test_internal_email_recipient_parameters_are_worker_only() -> None:
+    locals_source = _read("locals.tf")
+    iam_source = _read("iam.tf")
+    api_secrets = locals_source.split("api_secrets = [", 1)[1].split("]\n\n  role_db_secrets", 1)[0]
+    worker_secrets = locals_source.split("worker_secrets = concat", 1)[1]
+    names = (
+        "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+    )
+    for name in names:
+        assert name not in api_secrets
+        assert name in worker_secrets
+    assert 'actions   = ["ssm:GetParameters"]' in iam_source
+    assert "resources = values(local.runtime_parameter_arns)" in iam_source
+
+
 def test_one_environment_repository_and_digest_only_service_images() -> None:
     ecr = _read("ecr.tf")
     data = _read("data.tf")
