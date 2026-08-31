@@ -43,7 +43,10 @@ ACCOUNT_VERIFICATION_REQUIRED_GROUPS = (
 )
 DEFAULT_FIELD_CONFIDENCE_THRESHOLD = 0.8
 
-_CARD_CANDIDATE_RE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+# The lookbehind also rejects a "+": an E.164 phone number such as
+# "+86 15112080608" yields a 13-digit run that can pass Luhn by chance and
+# must not be treated as a payment card candidate (AC-13157).
+_CARD_CANDIDATE_RE = re.compile(r"(?<![\d+])(?:\d[ -]?){12,18}\d(?!\d)")
 _LABELED_SENSITIVE_PATTERNS = (
     ("security_code", re.compile(r"\b(?:cvv|cvc|card security code)\s*[:=#-]?\s*\d{3,4}\b", re.I)),
     ("credential", re.compile(r"\b(?:password|passcode|otp|one[- ]time password|verification code)\s*[:=#-]\s*\S+", re.I)),

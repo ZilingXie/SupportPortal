@@ -13,6 +13,7 @@ from backend.services.account_verification_automation import (
 from backend.services.account_verification_field_extractor import (
     ACCOUNT_VERIFICATION_REQUIRED_GROUPS,
     AccountVerificationFieldExtraction,
+    _redact_sensitive_payment_data,
     build_account_verification_field_system_prompt,
     compose_account_verification_follow_up,
     detect_sensitive_payment_data,
@@ -249,6 +250,46 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
         self.assertEqual(result.collected_fields, {})
         self.assertEqual(result.prompt_snapshot["user_prompt"], "[redacted account verification extraction input]")
         self.assertEqual(detect_sensitive_payment_data("OTP: 123456"), ["credential"])
+        self.assertEqual(detect_sensitive_payment_data("4111 1111 1111 1111"), ["payment_card"])
+
+    def test_e164_phone_number_is_not_treated_as_payment_card(self) -> None:
+        # AC-13157: "+86 15112080608" is a 13-digit run that happens to pass
+        # Luhn, but the "+" country-code prefix marks it as a phone number,
+        # so the sensitive-payment gate must not fail closed on it.
+        self.assertEqual(detect_sensitive_payment_data("+86 15112080608"), [])
+        self.assertEqual(_redact_sensitive_payment_data("+86 15112080608"), "+86 15112080608")
+
+        invoked = False
+
+        def invoke(**_: object) -> dict[str, object]:
+            nonlocal invoked
+            invoked = True
+            return {}
+
+        result = extract_account_verification_fields(
+            ticket_subject="Account suspension review",
+            customer_messages=[
+                {
+                    "message_id": "m1",
+                    "role": "customer",
+                    "content": (
+                        "- Name：MIN WENJUN\n"
+                        "- Office address：ROOM 1605, BLOCK 13, POLY YUNQI ELEGANT GARDEN, "
+                        "EAST JIAOYU ROAD, SHUNDE DISTRICT, FOSHAN, GUANGDONG, CHINA\n"
+                        "- Official contact number +86 15112080608\n"
+                        "- Last known console configuration Project：GuanDan"
+                    ),
+                }
+            ],
+            invoke=invoke,
+        )
+
+        # The pre-check must let the extraction reach the model instead of
+        # failing closed; the empty model response lands in a normal
+        # non-sensitive branch.
+        self.assertTrue(invoked)
+        self.assertNotEqual(result.status, "sensitive")
+        self.assertFalse(result.requires_human_review or result.status == "sensitive")
 
     def test_unsafe_follow_up_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

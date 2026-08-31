@@ -12,6 +12,16 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-08-31 - Payment-card gate no longer misfires on E.164 phone numbers (p2-127)
+
+- Area or subsystem: Account verification / fraud_account field extraction sensitive-payment pre-check.
+- Prompt or model version: prompt text and model configuration unchanged; extractor tooling behavior (`fraud-account-fields-v4` chain) narrowed for phone-shaped number runs.
+- Summary: the card-candidate regex lookbehind changed from `(?<!\d)` to `(?<![\d+])`, so an E.164 phone number such as "+86 15112080608" no longer enters Luhn validation as a 13-digit card candidate. Detection and redaction share the regex, so contact numbers also stop being redacted to [REDACTED PAYMENT CARD] before the model prompt.
+- Reason: production Case AC-13157 — the customer supplied the requested seven fields including "Official contact number +86 15112080608"; the digit run 8615112080608 happened to pass Luhn, tripped the sensitive gate before the LLM call, forced human review, and blocked the fraud handoff (customer reply + reviewer assignment) entirely.
+- Affected files or config: `backend/services/account_verification_field_extractor.py`, `backend/tests/test_account_verification_automation.py`.
+- Expected behavior change: fraud replies containing phone numbers in `+<country-code>` form proceed to normal field extraction and the fraud handoff loop (reply to customer, assign reviewer, human-review status without closing); genuine card numbers, CVV, credentials, and bank accounts still fail closed; un-prefixed 13-digit runs remain card candidates.
+- Verification: new unit case asserts the AC-13157 input reaches the model with a non-sensitive outcome and that real card numbers still return payment_card; the existing fails-closed case and the FraudReviewHandoff suite pass unchanged (183 tests green across worker/intake/fence/persona).
+
 ## 2026-08-28 - Persona greeting format and RAG fallback greeting name lookup (p2-126)
 
 - Area or subsystem: Automation Persona greeting rendering and Account reply RAG fallback reply facts.
