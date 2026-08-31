@@ -1362,6 +1362,8 @@ def _deliver_production_account_reply_to_zendesk(
             retry_failed=False,
             public_comment=delivery_is_public,
             solve_ticket=delivery_solve,
+            asset_repository=asset_repository,
+            asset_storage=asset_storage,
         )
     except AccountZendeskInternalCommentError as exc:
         if exc.outcome_unknown:

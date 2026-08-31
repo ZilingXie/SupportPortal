@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T02:38:45Z",
-  "source_base_commit": "50eec0079617c4a888de3c9aeec848d97a6775f6",
-  "registry_digest": "91496dcf5f6e5d2f925de8ccebc9a1e072fb5a31c079d7f7f267f1eb2b39b60c",
+  "generated_at": "2026-08-31T03:35:00Z",
+  "source_base_commit": "8ac5e130ef5557fc073d552222ccc92a8e12b70b",
+  "registry_digest": "40aab89ea4c71d5c2316797721853cafbab5830af9e370d31924d08145bedafc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1983,6 +1983,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live ECR repository contract alignment",
           "command": "aws ecr describe-repositories --repository-names supportportal/production --region us-east-1; pytest test_automation_ecs_terraform.py test_automation_promotion_tool.py; Terraform 1.9.8 isolated init -backend=false && validate",
           "details": "只读AWS readback确认现有supportportal/production仓库为IMMUTABLE、scan-on-push、AES256、标签完整且当前为空；ECS cluster supportportal-production为ACTIVE且无service/task。Terraform repository URL、digest precondition、promotion默认值和部署文档已对齐supportportal/production；未来Preproduction使用supportportal/preproduction。5项定向测试、promotion shell syntax、Terraform fmt/init/validate与diff check通过；未创建仓库、未push镜像、未部署ECS。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Zendesk Account reply delivery without backend.main",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py",
+          "details": "修复ECS Worker Account回复投递在无附件路径对backend.main的隐式导入；投递服务改用显式资产依赖，带附件但未配置资产存储时明确返回account_zendesk_comment_attachment_storage_unavailable/503并fail closed。无附件在backend.main不可用时仍成功。相关投递与ECS回归共171项通过；未重试或修改Ticket 13148。"
         }
       ],
       "source_refs": [
@@ -6229,6 +6235,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live ECR repository contract alignment",
           "command": "aws ecr describe-repositories --repository-names supportportal/production --region us-east-1; pytest test_automation_ecs_terraform.py test_automation_promotion_tool.py; Terraform 1.9.8 isolated init -backend=false && validate",
           "details": "只读AWS readback确认现有supportportal/production仓库为IMMUTABLE、scan-on-push、AES256、标签完整且当前为空；ECS cluster supportportal-production为ACTIVE且无service/task。Terraform repository URL、digest precondition、promotion默认值和部署文档已对齐supportportal/production；未来Preproduction使用supportportal/preproduction。5项定向测试、promotion shell syntax、Terraform fmt/init/validate与diff check通过；未创建仓库、未push镜像、未部署ECS。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Zendesk Account reply delivery without backend.main",
+          "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py",
+          "details": "修复ECS Worker Account回复投递在无附件路径对backend.main的隐式导入；投递服务改用显式资产依赖，带附件但未配置资产存储时明确返回account_zendesk_comment_attachment_storage_unavailable/503并fail closed。无附件在backend.main不可用时仍成功。相关投递与ECS回归共171项通过；未重试或修改Ticket 13148。"
         }
       ],
       "source_refs": [
@@ -6357,6 +6369,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-30",
           "event": "ecs_ticket_created_persona_fk_order_release_deployed",
           "summary": "从main@ad56ac5构建并部署r20260830-ad56ac5；API:4、Route:5、Worker:4均稳定1/1/0，实际task digest与Manifest一致，当前Route/Worker heartbeat匹配且readiness持续200。16分钟零流量观察、Bearer鉴权401/422、CloudWatch错误计数、PostgreSQL业务计数、DNS/TLS/ALB和EC2 backup readback全部通过；未重放Ticket 13141，等待用户创建新的受控Account Case完成业务链路验收。"
+        },
+        {
+          "at": "2026-08-31",
+          "event": "ecs_zendesk_delivery_backend_main_dependency_fixed",
+          "summary": "修复Account Zendesk内部评论投递对backend.main的隐式依赖：无附件消息不再导入backend.main；附件路径改用显式asset repository/storage，缺少资产配置时以account_zendesk_comment_attachment_storage_unavailable/503 fail closed。Worker显式传递依赖，相关投递与ECS回归通过；13148失败delivery未重试或修改，等待新的受控Case验收。"
         }
       ],
       "legacy_refs": [
