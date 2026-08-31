@@ -66,12 +66,13 @@ API额外要求：
 ```text
 AUTOMATION_INTAKE_SHARED_TOKEN=<n8n bearer token>
 AUTOMATION_WORKER_HEARTBEAT_MAX_AGE_SECONDS=30
-AUTOMATION_DASHBOARD_ADMIN_USERNAME=<independent dashboard administrator>
-AUTOMATION_DASHBOARD_ADMIN_PASSWORD=<dashboard administrator secret>
 AUTOMATION_DASHBOARD_SESSION_SECRET=<at least 32 random characters>
 ```
 
-Dashboard 管理员三项配置从 Secrets Manager 只注入 API role。登录成功仅设置
+Dashboard 管理员用户名和密码按 owner 明确批准的临时例外固定为 `admin/admin`；
+只有独立 Session secret 注入 API role：Terraform 管理的目标配置使用 Secrets
+Manager，当前手工管理的 ECS Production Task Definition 沿用现有 SSM SecureString
+前缀。登录成功仅设置
 `HttpOnly`、`Secure`、`SameSite=Strict` 的短期 session cookie，不返回或复用
 `AUTOMATION_INTAKE_SHARED_TOKEN`；Route 与 Worker 不接收 dashboard secret。
 
