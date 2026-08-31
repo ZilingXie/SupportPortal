@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T11:05:09Z",
-  "source_base_commit": "01abdfbfc116135088311cf66f94b9da57e8c11d",
-  "registry_digest": "923769cdb1a4755e4f508c209d0663e8f4e47d1636e73c8659821fd6c61d48a7",
+  "generated_at": "2026-08-31T12:04:02Z",
+  "source_base_commit": "531b128b02d7202f847597c16aac1e6e976f1100",
+  "registry_digest": "40b2f3753d63cc5af9b42f2df7ce064ae03cbc1a18d34711fb46ae05c9c2af4d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2066,7 +2066,43 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Production fixed dashboard credentials approved",
           "command": "owner confirmation: admin/admin",
-          "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥仍保持至少 32 位、独立外部注入且不进入浏览器或仓库。"
+          "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥使用 32 字节随机值、独立外部注入且不进入浏览器或仓库。"
+        },
+        {
+          "type": "deployment",
+          "label": "Immutable ECS Production release",
+          "command": "deployment/build_automation_ecs_release.sh --release-id r20260831-8e02e7a --prompt-release-id pr-2bc7aaccb8b0 --builder podman",
+          "details": "Release Manifest commit 8e02e7a9c49fec27ab78832897a9ea241510066b、build time 2026-08-31T10:43:12Z；API sha256:a42434486a7095cf81e65102a3c892680fca66b6ea2d4f928a0927e22e905723、Route sha256:2dfee8b308d5b2bfc8633ec49234435b6e1f2c425b2649bd34a846b822f33c67、Worker sha256:ffdde9206fabb49d0796cbbf0df2c63620c080857c820219078a4ef376b2eee5。三个 ECR readback digest 与 manifest 一致且远端均为单一 linux/amd64；API 仅含新看板 UI，Route/Worker 无 UI，要求排除的旧 runtime、backend.main、tests、rerun/reset 与项目内 RAG runtime 均不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production deployment",
+          "command": "ECS update-service and services-stable readback",
+          "details": "部署 Task Definition API supportportal-production-api:8、Route supportportal-production-route:9、Worker supportportal-production-worker:8；只有 API 注入 SSM SecureString AUTOMATION_DASHBOARD_SESSION_SECRET。三个 Service 均为 1/1/0、单一 PRIMARY deployment COMPLETED，运行 task image digest 与 Release Manifest 一致。"
+        },
+        {
+          "type": "test",
+          "label": "Production dashboard read-only acceptance",
+          "command": "HTTPS session/list/filter/detail/runtime/static/fail-closed probes plus in-app Browser desktop/mobile verification",
+          "details": "正式 URL https://supportcenter.stellarix.space/automation/production/ 返回登录页；未认证 session/list 为 401，admin/admin 登录签发 Secure/HttpOnly/SameSite=strict Cookie，logout 后失效。分页以及 Ticket ID、Execution ID、status、event type 筛选、现有 Execution 详情、intake/route/steps/events/jobs/deliveries/failure/review/provenance/runtime 均为只读可见；Dashboard POST/PUT/PATCH/DELETE 均为 405。HTML/JS/API 扫描无 intake token、DSN、Session secret 或 localStorage；1440x900 与 390x844 无溢出/重叠且浏览器 console 0 error/0 warning。"
+        },
+        {
+          "type": "test",
+          "label": "Production health, provenance and backup",
+          "command": "ECS, health endpoints, CloudWatch and backup readback",
+          "details": "health/live、health/release、health/ready 均为 200；当前 Route/Worker heartbeat 小于 30 秒、release/commit/build time/Prompt Release 一致且 provenance_mismatches=[]。CloudWatch 新任务流错误模式事件为 0，仅有正常 prompt_runtime_loaded startup warning。旧 EC2 https://support.stellarix.space/production/ 保持 200；验收未调用 intake，未修改旧 Execution、真实 Case、n8n、DNS 或 Cloudflare。"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge official local stack",
+          "command": "scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "最新 main 531b128b02d7202f847597c16aac1e6e976f1100 为 dashboard merge commit 的后继；official deployment 栈重启成功，auxiliary_stack_present=false，/health status=ok，app_build.ref 与 runtime build ref 均为 531b128b02d7。运行中的 deployment_api_1 含 ui/automation-ecs-production 与 Production Automation 唯一标记，app.js 无 localStorage。"
+        },
+        {
+          "type": "pr",
+          "label": "Implementation pull requests",
+          "command": "PR #1008 and PR #1009",
+          "details": "PR #1008 Add ECS Production read-only dashboard 合并为 091b4af97e184e97ec9b23cf4dbdfad75238b798；PR #1009 Fix ECS dashboard credentials to admin/admin 合并为 8e02e7a9c49fec27ab78832897a9ea241510066b。"
         }
       ],
       "source_refs": [
@@ -2080,7 +2116,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 2,
-      "done_count": 0,
+      "done_count": 1,
       "blocked_count": 0
     },
     {
@@ -8404,10 +8440,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-128",
       "title": "ECS Account parity Production 只读运行看板",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "在 ECS API 的 /automation/production/ 提供独立管理员 session 保护的只读运行看板，覆盖 Execution 分页筛选、完整执行详情、delivery/job/failure/outcome_unknown、route 和 release provenance、Route/Automation Worker heartbeat，并保持 intake、真实业务数据与旧 EC2 backup 不变。",
-      "next_action": "实现与 owner review 已完成；构建三角色 linux/amd64 release，验证 API-only UI/secret 注入与 Route/Worker 排除，finalize 合并后部署 ECS Production，并完成 URL、Service、health、heartbeat/provenance、CloudWatch 与 EC2 backup 只读验收。",
+      "next_action": "",
       "acceptance_criteria": [
         "未认证访问 /automation/production/、静态资产和 dashboard API 时被拒绝或进入登录，管理员登录签发短期 HttpOnly/Secure/SameSite session，退出后 session 失效。",
         "浏览器、HTML、JavaScript、localStorage、URL 和 dashboard API 响应均不包含 n8n intake token、DSN、长期凭据、内部邮件正文或不必要的客户敏感字段。",
@@ -8442,7 +8478,43 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Production fixed dashboard credentials approved",
           "command": "owner confirmation: admin/admin",
-          "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥仍保持至少 32 位、独立外部注入且不进入浏览器或仓库。"
+          "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥使用 32 字节随机值、独立外部注入且不进入浏览器或仓库。"
+        },
+        {
+          "type": "deployment",
+          "label": "Immutable ECS Production release",
+          "command": "deployment/build_automation_ecs_release.sh --release-id r20260831-8e02e7a --prompt-release-id pr-2bc7aaccb8b0 --builder podman",
+          "details": "Release Manifest commit 8e02e7a9c49fec27ab78832897a9ea241510066b、build time 2026-08-31T10:43:12Z；API sha256:a42434486a7095cf81e65102a3c892680fca66b6ea2d4f928a0927e22e905723、Route sha256:2dfee8b308d5b2bfc8633ec49234435b6e1f2c425b2649bd34a846b822f33c67、Worker sha256:ffdde9206fabb49d0796cbbf0df2c63620c080857c820219078a4ef376b2eee5。三个 ECR readback digest 与 manifest 一致且远端均为单一 linux/amd64；API 仅含新看板 UI，Route/Worker 无 UI，要求排除的旧 runtime、backend.main、tests、rerun/reset 与项目内 RAG runtime 均不存在。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production deployment",
+          "command": "ECS update-service and services-stable readback",
+          "details": "部署 Task Definition API supportportal-production-api:8、Route supportportal-production-route:9、Worker supportportal-production-worker:8；只有 API 注入 SSM SecureString AUTOMATION_DASHBOARD_SESSION_SECRET。三个 Service 均为 1/1/0、单一 PRIMARY deployment COMPLETED，运行 task image digest 与 Release Manifest 一致。"
+        },
+        {
+          "type": "test",
+          "label": "Production dashboard read-only acceptance",
+          "command": "HTTPS session/list/filter/detail/runtime/static/fail-closed probes plus in-app Browser desktop/mobile verification",
+          "details": "正式 URL https://supportcenter.stellarix.space/automation/production/ 返回登录页；未认证 session/list 为 401，admin/admin 登录签发 Secure/HttpOnly/SameSite=strict Cookie，logout 后失效。分页以及 Ticket ID、Execution ID、status、event type 筛选、现有 Execution 详情、intake/route/steps/events/jobs/deliveries/failure/review/provenance/runtime 均为只读可见；Dashboard POST/PUT/PATCH/DELETE 均为 405。HTML/JS/API 扫描无 intake token、DSN、Session secret 或 localStorage；1440x900 与 390x844 无溢出/重叠且浏览器 console 0 error/0 warning。"
+        },
+        {
+          "type": "test",
+          "label": "Production health, provenance and backup",
+          "command": "ECS, health endpoints, CloudWatch and backup readback",
+          "details": "health/live、health/release、health/ready 均为 200；当前 Route/Worker heartbeat 小于 30 秒、release/commit/build time/Prompt Release 一致且 provenance_mismatches=[]。CloudWatch 新任务流错误模式事件为 0，仅有正常 prompt_runtime_loaded startup warning。旧 EC2 https://support.stellarix.space/production/ 保持 200；验收未调用 intake，未修改旧 Execution、真实 Case、n8n、DNS 或 Cloudflare。"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge official local stack",
+          "command": "scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote",
+          "details": "最新 main 531b128b02d7202f847597c16aac1e6e976f1100 为 dashboard merge commit 的后继；official deployment 栈重启成功，auxiliary_stack_present=false，/health status=ok，app_build.ref 与 runtime build ref 均为 531b128b02d7。运行中的 deployment_api_1 含 ui/automation-ecs-production 与 Production Automation 唯一标记，app.js 无 localStorage。"
+        },
+        {
+          "type": "pr",
+          "label": "Implementation pull requests",
+          "command": "PR #1008 and PR #1009",
+          "details": "PR #1008 Add ECS Production read-only dashboard 合并为 091b4af97e184e97ec9b23cf4dbdfad75238b798；PR #1009 Fix ECS dashboard credentials to admin/admin 合并为 8e02e7a9c49fec27ab78832897a9ea241510066b。"
         }
       ],
       "source_refs": [
@@ -13921,10 +13993,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Detailed Invoice 仅保留 Account & Billing 分类，不进入 Automation 执行；既有自动化实现保留供未来启用。",
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
-        "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。"
+        "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
+        "ECS `/automation/production/` 只读运行看板提供独立管理员 session、Execution 分页/筛选/详情、steps/jobs/delivery ledger、失败与 `outcome_unknown`、release provenance 和 API/Route/Worker heartbeat。"
       ],
       "planned": [
-        "ECS `/automation/production/` 只读运行看板：独立管理员 session、Execution 分页/筛选/详情、steps/jobs/delivery ledger、失败与 `outcome_unknown`、release provenance 和 API/Route/Worker heartbeat；待 Production release 与只读验收完成后转已完成。"
+        "待补充。"
       ]
     },
     {
