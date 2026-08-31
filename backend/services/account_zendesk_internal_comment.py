@@ -326,14 +326,15 @@ def _existing_result(
 
 def _message_attachment_files(
     message: dict[str, Any],
+    *,
+    asset_repository: Any | None,
+    asset_storage: Any | None,
 ) -> list[tuple[str, str, bytes]]:
     """Resolve the message's asset attachments to uploadable file tuples.
 
     Runs before the idempotency claim: a missing asset or unreadable storage is
     a permanent local failure, and no Zendesk write has happened yet.
     """
-    from backend import main as backend_main
-
     # Postgres reads spread message meta onto the message, while in-memory
     # replies keep meta nested; accept both attachment locations.
     raw_attachments = message.get("attachments")
@@ -341,14 +342,23 @@ def _message_attachment_files(
         nested_meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
         raw_attachments = nested_meta.get("attachments")
     attachments = raw_attachments if isinstance(raw_attachments, list) else []
+    attachments_with_assets = [
+        attachment
+        for attachment in attachments
+        if isinstance(attachment, dict) and str(attachment.get("asset_id") or "").strip()
+    ]
+    if not attachments_with_assets:
+        return []
+    if asset_repository is None or asset_storage is None:
+        raise AccountZendeskInternalCommentError(
+            "account_zendesk_comment_attachment_storage_unavailable",
+            "Attachment storage is not configured for this runtime",
+            status_code=503,
+        )
     files: list[tuple[str, str, bytes]] = []
-    for attachment in attachments:
-        if not isinstance(attachment, dict):
-            continue
+    for attachment in attachments_with_assets:
         asset_id = str(attachment.get("asset_id") or "").strip()
-        if not asset_id:
-            continue
-        asset = backend_main.asset_repository.get_asset(asset_id)
+        asset = asset_repository.get_asset(asset_id)
         if asset is None:
             raise AccountZendeskInternalCommentError(
                 "account_zendesk_comment_attachment_missing",
@@ -356,7 +366,7 @@ def _message_attachment_files(
                 status_code=422,
             )
         try:
-            data = backend_main.asset_storage.fetch_bytes(asset)
+            data = asset_storage.fetch_bytes(asset)
         except RuntimeError as exc:
             raise AccountZendeskInternalCommentError(
                 "account_zendesk_comment_attachment_unreadable",
@@ -391,6 +401,8 @@ def deliver_account_ai_message_as_internal_comment(
     retry_failed: bool = False,
     public_comment: bool = False,
     solve_ticket: bool = False,
+    asset_repository: Any | None = None,
+    asset_storage: Any | None = None,
 ) -> AccountZendeskCommentResult:
     """Write the persisted AI message once through the Zendesk API.
 
@@ -410,7 +422,11 @@ def deliver_account_ai_message_as_internal_comment(
         message_id=message_id,
     )
     _ = account_case
-    attachment_files = _message_attachment_files(message)
+    attachment_files = _message_attachment_files(
+        message,
+        asset_repository=asset_repository,
+        asset_storage=asset_storage,
+    )
     normalized_case_id = str(account_case_id).strip()
     normalized_message_id = str(message_id).strip()
     normalized_actor_id = str(actor_id or "system").strip() or "system"

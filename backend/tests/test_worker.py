@@ -672,6 +672,8 @@ class WorkerResilienceTests(unittest.TestCase):
             retry_failed=False,
             public_comment=True,
             solve_ticket=False,
+            asset_repository=worker.asset_repository,
+            asset_storage=worker.asset_storage,
         )
 
     def test_policy_blocker_terminates_delivery_without_public_write(self) -> None:

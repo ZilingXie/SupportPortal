@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import sys
 from unittest.mock import patch
 
 from backend import main as backend_main
@@ -121,6 +122,28 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
         comment_state = saved_message["meta"]["zendesk_internal_comment"]
         self.assertEqual(comment_state["status"], "added")
         self.assertEqual(comment_state["trigger"], "production_worker")
+
+    def test_no_attachment_delivery_does_not_require_backend_main(self) -> None:
+        self._create_delivery()
+        with patch.dict(sys.modules, {"backend.main": None}), patch(
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-no-main", status_code=200),
+        ) as add_comment:
+            result = deliver_account_ai_message_as_internal_comment(
+                repository=self.repository,
+                account_case_id="AC-SERVICE-1",
+                message_id=self.message_id,
+                actor_id="system:production-account-reply",
+                trigger="production_worker",
+            )
+
+        self.assertEqual(result.status, "added")
+        add_comment.assert_called_once_with(
+            ticket_id="12838",
+            body="The persisted Production answer.",
+            public=False,
+            solve=False,
+        )
 
     def test_reconciliation_updates_all_states_without_put(self) -> None:
         self._create_delivery()
@@ -377,6 +400,8 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
                 trigger="production_worker",
                 public_comment=True,
                 solve_ticket=True,
+                asset_repository=asset_repository,
+                asset_storage=asset_storage,
             )
 
         self.assertEqual(result.status, "added")
@@ -407,7 +432,47 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
         )
         asset_repository = unittest.mock.Mock()
         asset_repository.get_asset.return_value = None
+        asset_storage = unittest.mock.Mock()
         with patch.object(backend_main, "asset_repository", asset_repository), patch(
+            "backend.services.account_zendesk_internal_comment.upload_ticket_attachment"
+        ) as upload, patch(
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment"
+        ) as add_comment:
+            with self.assertRaises(AccountZendeskInternalCommentError) as raised:
+                deliver_account_ai_message_as_internal_comment(
+                    repository=self.repository,
+                    account_case_id="AC-SERVICE-1",
+                    message_id=self.message_id,
+                    actor_id="system:production-account-reply",
+                    trigger="production_worker",
+                    public_comment=True,
+                    solve_ticket=True,
+                    asset_repository=asset_repository,
+                    asset_storage=asset_storage,
+                )
+
+        self.assertEqual(raised.exception.code, "account_zendesk_comment_attachment_missing")
+        self.assertFalse(raised.exception.outcome_unknown)
+        upload.assert_not_called()
+        add_comment.assert_not_called()
+
+    def test_delivery_fails_closed_when_attachment_storage_is_unconfigured(self) -> None:
+        self._create_delivery()
+        self.repository.update_ticket_message_meta(
+            ticket_id="PRD-SERVICE-1",
+            message_id=self.message_id,
+            meta_updates={
+                "attachments": [
+                    {
+                        "asset_id": "ASSET-PDF0000000000000000000",
+                        "original_filename": "invoice-approval.pdf",
+                        "content_type": "application/pdf",
+                    }
+                ]
+            },
+        )
+
+        with patch(
             "backend.services.account_zendesk_internal_comment.upload_ticket_attachment"
         ) as upload, patch(
             "backend.services.account_zendesk_internal_comment.add_ticket_comment"
@@ -423,7 +488,11 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
                     solve_ticket=True,
                 )
 
-        self.assertEqual(raised.exception.code, "account_zendesk_comment_attachment_missing")
+        self.assertEqual(
+            raised.exception.code,
+            "account_zendesk_comment_attachment_storage_unavailable",
+        )
+        self.assertEqual(raised.exception.status_code, 503)
         self.assertFalse(raised.exception.outcome_unknown)
         upload.assert_not_called()
         add_comment.assert_not_called()
