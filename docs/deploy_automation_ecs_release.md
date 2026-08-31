@@ -66,7 +66,14 @@ API额外要求：
 ```text
 AUTOMATION_INTAKE_SHARED_TOKEN=<n8n bearer token>
 AUTOMATION_WORKER_HEARTBEAT_MAX_AGE_SECONDS=30
+AUTOMATION_DASHBOARD_ADMIN_USERNAME=<independent dashboard administrator>
+AUTOMATION_DASHBOARD_ADMIN_PASSWORD=<dashboard administrator secret>
+AUTOMATION_DASHBOARD_SESSION_SECRET=<at least 32 random characters>
 ```
+
+Dashboard 管理员三项配置从 Secrets Manager 只注入 API role。登录成功仅设置
+`HttpOnly`、`Secure`、`SameSite=Strict` 的短期 session cookie，不返回或复用
+`AUTOMATION_INTAKE_SHARED_TOKEN`；Route 与 Worker 不接收 dashboard secret。
 
 Worker是否允许 Zendesk副作用由环境显式控制：
 

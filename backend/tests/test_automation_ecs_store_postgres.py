@@ -62,7 +62,17 @@ def test_postgres_intake_is_concurrently_idempotent(store: PostgresAutomationEcs
     execution = store.get_execution(receipts[0].execution_id)
     assert execution is not None
     assert execution["status"] == "route_pending"
+    assert execution["jobs"][0]["kind"] == "route"
     assert [event["event_type"] for event in execution["events"]].count("route.queued") == 1
+    page, total = store.list_executions(
+        offset=0,
+        limit=10,
+        zendesk_ticket_id="123",
+        status="route_pending",
+        event_type="ticket.created",
+    )
+    assert total == 1
+    assert page[0]["execution_id"] == receipts[0].execution_id
 
 
 def test_postgres_route_processing_delivery_and_heartbeat(store: PostgresAutomationEcsStore) -> None:

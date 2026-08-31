@@ -72,6 +72,16 @@ class AutomationEcsStore(Protocol):
     def accept_intake(self, event: AutomationIntakeEvent, provenance: RuntimeProvenance) -> IntakeReceipt: ...
     def get_execution(self, execution_id: str) -> dict[str, Any] | None: ...
     def list_case_executions(self, zendesk_ticket_id: str) -> list[dict[str, Any]]: ...
+    def list_executions(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        zendesk_ticket_id: str | None = None,
+        execution_id: str | None = None,
+        status: str | None = None,
+        event_type: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]: ...
     def claim_job(self, kind: JobKind, *, worker_id: str, lease_seconds: int) -> ClaimedJob | None: ...
     def renew_job_lease(self, job: ClaimedJob, *, lease_seconds: int) -> None: ...
     def complete_route(self, job: ClaimedJob, *, route: dict[str, Any], persona: dict[str, Any] | None, prompt_snapshots: dict[str, Any], provenance: RuntimeProvenance) -> None: ...
@@ -272,6 +282,12 @@ class InMemoryAutomationEcsStore:
             "events": copy.deepcopy(
                 [item for item in self._events if item["execution_id"] == execution_id]
             ),
+            "jobs": copy.deepcopy(
+                sorted(
+                    (item for item in self._jobs.values() if item["execution_id"] == execution_id),
+                    key=lambda item: item["created_at"],
+                )
+            ),
             "deliveries": copy.deepcopy(
                 [item for item in self._deliveries.values() if item["execution_id"] == execution_id]
             ),
@@ -290,6 +306,28 @@ class InMemoryAutomationEcsStore:
                 if item["zendesk_ticket_id"] == str(zendesk_ticket_id)
             ]
         return sorted(rows, key=lambda item: item["created_at"], reverse=True)
+
+    def list_executions(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        zendesk_ticket_id: str | None = None,
+        execution_id: str | None = None,
+        status: str | None = None,
+        event_type: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        with self._lock:
+            rows = [
+                copy.deepcopy(item)
+                for item in self._executions.values()
+                if (zendesk_ticket_id is None or item["zendesk_ticket_id"] == zendesk_ticket_id)
+                and (execution_id is None or item["execution_id"] == execution_id)
+                and (status is None or item["status"] == status)
+                and (event_type is None or item["event_type"] == event_type)
+            ]
+        rows.sort(key=lambda item: item["created_at"], reverse=True)
+        return rows[offset : offset + limit], len(rows)
 
     def _expire_unsafe_processing_jobs(self, now_value: datetime) -> None:
         for job in self._jobs.values():
@@ -1000,14 +1038,14 @@ class PostgresAutomationEcsStore:
         )
 
     def _execution_rows(self, *, execution_id: str | None = None, ticket_id: str | None = None) -> list[dict[str, Any]]:
-        filters: list[sql.Composed] = []
-        params: list[Any] = []
+        filters: list[sql.Composed] = [sql.SQL("namespace=%s")]
+        params: list[Any] = [self.settings.job_namespace]
         if execution_id is not None:
             filters.append(sql.SQL("execution_id=%s"))
             params.append(execution_id)
         if ticket_id is not None:
-            filters.extend([sql.SQL("namespace=%s"), sql.SQL("zendesk_ticket_id=%s")])
-            params.extend([self.settings.job_namespace, ticket_id])
+            filters.append(sql.SQL("zendesk_ticket_id=%s"))
+            params.append(ticket_id)
         where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(filters) if filters else sql.SQL("")
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -1035,6 +1073,13 @@ class PostgresAutomationEcsStore:
                     )
                     row["events"] = list(cursor.fetchall())
                     cursor.execute(
+                        sql.SQL(
+                            "SELECT * FROM {} WHERE namespace=%s AND execution_id=%s ORDER BY created_at"
+                        ).format(self._table("automation_jobs")),
+                        (self.settings.job_namespace, current_id),
+                    )
+                    row["jobs"] = list(cursor.fetchall())
+                    cursor.execute(
                         sql.SQL("SELECT * FROM {} WHERE execution_id=%s ORDER BY created_at").format(
                             self._table("automation_delivery_ledger")
                         ),
@@ -1050,6 +1095,47 @@ class PostgresAutomationEcsStore:
     def list_case_executions(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
         rows = self._execution_rows(ticket_id=str(zendesk_ticket_id))
         return sorted(rows, key=lambda row: row["created_at"], reverse=True)
+
+    def list_executions(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        zendesk_ticket_id: str | None = None,
+        execution_id: str | None = None,
+        status: str | None = None,
+        event_type: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        filters = [sql.SQL("namespace=%s")]
+        params: list[Any] = [self.settings.job_namespace]
+        for column, value in (
+            ("zendesk_ticket_id", zendesk_ticket_id),
+            ("execution_id", execution_id),
+            ("status", status),
+            ("event_type", event_type),
+        ):
+            if value is not None:
+                filters.append(sql.SQL("{}=%s").format(sql.Identifier(column)))
+                params.append(value)
+        where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(filters)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT COUNT(*) AS total FROM {}{}").format(
+                        self._table("automation_executions"), where
+                    ),
+                    params,
+                )
+                total = int(cursor.fetchone()["total"])
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT execution_id,zendesk_ticket_id,event_id,event_type,status,current_stage,"
+                        "failure_stage,failure_code,requires_human_review,provenance,route_provenance,"
+                        "created_at,updated_at FROM {}{} ORDER BY created_at DESC LIMIT %s OFFSET %s"
+                    ).format(self._table("automation_executions"), where),
+                    [*params, limit, offset],
+                )
+                return list(cursor.fetchall()), total
 
     def claim_job(self, kind: JobKind, *, worker_id: str, lease_seconds: int) -> ClaimedJob | None:
         namespace = self.settings.job_namespace
