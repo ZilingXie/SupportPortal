@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -497,7 +498,7 @@ def route_execution_from_decision(
     created_at: str | None = None,
     classification: dict[str, Any] | None = None,
     prompt_snapshots: dict[str, dict[str, str]] | None = None,
-    stage_attempts: dict[str, Any] | None = None,
+    stage_attempts: Mapping[str, Any] | list[Any] | tuple[Any, ...] | None = None,
 ) -> dict[str, Any]:
     if isinstance(classification, dict) and classification:
         stage_confidences = dict(classification.get("stage_confidences") or {})
@@ -506,31 +507,80 @@ def route_execution_from_decision(
             or classification.get("stage_reasons")
             or {}
         )
-        attempt_records = dict(stage_attempts or {})
+        # The local pipeline keeps rich AccountRouteStageAttempt objects in a
+        # mapping. The ECS route contract intentionally serializes only the
+        # attempted stage names as a list, while older JSON payloads may carry
+        # mapping values as plain dictionaries. Normalize those shapes here so
+        # the persistence boundary never relies on ``dict(list_of_names)``.
+        attempt_records: dict[str, Any] = {}
+        if isinstance(stage_attempts, Mapping):
+            attempt_records = {str(name): attempt for name, attempt in stage_attempts.items()}
+        elif isinstance(stage_attempts, (list, tuple)):
+            for item in stage_attempts:
+                if isinstance(item, str):
+                    attempt_records.setdefault(item, None)
+                    continue
+                if isinstance(item, Mapping):
+                    name = item.get("name") or item.get("stage")
+                    if name:
+                        attempt_records[str(name)] = item
+
+        failure_types = classification.get("stage_failure_types") or {}
+        failure_sources = classification.get("stage_failure_sources") or {}
+        attempt_counts = classification.get("stage_attempt_counts") or {}
+        recovered_stages = classification.get("stage_recovered") or {}
+
+        def attempt_value(attempt: Any, key: str, default: Any = None) -> Any:
+            if isinstance(attempt, Mapping):
+                return attempt.get(key, default)
+            return getattr(attempt, key, default)
+
         stages = []
         for name, confidence in stage_confidences.items():
             attempt = attempt_records.get(name)
-            failure_type = str(getattr(attempt, "failure_type", "") or "").strip() or None
-            recovered = bool(getattr(attempt, "recovered", False))
+            failure_type = str(
+                attempt_value(attempt, "failure_type") or failure_types.get(name) or ""
+            ).strip() or None
+            recovered_value = attempt_value(attempt, "recovered")
+            recovered = (
+                bool(recovered_value)
+                if recovered_value is not None
+                else bool(recovered_stages.get(name))
+            )
+            failure_source = str(
+                attempt_value(attempt, "failure_source") or failure_sources.get(name) or ""
+            ).strip() or None
+            attempt_count = attempt_value(attempt, "attempt_count")
+            if attempt_count is None:
+                attempt_count = attempt_counts.get(name)
+            try:
+                normalized_attempt_count = max(1, int(attempt_count or 1))
+            except (TypeError, ValueError):
+                normalized_attempt_count = 1
+            attempt_failures = attempt_value(attempt, "attempt_failures", ()) or ()
+            if isinstance(attempt_failures, Mapping):
+                attempt_failures = (attempt_failures,)
+            elif not isinstance(attempt_failures, (list, tuple)):
+                attempt_failures = ()
             stage = {
                 "name": name,
                 "status": "failed" if failure_type else "completed_after_retry" if recovered else "completed",
                 "confidence": confidence,
                 "reason": stage_reasons.get(name),
                 "failure_type": failure_type,
-                "failure_source": str(getattr(attempt, "failure_source", "") or "").strip() or None,
-                "attempt_count": max(1, int(getattr(attempt, "attempt_count", 1) or 1)),
+                "failure_source": failure_source,
+                "attempt_count": normalized_attempt_count,
                 "recovered": recovered,
-                "model": str(getattr(attempt, "model_name", "") or "").strip() or None,
-                "provider": str(getattr(attempt, "provider_name", "") or "").strip() or None,
-                "output_length": int(getattr(attempt, "raw_output_length", 0) or 0),
-                "output_sha256": getattr(attempt, "raw_output_sha256", None),
-                "output_excerpt": getattr(attempt, "sanitized_output_excerpt", None),
-                "attempt_failures": [dict(item) for item in getattr(attempt, "attempt_failures", ())],
+                "model": str(attempt_value(attempt, "model_name", "") or "").strip() or None,
+                "provider": str(attempt_value(attempt, "provider_name", "") or "").strip() or None,
+                "output_length": int(attempt_value(attempt, "raw_output_length", 0) or 0),
+                "output_sha256": attempt_value(attempt, "raw_output_sha256"),
+                "output_excerpt": attempt_value(attempt, "sanitized_output_excerpt"),
+                "attempt_failures": [dict(item) for item in attempt_failures if isinstance(item, Mapping)],
             }
             stages.append(stage)
         known_stage_names = {str(stage.get("name") or "") for stage in stages}
-        for name, failure_type in dict(classification.get("stage_failure_types") or {}).items():
+        for name, failure_type in dict(failure_types).items():
             if name in known_stage_names:
                 continue
             stages.append(
@@ -540,12 +590,12 @@ def route_execution_from_decision(
                     "confidence": 0.0,
                     "reason": stage_reasons.get(name),
                     "failure_type": str(failure_type),
-                    "failure_source": (classification.get("stage_failure_sources") or {}).get(name),
+                    "failure_source": failure_sources.get(name),
                     "attempt_count": max(
                         1,
-                        int((classification.get("stage_attempt_counts") or {}).get(name) or 1),
+                        int(attempt_counts.get(name) or 1),
                     ),
-                    "recovered": bool((classification.get("stage_recovered") or {}).get(name)),
+                    "recovered": bool(recovered_stages.get(name)),
                 }
             )
         stages.append(

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-30T13:18:29Z",
-  "source_base_commit": "ad56ac582dac3e4fb09e63e73928fd386376df6b",
-  "registry_digest": "8cb758b6e481e07419d838be8fa6fbcdec0bd893712eb712508bb4c9985b0025",
+  "generated_at": "2026-08-31T02:38:45Z",
+  "source_base_commit": "50eec0079617c4a888de3c9aeec848d97a6775f6",
+  "registry_digest": "91496dcf5f6e5d2f925de8ccebc9a1e072fb5a31c079d7f7f267f1eb2b39b60c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1824,6 +1824,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "ECS stage_attempts serialization compatibility fix",
+          "command": ".venv/bin/pytest -q backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_comment_sync.py; python -m py_compile backend/services/account_admin.py backend/services/automation_account_intake.py backend/automation_ecs_route_worker.py backend/automation_ecs_worker.py; git diff --check",
+          "details": "修复 route_execution_from_decision 对原生 stage-attempt mapping、ECS automation-route-v1 名称列表和 JSON 字典记录的边界归一化；列表缺失的 failure/source/count/recovered 元数据从 classification 审计字段补齐，避免 dict(list_of_stage_names) ValueError。新增列表、JSON 记录及 ticket.created Account Intake 持久化回归；284 passed、20 subtests passed，py_compile 与 diff check 通过，测试未触发真实邮件、RAG、Zendesk 或 Slack 外呼。"
+        },
+        {
+          "type": "test",
           "label": "ECS ticket.created Route/Persona FK ordering regression",
           "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py; .venv/bin/pytest -q backend/tests/test_worker.py; AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cisolated-test-dsn> .venv/bin/pytest -q backend/tests/test_automation_ecs_store_postgres.py::test_ticket_created_route_does_not_resolve_persona_before_ticket_parent",
           "details": "215项ECS/Account/旧production契约与11项子测试通过，118项legacy Worker与17项子测试通过；真实PostgreSQL随机schema回归确认无support_tickets父记录时Route仍完成classification并原子创建Processing Job，execution与payload的persona均为null，且未创建Persona assignment。ticket.updated继续保留Route-time Persona解析。测试未重放失败Execution，也未触发RAG、邮件、Slack或Zendesk业务写入。"
@@ -1839,6 +1845,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Account parity Production Persona ordering fix release",
           "command": "ECR digest/task-definition readback, ECS API/Route/Worker rolling deployment, public DNS/TLS/ALB/auth checks, 16 one-minute zero-traffic samples, CloudWatch and PostgreSQL count readback 2026-08-30",
           "details": "release r20260830-ad56ac5基于commit ad56ac582dac3e4fb09e63e73928fd386376df6b和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:d77ebf27065ab5d5cdb471a209841fca125f74a254384d29211f7420c74df566、sha256:460f982fb0859c11b5c71ce6dade59bb27a03e24e085e64e2cdaa877af2daa79、sha256:1bd41e4e9c1374df67fe367d08bb9cf3e886a077d81a2c330af07f9e1049a08e，均为单一linux/amd64 OCI manifest。Task Definition为API:4、Route:5、Worker:4，三个Service deployment均COMPLETED且desired/running/pending=1/1/0；实际运行task digest与Manifest一致，Worker固定在EFS所在us-east-1b subnet。当前Route/Worker heartbeat age均小于1秒且provenance_mismatches=[]，API release、commit、image digest、Prompt Release全部匹配。公网live/release/ready均为200；HTTP 301跳转HTTPS，1.1.1.1、8.8.8.8与本机解析到同一ALB，TLS证书SAN覆盖supportcenter.stellarix.space，Target Group仅新API target healthy。缺失Authorization返回401；使用正式SSM intake token的Authorization Bearer请求返回空payload 422。16个一分钟样本约16分钟全部保持200与1/1/0；最近15分钟CloudWatch ERROR、Traceback、Exception均为0。部署前后及中途PostgreSQL计数保持automation_executions=1、automation_jobs=1、automation_intake_events=1、automation_delivery_ledger=0，未创建新Case或Delivery；临时bootstrap参数无残留且supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n、Cloudflare、DNS记录和EC2 /production未修改。Persona FK修复已部署，等待用户创建新的受控Case验证完整Account processing。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Account parity stage_attempts contract release",
+          "command": "Local OCI manifest validation, ECR digest readback, ECS API/Route/Worker rolling deployment, public DNS/TLS/ALB/auth checks, CloudWatch and heartbeat observation 2026-08-31",
+          "details": "release r20260830-50eec00基于commit 50eec0079617c4a888de3c9aeec848d97a6775f6和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker OCI digest分别为sha256:0e123c9520d1b6a27c35f6be726182d091cca32d5c95235550af593af97dd0c5、sha256:6c413f431072b139ced67c19d990bc32072285278e5531f475782bfb3b316645、sha256:6875440ca354e352623315dee20d860f1813014e56db452ca587dceacadcc64d，ECR远端digest与本地Manifest完全一致且均为单一OCI linux/amd64。Task Definition为API:5、Route:6、Worker:5，三个Service滚动deployment完成并稳定为desired/running/pending=1/1/0；实际运行image均使用repository@sha256 digest，release、commit、build time、Prompt Release provenance全部匹配。supportcenter.stellarix.space由1.1.1.1、8.8.8.8与本机一致解析到active internet-facing ALB，HTTP 301跳转HTTPS，TLS校验成功，Target Group仅一个healthy API target。公网/automation/production/health/live、/health/release、/health/ready均为200；未认证v1/intake返回401，正式SSM token加Bearer后空payload返回422。Route与Worker heartbeat均新鲜且provenance_mismatches=[]；最近约15分钟CloudWatch 126条日志中ERROR、Traceback、Exception、failed、failure、mismatch均为0。远端RAG按权威契约POST /api/v1/retrieval使用SSM token返回HTTP 200、code=0和1条合成检索结果；旧/internal/rag/query与/health路径不属于该RAGFlow契约。未发送真实Case、未创建新Execution/Job/Delivery，n8n、Cloudflare、DNS记录及EC2 /production backup均未修改。stage_attempts兼容修复已部署；等待用户创建新的受控Account Case，Slack Engineer Case链路仍延期。"
         },
         {
           "type": "test",
@@ -6039,8 +6051,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker当前分别使用 Task Definition 4、5、4，三者均为1/1/0且固定到release r20260830-ad56ac5的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。n8n首个受控Case暴露ticket.created在父Ticket持久化前写入Persona assignment的外键顺序缺陷；代码已改为Route仅完成分类与Processing交接，Persona由Account Processing在save_ticket后固定，修复release已部署并通过16分钟零流量稳定观察，原失败Execution保持human_review且不重放，等待用户创建新Case验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
-      "next_action": "由用户创建一个新的受控 Account Case，完成 Execution/Job/Delivery、Zendesk、Outlook及必要外部 readback验收；不得重放或修改 Ticket 13141 的失败 Execution，也不得重试 outcome_unknown。新Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
+      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production完成零流量上线：ECS API、Route Worker与 Automation Worker当前分别使用 Task Definition 5、6、5，三者均为1/1/0且固定到release r20260830-50eec00的linux/amd64 digest；公网DNS、TLS、ALB、live/release/ready、Graph/EFS、远端RAGFlow、RDS、Zendesk、Slack、Outlook poll、release provenance和零业务增长门禁均通过。stage_attempts兼容修复已包含在本release，Route/Worker新heartbeat持续新鲜且provenance_mismatches=[]；等待用户创建新的受控Case验收完整Account processing。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与 Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
+      "next_action": "由用户创建一个新的受控 Account Case，完成 Execution/Job/Delivery、Zendesk、Outlook及必要外部 readback验收；不得重放或修改 Ticket 13141/13143 的失败 Execution，也不得重试 outcome_unknown。新Case通过后进入阶段2，建立隔离的ECS Preproduction并验证同digest晋升流程；阶段3再在现有EC2建立独立Staging。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6058,6 +6070,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
+          "label": "ECS stage_attempts serialization compatibility fix",
+          "command": ".venv/bin/pytest -q backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_automation_comment_sync.py; python -m py_compile backend/services/account_admin.py backend/services/automation_account_intake.py backend/automation_ecs_route_worker.py backend/automation_ecs_worker.py; git diff --check",
+          "details": "修复 route_execution_from_decision 对原生 stage-attempt mapping、ECS automation-route-v1 名称列表和 JSON 字典记录的边界归一化；列表缺失的 failure/source/count/recovered 元数据从 classification 审计字段补齐，避免 dict(list_of_stage_names) ValueError。新增列表、JSON 记录及 ticket.created Account Intake 持久化回归；284 passed、20 subtests passed，py_compile 与 diff check 通过，测试未触发真实邮件、RAG、Zendesk 或 Slack 外呼。"
+        },
+        {
+          "type": "test",
           "label": "ECS ticket.created Route/Persona FK ordering regression",
           "command": ".venv/bin/pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_automation_production_runtime_contract.py; .venv/bin/pytest -q backend/tests/test_worker.py; AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cisolated-test-dsn> .venv/bin/pytest -q backend/tests/test_automation_ecs_store_postgres.py::test_ticket_created_route_does_not_resolve_persona_before_ticket_parent",
           "details": "215项ECS/Account/旧production契约与11项子测试通过，118项legacy Worker与17项子测试通过；真实PostgreSQL随机schema回归确认无support_tickets父记录时Route仍完成classification并原子创建Processing Job，execution与payload的persona均为null，且未创建Persona assignment。ticket.updated继续保留Route-time Persona解析。测试未重放失败Execution，也未触发RAG、邮件、Slack或Zendesk业务写入。"
@@ -6073,6 +6091,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Account parity Production Persona ordering fix release",
           "command": "ECR digest/task-definition readback, ECS API/Route/Worker rolling deployment, public DNS/TLS/ALB/auth checks, 16 one-minute zero-traffic samples, CloudWatch and PostgreSQL count readback 2026-08-30",
           "details": "release r20260830-ad56ac5基于commit ad56ac582dac3e4fb09e63e73928fd386376df6b和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker digest分别为sha256:d77ebf27065ab5d5cdb471a209841fca125f74a254384d29211f7420c74df566、sha256:460f982fb0859c11b5c71ce6dade59bb27a03e24e085e64e2cdaa877af2daa79、sha256:1bd41e4e9c1374df67fe367d08bb9cf3e886a077d81a2c330af07f9e1049a08e，均为单一linux/amd64 OCI manifest。Task Definition为API:4、Route:5、Worker:4，三个Service deployment均COMPLETED且desired/running/pending=1/1/0；实际运行task digest与Manifest一致，Worker固定在EFS所在us-east-1b subnet。当前Route/Worker heartbeat age均小于1秒且provenance_mismatches=[]，API release、commit、image digest、Prompt Release全部匹配。公网live/release/ready均为200；HTTP 301跳转HTTPS，1.1.1.1、8.8.8.8与本机解析到同一ALB，TLS证书SAN覆盖supportcenter.stellarix.space，Target Group仅新API target healthy。缺失Authorization返回401；使用正式SSM intake token的Authorization Bearer请求返回空payload 422。16个一分钟样本约16分钟全部保持200与1/1/0；最近15分钟CloudWatch ERROR、Traceback、Exception均为0。部署前后及中途PostgreSQL计数保持automation_executions=1、automation_jobs=1、automation_intake_events=1、automation_delivery_ledger=0，未创建新Case或Delivery；临时bootstrap参数无残留且supportportal-production-worker-graph-bootstrap:1为INACTIVE；EC2 backup /health=200，n8n、Cloudflare、DNS记录和EC2 /production未修改。Persona FK修复已部署，等待用户创建新的受控Case验证完整Account processing。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Account parity stage_attempts contract release",
+          "command": "Local OCI manifest validation, ECR digest readback, ECS API/Route/Worker rolling deployment, public DNS/TLS/ALB/auth checks, CloudWatch and heartbeat observation 2026-08-31",
+          "details": "release r20260830-50eec00基于commit 50eec0079617c4a888de3c9aeec848d97a6775f6和Prompt Release pr-2bc7aaccb8b0；API/Route/Worker OCI digest分别为sha256:0e123c9520d1b6a27c35f6be726182d091cca32d5c95235550af593af97dd0c5、sha256:6c413f431072b139ced67c19d990bc32072285278e5531f475782bfb3b316645、sha256:6875440ca354e352623315dee20d860f1813014e56db452ca587dceacadcc64d，ECR远端digest与本地Manifest完全一致且均为单一OCI linux/amd64。Task Definition为API:5、Route:6、Worker:5，三个Service滚动deployment完成并稳定为desired/running/pending=1/1/0；实际运行image均使用repository@sha256 digest，release、commit、build time、Prompt Release provenance全部匹配。supportcenter.stellarix.space由1.1.1.1、8.8.8.8与本机一致解析到active internet-facing ALB，HTTP 301跳转HTTPS，TLS校验成功，Target Group仅一个healthy API target。公网/automation/production/health/live、/health/release、/health/ready均为200；未认证v1/intake返回401，正式SSM token加Bearer后空payload返回422。Route与Worker heartbeat均新鲜且provenance_mismatches=[]；最近约15分钟CloudWatch 126条日志中ERROR、Traceback、Exception、failed、failure、mismatch均为0。远端RAG按权威契约POST /api/v1/retrieval使用SSM token返回HTTP 200、code=0和1条合成检索结果；旧/internal/rag/query与/health路径不属于该RAGFlow契约。未发送真实Case、未创建新Execution/Job/Delivery，n8n、Cloudflare、DNS记录及EC2 /production backup均未修改。stage_attempts兼容修复已部署；等待用户创建新的受控Account Case，Slack Engineer Case链路仍延期。"
         },
         {
           "type": "test",

@@ -223,6 +223,33 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertTrue(escalated)
         self.assertEqual(escalated[-1]["failure_stage"], "ownership_gate")
 
+    def test_ticket_created_accepts_ecs_route_stage_attempt_list(self):
+        from backend.services.account_admin import route_execution_from_decision
+
+        repository = _FakeRepository()
+        route_decision = {
+            **DECISION,
+            "stage_attempts": ["intent_classifier"],
+        }
+        classification = {
+            "automation_handler": "billing",
+            "pipeline_version": "account-layered-router-v10",
+            "route_target": "fraud_account",
+            "route_reason_code": "matched",
+            "stage_confidences": {"intent_classifier": 0.9},
+            "stage_reason_codes": {"intent_classifier": "matched"},
+            "stage_attempt_counts": {"intent_classifier": 1},
+        }
+        with self._base_patches(route_execution_from_decision=route_execution_from_decision):
+            outcome = self._run(
+                repository,
+                route_decision=route_decision,
+                route_classification=classification,
+            )
+
+        self.assertEqual(outcome["response_status"], "automation")
+        self.assertEqual(repository.saved_route_executions[0]["stages"][0]["name"], "intent_classifier")
+
 
 if __name__ == "__main__":
     unittest.main()

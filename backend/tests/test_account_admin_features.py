@@ -1089,6 +1089,84 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertEqual(stage["output_sha256"], "a" * 64)
         self.assertEqual(stage["output_excerpt"], "not json")
 
+    def test_route_execution_accepts_ecs_stage_name_list_and_uses_classification_metadata(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="uncertain",
+            route="human_review_required",
+            confidence=0.0,
+            reason="intent_classifier_invalid_json",
+            route_family="human_review",
+            execution_action="human_review_required",
+            router_source="account_layered_llm",
+        )
+        execution = route_execution_from_decision(
+            ticket_id="TK-ECS-LIST",
+            decision=decision,
+            system_prompt=None,
+            user_prompt=None,
+            classification={
+                "pipeline_version": ROUTER_PROMPT_VERSION,
+                "route_target": "human_review",
+                "route_reason_code": "intent_classifier_invalid_json",
+                "stage_confidences": {"intent_classifier": 0.0},
+                "stage_reason_codes": {"intent_classifier": "intent_classifier_invalid_json"},
+                "stage_failure_types": {"intent_classifier": "invalid_json"},
+                "stage_failure_sources": {"intent_classifier": "intent_classifier"},
+                "stage_attempt_counts": {"intent_classifier": 2},
+                "stage_recovered": {"intent_classifier": False},
+            },
+            stage_attempts=["intent_classifier"],
+        )
+
+        self.assertEqual([stage["name"] for stage in execution["stages"]], ["intent_classifier", "final_route"])
+        self.assertEqual(execution["stages"][0]["failure_type"], "invalid_json")
+        self.assertEqual(execution["stages"][0]["failure_source"], "intent_classifier")
+        self.assertEqual(execution["stages"][0]["attempt_count"], 2)
+        self.assertEqual(execution["stages"][0]["status"], "failed")
+
+    def test_route_execution_accepts_json_stage_attempt_records(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="detailed_invoice",
+            confidence=0.91,
+            reason="billing_request",
+            route_family="automated",
+            execution_action="detailed_invoice",
+            router_source="account_layered_llm",
+        )
+        execution = route_execution_from_decision(
+            ticket_id="TK-ECS-JSON",
+            decision=decision,
+            system_prompt=None,
+            user_prompt=None,
+            classification={
+                "pipeline_version": ROUTER_PROMPT_VERSION,
+                "route_target": "detailed_invoice",
+                "route_reason_code": "billing_request",
+                "stage_confidences": {"intent_classifier": 0.91},
+                "stage_reason_codes": {"intent_classifier": "billing_request"},
+            },
+            stage_attempts={
+                "intent_classifier": {
+                    "failure_type": None,
+                    "recovered": True,
+                    "attempt_count": 2,
+                    "model_name": "gpt-test",
+                    "provider_name": "openai",
+                    "raw_output_length": 12,
+                    "raw_output_sha256": "b" * 64,
+                    "sanitized_output_excerpt": None,
+                    "attempt_failures": [{"attempt": 1, "failure_type": "invalid_json"}],
+                }
+            },
+        )
+
+        stage = execution["stages"][0]
+        self.assertEqual(stage["status"], "completed_after_retry")
+        self.assertEqual(stage["attempt_count"], 2)
+        self.assertEqual(stage["model"], "gpt-test")
+        self.assertEqual(stage["attempt_failures"], [{"attempt": 1, "failure_type": "invalid_json"}])
+
     def test_routing_config_describes_stages_and_lists_supported_categories(self) -> None:
         payload = routing_config_payload()
 
