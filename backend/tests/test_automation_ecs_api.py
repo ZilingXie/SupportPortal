@@ -19,8 +19,6 @@ def _client() -> tuple[TestClient, InMemoryAutomationEcsStore]:
     store = InMemoryAutomationEcsStore(settings)
     store.migrate()
     auth = DashboardAuthConfig(
-        username="operator",
-        password="dashboard-password",
         session_secret="test-session-secret-that-is-long-enough",
         session_ttl_seconds=120,
     )
@@ -33,7 +31,7 @@ def _client() -> tuple[TestClient, InMemoryAutomationEcsStore]:
 def _dashboard_login(client: TestClient) -> None:
     response = client.post(
         "/automation/production/dashboard/auth/login",
-        json={"username": "operator", "password": "dashboard-password"},
+        json={"username": "admin", "password": "admin"},
     )
     assert response.status_code == 200
 
@@ -51,12 +49,10 @@ def test_authentication_happens_before_body_parsing_or_writes() -> None:
 
 
 def test_dashboard_credentials_cannot_reuse_intake_token() -> None:
-    settings = replace(_settings("api"), intake_shared_token="dashboard-password")
+    settings = replace(_settings("api"), intake_shared_token="admin")
     store = InMemoryAutomationEcsStore(settings)
     store.migrate()
     auth = DashboardAuthConfig(
-        username="operator",
-        password="dashboard-password",
         session_secret="test-session-secret-that-is-long-enough",
     )
     with pytest.raises(RuntimeError, match="intake token must be independent"):
@@ -177,7 +173,7 @@ def test_dashboard_login_uses_http_only_session_and_logout_invalidates_it() -> N
     with client:
         invalid = client.post(
             "/automation/production/dashboard/auth/login",
-            json={"username": "operator", "password": "wrong"},
+            json={"username": "admin", "password": "wrong"},
         )
         assert invalid.status_code == 401
         _dashboard_login(client)
@@ -185,12 +181,11 @@ def test_dashboard_login_uses_http_only_session_and_logout_invalidates_it() -> N
         assert cookie
         login_header = client.post(
             "/automation/production/dashboard/auth/login",
-            json={"username": "operator", "password": "dashboard-password"},
+            json={"username": "admin", "password": "admin"},
         ).headers["set-cookie"]
         assert "HttpOnly" in login_header
         assert "Secure" in login_header
         assert "SameSite=strict" in login_header
-        assert "dashboard-password" not in login_header
         assert "secret" not in login_header.lower().replace("test-session-secret", "")
         assert client.get("/automation/production/dashboard/auth/session").status_code == 200
         assert client.post("/automation/production/dashboard/auth/logout").status_code == 200

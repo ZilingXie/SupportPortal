@@ -13,40 +13,39 @@ from backend.services.workspace_auth import (
 )
 
 
+DASHBOARD_ADMIN_USERNAME = "admin"
+DASHBOARD_ADMIN_PASSWORD = "admin"
+
+
 @dataclass(frozen=True)
 class DashboardAuthConfig:
-    username: str
-    password: str
     session_secret: str
     session_ttl_seconds: int = 12 * 60 * 60
 
     def __post_init__(self) -> None:
-        if not self.username or len(self.password) < 12:
-            raise RuntimeError("dashboard username and a password of at least 12 characters are required")
         if len(self.session_secret) < 32:
             raise RuntimeError("dashboard session secret must be at least 32 characters")
-        if hmac.compare_digest(self.password, self.session_secret):
-            raise RuntimeError("dashboard password and session secret must be independent")
         if self.session_ttl_seconds < 60 or self.session_ttl_seconds > 24 * 60 * 60:
             raise RuntimeError("dashboard session TTL must be between 60 and 86400")
 
+    @property
+    def username(self) -> str:
+        return DASHBOARD_ADMIN_USERNAME
+
+    @property
+    def password(self) -> str:
+        return DASHBOARD_ADMIN_PASSWORD
+
     @classmethod
     def from_env(cls) -> "DashboardAuthConfig":
-        username = str(os.getenv("AUTOMATION_DASHBOARD_ADMIN_USERNAME") or "").strip()
-        password = str(os.getenv("AUTOMATION_DASHBOARD_ADMIN_PASSWORD") or "")
         session_secret = str(os.getenv("AUTOMATION_DASHBOARD_SESSION_SECRET") or "").strip()
-        if not username or not password or not session_secret:
-            raise RuntimeError(
-                "AUTOMATION_DASHBOARD_ADMIN_USERNAME, AUTOMATION_DASHBOARD_ADMIN_PASSWORD, "
-                "and AUTOMATION_DASHBOARD_SESSION_SECRET are required"
-            )
+        if not session_secret:
+            raise RuntimeError("AUTOMATION_DASHBOARD_SESSION_SECRET is required")
         try:
             ttl_seconds = int(os.getenv("AUTOMATION_DASHBOARD_SESSION_TTL_SECONDS") or 12 * 60 * 60)
         except ValueError as exc:
             raise RuntimeError("AUTOMATION_DASHBOARD_SESSION_TTL_SECONDS must be an integer") from exc
         return cls(
-            username=username,
-            password=password,
             session_secret=session_secret,
             session_ttl_seconds=ttl_seconds,
         )

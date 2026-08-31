@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T11:03:03Z",
-  "source_base_commit": "091b4af97e184e97ec9b23cf4dbdfad75238b798",
-  "registry_digest": "fadb87cab38d4b4c78dce7cc277bf9b3fa662545ac8b5728e99e5cd38b8dfcd8",
+  "generated_at": "2026-08-31T11:05:09Z",
+  "source_base_commit": "01abdfbfc116135088311cf66f94b9da57e8c11d",
+  "registry_digest": "923769cdb1a4755e4f508c209d0663e8f4e47d1636e73c8659821fd6c61d48a7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2061,6 +2061,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implemented plan owner review",
           "command": "review-implemented-plan skill",
           "details": "修复 username/password compare 短路、nested route classification 脱敏和 execution namespace 明确约束；review 后无未处理 correctness/security finding。"
+        },
+        {
+          "type": "decision",
+          "label": "Production fixed dashboard credentials approved",
+          "command": "owner confirmation: admin/admin",
+          "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥仍保持至少 32 位、独立外部注入且不进入浏览器或仓库。"
         }
       ],
       "source_refs": [
@@ -8431,6 +8437,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implemented plan owner review",
           "command": "review-implemented-plan skill",
           "details": "修复 username/password compare 短路、nested route classification 脱敏和 execution namespace 明确约束；review 后无未处理 correctness/security finding。"
+        },
+        {
+          "type": "decision",
+          "label": "Production fixed dashboard credentials approved",
+          "command": "owner confirmation: admin/admin",
+          "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥仍保持至少 32 位、独立外部注入且不进入浏览器或仓库。"
         }
       ],
       "source_refs": [

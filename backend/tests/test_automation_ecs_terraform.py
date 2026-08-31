@@ -49,17 +49,14 @@ def test_health_and_runtime_provenance_contracts_are_complete() -> None:
     assert "AUTOMATION_DB_MIGRATION_DSN" not in ecs
 
 
-def test_dashboard_secrets_are_injected_only_into_api_role() -> None:
+def test_dashboard_session_secret_is_injected_only_into_api_role() -> None:
     locals_source = _read("locals.tf")
     api_secrets = locals_source.split("api_secrets = [", 1)[1].split("]\n\n  role_db_secrets", 1)[0]
     route_and_worker = locals_source.split("role_db_secrets = [", 1)[1]
-    for name in (
-        "AUTOMATION_DASHBOARD_ADMIN_USERNAME",
-        "AUTOMATION_DASHBOARD_ADMIN_PASSWORD",
-        "AUTOMATION_DASHBOARD_SESSION_SECRET",
-    ):
-        assert name in api_secrets
-        assert name not in route_and_worker
+    assert "AUTOMATION_DASHBOARD_SESSION_SECRET" in api_secrets
+    assert "AUTOMATION_DASHBOARD_SESSION_SECRET" not in route_and_worker
+    assert "AUTOMATION_DASHBOARD_ADMIN_USERNAME" not in locals_source
+    assert "AUTOMATION_DASHBOARD_ADMIN_PASSWORD" not in locals_source
 
 
 def test_worker_receives_account_mail_rag_and_delivery_contracts() -> None:

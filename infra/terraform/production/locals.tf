@@ -39,8 +39,6 @@ locals {
     ticket_db_dsn               = "${local.name_prefix}/ticket-db-dsn"
     migration_db_dsn            = "${local.name_prefix}/migration-db-dsn"
     automation_intake_token     = "${local.name_prefix}/automation-intake-token"
-    dashboard_admin_username    = "${local.name_prefix}/dashboard-admin-username"
-    dashboard_admin_password    = "${local.name_prefix}/dashboard-admin-password"
     dashboard_session_secret    = "${local.name_prefix}/dashboard-session-secret"
     n8n_request_token           = "${local.name_prefix}/n8n-request-token"
     rag_service_url             = "${local.name_prefix}/rag-service-url"
@@ -137,14 +135,6 @@ locals {
     {
       name      = "AUTOMATION_INTAKE_SHARED_TOKEN"
       valueFrom = aws_secretsmanager_secret.runtime["automation_intake_token"].arn
-    },
-    {
-      name      = "AUTOMATION_DASHBOARD_ADMIN_USERNAME"
-      valueFrom = aws_secretsmanager_secret.runtime["dashboard_admin_username"].arn
-    },
-    {
-      name      = "AUTOMATION_DASHBOARD_ADMIN_PASSWORD"
-      valueFrom = aws_secretsmanager_secret.runtime["dashboard_admin_password"].arn
     },
     {
       name      = "AUTOMATION_DASHBOARD_SESSION_SECRET"
