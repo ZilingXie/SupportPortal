@@ -58,6 +58,12 @@ locals {
     billing_graph_username      = "${local.name_prefix}/billing-graph-username"
   }
 
+  runtime_parameter_arns = {
+    enablement_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/enablement-internal-email-recipients"
+    fraud_internal_email_recipients      = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/fraud-internal-email-recipients"
+    suspension_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/account-suspension-internal-email-recipients"
+  }
+
   manifest_bucket_name = trimspace(var.manifest_bucket_name) != "" ? trimspace(var.manifest_bucket_name) : "${var.project_name}-${var.environment}-release-manifests-${data.aws_caller_identity.current.account_id}"
 
   certificate_arn = trimspace(var.acm_certificate_arn) != "" ? trimspace(var.acm_certificate_arn) : try(aws_acm_certificate.production[0].arn, "")
@@ -218,6 +224,18 @@ locals {
     {
       name      = "BILLING_AUTOMATION_GRAPH_USERNAME"
       valueFrom = aws_secretsmanager_secret.runtime["billing_graph_username"].arn
+    },
+    {
+      name      = "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
+      valueFrom = local.runtime_parameter_arns.enablement_internal_email_recipients
+    },
+    {
+      name      = "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
+      valueFrom = local.runtime_parameter_arns.fraud_internal_email_recipients
+    },
+    {
+      name      = "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
+      valueFrom = local.runtime_parameter_arns.suspension_internal_email_recipients
     },
   ])
 }

@@ -76,7 +76,8 @@ def acquire_graph_access_token(config: dict[str, str]) -> str:
 
 def send_graph_mail(
     *,
-    to_address: str,
+    to_address: str | None = None,
+    to_addresses: list[str] | None = None,
     subject: str,
     body: str,
     content_type: str = "Text",
@@ -90,6 +91,7 @@ def send_graph_mail(
     send_graph_mail_with_token(
         access_token=access_token,
         to_address=to_address,
+        to_addresses=to_addresses,
         subject=subject,
         body=body,
         content_type=content_type,
@@ -100,7 +102,8 @@ def send_graph_mail(
 def send_graph_mail_with_token(
     *,
     access_token: str,
-    to_address: str,
+    to_address: str | None = None,
+    to_addresses: list[str] | None = None,
     subject: str,
     body: str,
     content_type: str = "Text",
@@ -110,11 +113,21 @@ def send_graph_mail_with_token(
     if normalized_content_type not in {"text", "html"}:
         raise ValueError("Graph mail content_type must be Text or HTML")
     graph_content_type = "HTML" if normalized_content_type == "html" else "Text"
-    normalized_cc = [addr for addr in (_clean(cc) for cc in (cc_addresses or [])) if addr]
+    normalized_to = _unique_addresses([*(to_addresses or []), to_address or ""])
+    if not normalized_to:
+        raise ValueError("Graph mail requires at least one To recipient")
+    to_identities = {address.casefold() for address in normalized_to}
+    normalized_cc = [
+        address
+        for address in _unique_addresses(cc_addresses or [])
+        if address.casefold() not in to_identities
+    ]
     message: dict[str, Any] = {
         "subject": subject,
         "body": {"contentType": graph_content_type, "content": body},
-        "toRecipients": [{"emailAddress": {"address": to_address}}],
+        "toRecipients": [
+            {"emailAddress": {"address": address}} for address in normalized_to
+        ],
     }
     if normalized_cc:
         message["ccRecipients"] = [
@@ -142,6 +155,18 @@ def _env(primary: str, fallback: str) -> str:
 
 def _clean(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _unique_addresses(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        address = _clean(value)
+        identity = address.casefold()
+        if address and identity not in seen:
+            seen.add(identity)
+            normalized.append(address)
+    return normalized
 
 
 def _safe_int(value: Any, default: int) -> int:

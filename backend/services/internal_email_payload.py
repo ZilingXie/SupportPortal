@@ -8,6 +8,13 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from backend.services.account_internal_email_recipients import (
+    ACCOUNT_SUSPENSION_RECIPIENTS_JSON_ENV,
+    ECS_ACCOUNT_ONLY_ENV,
+    ENABLEMENT_RECIPIENTS_JSON_ENV,
+    FRAUD_RECIPIENTS_JSON_ENV,
+    resolve_account_internal_email_recipients,
+)
 from backend.services.account_verification_automation import (
     build_account_verification_internal_email_payload,
 )
@@ -64,13 +71,26 @@ def _extract_zendesk_ticket_url(source: Any, ticket_id: str) -> str | None:
 # config key is persisted alongside the resolved recipient so later workers do
 # not need to make a different environment lookup.
 ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS = {
-    "account_verification": "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL",
-    "fraud_account": "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL",
-    "enablement": "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL",
-    "quota": "QUOTA_AUTOMATION_INTERNAL_EMAIL",
+    "account_verification": (
+        FRAUD_RECIPIENTS_JSON_ENV,
+        "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL",
+    ),
+    "fraud_account": (
+        FRAUD_RECIPIENTS_JSON_ENV,
+        "BILLING_AUTOMATION_ACCOUNT_VERIFICATION_EMAIL",
+    ),
+    "enablement": (
+        ENABLEMENT_RECIPIENTS_JSON_ENV,
+        "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL",
+    ),
+    "account_suspension": (
+        ACCOUNT_SUSPENSION_RECIPIENTS_JSON_ENV,
+        "BILLING_AUTOMATION_ACCOUNT_SUSPENSION_EMAIL",
+    ),
+    "quota": ("QUOTA_AUTOMATION_INTERNAL_EMAIL",),
     # Billing-family payloads already contain their fixed/default recipient;
     # they still pass through this allowlist but never read a new env key.
-    "billing": None,
+    "billing": (),
 }
 
 
@@ -93,15 +113,36 @@ def resolve_account_internal_email_recipient(
 
     resolved = deepcopy(payload) if isinstance(payload, dict) else {}
     normalized_handler = " ".join(str(handler or "").split()).strip().lower()
-    config_key = ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS.get(normalized_handler)
+    config_keys = ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS.get(normalized_handler)
     payload_key = " ".join(str(resolved.get("recipient_config_key") or "").split()).strip()
     if normalized_handler not in ACCOUNT_INTERNAL_EMAIL_RECIPIENT_KEYS or (
-        config_key and payload_key and payload_key != config_key
+        config_keys and payload_key and payload_key not in config_keys
     ):
         raise InternalEmailRecipientResolutionError(
             "account_internal_email_recipient_unregistered",
             "internal email recipient config is not registered for this handler",
         )
+    to_addresses = resolved.get("to_addresses")
+    cc_addresses = resolved.get("cc_addresses")
+    if isinstance(to_addresses, list) or isinstance(cc_addresses, list):
+        if not isinstance(to_addresses, list) or not to_addresses or not isinstance(cc_addresses, list) or not cc_addresses:
+            raise InternalEmailRecipientResolutionError(
+                "account_internal_email_recipient_invalid",
+                "persisted internal email recipients are incomplete",
+            )
+        resolved["recipient_resolution_source"] = "persisted_payload"
+        resolved["to"] = str(to_addresses[0]).strip()
+        resolved["resolved_to"] = resolved["to"]
+        return resolved
+
+    json_key = config_keys[0] if config_keys and str(config_keys[0]).endswith("_JSON") else ""
+    if normalized_handler != "quota" and (
+        str(os.getenv(ECS_ACCOUNT_ONLY_ENV) or "").strip() == "1"
+        or (json_key and str(os.getenv(json_key) or "").strip())
+    ):
+        return resolve_account_internal_email_recipients(normalized_handler).apply(resolved)
+
+    config_key = config_keys[-1] if config_keys else None
     if config_key:
         resolved["recipient_config_key"] = config_key
     current_to = " ".join(str(resolved.get("to") or "").split()).strip()
@@ -143,6 +184,8 @@ def _customer_email(account_case: dict[str, Any], ticket: dict[str, Any]) -> str
 def _preserve_delivery_metadata(payload: dict[str, Any], rendered: dict[str, Any]) -> dict[str, Any]:
     preserved_keys = {
         "to",
+        "to_addresses",
+        "cc_addresses",
         "recipient_config_key",
         "recipient_resolution_source",
         "delivery_key",

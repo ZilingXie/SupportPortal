@@ -5,6 +5,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from backend.services.account_internal_email_recipients import (
+    attach_account_internal_email_recipients,
+)
 from backend.services.account_verification_field_extractor import (
     AccountVerificationFieldExtraction,
     compose_account_verification_follow_up,
@@ -33,7 +36,7 @@ class AccountVerificationAutomationResult:
     customer_reply: str
     missing_fields: list[str]
     collected_fields: dict[str, str]
-    internal_email: dict[str, str] | None
+    internal_email: dict[str, Any] | None
     extraction: AccountVerificationFieldExtraction
     follow_up_count: int
     proceed_with_missing_fields: bool = False
@@ -50,7 +53,7 @@ def _internal_email(
     missing_fields: list[str],
     customer_message: str = "",
     zendesk_ticket_url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     provided_fields = [
         (_GROUP_LABELS[group], collected_fields[group])
         for group in _GROUP_LABELS
@@ -79,13 +82,13 @@ def _internal_email(
         action_text="Please reply directly to this email with a customer-shareable handling update.",
         zendesk_ticket_url=zendesk_ticket_url,
     )
-    return {
+    return attach_account_internal_email_recipients({
         "to": os.getenv(ACCOUNT_VERIFICATION_INTERNAL_EMAIL_ENV, "").strip()
         or DEFAULT_ACCOUNT_VERIFICATION_INTERNAL_EMAIL,
         "subject": f"{namespaced_internal_email_subject('[Fraud Account Review]')} - Ticket {ticket_id}",
         "delivery_key": delivery_key,
         **rendered,
-    }
+    }, handler="fraud_account")
 
 
 def build_account_verification_internal_email_payload(
@@ -97,7 +100,7 @@ def build_account_verification_internal_email_payload(
     missing_fields: list[str],
     customer_message: str = "",
     zendesk_ticket_url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Render the persisted Fraud/Account Verification handoff payload."""
     return _internal_email(
         ticket_id=ticket_id,

@@ -6,6 +6,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services.account_internal_email_recipients import (
+    attach_account_internal_email_recipients,
+)
 from backend.services.customer_reply_composer import compose_customer_reply_email
 from backend.services.graph_mail import DEFAULT_USERNAME, automation_internal_email_cc, send_graph_mail
 from backend.services.internal_email_template import (
@@ -312,6 +315,16 @@ def build_enablement_automation_result_from_fields(
 
 def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict[str, str]:
     payload = dict(email_payload or {})
+    to_addresses = [
+        _clean_text(value)
+        for value in payload.get("to_addresses", [])
+        if _clean_text(value)
+    ] if isinstance(payload.get("to_addresses"), list) else []
+    cc_addresses = [
+        _clean_text(value)
+        for value in payload.get("cc_addresses", [])
+        if _clean_text(value)
+    ] if isinstance(payload.get("cc_addresses"), list) else []
     # Rerun payloads persist the resolved destination before Commit.  Legacy
     # intake payloads without the marker retain their historical env lookup.
     persisted_source = _clean_text(payload.get("recipient_resolution_source"))
@@ -324,17 +337,24 @@ def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict
     body = str(payload.get("body") or "").strip()
     body_html = str(payload.get("body_html") or "").strip()
     send_body = body_html or body
-    missing = [name for name, value in (("to", to_address), ("subject", subject), ("body", send_body)) if not value]
+    missing = [
+        name
+        for name, value in (("to", to_addresses or to_address), ("subject", subject), ("body", send_body))
+        if not value
+    ]
     if missing:
         return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": f"missing {', '.join(missing)}"}
     try:
-        send_graph_mail(
-            to_address=to_address,
-            subject=subject,
-            body=send_body,
-            content_type="HTML" if body_html else "Text",
-            cc_addresses=automation_internal_email_cc(),
-        )
+        send_kwargs: dict[str, Any] = {
+            "subject": subject,
+            "body": send_body,
+            "content_type": "HTML" if body_html else "Text",
+        }
+        if to_addresses:
+            send_kwargs.update({"to_addresses": to_addresses, "cc_addresses": cc_addresses})
+        else:
+            send_kwargs.update({"to_address": to_address, "cc_addresses": automation_internal_email_cc()})
+        send_graph_mail(**send_kwargs)
     except (FileNotFoundError, ValueError) as exc:
         return {"status": ENABLEMENT_INTERNAL_EMAIL_RETRY, "reason": str(exc)}
     except Exception as exc:
@@ -342,7 +362,7 @@ def send_enablement_internal_email(email_payload: dict[str, Any] | None) -> dict
     return {
         "status": ENABLEMENT_INTERNAL_EMAIL_SENT,
         "reason": "",
-        "resolved_to": to_address,
+        "resolved_to": to_addresses[0] if to_addresses else to_address,
     }
 
 
@@ -469,7 +489,7 @@ def _build_internal_email(
     customer_message: str,
     collected_fields: dict[str, str],
     zendesk_ticket_url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     raw_feature_label = collected_fields["requested_feature_label"]
     feature_key = canonical_enablement_feature(collected_fields.get("requested_feature"))
     feature_label = _ENABLEMENT_FEATURE_DISPLAY_NAMES.get(feature_key) or raw_feature_label
@@ -489,14 +509,14 @@ def _build_internal_email(
         action_text="Please reply directly to this email with a customer-shareable handling update.",
         zendesk_ticket_url=zendesk_ticket_url,
     )
-    return {
+    return attach_account_internal_email_recipients({
         "to": "",
         "recipient_config_key": ENABLEMENT_INTERNAL_EMAIL_ENV,
         "delivery_key": f"enablement:{_clean_text(account_case_id)}:v1",
         "from": _clean_text(os.getenv("MSGRAPH_USERNAME")) or DEFAULT_USERNAME,
         "subject": f"{namespaced_internal_email_subject(ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX)} {feature_label} - Ticket {_clean_text(ticket_id)}",
         **rendered,
-    }
+    }, handler="enablement")
 
 
 def build_enablement_internal_email_payload(
@@ -507,7 +527,7 @@ def build_enablement_internal_email_payload(
     customer_message: str,
     collected_fields: dict[str, str],
     zendesk_ticket_url: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Render a persisted Enablement handoff without re-running extraction."""
     return _build_internal_email(
         ticket_id=ticket_id,

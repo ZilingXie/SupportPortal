@@ -80,6 +80,40 @@ class AutomationEmailCcTest(unittest.TestCase):
             payload = json.loads(request.data.decode("utf-8"))
             self.assertNotIn("ccRecipients", payload["message"])
 
+    def test_graph_payload_supports_multiple_recipients_and_deduplicates(self) -> None:
+        import json
+        import urllib.request
+        from unittest.mock import MagicMock
+
+        with patch.object(urllib.request, "urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=False)
+            mock_response.status = 202
+            mock_urlopen.return_value = mock_response
+
+            send_graph_mail_with_token(
+                access_token="fake-token",
+                to_addresses=["one@example.com", "ONE@example.com", "two@example.com"],
+                subject="Test",
+                body="Hello",
+                cc_addresses=["two@example.com", "owner@example.com", "OWNER@example.com"],
+            )
+
+            request = mock_urlopen.call_args.args[0]
+            message = json.loads(request.data.decode("utf-8"))["message"]
+            self.assertEqual(
+                message["toRecipients"],
+                [
+                    {"emailAddress": {"address": "one@example.com"}},
+                    {"emailAddress": {"address": "two@example.com"}},
+                ],
+            )
+            self.assertEqual(
+                message["ccRecipients"],
+                [{"emailAddress": {"address": "owner@example.com"}}],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
