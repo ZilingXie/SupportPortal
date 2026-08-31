@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T06:33:48Z",
-  "source_base_commit": "c498dcba9ed491cc0a463e612eeb8fc22f58d4dc",
-  "registry_digest": "ffb1b43c338be362ae485f96c5e16da7b7fee2d2e7222b6069d03f8d530505ae",
+  "generated_at": "2026-08-31T08:10:48Z",
+  "source_base_commit": "badbb5dc8f095695d7918354ab7ae8d8b996b90a",
+  "registry_digest": "9729af33cdd29de6f8f94d6467a8e8c866eeb4aa366491a806b5c03ceb85bc3c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1995,6 +1995,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Zendesk Account reply delivery without backend.main",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py",
           "details": "修复ECS Worker Account回复投递在无附件路径对backend.main的隐式导入；投递服务改用显式资产依赖，带附件但未配置资产存储时明确返回account_zendesk_comment_attachment_storage_unavailable/503并fail closed。无附件在backend.main不可用时仍成功。相关投递与ECS回归共171项通过；未重试或修改Ticket 13148。"
+        },
+        {
+          "type": "test",
+          "label": "ECS comment route contract OCI release r20260831-badbb5d",
+          "command": "./deployment/build_automation_ecs_release.sh --release-id r20260831-badbb5d --prompt-release-id pr-2bc7aaccb8b0 --builder podman; .venv/bin/python -m backend.scripts.automation_release validate --manifest .deployments/releases/r20260831-badbb5d/release-manifest.json; OCI config/filesystem/import and ECR digest readback",
+          "details": "从main@badbb5dc8f095695d7918354ab7ae8d8b996b90a构建并独立复核三份单一linux/amd64 OCI：API sha256:a9e0d711ad4d7f31ef8ed403952bcf29f78e918572368fdd95903e951287d5cc、Route sha256:1811c42918bebae3d02fa5168393781325a2d7714b9b447d4fda582e0372e187、Worker sha256:b99472d0d8429b8aad92f903bee82c34c2a535d655367a22ce5729c5092a1e29，Prompt Release为pr-2bc7aaccb8b0。Manifest、平台、digest、角色entrypoint/import与filesystem排除门禁通过，Route镜像包含五个intent-router审计字段；三个immutable ECR tag按OCI media type回读为相同digest。"
+        },
+        {
+          "type": "test",
+          "label": "ECS comment route contract Production rollout",
+          "command": "aws ecs/elbv2/logs readback; public health live/release/ready; protected Execution API readback",
+          "details": "API:7、Route:8、Worker:7均使用r20260831-badbb5d并稳定1/1/0、rollout completed，实际task imageDigest与Release Manifest一致；公网live/release/ready为200，新Route/Worker heartbeat的provenance_mismatches均为空。新task运行12分钟覆盖至少两个300秒Outlook poll间隔，三条CloudWatch stream的ERROR/Traceback/Exception/failed计数均为0。Ticket 13155仍只有部署前的ticket.created与comment.created两条Execution；exec-aa84651d0003404bb38ca463075c09b7保持outcome_unknown、automation_AttributeError、1条delivery和原更新时间，未重放或修改。"
         }
       ],
       "source_refs": [
@@ -6063,8 +6075,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production上线：ECS API、Route Worker与 Automation Worker当前分别使用 Task Definition 6、7、6，三者均为1/1/0且运行release r20260831-c498dc9；公网live/release/ready与当前heartbeat均正常。n8n comment sync已能把完整Zendesk评论快照送入ECS，但Ticket 13155的首个comment.created执行暴露Route Worker持久化decision时遗漏intent-router审计字段，导致Automation Worker在Account reply route execution边界抛AttributeError。源码修复已补齐下游实际消费的五个字段，并以真实Route payload进入reply链的回归验证通过；旧Execution保持outcome_unknown且不重放，等待从合并main构建并部署新release后由用户创建新评论验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与 Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
-      "next_action": "将ECS comment route decision审计字段修复finalize到main，从合并commit构建并部署新的三角色immutable linux/amd64 release；确认API/Route/Worker 1/1/0、health与provenance后，由用户创建新的Zendesk评论完成Execution/Job/Delivery和Zendesk readback验收。不得重放或修改exec-aa84651d0003404bb38ca463075c09b7，也不得重试其outcome_unknown delivery。新评论通过后进入阶段2建立隔离的ECS Preproduction；阶段3再在现有EC2建立独立Staging。",
+      "summary": "按 Production → Preproduction → EC2 Staging的顺序迁移 Automation。Account parity Production已在 supportcenter.stellarix.space/automation/production上线并更新到release r20260831-badbb5d：ECS API、Route Worker与 Automation Worker分别使用Task Definition 7、8、7，三者均为1/1/0且deployment completed；公网live/release/ready为200，当前Route/Worker heartbeat新鲜且provenance_mismatches为空。n8n comment sync已能把完整Zendesk评论快照送入ECS；Ticket 13155暴露的Route decision intent-router审计字段遗漏已在PR #1005修复并包含于当前三角色immutable linux/amd64 release。原comment.created Execution保持outcome_unknown、更新时间和delivery数量不变且未重放，等待用户创建新评论完成端到端验收。support.stellarix.space/production继续作为未修改的EC2 backup；Preproduction与EC2 Staging尚未建立。Slack Engineer Case thread binding、@bot、Guardrail与Final Approve明确延期，因此本次只宣称Account parity Production，不宣称完整旧/production parity。",
+      "next_action": "由用户在受控的自动化Account Case创建一条新的Zendesk评论；追踪新comment.created的Execution、Route/Processing Job、Account reply结果、Delivery ledger与Zendesk readback，确认本次Route decision契约修复端到端生效。不得重放或修改exec-aa84651d0003404bb38ca463075c09b7，也不得重试其outcome_unknown delivery。新评论通过后进入阶段2建立隔离的ECS Preproduction；阶段3再在现有EC2建立独立Staging。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6253,6 +6265,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Zendesk Account reply delivery without backend.main",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py",
           "details": "修复ECS Worker Account回复投递在无附件路径对backend.main的隐式导入；投递服务改用显式资产依赖，带附件但未配置资产存储时明确返回account_zendesk_comment_attachment_storage_unavailable/503并fail closed。无附件在backend.main不可用时仍成功。相关投递与ECS回归共171项通过；未重试或修改Ticket 13148。"
+        },
+        {
+          "type": "test",
+          "label": "ECS comment route contract OCI release r20260831-badbb5d",
+          "command": "./deployment/build_automation_ecs_release.sh --release-id r20260831-badbb5d --prompt-release-id pr-2bc7aaccb8b0 --builder podman; .venv/bin/python -m backend.scripts.automation_release validate --manifest .deployments/releases/r20260831-badbb5d/release-manifest.json; OCI config/filesystem/import and ECR digest readback",
+          "details": "从main@badbb5dc8f095695d7918354ab7ae8d8b996b90a构建并独立复核三份单一linux/amd64 OCI：API sha256:a9e0d711ad4d7f31ef8ed403952bcf29f78e918572368fdd95903e951287d5cc、Route sha256:1811c42918bebae3d02fa5168393781325a2d7714b9b447d4fda582e0372e187、Worker sha256:b99472d0d8429b8aad92f903bee82c34c2a535d655367a22ce5729c5092a1e29，Prompt Release为pr-2bc7aaccb8b0。Manifest、平台、digest、角色entrypoint/import与filesystem排除门禁通过，Route镜像包含五个intent-router审计字段；三个immutable ECR tag按OCI media type回读为相同digest。"
+        },
+        {
+          "type": "test",
+          "label": "ECS comment route contract Production rollout",
+          "command": "aws ecs/elbv2/logs readback; public health live/release/ready; protected Execution API readback",
+          "details": "API:7、Route:8、Worker:7均使用r20260831-badbb5d并稳定1/1/0、rollout completed，实际task imageDigest与Release Manifest一致；公网live/release/ready为200，新Route/Worker heartbeat的provenance_mismatches均为空。新task运行12分钟覆盖至少两个300秒Outlook poll间隔，三条CloudWatch stream的ERROR/Traceback/Exception/failed计数均为0。Ticket 13155仍只有部署前的ticket.created与comment.created两条Execution；exec-aa84651d0003404bb38ca463075c09b7保持outcome_unknown、automation_AttributeError、1条delivery和原更新时间，未重放或修改。"
         }
       ],
       "source_refs": [
@@ -6275,7 +6299,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-08-30",
+      "updated_at": "2026-08-31",
       "history": [
         {
           "at": "2026-08-25",
@@ -6391,6 +6415,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-31",
           "event": "ecs_comment_route_decision_contract_fixed",
           "summary": "n8n comment sync已成功持久化Ticket 13155完整评论快照，但首个comment.created执行确认ECS Route payload遗漏intent-router审计字段，并在Account reply route execution边界触发AttributeError。修复将下游实际消费的五个现有decision字段纳入持久化契约，真实payload reply-chain与ECS/Account回归共260项、20项子测试通过；原Execution保持outcome_unknown且不重放，等待从合并main构建新release部署。"
+        },
+        {
+          "at": "2026-08-31",
+          "event": "ecs_comment_route_decision_contract_release_deployed",
+          "summary": "从main@badbb5d构建并部署r20260831-badbb5d；API:7、Route:8、Worker:7均稳定1/1/0且rollout completed，实际task digest、public release/readiness和Route/Worker heartbeat provenance全部匹配。12分钟观察覆盖至少两个Outlook poll间隔，三条新CloudWatch stream无错误信号；Ticket 13155旧outcome_unknown Execution未重放或修改，等待用户创建新评论完成端到端验收。"
         }
       ],
       "legacy_refs": [
