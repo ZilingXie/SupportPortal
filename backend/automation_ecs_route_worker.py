@@ -38,6 +38,11 @@ def _route_payload(result: Any) -> dict[str, Any]:
         "not_automated_reason": decision.not_automated_reason,
         "risk_flags": list(decision.risk_flags or []),
         "evidence_spans": list(decision.evidence_spans or []),
+        "intent_router_attempted": decision.intent_router_attempted,
+        "intent_router_confidence_threshold": decision.intent_router_confidence_threshold,
+        "intent_router_fallback_reason": decision.intent_router_fallback_reason,
+        "intent_router_failure_type": decision.intent_router_failure_type,
+        "intent_router_failure_source": decision.intent_router_failure_source,
         "stage_attempts": list(getattr(result, "stage_attempts", None) or []),
         "classification": dict(result.classification),
     }

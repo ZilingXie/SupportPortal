@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import backend.services.automation_account_reply_sync as reply_module
+from backend.automation_ecs_route_worker import _route_payload
 from backend.automation_production_runtime import create_app
+from backend.services.support_router import SupportRouteDecision
 
 
 ENV = {
@@ -705,30 +707,39 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         repository.get_ticket = lambda ticket_id: {"ticket_id": "123", "status": "open", "messages": [], "customer_id": "c@example.com"}
         repository.save_ticket = lambda ticket, new_messages=None: None
         repository.save_account_case = lambda case: None
-        repository.save_account_route_execution = lambda execution: None
-        precomputed_route = {
-            "execution_action": "human_review_required",
-            "route": "human_review_required",
-            "route_family": "human_review",
-            "scope_label": "account",
-            "reason": "outside",
-            "confidence": 0.9,
-            "matched_signals": [],
-            "semantic_intent": None,
-            "automation_eligibility": None,
-            "policy_decision": None,
-            "not_automated_reason": "outside",
-            "risk_flags": [],
-            "evidence_spans": [],
-            "router_source": "mock",
-            "classification": {},
-        }
+        saved_route_executions: list[dict] = []
+        repository.save_account_route_execution = saved_route_executions.append
+        precomputed_route = _route_payload(
+            NS(
+                decision=SupportRouteDecision(
+                    execution_action="human_review_required",
+                    route="human_review_required",
+                    route_family="human_review",
+                    scope_label="account",
+                    reason="outside",
+                    confidence=0.9,
+                    matched_signals=[],
+                    semantic_intent=None,
+                    automation_eligibility=None,
+                    policy_decision=None,
+                    not_automated_reason="outside",
+                    risk_flags=[],
+                    evidence_spans=[],
+                    router_source="mock",
+                    intent_router_attempted=True,
+                    intent_router_confidence_threshold=0.82,
+                    intent_router_fallback_reason="threshold_not_met",
+                    intent_router_failure_type="provider_timeout",
+                    intent_router_failure_source="intent_classifier",
+                ),
+                classification={},
+                prompt_snapshots={},
+                stage_attempts=[],
+            )
+        )
         with patch(
             "backend.services.automation_account_reply_sync.decide_account_route",
             side_effect=AssertionError("precomputed Route must be authoritative"),
-        ), patch(
-            "backend.services.account_admin.route_execution_from_decision",
-            return_value={"ticket_id": "123"},
         ), patch(
             "backend.services.automation_account_reply_sync._apply_ownership_gate",
             return_value=True,
@@ -759,6 +770,10 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         end.assert_called_once()
         flush.assert_called_once()
         self.assertEqual(flushed, [("AC-123", 1)])
+        self.assertEqual(saved_route_executions[0]["confidence_threshold"], 0.82)
+        self.assertEqual(saved_route_executions[0]["fallback_reason"], "threshold_not_met")
+        self.assertEqual(saved_route_executions[0]["failure_type"], "provider_timeout")
+        self.assertEqual(saved_route_executions[0]["failure_source"], "intent_classifier")
 
     def test_split_reply_rag_failure_escalates_without_creating_reply_job(self):
         import asyncio
