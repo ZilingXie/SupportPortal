@@ -10,6 +10,7 @@ from backend.services.automation_ecs_contracts import (
     DeliveryStatus,
     ExecutionStatus,
     INTAKE_CONTRACT_VERSION,
+    IntakeEventType,
     JobKind,
 )
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
@@ -74,6 +75,23 @@ def test_intake_is_idempotent_and_payload_conflicts_fail_closed() -> None:
     with pytest.raises(IntakeConflictError) as raised:
         store.accept_intake(changed, _settings().provenance())
     assert raised.value.execution_id == receipt.execution_id
+
+
+def test_execution_list_is_paginated_and_filtered() -> None:
+    store = _store()
+    first = store.accept_intake(_event("zendesk:ticket:123:created"), _settings().provenance())
+    updated = _event("zendesk:ticket:123:updated")
+    updated.event_type = IntakeEventType.TICKET_UPDATED
+    store.accept_intake(updated, _settings().provenance())
+    page, total = store.list_executions(
+        offset=0,
+        limit=1,
+        zendesk_ticket_id="123",
+        status="route_pending",
+        event_type="ticket.created",
+    )
+    assert total == 1
+    assert page[0]["execution_id"] == first.execution_id
 
 
 def test_route_completion_atomically_creates_processing_job_and_trace() -> None:

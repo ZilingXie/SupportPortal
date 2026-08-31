@@ -31,6 +31,17 @@ def test_ecs_images_physically_exclude_legacy_and_local_rag_entrypoints() -> Non
             assert forbidden in block
 
 
+def test_only_ecs_api_image_retains_read_only_dashboard_assets() -> None:
+    api = _role_block("ecs-api", "ecs-route")
+    route = _role_block("ecs-route", "ecs-worker")
+    worker = _role_block("ecs-worker", "production")
+    assert "! -name automation-ecs-production" in api
+    assert "rm -rf /app/ui" not in api
+    assert "rm -rf /app/backend/tests" in api
+    assert "/app/ui /app/docs" in route
+    assert "/app/ui /app/docs" in worker
+
+
 def test_ecs_worker_retains_vendored_ragflow_skill() -> None:
     dockerfile = (ROOT / "backend/Dockerfile.automation").read_text(encoding="utf-8")
     worker = _role_block("ecs-worker", "production")

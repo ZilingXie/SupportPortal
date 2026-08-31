@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T08:50:51Z",
-  "source_base_commit": "32daaa4930e7da6f7045f2bf834822cd4d2af8e9",
-  "registry_digest": "1fea6217262c862f6a9cb359a72e6b5b694fb24aa59bb2590ddf40261bb8fc8e",
+  "generated_at": "2026-08-31T09:23:46Z",
+  "source_base_commit": "58643a238b05d42e2015cd54fa532531ab9bcaa8",
+  "registry_digest": "169c59613965cf2bf3a471fcbf482c7565b59764d3b379d347b671fad86d4ec9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2019,6 +2019,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS comment route contract Production rollout",
           "command": "aws ecs/elbv2/logs readback; public health live/release/ready; protected Execution API readback",
           "details": "API:7、Route:8、Worker:7均使用r20260831-badbb5d并稳定1/1/0、rollout completed，实际task imageDigest与Release Manifest一致；公网live/release/ready为200，新Route/Worker heartbeat的provenance_mismatches均为空。新task运行12分钟覆盖至少两个300秒Outlook poll间隔，三条CloudWatch stream的ERROR/Traceback/Exception/failed计数均为0。Ticket 13155仍只有部署前的ticket.created与comment.created两条Execution；exec-aa84651d0003404bb38ca463075c09b7保持outcome_unknown、automation_AttributeError、1条delivery和原更新时间，未重放或修改。"
+        },
+        {
+          "type": "test",
+          "label": "ECS dashboard and runtime regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
+          "details": "65 passed, 3 skipped；skip 为未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 的真实 Postgres integration；fresh 组合同时覆盖 dashboard/runtime、release builder/manifest、管理员 session、分页筛选、详情脱敏、jobs/deliveries、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform API-only secret wiring。"
+        },
+        {
+          "type": "test",
+          "label": "Local browser responsive verification",
+          "command": "in-app Browser desktop + 390x844 viewport against memory-only ECS API",
+          "details": "未认证登录页、认证后 execution workspace/runtime inspector、desktop 双栏与 mobile 单列均无重叠；console 0 error/0 warning；请求仅包含本地 static/session/executions/runtime，无 intake 或外部业务写操作。"
+        },
+        {
+          "type": "decision",
+          "label": "Implemented plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "修复 username/password compare 短路、nested route classification 脱敏和 execution namespace 明确约束；review 后无未处理 correctness/security finding。"
         }
       ],
       "source_refs": [
@@ -2031,7 +2049,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 1,
+      "task_count": 2,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -8354,6 +8372,64 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-128",
+      "title": "ECS Account parity Production 只读运行看板",
+      "status": "active",
+      "owner": "zac",
+      "summary": "在 ECS API 的 /automation/production/ 提供独立管理员 session 保护的只读运行看板，覆盖 Execution 分页筛选、完整执行详情、delivery/job/failure/outcome_unknown、route 和 release provenance、Route/Automation Worker heartbeat，并保持 intake、真实业务数据与旧 EC2 backup 不变。",
+      "next_action": "实现与 owner review 已完成；构建三角色 linux/amd64 release，验证 API-only UI/secret 注入与 Route/Worker 排除，finalize 合并后部署 ECS Production，并完成 URL、Service、health、heartbeat/provenance、CloudWatch 与 EC2 backup 只读验收。",
+      "acceptance_criteria": [
+        "未认证访问 /automation/production/、静态资产和 dashboard API 时被拒绝或进入登录，管理员登录签发短期 HttpOnly/Secure/SameSite session，退出后 session 失效。",
+        "浏览器、HTML、JavaScript、localStorage、URL 和 dashboard API 响应均不包含 n8n intake token、DSN、长期凭据、内部邮件正文或不必要的客户敏感字段。",
+        "只读 API 支持 Execution 全局分页和 Ticket ID、Execution ID、状态、事件类型筛选，详情包含 intake 摘要、route、steps、jobs、timeline、delivery ledger、failure/outcome_unknown 与 provenance。",
+        "看板清晰区分 completed、human review、failed、outcome unknown，并展示 API、Route Worker、Automation Worker 版本、heartbeat freshness 与 provenance mismatch。",
+        "所有 dashboard 写方法 fail closed；不提供 rerun、reset、reconcile、创建 Case 或 Zendesk/邮件/Slack 写操作。",
+        "ECS API 在 /automation/production/ 提供静态看板且 API 路由优先；API 镜像包含且仅包含新看板资产，Route/Worker 镜像不包含 UI，旧 runtime、backend.main、tests、rerun/reset、rag_api/rag_worker 继续物理排除。",
+        "release 三角色均为单一 linux/amd64 且 digest 与 Release Manifest 一致；部署后三个 Service 为 1/1/0，health live/release/ready 均为 200，heartbeat 新鲜且 provenance_mismatches=[]，CloudWatch 无持续错误。",
+        "验收过程不修改旧 Execution、真实 Case、n8n、DNS、Cloudflare 或 EC2 /production backup。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "ECS dashboard and runtime regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
+          "details": "65 passed, 3 skipped；skip 为未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 的真实 Postgres integration；fresh 组合同时覆盖 dashboard/runtime、release builder/manifest、管理员 session、分页筛选、详情脱敏、jobs/deliveries、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform API-only secret wiring。"
+        },
+        {
+          "type": "test",
+          "label": "Local browser responsive verification",
+          "command": "in-app Browser desktop + 390x844 viewport against memory-only ECS API",
+          "details": "未认证登录页、认证后 execution workspace/runtime inspector、desktop 双栏与 mobile 单列均无重叠；console 0 error/0 warning；请求仅包含本地 static/session/executions/runtime，无 intake 或外部业务写操作。"
+        },
+        {
+          "type": "decision",
+          "label": "Implemented plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "修复 username/password compare 短路、nested route classification 脱敏和 execution namespace 明确约束；review 后无未处理 correctness/security finding。"
+        }
+      ],
+      "source_refs": [
+        "backend/automation_ecs_api.py",
+        "backend/services/automation_ecs_store.py",
+        "backend/Dockerfile.automation",
+        "ui/automation-ecs-production/",
+        "infra/terraform/production/locals.tf",
+        "backend/tests/test_automation_ecs_api.py",
+        "backend/tests/test_automation_ecs_images.py",
+        "backend/tests/test_automation_ecs_terraform.py"
+      ],
+      "created_at": "2026-08-31",
+      "updated_at": "2026-08-31",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": []
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -13743,7 +13819,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。"
       ],
       "planned": [
-        "待补充。"
+        "ECS `/automation/production/` 只读运行看板：独立管理员 session、Execution 分页/筛选/详情、steps/jobs/delivery ledger、失败与 `outcome_unknown`、release provenance 和 API/Route/Worker heartbeat；待 Production release 与只读验收完成后转已完成。"
       ]
     },
     {
