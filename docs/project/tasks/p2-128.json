@@ -35,6 +35,12 @@
       "label": "Implemented plan owner review",
       "command": "review-implemented-plan skill",
       "details": "修复 username/password compare 短路、nested route classification 脱敏和 execution namespace 明确约束；review 后无未处理 correctness/security finding。"
+    },
+    {
+      "type": "decision",
+      "label": "Production fixed dashboard credentials approved",
+      "command": "owner confirmation: admin/admin",
+      "details": "Owner 明确确认 Production 看板临时固定使用 admin/admin 并接受弱口令风险；Session 签名密钥仍保持至少 32 位、独立外部注入且不进入浏览器或仓库。"
     }
   ],
   "source_refs": [
