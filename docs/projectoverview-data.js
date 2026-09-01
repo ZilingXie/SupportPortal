@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T09:33:50Z",
-  "source_base_commit": "ec7fff246febc464fbf2373e626094fa43df68f2",
-  "registry_digest": "5a7b143eb2edbfbc956e0c43748bb693b27c57cc9753927befdbd7dfba94f8e6",
+  "generated_at": "2026-09-01T09:36:02Z",
+  "source_base_commit": "0e114d872e5cc0bb62ecd95c23aab58ae76201ec",
+  "registry_digest": "1c514415a693f940d96c7c25bf2968d1fd9705d2938792bac77f0a5058df89f1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -843,7 +843,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Archer、Account、Persona、Human Review 与 Worker 聚焦回归",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_enablement_archer_executor.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_human_review_escalation.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_account_intake.py backend/tests/test_worker.py",
-          "details": "447 passed、68 subtests passed；仅 4 个既有 FastAPI on_event deprecation warnings。覆盖四 outcome、严格首行/退出码、超时进程组、脱敏、ownership gate、首次 intake、客户更正 App ID、Human Review 邮件 fallback、未知邮件不重发、nested comment execution 状态、Persona 合同与 close 派生。"
+          "details": "刷新至 origin/main@69e9836 后 448 passed、70 subtests passed；仅 4 个既有 FastAPI on_event deprecation warnings。覆盖四 outcome、严格首行/退出码、超时进程组、脱敏、ownership gate、首次 intake、客户更正 App ID、Human Review 邮件 fallback、未知邮件不重发、nested comment execution 状态、Persona 合同与 close 派生。"
         },
         {
           "type": "test",
@@ -9167,7 +9167,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Archer、Account、Persona、Human Review 与 Worker 聚焦回归",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_enablement_archer_executor.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_human_review_escalation.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_account_intake.py backend/tests/test_worker.py",
-          "details": "447 passed、68 subtests passed；仅 4 个既有 FastAPI on_event deprecation warnings。覆盖四 outcome、严格首行/退出码、超时进程组、脱敏、ownership gate、首次 intake、客户更正 App ID、Human Review 邮件 fallback、未知邮件不重发、nested comment execution 状态、Persona 合同与 close 派生。"
+          "details": "刷新至 origin/main@69e9836 后 448 passed、70 subtests passed；仅 4 个既有 FastAPI on_event deprecation warnings。覆盖四 outcome、严格首行/退出码、超时进程组、脱敏、ownership gate、首次 intake、客户更正 App ID、Human Review 邮件 fallback、未知邮件不重发、nested comment execution 状态、Persona 合同与 close 派生。"
         },
         {
           "type": "test",
@@ -9213,7 +9213,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-09-01",
           "event": "implementation_verified",
-          "summary": "实现、owner review、447 项聚焦回归、三角色最终 amd64 镜像与 Terraform validate 通过；Task 保持 active，等待用户执行 Production Pilot deposit、只读 probe、Worker rollout 与三类全新工单验收。"
+          "summary": "实现、owner review、刷新 main 后 448 项聚焦回归、三角色最终 amd64 镜像与 Terraform validate 通过；Task 保持 active，等待用户执行 Production Pilot deposit、只读 probe、Worker rollout 与三类全新工单验收。"
         }
       ]
     },
