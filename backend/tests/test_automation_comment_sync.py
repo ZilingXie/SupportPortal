@@ -775,6 +775,284 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         self.assertEqual(saved_route_executions[0]["failure_type"], "provider_timeout")
         self.assertEqual(saved_route_executions[0]["failure_source"], "intent_classifier")
 
+    def test_precomputed_route_partial_fraud_reply_hands_off_without_rag(self):
+        import asyncio
+
+        account_case = {
+            "account_case_id": "AC-13182",
+            "billing_ticket_id": "AC-13182",
+            "client_ticket_id": "13182",
+            "zendesk_ticket_id": "13182",
+            "processing_profile": "production",
+            "automation_status": "automation",
+            "route_status": "automated",
+            "route_family": "automated",
+            "route": "fraud_account",
+            "execution_action": "fraud_account",
+            "automation_handler": "billing",
+            "route_classification": {"handler_binding_status": "active"},
+            "collected_fields": {"account_type": "company"},
+            "missing_fields": ["office_address", "contact_number", "console_configuration"],
+            "internal_email_send_status": "not_ready",
+            "automation_context": {"follow_up_count": 0, "follow_up_scheduled": True},
+            "created_at": "2026-08-31T00:00:00Z",
+        }
+        ticket = {
+            "ticket_id": "13182",
+            "status": "open",
+            "subject": "Fraud review",
+            "customer_id": "customer@example.com",
+            "messages": [
+                {"role": "customer", "content": "Please review our account."},
+                {
+                    "role": "assistant",
+                    "content": "Please provide the missing information.",
+                    "meta": {
+                        "asked_field_keys": [
+                            "office_address",
+                            "contact_number",
+                            "console_configuration",
+                        ]
+                    },
+                },
+            ],
+        }
+        saved_cases: list[dict] = []
+        repository = _FakeRepository()
+        repository.get_account_case = lambda _case_id: dict(account_case)
+        repository.get_account_case_by_ticket_id = lambda _ticket_id: dict(account_case)
+        repository.get_ticket = lambda _ticket_id: ticket
+        repository.save_ticket = lambda saved, new_messages=None: None
+        repository.save_account_case = lambda saved: saved_cases.append(dict(saved))
+        repository.save_account_route_execution = lambda execution: None
+        repository.cancel_pending_account_reply_jobs = lambda *args, **kwargs: None
+
+        precomputed_route = {
+            "route_family": "rag_product_support",
+            "execution_action": "rag",
+            "route": "rag",
+            "scope_label": "support",
+            "reason": "route worker treated the short answer as conversation",
+            "confidence": 0.9,
+            "matched_signals": [],
+            "semantic_intent": None,
+            "automation_eligibility": "not_eligible",
+            "policy_decision": "rag",
+            "not_automated_reason": "unexpected reply",
+            "risk_flags": [],
+            "evidence_spans": [],
+            "router_source": "layered",
+            "classification": {"intent_class": "conversation"},
+        }
+        verification_attempt = {
+            "customer_reply": "",
+            "missing_fields": ["contact_number", "console_configuration"],
+            "collected_fields": {
+                "account_type": "company",
+                "office_address": "Shanghai",
+            },
+            "internal_email_payload": {
+                "subject": "Fraud handoff",
+                "delivery_key": "fraud:13182:v1",
+            },
+            "internal_email_to_send": {
+                "subject": "Fraud handoff",
+                "delivery_key": "fraud:13182:v1",
+            },
+            "internal_email_send_status": "pending",
+            "internal_email_send_reason": "",
+            "requires_human_review": False,
+            "field_extraction": NS(status="ok"),
+            "prompt_snapshots": {},
+            "automation_context": {
+                "follow_up_count": 1,
+                "follow_up_scheduled": False,
+                "proceed_with_missing_fields": True,
+            },
+        }
+        created_jobs: list[dict] = []
+
+        def create_reply_job(*args, **kwargs):
+            created_jobs.append(dict(kwargs))
+            return {"job_id": "job-fraud-handoff", "status": "queued", "payload": {}}
+
+        async def deliver_internal_email(**kwargs):
+            delivered_case = {
+                **kwargs["account_case"],
+                "internal_email_send_status": "sent",
+            }
+            return NS(succeeded=True, status="sent", reason=""), delivered_case
+
+        with patch.object(
+            reply_module,
+            "_apply_ownership_gate",
+            return_value=True,
+        ), patch(
+            "backend.services.account_admin.route_execution_from_decision",
+            return_value={"ticket_id": "13182"},
+        ), patch.object(
+            reply_module,
+            "_build_verification_attempt",
+            return_value=verification_attempt,
+        ) as build_attempt, patch.object(
+            reply_module,
+            "_run_internal_email_delivery",
+            new_callable=AsyncMock,
+            side_effect=deliver_internal_email,
+        ), patch.object(
+            reply_module,
+            "_create_reply_job",
+            side_effect=create_reply_job,
+        ), patch.object(
+            reply_module,
+            "try_rag_fallback_answer",
+            return_value=NS(kind="answer", answer="RAG answer", references=()),
+        ) as rag_fallback, patch.object(
+            reply_module,
+            "decide_account_route",
+            side_effect=AssertionError("precomputed Route must remain authoritative"),
+        ):
+            outcome = asyncio.run(
+                reply_module._process_account_customer_reply_impl(
+                    repository=repository,
+                    billing_ticket_id="AC-13182",
+                    message="My office is in Shanghai.",
+                    source="zendesk-comment",
+                    message_source_id="comment-13182",
+                    precomputed_route=precomputed_route,
+                )
+            )
+
+        build_attempt.assert_called_once()
+        self.assertEqual(build_attempt.call_args.kwargs["follow_up_count"], 1)
+        rag_fallback.assert_not_called()
+        self.assertEqual(outcome["execution_action"], "fraud_account")
+        self.assertEqual(outcome["route_status"], "automated")
+        self.assertEqual(outcome["automation_context"]["follow_up_count"], 1)
+        self.assertTrue(outcome["automation_context"]["proceed_with_missing_fields"])
+        self.assertEqual(len(created_jobs), 1)
+        self.assertEqual(created_jobs[0]["asked_field_keys"], [])
+        self.assertEqual(created_jobs[0]["reply_intent"], "fraud_handoff_confirmation")
+        self.assertEqual(created_jobs[0]["automation_delivery_key"], "fraud:13182:v1")
+        self.assertTrue(saved_cases)
+
+    def test_precomputed_route_off_topic_fraud_reply_still_uses_rag(self):
+        import asyncio
+
+        account_case = {
+            **_FakeRepository.DEFAULT_CASE,
+            "route": "fraud_account",
+            "automation_handler": "billing",
+            "collected_fields": {"account_type": "company"},
+            "missing_fields": ["office_address"],
+            "internal_email_send_status": "not_ready",
+            "automation_context": {"follow_up_count": 0, "follow_up_scheduled": True},
+        }
+        ticket = {
+            "ticket_id": "123",
+            "status": "open",
+            "subject": "Fraud review",
+            "customer_id": "customer@example.com",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Please provide your office address.",
+                    "meta": {"asked_field_keys": ["office_address"]},
+                }
+            ],
+        }
+        repository = _FakeRepository()
+        repository.get_account_case = lambda _case_id: dict(account_case)
+        repository.get_account_case_by_ticket_id = lambda _ticket_id: dict(account_case)
+        repository.get_ticket = lambda _ticket_id: ticket
+        repository.save_ticket = lambda saved, new_messages=None: None
+        repository.save_account_case = lambda saved: None
+        repository.save_account_route_execution = lambda execution: None
+        repository.cancel_pending_account_reply_jobs = lambda *args, **kwargs: None
+        no_progress_attempt = {
+            "customer_reply": "",
+            "missing_fields": ["office_address"],
+            "collected_fields": {"account_type": "company"},
+            "internal_email_payload": None,
+            "internal_email_to_send": None,
+            "internal_email_send_status": "not_ready",
+            "internal_email_send_reason": "missing_required_fields",
+            "requires_human_review": False,
+            "field_extraction": NS(status="ok"),
+            "prompt_snapshots": {},
+            "automation_context": {"follow_up_count": 0, "follow_up_scheduled": True},
+        }
+        precomputed_route = {
+            "route_family": "rag_product_support",
+            "execution_action": "rag",
+            "route": "rag",
+            "scope_label": "support",
+            "reason": "product question",
+            "confidence": 0.9,
+            "matched_signals": [],
+            "semantic_intent": "product.question",
+            "automation_eligibility": "not_eligible",
+            "policy_decision": "rag",
+            "not_automated_reason": "product question",
+            "risk_flags": [],
+            "evidence_spans": [],
+            "router_source": "layered",
+            "classification": {"intent_class": "agora"},
+        }
+        created_jobs: list[dict] = []
+
+        def create_reply_job(*args, **kwargs):
+            created_jobs.append(dict(kwargs))
+            return {"job_id": "job-rag", "status": "queued", "payload": {}}
+
+        with patch.object(
+            reply_module,
+            "_apply_ownership_gate",
+            return_value=True,
+        ), patch(
+            "backend.services.account_admin.route_execution_from_decision",
+            return_value={"ticket_id": "123"},
+        ), patch.object(
+            reply_module,
+            "_build_verification_attempt",
+            return_value=no_progress_attempt,
+        ), patch.object(
+            reply_module,
+            "should_run_reply_rag_fallback",
+            return_value=True,
+        ), patch.object(
+            reply_module,
+            "try_rag_fallback_answer",
+            return_value=NS(
+                kind="answer",
+                answer="Grounded product answer",
+                references=("https://docs.agora.io/en/example",),
+            ),
+        ) as rag_fallback, patch.object(
+            reply_module,
+            "_create_reply_job",
+            side_effect=create_reply_job,
+        ), patch.object(
+            reply_module,
+            "decide_account_route",
+            side_effect=AssertionError("precomputed Route must remain authoritative"),
+        ):
+            outcome = asyncio.run(
+                reply_module._process_account_customer_reply_impl(
+                    repository=repository,
+                    billing_ticket_id="AC-123",
+                    message="Where can I find the product documentation?",
+                    source="zendesk-comment",
+                    message_source_id="comment-off-topic",
+                    precomputed_route=precomputed_route,
+                )
+            )
+
+        rag_fallback.assert_called_once()
+        self.assertEqual(outcome["execution_action"], "rag")
+        self.assertEqual(len(created_jobs), 1)
+        self.assertEqual(created_jobs[0]["reply_intent"], "rag_fallback_answer")
+
     def test_split_reply_rag_failure_escalates_without_creating_reply_job(self):
         import asyncio
 

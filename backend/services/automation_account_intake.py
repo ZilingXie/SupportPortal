@@ -223,6 +223,11 @@ def _build_verification_attempt(
         zendesk_ticket_url=zendesk_ticket_url,
     )
     to_send = dict(result.internal_email) if result.internal_email else None
+    persisted_follow_up_count = result.follow_up_count
+    follow_up_scheduled = False
+    if result.missing_fields and not to_send:
+        persisted_follow_up_count = max(0, int(follow_up_count or 0))
+        follow_up_scheduled = True
     return {
         "customer_reply": result.customer_reply,
         "missing_fields": list(result.missing_fields),
@@ -234,6 +239,14 @@ def _build_verification_attempt(
         "requires_human_review": result.requires_human_review,
         "field_extraction": result.extraction,
         "prompt_snapshots": dict(result.prompt_snapshots),
+        "automation_context": {
+            "handler": "fraud_account",
+            "extractor_version": result.extraction.audit_payload().get("prompt_version"),
+            "extraction_status": result.extraction.status,
+            "follow_up_count": persisted_follow_up_count,
+            "follow_up_scheduled": follow_up_scheduled,
+            "proceed_with_missing_fields": result.proceed_with_missing_fields,
+        },
     }
 
 
