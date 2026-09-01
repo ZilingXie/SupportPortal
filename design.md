@@ -403,6 +403,8 @@
    - 颜色 token 必须集中在共享模板中并满足正文 WCAG AA 对比度；不得添加远程字体、图片、脚本或追踪资源。每次模板变更都必须在 Outlook for Mac 深色和浅色主题中做视觉验收。
 
 ### 6.10 Automation Environment Consoles (`/automation/staging`、`/automation/preproduction`、`/automation/production`)
+> 本节描述旧 runtime 的可写环境控制台。ECS Production 已改为独立的只读 Ticket 工作台，`/automation/production` 必须遵守 6.11；本节的 execution token、localStorage、rerun、reset、reconcile 和写入交互均不得应用到 ECS Production。
+
 1. 三个控制台复用第 3–5 章 token 与组件规则及 `ui/account-ui`/`ui/production-ui` 的既有样式表：staging 取 `/account` 模板（品牌与文案风格、无 Zendesk ticket 字段的执行表单），preproduction 与 production 取 `/production` 模板（表单必填 Zendesk ticket ID；production 另需显式 comment visibility 下拉，preproduction 固定 internal 并在界面明示）。
 2. 三个控制台的登录与 `/workspace/admin` 同构：Email + Password 表单（Welcome Back / Sign In），凭据默认 `admin/admin`，可由 runtime 的 `AUTOMATION_ADMIN_USERNAME`/`AUTOMATION_ADMIN_PASSWORD` 覆盖；登录成功后服务端返回本环境 execution token，UI 按环境独立存 localStorage 并继续以 Bearer 调用全部 API。无 token 时不加载任何数据；任一请求返回 401 时清除本地 token、回到登录页并显示错误；错误凭据只提示 Invalid email or password，不得区分用户名或密码哪个错误。
 3. 侧边栏为执行历史工作台，过滤与 `/account` 6.8.9 同构的两级 route filter：一级紧凑按钮（All + 各 route category，显示服务端 `route_counts` facet count），二级为单个 subcategory 下拉（显示选中 category 的 `route_subcategory_counts`，仅在选中真实 category 且存在子类目时启用，第一项为当前一级的全部结果）；Case ID 搜索使用紧凑单行输入；列表项展示 case_id、状态徽标与本地化时间；分页只渲染服务端当前页。切换一级过滤必须重置二级与页码；filter 计数、当前页与 total 必须来自同一响应快照。
@@ -414,6 +416,19 @@
 9. `outcome_unknown` 的 execution 必须在列表徽标与详情中同时以颜色与文字表达，并提供 Reconcile 入口（调用 `/v1/executions/{id}/reconcile`）；`failed`/`human_review` 状态使用 `aria-live="polite"` 文字提示，不得只靠颜色。
 10. 409 `execution_requires_reconcile` 与携带 execution 记录的 502 错误必须结构化展示：显示错误码、关联 execution 摘要并提供跳转；纯文本 detail 才降级为普通错误文案。所有 API 请求使用 `cache: "no-store"`。
 11. route correction、route review、跨环境转发（Run in Production 类）与 route back to queue 明确不在三个控制台范围内，不得以禁用态按钮占位。
+
+### 6.11 ECS Production Read-only Ticket Workspace (`/automation/production`)
+1. ECS Production 使用独立管理员 Session：登录只提交用户名与密码，服务端签发短期 `HttpOnly`、`Secure`、`SameSite=Strict` Cookie；前端、HTML、URL 和浏览器持久化存储不得保存 intake token、DSN、Session secret 或长期凭据。
+2. 桌面使用 Filter、Ticket list、Case detail 三栏工作台；中等视口隐藏 Filter 为抽屉并保留 list + detail，手机使用 Filter 抽屉、Ticket list 和单独 Case detail 视图。所有固定列、点击目标和长内容必须在 `1440x900`、`1024x768` 与 `390x844` 无横向溢出或重叠。
+3. 主列表每个 Zendesk Ticket 只显示一次，Execution 仅作为审计信息；按最新 ECS intake 的 `ticket.updated_at DESC` 排序，缺失时回退 Account Case `updated_at`。Ticket Status 默认 `Active`，包含 unknown 并排除 `solved`、`closed`。
+4. Filter 沿用 Account Case taxonomy：一级按钮为 All、Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation、Human Review，并显示同一快照的服务端 facet count；二级只使用一个 Subcategory select。Ticket ID 常驻，Execution ID、Execution Status、Event Type 收入 Advanced filters；Clear 恢复 All + Active + 第一页。
+5. Ticket list 展示 Ticket #、title、`Agora / Category / Subcategory` Route、Automation/Zendesk status、Ticket updated time 和匹配 Execution status；completed、human review、failed、outcome unknown 必须同时使用文字与颜色。
+6. Case detail 首屏顺序固定为 Ticket/安全 Zendesk Source、Automation 与 Zendesk status、Persona、Route result、Collected fields、Conversation、Pending reply preview。Collected fields 只显示当前 automation handler 的规范字段；Public/Internal 评论必须以文字标记，消息按持久化 comment/message/delivery ID 去重并按时间正序。
+7. Pending reply 只显示最新未发布 Reply Job 的 status、attempt、`scheduled_for` 及 `generated_content`/`draft_content` Preview；queued/preparing 且正文尚未生成时只显示 `Preparing preview`，不得伪造正文或透传完整 payload。
+8. Execution history、steps、jobs、delivery ledger、timeline、failure/outcome_unknown、Prompt/release provenance 和 API/Route/Automation Worker heartbeat 统一放入默认折叠的 `Runtime audit`；完整 Execution ID 可在审计区查看，业务概览允许缩写。
+9. Source 只接受 `https` 且 host 为 `zendesk.com` 或其子域的当前 Ticket agent URL，不接受 userinfo、非 443 port、query、fragment 或 Ticket ID 不匹配；新窗口链接必须使用 `noopener noreferrer`。
+10. Dashboard Case/Execution 数据面仅注册 GET。不得渲染 Create、Rerun、Reset、Reconcile、Run in Production、route correction、Zendesk/邮件/Slack 写操作或对应禁用占位；POST、PUT、PATCH、DELETE 必须 fail closed。
+11. API 响应不得包含 token、DSN、Session secret、requester/author email 或 ID、prompt 正文、raw classification/outcome、delivery payload/result、claim token、内部邮件 payload/body。所有响应和前端请求使用 `no-store`。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：

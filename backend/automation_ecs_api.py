@@ -22,6 +22,10 @@ from backend.services.automation_ecs_contracts import (
     IntakeReceipt,
 )
 from backend.services.automation_ecs_dashboard_auth import DashboardAuthConfig
+from backend.services.automation_ecs_dashboard_reader import (
+    DashboardCaseReader,
+    create_dashboard_case_reader,
+)
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_store import (
     AutomationEcsStore,
@@ -234,10 +238,12 @@ def create_app(
     settings: AutomationEcsSettings | None = None,
     store: AutomationEcsStore | None = None,
     dashboard_auth: DashboardAuthConfig | None = None,
+    dashboard_reader: DashboardCaseReader | None = None,
 ) -> FastAPI:
     runtime = settings or AutomationEcsSettings.from_env("api")
     coordination_store = store or create_automation_ecs_store(runtime)
     auth = dashboard_auth or DashboardAuthConfig.from_env()
+    case_reader = dashboard_reader or create_dashboard_case_reader(runtime)
     if hmac.compare_digest(auth.password, runtime.intake_shared_token) or hmac.compare_digest(
         auth.session_secret, runtime.intake_shared_token
     ):
@@ -430,6 +436,64 @@ def create_app(
             samesite="strict",
         )
         return response
+
+    @app.get(
+        f"{base}/dashboard/api/cases",
+        dependencies=[Depends(require_dashboard_session)],
+    )
+    async def dashboard_cases(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100),
+        zendesk_ticket_id: str | None = Query(default=None, pattern=r"^\d{1,128}$"),
+        execution_id: str | None = Query(default=None, min_length=1, max_length=160),
+        route_group: str | None = Query(
+            default=None,
+            pattern=r"^(all|automation|backend_operation|account_billing|agora_technical|security_compliance|agora_non_technical|conversation|human_review)$",
+        ),
+        route_subcategory: str | None = Query(
+            default=None,
+            pattern=r"^[a-z][a-z0-9_]{0,63}$",
+        ),
+        ticket_status: str = Query(
+            default="active",
+            pattern=r"^(active|all|new|open|pending|hold|solved|closed|unknown)$",
+        ),
+        execution_status: ExecutionStatus | None = None,
+        event_type: IntakeEventType | None = None,
+    ) -> JSONResponse:
+        try:
+            payload = case_reader.list_cases(
+                page=page,
+                page_size=page_size,
+                zendesk_ticket_id=zendesk_ticket_id,
+                execution_id=execution_id,
+                route_group=route_group,
+                route_subcategory=route_subcategory,
+                ticket_status=ticket_status,
+                execution_status=execution_status.value if execution_status else None,
+                event_type=event_type.value if event_type else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(
+            content=jsonable_encoder(payload),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}",
+        dependencies=[Depends(require_dashboard_session)],
+    )
+    async def dashboard_case(zendesk_ticket_id: str) -> JSONResponse:
+        if not zendesk_ticket_id.isdigit() or len(zendesk_ticket_id) > 128:
+            raise HTTPException(status_code=422, detail="Zendesk ticket id must be numeric")
+        value = case_reader.get_case(zendesk_ticket_id)
+        if value is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        return JSONResponse(
+            content=jsonable_encoder(value),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get(
         f"{base}/dashboard/api/executions",

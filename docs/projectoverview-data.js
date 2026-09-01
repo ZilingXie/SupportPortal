@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T03:12:53Z",
-  "source_base_commit": "2128590b69bbeb9756a4ff5f50c426db1b731ebc",
-  "registry_digest": "0907fe61279eea1783f94bf628045c4a76ab1ccd9e6d202372d4c0c8ef8481da",
+  "generated_at": "2026-09-01T03:47:06Z",
+  "source_base_commit": "df96b48efd77c5e2cfc590a40ffb2a453969e544",
+  "registry_digest": "6385db0caa3ec4dbe9d6a418bea77dca65f84e5daf6c954cbc880050c84da70f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2127,6 +2127,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implementation pull requests",
           "command": "PR #1008 and PR #1009",
           "details": "PR #1008 Add ECS Production read-only dashboard 合并为 091b4af97e184e97ec9b23cf4dbdfad75238b798；PR #1009 Fix ECS dashboard credentials to admin/admin 合并为 8e02e7a9c49fec27ab78832897a9ea241510066b。"
+        },
+        {
+          "type": "test",
+          "label": "ECS dashboard and runtime regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
+          "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
+        },
+        {
+          "type": "test",
+          "label": "Local responsive browser verification",
+          "command": "in-app Browser at 1440x900, 1024x768, and 390x844 against memory-only ECS API fixture",
+          "details": "退出后显示登录页，admin/admin 登录恢复看板；Category/Subcategory、Ticket Status 默认 Active、Clear、列表/详情切换、三个独立状态、长 Conversation、Preview、Runtime audit、移动端 Sign out 与 44px 焦点目标正常。三视口 body scrollWidth=clientWidth；长 Execution ID 无内部溢出；console 0 error/0 warning，DOM/资产无长期凭据标识。请求仅为静态资源、Session、runtime、cases、case detail、execution detail 与登录/退出，无 intake 或业务写请求。"
+        },
+        {
+          "type": "decision",
+          "label": "Implemented plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "修复 Conversation 不必要 author identity/channel 字段、nested collected-fields 任意 JSON 透传、Ticket 卡片状态混淆、移动端隐藏 Sign out、38px header target 与 Runtime audit 长 ID 裁剪；复审后无未处理 correctness/security finding。"
         }
       ],
       "source_refs": [
@@ -2139,7 +2157,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 2,
+      "task_count": 3,
       "done_count": 1,
       "blocked_count": 0
     },
@@ -8800,6 +8818,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-132",
+      "title": "ECS Production 人类可读 Ticket 只读看板",
+      "status": "active",
+      "owner": "zac",
+      "summary": "将 ECS Production 只读看板重构为面向运营人员的 Ticket/Case 工作台：每个 Ticket 一条、默认隐藏 solved/closed、支持 Category/Subcategory/Ticket Status 与 Execution 条件组合筛选，并安全展示 Case、Conversation、待发布 Preview 和折叠的 Runtime audit。",
+      "next_action": "通过 finalize workflow 合并实现 PR 并验证 official local stack；随后构建三角色 immutable release、部署 ECS 并完成只读生产验收。",
+      "acceptance_criteria": [
+        "默认列表每个 Zendesk Ticket 仅一条，按 Zendesk ticket.updated_at 倒序；缺失时回退 Account Case updated_at，且默认 active 过滤排除 solved/closed。",
+        "Ticket Status、Category/Subcategory、Ticket ID、Execution ID、Execution Status 与 Event Type 可组合分页，total、facets 和当前页来自同一只读数据库快照。",
+        "Case Detail 安全展示 Ticket/Source、Automation 与 Zendesk 状态、Persona、Route result、规范 collected fields、Public/Internal Conversation、待发布 Reply Preview 和计划时间。",
+        "完整 Execution history、steps、jobs、delivery ledger、timeline、failure/outcome_unknown、provenance 与 API/Route/Worker runtime heartbeat 保留在默认折叠的 Runtime audit。",
+        "Dashboard 仅注册 GET 数据 API，不提供 Create、Rerun、Reset、Reconcile 或业务写入口；未认证访问、Session 生命周期、写方法 fail closed 与敏感字段扫描通过。",
+        "Dashboard API 不返回 token、DSN、Session secret、prompt 正文、raw classification/outcome、delivery payload/result、claim token、内部邮件 payload/body 或不必要的客户身份字段。",
+        "1440x900、1024x768 和 390x844 下完成响应式、键盘、console、网络、长内容和无横向溢出验证。",
+        "三角色镜像均为单一 linux/amd64 且 digest 与 Release Manifest 一致；只有 API 镜像包含新看板，Route/Worker 不包含 UI，旧 runtime 与被排除模块仍不存在。",
+        "部署后三个 ECS Service 为 1/1/0，health live/release/ready 为 200，heartbeat 新鲜且 provenance_mismatches=[]，CloudWatch 无持续错误，旧 EC2 backup 仍为 200。",
+        "验收过程不调用 intake，不修改真实 Case、Execution、n8n、DNS 或 Cloudflare。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "ECS dashboard and runtime regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
+          "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
+        },
+        {
+          "type": "test",
+          "label": "Local responsive browser verification",
+          "command": "in-app Browser at 1440x900, 1024x768, and 390x844 against memory-only ECS API fixture",
+          "details": "退出后显示登录页，admin/admin 登录恢复看板；Category/Subcategory、Ticket Status 默认 Active、Clear、列表/详情切换、三个独立状态、长 Conversation、Preview、Runtime audit、移动端 Sign out 与 44px 焦点目标正常。三视口 body scrollWidth=clientWidth；长 Execution ID 无内部溢出；console 0 error/0 warning，DOM/资产无长期凭据标识。请求仅为静态资源、Session、runtime、cases、case detail、execution detail 与登录/退出，无 intake 或业务写请求。"
+        },
+        {
+          "type": "decision",
+          "label": "Implemented plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "修复 Conversation 不必要 author identity/channel 字段、nested collected-fields 任意 JSON 透传、Ticket 卡片状态混淆、移动端隐藏 Sign out、38px header target 与 Runtime audit 长 ID 裁剪；复审后无未处理 correctness/security finding。"
+        }
+      ],
+      "source_refs": [
+        "backend/automation_ecs_api.py",
+        "backend/services/automation_ecs_dashboard_reader.py",
+        "ui/automation-ecs-production/",
+        "backend/tests/test_automation_ecs_api.py",
+        "backend/tests/test_automation_ecs_dashboard_reader_postgres.py",
+        "backend/tests/test_automation_ecs_images.py",
+        "design.md",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-01",
+          "event": "created",
+          "summary": "Owner 批准将 ECS Production 看板从 Execution 表格重构为 Ticket-centric 只读工作台；原拟使用 p2-131，因该编号随后被合并任务占用，Owner 再次确认改用 p2-132。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "implemented",
+          "summary": "完成只读 Case Reader、Ticket-centric API、响应式 UI、脱敏与定向测试；owner review 和三视口浏览器验证通过，Task 保持 active 等待 PR、release、ECS 部署与生产验收。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -14187,7 +14276,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Automation Behavior 只提取结构化字段和处理事实，所有实际客户文案在发送前统一由 Automation Persona 生成；Persona 失败时转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
-        "ECS `/automation/production/` 只读运行看板提供独立管理员 session、Execution 分页/筛选/详情、steps/jobs/delivery ledger、失败与 `outcome_unknown`、release provenance 和 API/Route/Worker heartbeat。"
+        "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。"
       ],
       "planned": [
         "待补充。"
