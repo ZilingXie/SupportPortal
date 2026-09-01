@@ -252,6 +252,8 @@ fi
 
 echo "requirements.base.txt: $(git hash-object requirements.base.txt)"
 echo "requirements.ml.txt: $(git hash-object requirements.ml.txt)"
+echo "requirements.base.lock: $(git hash-object requirements.base.lock)"
+echo "requirements.full.lock: $(git hash-object requirements.full.lock)"
 
 health_attempts="${SUPPORTPORTAL_HEALTH_ATTEMPTS:-180}"
 health_interval_seconds="${SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS:-2}"

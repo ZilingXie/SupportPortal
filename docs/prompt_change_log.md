@@ -4182,3 +4182,20 @@ For each new entry, record:
   - `backend/tests/test_llm_profiles.py` + `backend/tests/test_llm_factory.py`: 38 passed (endpoint override two-state coverage; agent-endpoint output-item extraction).
   - Live end-to-end against the local Hermes agent stack: valid schema-conforming investigation turn (state/message/draft_customer_reply), `generation_status=succeeded`, conversation auto-captured to L0 memory; failure paths retain the existing fail-closed turn.
   - `backend/tests/test_investigation_flow.py`: 113 passed, 2 pre-existing multi_agent failures reproduced on clean main.
+
+## 2026-09-01 - Reproducible Transformers tooling runtime
+
+- Area or subsystem:
+  - Shared single-host and ECS Python model tooling dependencies.
+- Prompt or model versions:
+  - Prompt content, Prompt Release IDs, model names, providers, reasoning effort, timeouts, and fallback policies are unchanged.
+  - The effective dependency contract is fixed at `transformers==4.46.3`; the full single-host ML profile uses compatible `sentence-transformers==5.7.0` and CPU-only `torch==2.13.0+cpu`.
+- Reason:
+  - Separate pip transactions allowed Sentence Transformers 6.x to replace the explicit Transformers 4.46.3 pin. A single hash-verified dependency graph now rejects that conflict during lock generation instead of changing tooling during deployment.
+- Affected files or config:
+  - Python base/full requirements locks, ML direct requirements, both runtime Dockerfiles, lock tooling, build contracts, and operations documentation.
+- Expected behavior change:
+  - No intended prompt or model-output contract change. Dependency selection becomes deterministic, and CPU-only hosts stop carrying unused CUDA packages.
+- Verification:
+  - The full lock resolves Transformers 4.46.3, Tokenizers 0.20.3, Sentence Transformers 5.7.0, Accelerate 1.14.0, and PyTorch 2.13.0+cpu with SHA256 hashes.
+  - The built full image passed import checks for the Transformers pipeline and embedding runtime, plus `pip check`; the lightweight image retained Transformers 4.46.3 without torch.
