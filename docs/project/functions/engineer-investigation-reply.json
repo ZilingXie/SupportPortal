@@ -1,0 +1,15 @@
+{
+ "schema_version": 2,
+ "function_id": "engineer-investigation-reply",
+ "phase_id": "phase-2",
+ "module_id": "engineer-workspace",
+ "title": "Engineer Investigation Reply",
+ "goal": "在 Engineer Case 调查线程内生成工程师向的 AI 调查回合（状态推进、下一步请求、客户草稿与就绪度评估），支持官方 LLM 端点与自定义调查 agent 端点两种 provider。",
+ "acceptance_criteria": [],
+ "evidence": [],
+ "source_refs": [
+  "backend/services/engineer_agent.py",
+  "backend/services/investigation_flow.py"
+ ],
+ "legacy_ids": []
+}

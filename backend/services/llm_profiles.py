@@ -612,17 +612,22 @@ def resolve_model_profile(
             fallback_models=("gpt-5.4-mini",),
         ))
     if scenario == ENGINEER_INVESTIGATION_REPLY_SCENARIO:
+        investigation_base_url = _clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_BASE_URL")) or None
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_MODEL")) or "gpt-5.4",
             api_mode=OPENAI_RESPONSES_API,
-            api_key=_openai_api_key(),
+            api_key=_clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_API_KEY")) or _openai_api_key(),
+            base_url=investigation_base_url,
             reasoning_effort=_clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT")) or "medium",
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES", 1),
-            fallback_models=("gpt-5.4-mini",),
+            # Model fallback assumes a model-tier downgrade; a custom agent
+            # endpoint has no tier below it and a same-endpoint retry would
+            # repeat a multi-minute investigation turn.
+            fallback_models=() if investigation_base_url else ("gpt-5.4-mini",),
         ))
     if scenario == KNOWLEDGE_INGESTION_SCENARIO:
         return _with_provider_fallback(ModelProfile(

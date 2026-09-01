@@ -38,11 +38,18 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v18"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v19"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v2"
 
 _HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
+_ENABLEMENT_SUBMISSION_24_HOUR_PATTERN = r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"
+_ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN = (
+    r"(?:\bmonday\s*(?:-|to|through)\s*friday\b|\bmon\s*(?:-|to)\s*fri\b|\bweekdays\b)"
+)
+_ENABLEMENT_SUBMISSION_CONTRACT_SENTENCE = (
+    "Activation may take up to 24 hours, and the change window is Monday-Friday."
+)
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _DETERMINISTIC_MISSING_INFORMATION_BEHAVIORS = frozenset(
@@ -389,10 +396,42 @@ def _assert_enablement_submission_contract(reply: str) -> None:
     )
     has_change_window = _has_positive_clause(
         reply,
-        r"(?:\bmonday\s*(?:-|to|through)\s*friday\b|\bmon\s*(?:-|to)\s*fri\b|\bweekdays\b)",
+        _ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN,
     )
     if not has_change_window:
         raise AutomationPersonaError("automation_persona_enablement_submission_contract_failed")
+
+
+def _deterministic_enablement_submission_reply(reply: str) -> str:
+    clauses = _reply_clauses(reply)
+    for pattern in (
+        _ENABLEMENT_SUBMISSION_24_HOUR_PATTERN,
+        _ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN,
+    ):
+        if any(
+            re.search(pattern, clause) and not _is_positive_clause(clause)
+            for clause in clauses
+        ):
+            raise AutomationPersonaError(
+                "automation_persona_enablement_submission_contract_failed"
+            )
+    has_24_hour_commitment = _has_positive_clause(
+        reply,
+        _ENABLEMENT_SUBMISSION_24_HOUR_PATTERN,
+    )
+    has_change_window = _has_positive_clause(
+        reply,
+        _ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN,
+    )
+    if has_24_hour_commitment and has_change_window:
+        return reply
+    if not has_24_hour_commitment and not has_change_window:
+        contract = _ENABLEMENT_SUBMISSION_CONTRACT_SENTENCE
+    elif not has_24_hour_commitment:
+        contract = "Activation may take up to 24 hours."
+    else:
+        contract = "The change window is Monday-Friday."
+    return f"{reply}\n\n{contract}"
 
 
 def _assert_fraud_handoff_contract(reply: str) -> None:
@@ -756,6 +795,13 @@ def _validated_automation_reply_content(
             reply,
             facts.get("missing_information") or [],
         )
+    if (
+        account_scope
+        and str(facts.get("behavior") or "").strip().lower() == "enablement"
+        and str(facts.get("reply_intent") or "").strip().lower()
+        == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION
+    ):
+        reply = _deterministic_enablement_submission_reply(reply)
     if account_scope:
         validate_account_reply_contract(reply, facts)
     rendered_content = f"{greeting}\n\n{reply}"

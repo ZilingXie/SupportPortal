@@ -140,6 +140,53 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(result.prompt_tokens, 13)
         self.assertEqual(result.completion_tokens, 5)
 
+    def test_invoke_responses_text_extracts_message_from_agent_endpoint_output_items(self) -> None:
+        # Agent endpoints (e.g. the Hermes investigation agent) return the
+        # Responses output as a list of typed items: tool calls first, the
+        # final assistant text in a trailing message item.
+        def _fake_urlopen(request, timeout):
+            return _FakeResponse(
+                {
+                    "id": "resp_agent_test",
+                    "object": "response",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "fc_1",
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "tdai_memory_search",
+                            "arguments": "{\"query\": \"project codename\"}",
+                        },
+                        {
+                            "id": "fco_1",
+                            "type": "function_call_output",
+                            "call_id": "call_1",
+                            "output": "zeta-p0",
+                        },
+                        {
+                            "id": "msg_1",
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "{\"state\": \"active\", \"draft_customer_reply\": \"draft\"}"}
+                            ],
+                        },
+                    ],
+                    "usage": {"input_tokens": 12171, "output_tokens": 8, "total_tokens": 12179},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile(api_mode=OPENAI_RESPONSES_API),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(result.text, "{\"state\": \"active\", \"draft_customer_reply\": \"draft\"}")
+        self.assertEqual(result.prompt_tokens, 12171)
+        self.assertEqual(result.completion_tokens, 8)
+
     def test_invoke_responses_text_raises_after_retry_budget_is_exhausted(self) -> None:
         attempts = 0
 

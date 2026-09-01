@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T03:16:02Z",
-  "source_base_commit": "0612d672e376afcfb15c3ea3ed00ebad7bbd32a5",
-  "registry_digest": "3b15b48956ff185df9419e0edfb91c840a3312eb6215e5b5d50b0fe881893d1e",
+  "generated_at": "2026-09-01T03:32:40Z",
+  "source_base_commit": "248b667084b07c0082e358788ecc0fbb3ef8ee3f",
+  "registry_digest": "9780219a71f4a6fd1adb24ddd8f99b558b5dcf5b7a82f56788d9baa850ca0ab6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -816,6 +816,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "确认参数值不进入源码、日志或 Manifest；SSM GetParameters 仅加入 execution role，三个参数仅注入 Worker；历史 Ticket 13166/13157 无重放路径；review 后无未处理 correctness/security finding。"
         },
         {
+          "type": "decision",
+          "label": "Production Case 13176 read-only diagnosis",
+          "command": "ECS production DB lifecycle/job/delivery ledger + CloudWatch + Zendesk provider readback",
+          "details": "comment.created 已完成，app_id 已收集、missing_fields=[]、内部邮件 status=sent；submission_confirmation job 在 automation_persona 合同校验四次失败后进入 manual_attention，Case=human_review_required；无新公开 delivery，Zendesk 仅新增私有内部评论。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement deterministic contract focused regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py -k 'enablement_submission' -q",
+          "details": "6 passed + 5 subtests；覆盖完全遗漏两项时一次调用后补齐、只缺一项时只补一项、两项都存在时不重复、24 小时否定句与 weekday 问句仍四次失败并保留原合同错误码。"
+        },
+        {
+          "type": "test",
+          "label": "Persona, Worker, and version-fence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_worker.py -q",
+          "details": "185 passed + 50 subtests；Account AI 四次预算、v19 version fence、Worker fail-closed/publication gates 零回归。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement intake and ECS compatibility regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py -q",
+          "details": "276 passed + 52 subtests；字段提取、内部邮件、完成/未完成分类、comment sync、Account intake 与 ECS Worker 零回归。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -922,8 +946,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 26,
-      "done_count": 14,
+      "task_count": 27,
+      "done_count": 15,
       "blocked_count": 0
     },
     {
@@ -2103,6 +2127,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implementation pull requests",
           "command": "PR #1008 and PR #1009",
           "details": "PR #1008 Add ECS Production read-only dashboard 合并为 091b4af97e184e97ec9b23cf4dbdfad75238b798；PR #1009 Fix ECS dashboard credentials to admin/admin 合并为 8e02e7a9c49fec27ab78832897a9ea241510066b。"
+        },
+        {
+          "type": "test",
+          "label": "ECS dashboard and runtime regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
+          "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
         }
       ],
       "source_refs": [
@@ -3007,6 +3037,44 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 8,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-investigation-reply",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "title": "Engineer Investigation Reply",
+      "goal": "在 Engineer Case 调查线程内生成工程师向的 AI 调查回合（状态推进、下一步请求、客户草稿与就绪度评估），支持官方 LLM 端点与自定义调查 agent 端点两种 provider。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Profile + factory unit tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_llm_factory.py -q",
+          "details": "38 passed（含新用例：agent endpoint 两态覆盖、agent 端点 output items 结构的 _responses_text 提取）。"
+        },
+        {
+          "type": "test",
+          "label": "Investigation flow regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_investigation_flow.py -q",
+          "details": "113 passed + 2 failed；2 个 multi_agent 用例在干净 root main 上同样失败（既有顺序污染，非本任务引入）。"
+        },
+        {
+          "type": "deployment",
+          "label": "End-to-end against live Hermes agent stack",
+          "command": "/tmp/p2_e2e_hermes_check.py（worktree 代码直调 _generate_investigation_reply_turn，env 指向 http://127.0.0.1:8642/v1 真栈）",
+          "details": "黑屏工单构造输入 → Hermes（gpt-5.6-luna+腾讯 Agent Memory 记忆）返回 state=active、message 语义正确的调查回合（要求 channel name、确认复现范围），message_meta.generation_status=succeeded；中间迭代两次（invalid_json→invalid_fields）由 prompt 层 schema 内联补偿解决；调查对话经 memory 插件自动 capture 进 L0（search/conversations 可检索）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/engineer_agent.py",
+        "backend/services/investigation_flow.py"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -8607,12 +8675,143 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-130",
+      "title": "调查回合支持自定义 agent 端点路由（Hermes 调查 agent 接线一期）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "engineer investigation reply 场景（_generate_investigation_reply_turn，scenario engineer_investigation_reply）新增端点路由能力：ENGINEER_INVESTIGATION_REPLY_BASE_URL / ENGINEER_INVESTIGATION_REPLY_API_KEY 设置时，OpenAI Responses 调用路由到自定义 OpenAI 兼容 agent 端点（本地 agent-infra 的 Hermes 调查 agent，http://127.0.0.1:8642/v1，记忆后端腾讯 Agent Memory）。自定义端点时 fallback_models 置空（模型级 fallback 是模型分级降级语义，agent 端点无分级且同端点重试会重复一次分钟级调查回合）；deepseek provider fallback 维持既有契约不变（失败降级在 message_meta.model_name 可见）。自定义端点忽略 Responses text.format json_schema 强制，故 prompt 层内联输出契约补偿：user prompt 尾部注入完整 json_schema（与 extra_payload 单一来源动态同步），要求最终回复为单个符合 schema 的 JSON 对象。默认（不设 env）行为逐字段不变。engineer_agent 主链、fail-closed（LlmInvocationError→确定性回退回合）、guardrail、Slack/Zendesk 投递链零改动。",
+      "next_action": "实现、单测与真栈端到端验证已完成，待 finalize 合并、本地官方栈重启验证，以及生产侧（用户节奏）配置 env 灰度启用。",
+      "acceptance_criteria": [
+        "不设 ENGINEER_INVESTIGATION_REPLY_BASE_URL 时 investigation profile 与现状逐字段一致（base_url None、fallback_models 含 mini、api_key 走 OPENAI_API_KEY）。",
+        "设置 BASE_URL+API_KEY 时 profile 路由到自定义端点，fallback_models 为空。",
+        "自定义端点返回的 Responses 输出（output items 数组含 function_call/message 混合形态）被 _responses_text 正确提取最终 message 文本。",
+        "真栈端到端：Hermes 端点产出合法调查回合 JSON（state/message/draft_customer_reply/reply_readiness/engineer_agent_state），message_meta.generation_status=succeeded；调查对话自动沉淀 L0 记忆。",
+        "Hermes 失败（超时/连接错/非法输出）走既有 fail-closed 回合，错误原因进 message_meta。",
+        "test_llm_profiles/test_llm_factory 全绿；test_investigation_flow 除 2 个既有失败（multi_agent 顺序污染，干净 main 同样失败）外全绿。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Profile + factory unit tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_llm_factory.py -q",
+          "details": "38 passed（含新用例：agent endpoint 两态覆盖、agent 端点 output items 结构的 _responses_text 提取）。"
+        },
+        {
+          "type": "test",
+          "label": "Investigation flow regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_investigation_flow.py -q",
+          "details": "113 passed + 2 failed；2 个 multi_agent 用例在干净 root main 上同样失败（既有顺序污染，非本任务引入）。"
+        },
+        {
+          "type": "deployment",
+          "label": "End-to-end against live Hermes agent stack",
+          "command": "/tmp/p2_e2e_hermes_check.py（worktree 代码直调 _generate_investigation_reply_turn，env 指向 http://127.0.0.1:8642/v1 真栈）",
+          "details": "黑屏工单构造输入 → Hermes（gpt-5.6-luna+腾讯 Agent Memory 记忆）返回 state=active、message 语义正确的调查回合（要求 channel name、确认复现范围），message_meta.generation_status=succeeded；中间迭代两次（invalid_json→invalid_fields）由 prompt 层 schema 内联补偿解决；调查对话经 memory 插件自动 capture 进 L0（search/conversations 可检索）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_profiles.py",
+        "backend/services/engineer_agent.py",
+        "backend/tests/test_llm_profiles.py",
+        "backend/tests/test_llm_factory.py"
+      ],
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "history": [
+        {
+          "at": "2026-09-01",
+          "event": "created",
+          "summary": "P2 一期接线：调查回合 provider 可路由到外部 Hermes 调查 agent 端点（agent-infra 本地栈，端点化架构），默认关闭、fail-closed 保留、/production 零影响。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply"
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-131",
+      "title": "Enablement 提交确认的固定 SLA 与变更窗口改为确定性装配",
+      "status": "done",
+      "owner": "zac",
+      "summary": "Production Case 13176 在客户补齐 App ID 后成功发送 Enablement 内部邮件，但 submission_confirmation Persona 连续四次遗漏或未满足固定的 up to 24 hours SLA 与 Monday-Friday 变更窗口合同，reply job 转 manual_attention、Case 升级 Human Review，未生成客户公开回复。修复将缺失的固定 SLA/窗口子句在应用层确定性补齐，再执行现有最终合同、ownership、签名和 forbidden-value 校验；模型已生成的有效子句保留，否定或问句形式仍 fail closed，其他 intent 不变。13176 不重放、不补发，使用新工单验收。",
+      "next_action": "构建并部署包含 automation-persona-v19 的新 ECS Production release，随后由用户创建新 Case 验证 Enablement submission_confirmation 可一次生成客户回复；Case 13176 保持不重放。",
+      "acceptance_criteria": [
+        "Enablement submission_confirmation 的模型正文完全遗漏 SLA 与变更窗口时，应用在第一次模型调用后追加 canonical 句并通过现有最终合同校验。",
+        "模型已包含正向 24 小时或 Monday-Friday/weekday 子句时只补缺失部分，不重复已有合同事实。",
+        "否定、问题形式或其他非正向的 24 小时/变更窗口子句不会被确定性补全文案掩盖，仍以 automation_persona_enablement_submission_contract_failed fail closed。",
+        "automation-persona version fence 前进，未发布旧 payload 使用新装配行为重新渲染；其他 Account intent、投递与内部邮件行为不变。",
+        "Case 13176 不重放、不补发、不修改；通过新的生产测试工单完成后续验收。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Production Case 13176 read-only diagnosis",
+          "command": "ECS production DB lifecycle/job/delivery ledger + CloudWatch + Zendesk provider readback",
+          "details": "comment.created 已完成，app_id 已收集、missing_fields=[]、内部邮件 status=sent；submission_confirmation job 在 automation_persona 合同校验四次失败后进入 manual_attention，Case=human_review_required；无新公开 delivery，Zendesk 仅新增私有内部评论。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement deterministic contract focused regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py -k 'enablement_submission' -q",
+          "details": "6 passed + 5 subtests；覆盖完全遗漏两项时一次调用后补齐、只缺一项时只补一项、两项都存在时不重复、24 小时否定句与 weekday 问句仍四次失败并保留原合同错误码。"
+        },
+        {
+          "type": "test",
+          "label": "Persona, Worker, and version-fence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_worker.py -q",
+          "details": "185 passed + 50 subtests；Account AI 四次预算、v19 version fence、Worker fail-closed/publication gates 零回归。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement intake and ECS compatibility regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py -q",
+          "details": "276 passed + 52 subtests；字段提取、内部邮件、完成/未完成分类、comment sync、Account intake 与 ECS Worker 零回归。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_worker.py",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "history": [
+        {
+          "at": "2026-09-01",
+          "event": "created",
+          "summary": "Case 13176 只读诊断定位：固定 SLA/窗口事实已在 reply_facts 与 Prompt 中，但四次随机 Persona 输出仍未通过确定性合同；用户批准改为应用层装配并要求用新工单测试。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "implemented",
+          "summary": "automation-persona-v19 在最终 Account contract 前确定性补齐缺失的 24 小时 SLA 与 Monday-Friday 窗口；有效模型子句不重复，否定/问句仍 fail closed；核心与 ECS 兼容回归全绿。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "completed",
+          "summary": "实现与本地回归完成；生产生效仍依赖后续构建并部署包含 automation-persona-v19 的 ECS release，再由新工单完成业务验收。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-132",
       "title": "ECS Production 人类可读 Ticket 只读看板",
       "status": "active",
       "owner": "zac",
       "summary": "将 ECS Production 只读看板重构为面向运营人员的 Ticket/Case 工作台：每个 Ticket 一条、默认隐藏 solved/closed、支持 Category/Subcategory/Ticket Status 与 Execution 条件组合筛选，并安全展示 Case、Conversation、待发布 Preview 和折叠的 Runtime audit。",
-      "next_action": "实现独立只读 Case Reader、Ticket-centric API 与响应式 UI，完成脱敏和 fail-closed 测试、浏览器验证、PR 合并、三角色 immutable release、ECS 部署及只读生产验收。",
+      "next_action": "完成 owner review、定向测试、浏览器验证和 PR 合并；随后构建三角色 immutable release、部署 ECS 并完成只读生产验收。",
       "acceptance_criteria": [
         "默认列表每个 Zendesk Ticket 仅一条，按 Zendesk ticket.updated_at 倒序；缺失时回退 Account Case updated_at，且默认 active 过滤排除 solved/closed。",
         "Ticket Status、Category/Subcategory、Ticket ID、Execution ID、Execution Status 与 Event Type 可组合分页，total、facets 和当前页来自同一只读数据库快照。",
@@ -8626,7 +8825,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "验收过程不调用 intake，不修改真实 Case、Execution、n8n、DNS 或 Cloudflare。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "ECS dashboard and runtime regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
+          "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
+        }
+      ],
       "source_refs": [
         "backend/automation_ecs_api.py",
         "backend/services/automation_ecs_dashboard_reader.py",
@@ -8648,7 +8854,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-09-01",
           "event": "created",
-          "summary": "Owner 批准将 ECS Production 看板从 Execution 表格重构为 Ticket-centric 只读工作台；因 p2-130 已被另一活跃 worktree 占用，本任务使用 p2-131。"
+          "summary": "Owner 批准将 ECS Production 看板从 Execution 表格重构为 Ticket-centric 只读工作台；原拟使用 p2-131，因该编号随后被合并任务占用，Owner 再次确认改用 p2-132。"
         }
       ]
     },

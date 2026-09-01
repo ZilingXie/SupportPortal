@@ -614,7 +614,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v18")
+        self.assertEqual(result.prompt_version, "automation-persona-v19")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -932,6 +932,124 @@ class AutomationPersonaTests(unittest.TestCase):
                 facts,
             )
 
+    def test_enablement_submission_deterministically_completes_omitted_contract(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thank you for providing the requested information. I am reviewing the request with our internal "
+                "team and will keep you updated."
+            ),
+            model_name="persona-model",
+        )
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={"requested_feature": "media_relay"},
+            submitted=True,
+        )
+
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                account_scope=True,
+            )
+
+        self.assertIn(
+            "Activation may take up to 24 hours, and the change window is Monday-Friday.",
+            result.content,
+        )
+        self.assertEqual(result.prompt_version, "automation-persona-v19")
+        self.assertEqual(invoke.call_count, 1)
+
+    def test_enablement_submission_deterministic_completion_preserves_existing_clauses(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={"requested_feature": "media_relay"},
+            submitted=True,
+        )
+        cases = (
+            (
+                "I am reviewing the request and will keep you updated. Activation may take up to 24 hours.",
+                "Activation may take up to 24 hours.",
+                "The change window is Monday-Friday.",
+            ),
+            (
+                "I am reviewing the request and will keep you updated. The change window is Monday-Friday.",
+                "Activation may take up to 24 hours.",
+                "The change window is Monday-Friday.",
+            ),
+            (
+                "I am reviewing the request and will keep you updated. Activation may take up to 24 hours, and "
+                "the change window is Monday-Friday.",
+                "Activation may take up to 24 hours",
+                "the change window is Monday-Friday",
+            ),
+        )
+
+        for text, sla_clause, window_clause in cases:
+            with self.subTest(text=text):
+                response = SimpleNamespace(text=text, model_name="persona-model")
+                with patch(
+                    "backend.services.automation_persona.resolve_model_profile",
+                    return_value=profile,
+                ), patch(
+                    "backend.services.account_ai_execution.invoke_responses_text",
+                    return_value=response,
+                ) as invoke:
+                    result = render_automation_reply(
+                        reply_facts=facts,
+                        persona_assignment={"content": {"instruction": "Warm and precise."}},
+                        account_scope=True,
+                    )
+
+                self.assertEqual(result.content.count(sla_clause), 1)
+                self.assertEqual(result.content.count(window_clause), 1)
+                self.assertEqual(invoke.call_count, 1)
+
+    def test_enablement_submission_deterministic_completion_rejects_nonpositive_contract(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={"requested_feature": "media_relay"},
+            submitted=True,
+        )
+        responses = (
+            "I am reviewing the request and will keep you updated. Activation will not happen within 24 hours.",
+            "I am reviewing the request and will keep you updated. Are weekdays the change window?",
+        )
+
+        for text in responses:
+            with self.subTest(text=text):
+                response = SimpleNamespace(text=text, model_name="persona-model")
+                with patch(
+                    "backend.services.automation_persona.resolve_model_profile",
+                    return_value=profile,
+                ), patch(
+                    "backend.services.account_ai_execution.invoke_responses_text",
+                    return_value=response,
+                ) as invoke:
+                    with self.assertRaisesRegex(
+                        AutomationPersonaError,
+                        "automation_persona_enablement_submission_contract_failed",
+                    ) as raised:
+                        render_automation_reply(
+                            reply_facts=facts,
+                            persona_assignment={"content": {"instruction": "Warm and precise."}},
+                            account_scope=True,
+                        )
+
+                self.assertEqual(raised.exception.attempt_count, 4)
+                self.assertEqual(invoke.call_count, 4)
+
     def test_suspension_contact_contract_requires_email_close_and_reopen_terms(self) -> None:
         facts = {
             "behavior": "account_suspension",
@@ -1090,7 +1208,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v18")
+        self.assertEqual(result.prompt_version, "automation-persona-v19")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("providing the additional information", system_prompt)
         self.assertIn("archived now", system_prompt)
