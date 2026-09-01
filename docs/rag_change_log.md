@@ -11,6 +11,24 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-01 - ECS Fraud extraction failures stop before reply RAG fallback (p2-110)
+
+- Summary:
+  - Ported the existing `/production` Fraud extraction-failure reconciliation into the ECS customer-reply chain.
+  - `uncertain` and `sensitive` Account Verification extraction outcomes now preserve the registered Fraud route, set a stable `account_verification_field_extraction_<status>` Human Review reason, cancel pending reply jobs, and cannot enter `reply_rag_fallback`.
+  - Genuine off-topic/no-field-progress Agora product questions retain the existing RAGFlow fallback path.
+- Reason:
+  - Case 13190 hit an uncertain Fraud field extraction after a valid partial reply. ECS only discarded the failed attempt, leaving `automation_status=automation`; the generic fallback gate therefore asked RAG to answer a field-collection message and escalated it as insufficient evidence.
+- Affected files or config:
+  - `backend/services/automation_account_reply_sync.py`
+  - `backend/tests/test_automation_comment_sync.py`
+  - No RAG endpoint, token, prompt, retrieval, generation, or index configuration changes.
+- Data impact:
+  - No RAG documents, chunks, embeddings, vector/BM25 indexes, schema, migration, or backfill changes.
+  - No historical ticket was replayed or modified; Case 13190 remains unchanged.
+- Verification:
+  - Related Account/ECS/Persona/RAG/model-profile regression passed (`430 passed`, `91 subtests passed`). New uncertain and sensitive subtests assert Human Review state, stable reason code, preserved Fraud route, pending-job cancellation, and zero RAG calls; the existing off-topic Fraud test still asserts RAG execution.
+
 ## 2026-08-24 - Route Production Non automated Zendesk comments into Engineer AI
 
 - Summary:
@@ -5121,3 +5139,24 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py` (`371 passed`, `61 subtests passed`).
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_verification_automation.py` (`45 passed`, `28 subtests passed`).
+
+## 2026-09-01 - Reproducible CPU-only local embedding runtime
+
+- Summary:
+  - Pinned the shared Python base image to one multi-platform OCI index digest and added hash-verified base/full dependency locks.
+  - The full single-host runtime now installs `torch==2.13.0+cpu`, `sentence-transformers==5.7.0`, and `transformers==4.46.3` in one transaction; the lightweight runtime continues to omit torch and Sentence Transformers.
+  - Added a Docker-backed lock update/check command and pip download cache mount. Deployments no longer resolve mutable Python or ML package versions.
+- Reason:
+  - A mutable `python:3.11-slim` update invalidated the 5.64 GB dependency layer and broad ML ranges selected newer packages during an EC2 deployment. The EC2 host has no NVIDIA device and the CUDA build reported `cuda_available=False`.
+- Affected files/config:
+  - `backend/Dockerfile`, `backend/Dockerfile.automation`
+  - `requirements.base.lock`, `requirements.full.lock`, `requirements.ml.txt`
+  - `scripts/ops/update_python_dependency_locks.sh`
+  - Single-host dependency/build contract tests and deployment documentation
+- Data impact:
+  - No schema, ingestion, chunking, embedding model ID, vector table, index, reset, or backfill change.
+  - Existing embeddings are unchanged. CPU execution remains the effective runtime because the previous CUDA wheel also ran without a usable GPU.
+- Verification:
+  - Hash lock generation and `--check` completed successfully.
+  - Full image built successfully, passed `pip check`, imported PyTorch/Sentence Transformers/Transformers/Accelerate and the embedding provider, contained no CUDA/NVIDIA packages, and measured 489,760,121 bytes versus 3,046,167,508 bytes previously.
+  - Lightweight image built successfully, passed `pip check`, omitted torch, and measured 187,233,165 bytes.

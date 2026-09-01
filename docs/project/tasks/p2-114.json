@@ -38,6 +38,7 @@
     "backend/services/quota_field_extractor.py",
     "backend/services/detailed_invoice_field_extractor.py",
     "backend/services/account_verification_field_extractor.py",
+    "backend/services/account_verification_automation.py",
     "backend/services/account_suspension_field_extractor.py",
     "backend/services/enablement_field_extractor.py",
     "backend/services/billing_automation.py",
@@ -45,7 +46,7 @@
     "docs/prompt_change_log.md"
   ],
   "created_at": "2026-08-24",
-  "updated_at": "2026-08-24",
+  "updated_at": "2026-09-01",
   "history": [
     {
       "at": "2026-08-24",
@@ -56,6 +57,11 @@
       "at": "2026-08-25",
       "event": "updated",
       "summary": "PR#934 合并（root f468c6e）；官方栈重启至 f468c6e309f2 完成全部 live 验证（provenance matched、五场景容器内实测 luna/low、客户端流 mini 不变），翻 done。用户确认 EC2 .env 无相关模型覆盖；EC2 蓝绿部署链四根因（schema bootstrap/worker PGVECTOR_DSN/稳定等待/verify 识别 candidate）由用户自修，修好后 fetch 即得 luna 默认。"
+    },
+    {
+      "at": "2026-09-01",
+      "event": "correction",
+      "summary": "更正原迁移范围声明：底层 account_verification_field_extractor 已使用 ACCOUNT_EXTRACTOR，但共享 account_verification_automation builder 仍显式覆盖为 INTENT_ROUTER_SCENARIO，导致 ECS Fraud 回复链绕回 mini/紧超时。p2-110 parity 修复已将 builder 默认值接到 ACCOUNT_EXTRACTOR；p2-114 的目标模型合同不变。"
     }
   ],
   "legacy_refs": [

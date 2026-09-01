@@ -1,4 +1,7 @@
-FROM python:3.11-slim AS runtime-base
+# syntax=docker/dockerfile:1.7
+
+ARG PYTHON_BASE_IMAGE=python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0
+FROM ${PYTHON_BASE_IMAGE} AS runtime-base
 
 ARG APP_BUILD_REF=unknown
 ARG APP_BUILD_TIME=
@@ -11,9 +14,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.base.txt /app/requirements.base.txt
-RUN python -m pip install --upgrade pip && \
-    python -m pip install --no-cache-dir -r /app/requirements.base.txt
+COPY requirements.base.lock /app/requirements.base.lock
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --require-hashes -r /app/requirements.base.lock
 
 FROM runtime-base AS role-files
 

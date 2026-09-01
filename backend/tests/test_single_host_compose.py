@@ -14,6 +14,8 @@ ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 REQUIREMENTS_BASE_PATH = REPO_ROOT / "requirements.base.txt"
 REQUIREMENTS_ML_PATH = REPO_ROOT / "requirements.ml.txt"
+REQUIREMENTS_BASE_LOCK_PATH = REPO_ROOT / "requirements.base.lock"
+REQUIREMENTS_FULL_LOCK_PATH = REPO_ROOT / "requirements.full.lock"
 RUNTIME_SERVICE_NAMES = ("api", "rag_api", "rag_worker", "ws_gateway", "worker_query", "worker_aux")
 BOOTSTRAP_SERVICE_NAMES = ("runtime_bootstrap",)
 PRODUCTION_SERVICE_NAMES = ("api_production", "worker_query_production", "worker_aux_production")
@@ -456,11 +458,13 @@ class SingleHostComposeTests(unittest.TestCase):
         content = DOCKERFILE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("ARG INSTALL_ML_DEPS=1", content)
-        self.assertIn("COPY requirements.base.txt /app/requirements.base.txt", content)
-        self.assertIn("COPY requirements.ml.txt /app/requirements.ml.txt", content)
-        self.assertIn("python -m pip install --no-cache-dir -r /app/requirements.base.txt", content)
-        self.assertIn('if [ "${INSTALL_ML_DEPS}" = "1" ]; then', content)
-        self.assertIn("python -m pip install --no-cache-dir -r /app/requirements.ml.txt", content)
+        self.assertIn("COPY requirements.base.lock /app/requirements.base.lock", content)
+        self.assertIn("COPY requirements.full.lock /app/requirements.full.lock", content)
+        self.assertIn("requirements_file=/app/requirements.full.lock", content)
+        self.assertIn('if [ "${INSTALL_ML_DEPS}" != "1" ]; then', content)
+        self.assertIn("requirements_file=/app/requirements.base.lock", content)
+        self.assertIn('python -m pip install --require-hashes -r "${requirements_file}"', content)
+        self.assertNotIn("pip install --upgrade pip", content)
 
     def test_requirements_txt_aggregates_base_and_ml_files(self) -> None:
         content = REQUIREMENTS_PATH.read_text(encoding="utf-8")
@@ -478,9 +482,16 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertNotIn("sentence-transformers>=3.2.1", base_content)
         self.assertNotIn("accelerate>=0.26.0", base_content)
 
-        self.assertIn("torch>=2.2.0", ml_content)
-        self.assertIn("sentence-transformers>=3.2.1", ml_content)
-        self.assertIn("accelerate>=0.26.0", ml_content)
+        self.assertIn("torch==2.13.0+cpu", ml_content)
+        self.assertIn("sentence-transformers==5.7.0", ml_content)
+        self.assertIn("accelerate==1.14.0", ml_content)
+
+        base_lock = REQUIREMENTS_BASE_LOCK_PATH.read_text(encoding="utf-8")
+        full_lock = REQUIREMENTS_FULL_LOCK_PATH.read_text(encoding="utf-8")
+        self.assertIn("transformers==4.46.3", base_lock)
+        self.assertIn("transformers==4.46.3", full_lock)
+        self.assertIn("torch==2.13.0+cpu", full_lock)
+        self.assertNotRegex(full_lock, r"(?m)^(?:nvidia-|triton==)")
 
     def test_local_lightweight_override_forces_legacy_sentiment_and_skips_ml_deps(self) -> None:
         content = LIGHTWEIGHT_COMPOSE_PATH.read_text(encoding="utf-8")

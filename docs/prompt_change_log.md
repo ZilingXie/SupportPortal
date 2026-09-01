@@ -20,6 +20,16 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-09-01 - ECS Fraud shared builder uses Account Extractor profile (p2-110, correction to p2-114)
+
+- Area or subsystem: ECS Account Automation Fraud field extraction on customer comment replies.
+- Prompt or model version: prompt content unchanged; the shared `build_account_verification_automation_result` default scenario changes from `intent_router` to the existing `account_extractor` profile (`gpt-5.6-luna`, low reasoning, 30-second default timeout).
+- Summary: the shared Fraud automation builder now preserves the field extractor's approved Account Extractor model contract instead of overriding it with the client intent-router profile. Explicit callers may still pass a different scenario; old EC2 `/production` keeps its explicit `account_route` scenario unchanged.
+- Reason: Case 13190 supplied a valid requested field, but ECS used the stale shared-builder override (`gpt-5.4-mini`, low, 8-second runtime profile) left behind when p2-114 migrated the underlying extractor. Extraction became uncertain and exposed the separate missing-reconciliation defect.
+- Affected files or config: `backend/services/account_verification_automation.py`, focused Account verification and ECS comment-sync tests. No prompt text, Prompt Release, environment value, or credential changes.
+- Expected behavior change: ECS Fraud replies use the approved Account Extractor quality/timeout profile; valid partial field replies remain in the one-follow-up handoff path. Extraction failures still fail closed through Human Review rather than being treated as successful extraction.
+- Verification: related Account/ECS/Persona/RAG/model-profile regression passed (`430 passed`, `91 subtests passed`), including direct default-scenario capture and deterministic extraction of `office_address=Shanghai` from the 13190-shaped reply.
+
 ## 2026-09-01 - Enablement submission fixed contract deterministic assembly (p2-131)
 
 - Area or subsystem: Account Automation Persona rendering for Enablement `submission_confirmation` replies.
@@ -4208,3 +4218,20 @@ For each new entry, record:
   - Public endpoint: `GET /v1/models` 200; real `POST /v1/responses` LLM turn returned valid output and auto-captured to L0 memory (`/search/conversations` hit).
   - EC2 production container probe: profile shows `base_url=https://supportcenter.stellarix.space/v1`, `timeout=300.0`, `fallback_models=()`; `invoke_responses_text` returned successfully and the same turn is persisted in Hermes memory (session `c7a4d9de`), proving the EC2→ALB→Hermes path end to end.
   - EC2 main stack and `/production` public `/health` remain 200; existing ECS three-role services unaffected.
+
+## 2026-09-01 - Reproducible Transformers tooling runtime
+
+- Area or subsystem:
+  - Shared single-host and ECS Python model tooling dependencies.
+- Prompt or model versions:
+  - Prompt content, Prompt Release IDs, model names, providers, reasoning effort, timeouts, and fallback policies are unchanged.
+  - The effective dependency contract is fixed at `transformers==4.46.3`; the full single-host ML profile uses compatible `sentence-transformers==5.7.0` and CPU-only `torch==2.13.0+cpu`.
+- Reason:
+  - Separate pip transactions allowed Sentence Transformers 6.x to replace the explicit Transformers 4.46.3 pin. A single hash-verified dependency graph now rejects that conflict during lock generation instead of changing tooling during deployment.
+- Affected files or config:
+  - Python base/full requirements locks, ML direct requirements, both runtime Dockerfiles, lock tooling, build contracts, and operations documentation.
+- Expected behavior change:
+  - No intended prompt or model-output contract change. Dependency selection becomes deterministic, and CPU-only hosts stop carrying unused CUDA packages.
+- Verification:
+  - The full lock resolves Transformers 4.46.3, Tokenizers 0.20.3, Sentence Transformers 5.7.0, Accelerate 1.14.0, and PyTorch 2.13.0+cpu with SHA256 hashes.
+  - The built full image passed import checks for the Transformers pipeline and embedding runtime, plus `pip check`; the lightweight image retained Transformers 4.46.3 without torch.
