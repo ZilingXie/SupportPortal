@@ -2,10 +2,10 @@
  "schema_version": 2,
  "task_id": "p2-130",
  "title": "调查回合支持自定义 agent 端点路由（Hermes 调查 agent 接线一期）",
- "status": "active",
+ "status": "done",
  "owner": "zac",
  "summary": "engineer investigation reply 场景（_generate_investigation_reply_turn，scenario engineer_investigation_reply）新增端点路由能力：ENGINEER_INVESTIGATION_REPLY_BASE_URL / ENGINEER_INVESTIGATION_REPLY_API_KEY 设置时，OpenAI Responses 调用路由到自定义 OpenAI 兼容 agent 端点（本地 agent-infra 的 Hermes 调查 agent，http://127.0.0.1:8642/v1，记忆后端腾讯 Agent Memory）。自定义端点时 fallback_models 置空（模型级 fallback 是模型分级降级语义，agent 端点无分级且同端点重试会重复一次分钟级调查回合）；deepseek provider fallback 维持既有契约不变（失败降级在 message_meta.model_name 可见）。自定义端点忽略 Responses text.format json_schema 强制，故 prompt 层内联输出契约补偿：user prompt 尾部注入完整 json_schema（与 extra_payload 单一来源动态同步），要求最终回复为单个符合 schema 的 JSON 对象。默认（不设 env）行为逐字段不变。engineer_agent 主链、fail-closed（LlmInvocationError→确定性回退回合）、guardrail、Slack/Zendesk 投递链零改动。",
- "next_action": "实现、单测与真栈端到端验证已完成，待 finalize 合并、本地官方栈重启验证，以及生产侧（用户节奏）配置 env 灰度启用。",
+ "next_action": "代码、单测与真栈端到端验证已完成；生产灰度（Hermes 栈迁移 ECS + EC2 /production 三 env 注入 + 全链路实证）已由 p2-133 于 2026-09-01 完成并验证，无遗留动作。",
  "acceptance_criteria": [
   "不设 ENGINEER_INVESTIGATION_REPLY_BASE_URL 时 investigation profile 与现状逐字段一致（base_url None、fallback_models 含 mini、api_key 走 OPENAI_API_KEY）。",
   "设置 BASE_URL+API_KEY 时 profile 路由到自定义端点，fallback_models 为空。",
