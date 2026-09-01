@@ -1127,6 +1127,28 @@ def _generate_investigation_reply_turn(
         revision_note=_clean_text(revision_note),
         current_draft_customer_reply=_clean_text(investigation.get("draft_customer_reply")),
     )
+    if profile.base_url:
+        # Custom agent endpoints ignore the Responses text.format json_schema
+        # enforcement the official endpoint applies, so the output contract
+        # has to be restated at the prompt layer with the schema inline.
+        contract_schema = (
+            _investigation_reply_extra_payload()
+            .get("text", {})
+            .get("format", {})
+            .get("schema")
+        )
+        user_prompt = (
+            f"{user_prompt}\n\n"
+            "OUTPUT CONTRACT: this endpoint does not enforce structured output, "
+            "so follow this literally — your final reply must be exactly one "
+            "JSON object conforming to this JSON schema"
+            + (
+                f": {json.dumps(contract_schema, ensure_ascii=False)}"
+                if isinstance(contract_schema, dict)
+                else "."
+            )
+            + " No prose, no code fences, and no text before or after the JSON object."
+        )
 
     try:
         response = invoke_responses_text(

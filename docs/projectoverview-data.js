@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-08-31T12:04:02Z",
-  "source_base_commit": "531b128b02d7202f847597c16aac1e6e976f1100",
-  "registry_digest": "40b2f3753d63cc5af9b42f2df7ce064ae03cbc1a18d34711fb46ae05c9c2af4d",
+  "generated_at": "2026-09-01T02:44:31Z",
+  "source_base_commit": "0612d672e376afcfb15c3ea3ed00ebad7bbd32a5",
+  "registry_digest": "0085ed5643b13cccec388e58ab80d5b7ef8b09700bf2d10e56b6237508a7db98",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3007,6 +3007,44 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 8,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "engineer-investigation-reply",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "title": "Engineer Investigation Reply",
+      "goal": "在 Engineer Case 调查线程内生成工程师向的 AI 调查回合（状态推进、下一步请求、客户草稿与就绪度评估），支持官方 LLM 端点与自定义调查 agent 端点两种 provider。",
+      "acceptance_criteria": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Profile + factory unit tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_llm_factory.py -q",
+          "details": "38 passed（含新用例：agent endpoint 两态覆盖、agent 端点 output items 结构的 _responses_text 提取）。"
+        },
+        {
+          "type": "test",
+          "label": "Investigation flow regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_investigation_flow.py -q",
+          "details": "113 passed + 2 failed；2 个 multi_agent 用例在干净 root main 上同样失败（既有顺序污染，非本任务引入）。"
+        },
+        {
+          "type": "deployment",
+          "label": "End-to-end against live Hermes agent stack",
+          "command": "/tmp/p2_e2e_hermes_check.py（worktree 代码直调 _generate_investigation_reply_turn，env 指向 http://127.0.0.1:8642/v1 真栈）",
+          "details": "黑屏工单构造输入 → Hermes（gpt-5.6-luna+腾讯 Agent Memory 记忆）返回 state=active、message 语义正确的调查回合（要求 channel name、确认复现范围），message_meta.generation_status=succeeded；中间迭代两次（invalid_json→invalid_fields）由 prompt 层 schema 内联补偿解决；调查对话经 memory 插件自动 capture 进 L0（search/conversations 可检索）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/engineer_agent.py",
+        "backend/services/investigation_flow.py"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -8604,6 +8642,64 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "summary": "只读诊断确认 13166 已完成 App ID 收集，但 ECS Worker revision 7 缺少 ENABLEMENT_AUTOMATION_INTERNAL_EMAIL，持久化 payload 的 to 为空并以 enablement_internal_email_retry/missing to 转人工；用户要求不重放旧工单，并批准三条链路的独立 SSM JSON To/Cc 配置。"
         }
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-130",
+      "title": "调查回合支持自定义 agent 端点路由（Hermes 调查 agent 接线一期）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "engineer investigation reply 场景（_generate_investigation_reply_turn，scenario engineer_investigation_reply）新增端点路由能力：ENGINEER_INVESTIGATION_REPLY_BASE_URL / ENGINEER_INVESTIGATION_REPLY_API_KEY 设置时，OpenAI Responses 调用路由到自定义 OpenAI 兼容 agent 端点（本地 agent-infra 的 Hermes 调查 agent，http://127.0.0.1:8642/v1，记忆后端腾讯 Agent Memory）。自定义端点时 fallback_models 置空（模型级 fallback 是模型分级降级语义，agent 端点无分级且同端点重试会重复一次分钟级调查回合）；deepseek provider fallback 维持既有契约不变（失败降级在 message_meta.model_name 可见）。自定义端点忽略 Responses text.format json_schema 强制，故 prompt 层内联输出契约补偿：user prompt 尾部注入完整 json_schema（与 extra_payload 单一来源动态同步），要求最终回复为单个符合 schema 的 JSON 对象。默认（不设 env）行为逐字段不变。engineer_agent 主链、fail-closed（LlmInvocationError→确定性回退回合）、guardrail、Slack/Zendesk 投递链零改动。",
+      "next_action": "实现、单测与真栈端到端验证已完成，待 finalize 合并、本地官方栈重启验证，以及生产侧（用户节奏）配置 env 灰度启用。",
+      "acceptance_criteria": [
+        "不设 ENGINEER_INVESTIGATION_REPLY_BASE_URL 时 investigation profile 与现状逐字段一致（base_url None、fallback_models 含 mini、api_key 走 OPENAI_API_KEY）。",
+        "设置 BASE_URL+API_KEY 时 profile 路由到自定义端点，fallback_models 为空。",
+        "自定义端点返回的 Responses 输出（output items 数组含 function_call/message 混合形态）被 _responses_text 正确提取最终 message 文本。",
+        "真栈端到端：Hermes 端点产出合法调查回合 JSON（state/message/draft_customer_reply/reply_readiness/engineer_agent_state），message_meta.generation_status=succeeded；调查对话自动沉淀 L0 记忆。",
+        "Hermes 失败（超时/连接错/非法输出）走既有 fail-closed 回合，错误原因进 message_meta。",
+        "test_llm_profiles/test_llm_factory 全绿；test_investigation_flow 除 2 个既有失败（multi_agent 顺序污染，干净 main 同样失败）外全绿。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Profile + factory unit tests",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_llm_factory.py -q",
+          "details": "38 passed（含新用例：agent endpoint 两态覆盖、agent 端点 output items 结构的 _responses_text 提取）。"
+        },
+        {
+          "type": "test",
+          "label": "Investigation flow regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_investigation_flow.py -q",
+          "details": "113 passed + 2 failed；2 个 multi_agent 用例在干净 root main 上同样失败（既有顺序污染，非本任务引入）。"
+        },
+        {
+          "type": "deployment",
+          "label": "End-to-end against live Hermes agent stack",
+          "command": "/tmp/p2_e2e_hermes_check.py（worktree 代码直调 _generate_investigation_reply_turn，env 指向 http://127.0.0.1:8642/v1 真栈）",
+          "details": "黑屏工单构造输入 → Hermes（gpt-5.6-luna+腾讯 Agent Memory 记忆）返回 state=active、message 语义正确的调查回合（要求 channel name、确认复现范围），message_meta.generation_status=succeeded；中间迭代两次（invalid_json→invalid_fields）由 prompt 层 schema 内联补偿解决；调查对话经 memory 插件自动 capture 进 L0（search/conversations 可检索）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_profiles.py",
+        "backend/services/engineer_agent.py",
+        "backend/tests/test_llm_profiles.py",
+        "backend/tests/test_llm_factory.py"
+      ],
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "history": [
+        {
+          "at": "2026-09-01",
+          "event": "created",
+          "summary": "P2 一期接线：调查回合 provider 可路由到外部 Hermes 调查 agent 端点（agent-infra 本地栈，端点化架构），默认关闭、fail-closed 保留、/production 零影响。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply"
     },
     {
       "schema_version": 2,
