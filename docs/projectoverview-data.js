@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T03:47:06Z",
-  "source_base_commit": "df96b48efd77c5e2cfc590a40ffb2a453969e544",
-  "registry_digest": "6385db0caa3ec4dbe9d6a418bea77dca65f84e5daf6c954cbc880050c84da70f",
+  "generated_at": "2026-09-01T05:00:03Z",
+  "source_base_commit": "fa1701ce3a83bb52c72d78bf33fe08398ee2ad9b",
+  "registry_digest": "7a157791b8014697f369848c6a75a019e6d615df19e627ffa77cbff2b6435a86",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -8823,7 +8823,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将 ECS Production 只读看板重构为面向运营人员的 Ticket/Case 工作台：每个 Ticket 一条、默认隐藏 solved/closed、支持 Category/Subcategory/Ticket Status 与 Execution 条件组合筛选，并安全展示 Case、Conversation、待发布 Preview 和折叠的 Runtime audit。",
-      "next_action": "通过 finalize workflow 合并实现 PR 并验证 official local stack；随后构建三角色 immutable release、部署 ECS 并完成只读生产验收。",
+      "next_action": "修复首轮生产浏览器验收发现的 44px 点击目标缺口，通过 finalize workflow 合并后重建三角色 immutable release，并重新部署 ECS 完成最终只读验收。",
       "acceptance_criteria": [
         "默认列表每个 Zendesk Ticket 仅一条，按 Zendesk ticket.updated_at 倒序；缺失时回退 Account Case updated_at，且默认 active 过滤排除 solved/closed。",
         "Ticket Status、Category/Subcategory、Ticket ID、Execution ID、Execution Status 与 Event Type 可组合分页，total、facets 和当前页来自同一只读数据库快照。",
@@ -8884,6 +8884,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-01",
           "event": "implemented",
           "summary": "完成只读 Case Reader、Ticket-centric API、响应式 UI、脱敏与定向测试；owner review 和三视口浏览器验证通过，Task 保持 active 等待 PR、release、ECS 部署与生产验收。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "production_acceptance_followup",
+          "summary": "首轮 r20260901-fa1701c 已部署至 API :11、Route :12、Worker :11，运行健康与只读数据契约通过；真实生产浏览器发现 Advanced Filters、分页、移动端 Back/Source 点击目标低于 44px，Task 保持 active 进行最小 CSS 修复和重新发布。"
         }
       ]
     },
