@@ -37,6 +37,9 @@ from backend.services.account_suspension_automation import (
     closing_reply_facts,
     suspension_contact_confirmation,
 )
+from backend.services.account_verification_field_extractor import (
+    AccountVerificationFieldExtraction,
+)
 from backend.services.account_zendesk_comments import (
     ZendeskCommentSnapshotError,
     normalize_snapshot,
@@ -863,6 +866,21 @@ async def _process_account_customer_reply_impl(
     should_send_internal_email = False
     collected_fields: dict[str, Any] = dict(billing_ticket.get("collected_fields") or {})
     if automation_attempt is not None and automation_attempt.get("requires_human_review"):
+        extraction = automation_attempt.get("field_extraction")
+        if isinstance(extraction, AccountVerificationFieldExtraction):
+            failure_reason = f"account_verification_field_extraction_{extraction.status}"
+            billing_ticket = reconcile_automation_execution_failure(
+                billing_ticket,
+                reason_code=failure_reason,
+                extraction=extraction,
+                context=dict(
+                    automation_attempt.get("automation_context")
+                    or prior_automation_context
+                ),
+            )
+            billing_ticket["internal_email_send_reason"] = (
+                f"field_extraction_{extraction.status}"
+            )
         automation_attempt = None
         await _sync(repository.cancel_pending_account_reply_jobs, client_ticket_id, updated_at=timestamp)
 

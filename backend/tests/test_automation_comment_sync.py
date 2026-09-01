@@ -10,6 +10,9 @@ from fastapi.testclient import TestClient
 import backend.services.automation_account_reply_sync as reply_module
 from backend.automation_ecs_route_worker import _route_payload
 from backend.automation_production_runtime import create_app
+from backend.services.account_verification_field_extractor import (
+    AccountVerificationFieldExtraction,
+)
 from backend.services.support_router import SupportRouteDecision
 
 
@@ -1052,6 +1055,134 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         self.assertEqual(outcome["execution_action"], "rag")
         self.assertEqual(len(created_jobs), 1)
         self.assertEqual(created_jobs[0]["reply_intent"], "rag_fallback_answer")
+
+    def test_fraud_extraction_failure_enters_human_review_without_rag(self):
+        import asyncio
+
+        for extraction_status in ("uncertain", "sensitive"):
+            with self.subTest(extraction_status=extraction_status):
+                account_case = {
+                    **_FakeRepository.DEFAULT_CASE,
+                    "route_status": "automated",
+                    "route": "fraud_account",
+                    "execution_action": "fraud_account",
+                    "automation_handler": "billing",
+                    "route_classification": {"handler_binding_status": "active"},
+                    "collected_fields": {"account_type": "company"},
+                    "missing_fields": ["office_address"],
+                    "internal_email_send_status": "not_ready",
+                    "automation_context": {"follow_up_count": 1},
+                }
+                ticket = {
+                    "ticket_id": "123",
+                    "status": "open",
+                    "subject": "Fraud review",
+                    "customer_id": "customer@example.com",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "Please provide your office address.",
+                            "meta": {"asked_field_keys": ["office_address"]},
+                        }
+                    ],
+                }
+                extraction = AccountVerificationFieldExtraction(
+                    status=extraction_status,
+                    collected_fields={"account_type": "company"},
+                    missing_fields=[],
+                    grounding_status="blocked" if extraction_status == "sensitive" else "failed",
+                    failure_type=(
+                        "sensitive_payment_data"
+                        if extraction_status == "sensitive"
+                        else "llm_extraction_failed"
+                    ),
+                )
+                failed_attempt = {
+                    "customer_reply": "",
+                    "missing_fields": [],
+                    "collected_fields": dict(extraction.collected_fields),
+                    "internal_email_payload": None,
+                    "internal_email_to_send": None,
+                    "internal_email_send_status": "not_applicable",
+                    "internal_email_send_reason": "",
+                    "requires_human_review": True,
+                    "field_extraction": extraction,
+                    "prompt_snapshots": {},
+                    "automation_context": {"follow_up_count": 1},
+                }
+                saved_cases: list[dict] = []
+                cancelled: list[str] = []
+                repository = _FakeRepository()
+                repository.get_account_case = lambda _case_id: dict(account_case)
+                repository.get_account_case_by_ticket_id = lambda _ticket_id: dict(account_case)
+                repository.get_ticket = lambda _ticket_id: ticket
+                repository.save_ticket = lambda saved, new_messages=None: None
+                repository.save_account_case = lambda saved: saved_cases.append(dict(saved))
+                repository.cancel_pending_account_reply_jobs = (
+                    lambda ticket_id, updated_at=None: cancelled.append(ticket_id)
+                )
+
+                with patch.object(
+                    reply_module,
+                    "_apply_ownership_gate",
+                    return_value=True,
+                ), patch.object(
+                    reply_module,
+                    "_build_verification_attempt",
+                    return_value=failed_attempt,
+                ), patch.object(
+                    reply_module,
+                    "try_rag_fallback_answer",
+                    return_value=NS(kind="answer", answer="must not run", references=()),
+                ) as rag_fallback, patch.object(
+                    reply_module,
+                    "_create_reply_job",
+                    return_value={"job_id": "unexpected", "status": "queued", "payload": {}},
+                ) as create_reply_job:
+                    outcome = asyncio.run(
+                        reply_module._process_account_customer_reply_impl(
+                            repository=repository,
+                            billing_ticket_id="AC-123",
+                            message="my office is in shanghai",
+                            source="zendesk-comment",
+                            message_source_id=f"comment-{extraction_status}",
+                            precomputed_route={
+                                "route_family": "automated",
+                                "execution_action": "fraud_account",
+                                "route": "fraud_account",
+                                "scope_label": "account",
+                                "reason": "active Fraud reply",
+                                "confidence": 0.99,
+                                "matched_signals": [],
+                                "semantic_intent": "account.fraud",
+                                "automation_eligibility": "eligible",
+                                "policy_decision": "automate",
+                                "not_automated_reason": None,
+                                "risk_flags": [],
+                                "evidence_spans": [],
+                                "router_source": "test",
+                                "classification": {"intent_class": "conversation"},
+                            },
+                        )
+                    )
+
+                rag_fallback.assert_not_called()
+                create_reply_job.assert_not_called()
+                self.assertEqual(outcome["automation_status"], "human_review_required")
+                self.assertEqual(
+                    outcome["execution_reason_code"],
+                    f"account_verification_field_extraction_{extraction_status}",
+                )
+                self.assertEqual(outcome["route"], "fraud_account")
+                self.assertEqual(outcome["route_status"], "automated")
+                self.assertEqual(
+                    outcome["route_classification"]["handler_binding_status"],
+                    "human_review",
+                )
+                self.assertIsNone(outcome["internal_email_payload"])
+                self.assertEqual(outcome["internal_email_send_status"], "not_applicable")
+                self.assertEqual(cancelled, ["123"])
+                self.assertTrue(saved_cases)
 
     def test_split_reply_rag_failure_escalates_without_creating_reply_job(self):
         import asyncio
