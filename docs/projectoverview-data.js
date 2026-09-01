@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T02:44:31Z",
-  "source_base_commit": "0612d672e376afcfb15c3ea3ed00ebad7bbd32a5",
-  "registry_digest": "0085ed5643b13cccec388e58ab80d5b7ef8b09700bf2d10e56b6237508a7db98",
+  "generated_at": "2026-09-01T03:12:53Z",
+  "source_base_commit": "2128590b69bbeb9756a4ff5f50c426db1b731ebc",
+  "registry_digest": "0907fe61279eea1783f94bf628045c4a76ab1ccd9e6d202372d4c0c8ef8481da",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -816,6 +816,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "确认参数值不进入源码、日志或 Manifest；SSM GetParameters 仅加入 execution role，三个参数仅注入 Worker；历史 Ticket 13166/13157 无重放路径；review 后无未处理 correctness/security finding。"
         },
         {
+          "type": "decision",
+          "label": "Production Case 13176 read-only diagnosis",
+          "command": "ECS production DB lifecycle/job/delivery ledger + CloudWatch + Zendesk provider readback",
+          "details": "comment.created 已完成，app_id 已收集、missing_fields=[]、内部邮件 status=sent；submission_confirmation job 在 automation_persona 合同校验四次失败后进入 manual_attention，Case=human_review_required；无新公开 delivery，Zendesk 仅新增私有内部评论。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement deterministic contract focused regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py -k 'enablement_submission' -q",
+          "details": "6 passed + 5 subtests；覆盖完全遗漏两项时一次调用后补齐、只缺一项时只补一项、两项都存在时不重复、24 小时否定句与 weekday 问句仍四次失败并保留原合同错误码。"
+        },
+        {
+          "type": "test",
+          "label": "Persona, Worker, and version-fence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_worker.py -q",
+          "details": "185 passed + 50 subtests；Account AI 四次预算、v19 version fence、Worker fail-closed/publication gates 零回归。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement intake and ECS compatibility regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py -q",
+          "details": "276 passed + 52 subtests；字段提取、内部邮件、完成/未完成分类、comment sync、Account intake 与 ECS Worker 零回归。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -922,8 +946,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 26,
-      "done_count": 14,
+      "task_count": 27,
+      "done_count": 15,
       "blocked_count": 0
     },
     {
@@ -8700,6 +8724,79 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "engineer-workspace",
       "function_id": "engineer-investigation-reply"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-131",
+      "title": "Enablement 提交确认的固定 SLA 与变更窗口改为确定性装配",
+      "status": "done",
+      "owner": "zac",
+      "summary": "Production Case 13176 在客户补齐 App ID 后成功发送 Enablement 内部邮件，但 submission_confirmation Persona 连续四次遗漏或未满足固定的 up to 24 hours SLA 与 Monday-Friday 变更窗口合同，reply job 转 manual_attention、Case 升级 Human Review，未生成客户公开回复。修复将缺失的固定 SLA/窗口子句在应用层确定性补齐，再执行现有最终合同、ownership、签名和 forbidden-value 校验；模型已生成的有效子句保留，否定或问句形式仍 fail closed，其他 intent 不变。13176 不重放、不补发，使用新工单验收。",
+      "next_action": "构建并部署包含 automation-persona-v19 的新 ECS Production release，随后由用户创建新 Case 验证 Enablement submission_confirmation 可一次生成客户回复；Case 13176 保持不重放。",
+      "acceptance_criteria": [
+        "Enablement submission_confirmation 的模型正文完全遗漏 SLA 与变更窗口时，应用在第一次模型调用后追加 canonical 句并通过现有最终合同校验。",
+        "模型已包含正向 24 小时或 Monday-Friday/weekday 子句时只补缺失部分，不重复已有合同事实。",
+        "否定、问题形式或其他非正向的 24 小时/变更窗口子句不会被确定性补全文案掩盖，仍以 automation_persona_enablement_submission_contract_failed fail closed。",
+        "automation-persona version fence 前进，未发布旧 payload 使用新装配行为重新渲染；其他 Account intent、投递与内部邮件行为不变。",
+        "Case 13176 不重放、不补发、不修改；通过新的生产测试工单完成后续验收。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Production Case 13176 read-only diagnosis",
+          "command": "ECS production DB lifecycle/job/delivery ledger + CloudWatch + Zendesk provider readback",
+          "details": "comment.created 已完成，app_id 已收集、missing_fields=[]、内部邮件 status=sent；submission_confirmation job 在 automation_persona 合同校验四次失败后进入 manual_attention，Case=human_review_required；无新公开 delivery，Zendesk 仅新增私有内部评论。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement deterministic contract focused regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py -k 'enablement_submission' -q",
+          "details": "6 passed + 5 subtests；覆盖完全遗漏两项时一次调用后补齐、只缺一项时只补一项、两项都存在时不重复、24 小时否定句与 weekday 问句仍四次失败并保留原合同错误码。"
+        },
+        {
+          "type": "test",
+          "label": "Persona, Worker, and version-fence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_worker.py -q",
+          "details": "185 passed + 50 subtests；Account AI 四次预算、v19 version fence、Worker fail-closed/publication gates 零回归。"
+        },
+        {
+          "type": "test",
+          "label": "Enablement intake and ECS compatibility regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py -q",
+          "details": "276 passed + 52 subtests；字段提取、内部邮件、完成/未完成分类、comment sync、Account intake 与 ECS Worker 零回归。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_worker.py",
+        "docs/prompt_change_log.md"
+      ],
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "history": [
+        {
+          "at": "2026-09-01",
+          "event": "created",
+          "summary": "Case 13176 只读诊断定位：固定 SLA/窗口事实已在 reply_facts 与 Prompt 中，但四次随机 Persona 输出仍未通过确定性合同；用户批准改为应用层装配并要求用新工单测试。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "implemented",
+          "summary": "automation-persona-v19 在最终 Account contract 前确定性补齐缺失的 24 小时 SLA 与 Monday-Friday 窗口；有效模型子句不重复，否定/问句仍 fail closed；核心与 ECS 兼容回归全绿。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "completed",
+          "summary": "实现与本地回归完成；生产生效仍依赖后续构建并部署包含 automation-persona-v19 的 ECS release，再由新工单完成业务验收。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
