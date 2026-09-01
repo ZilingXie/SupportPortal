@@ -85,6 +85,48 @@ def test_worker_receives_account_mail_rag_and_delivery_contracts() -> None:
     assert 'value = var.zendesk_side_effects_enabled ? "1" : "0"' in ecs
 
 
+def test_pilot_credentials_mount_and_iam_are_worker_only() -> None:
+    variables = _read("variables.tf")
+    ecs = _read("ecs.tf")
+    iam = _read("iam.tf")
+    api_task = ecs.split('resource "aws_ecs_task_definition" "api" {', 1)[1].split(
+        'resource "aws_ecs_task_definition" "route" {', 1
+    )[0]
+    route_task = ecs.split('resource "aws_ecs_task_definition" "route" {', 1)[1].split(
+        'resource "aws_ecs_task_definition" "worker" {', 1
+    )[0]
+    worker_task = ecs.split('resource "aws_ecs_task_definition" "worker" {', 1)[1].split(
+        'resource "aws_ecs_service" "worker" {', 1
+    )[0]
+    for name in ("pilot_efs_file_system_id", "pilot_efs_access_point_id"):
+        assert f'variable "{name}"' in variables
+        assert name in worker_task
+        assert name not in api_task
+        assert name not in route_task
+    for value in ("pilot-creds", "/var/lib/pilot", "XDG_CONFIG_HOME", "PILOT_BIN", "/app/bin/pilot"):
+        assert value in worker_task
+        assert value not in api_task
+        assert value not in route_task
+    assert 'data "aws_iam_policy_document" "ecs_task_pilot_efs"' in iam
+    assert 'resource "aws_iam_role_policy" "ecs_task_pilot_efs"' in iam
+    assert 'sid     = "MountPilotCredentials"' in iam
+    assert 'actions = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]' in iam
+    assert 'task_role_arn            = aws_iam_role.ecs_worker_task.arn' in worker_task
+    assert 'task_role_arn            = aws_iam_role.ecs_worker_task.arn' not in api_task
+    assert 'task_role_arn            = aws_iam_role.ecs_worker_task.arn' not in route_task
+    pilot_policy = iam.split(
+        'resource "aws_iam_role_policy" "ecs_task_pilot_efs"', 1
+    )[1].split('data "aws_iam_policy_document" "github_oidc_assume"', 1)[0]
+    assert "role   = aws_iam_role.ecs_worker_task.id" in pilot_policy
+    assert "role   = aws_iam_role.ecs_task.id" not in pilot_policy
+    assert 'variable = "elasticfilesystem:AccessPointArn"' in iam
+    pass_roles = iam.split('sid     = "PassEcsRoles"', 1)[1].split("  }", 1)[0]
+    assert "aws_iam_role.ecs_worker_task.arn" in pass_roles
+    assert "graph-token-cache" not in iam.split(
+        'data "aws_iam_policy_document" "ecs_task_pilot_efs"', 1
+    )[1]
+
+
 def test_internal_email_recipient_parameters_are_worker_only() -> None:
     locals_source = _read("locals.tf")
     iam_source = _read("iam.tf")

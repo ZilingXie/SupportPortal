@@ -52,6 +52,7 @@ from backend.services.automation_account_intake import (
     _create_reply_job,
     _record_execution_failure,
     _reply_facts,
+    _run_enablement_archer_workflow,
     _run_internal_email_delivery,
 )
 from backend.services.automation_routing import is_registered_automation
@@ -922,11 +923,23 @@ async def _process_account_customer_reply_impl(
             route_classification=current_classification,
             automation_context=merged_automation_context,
         )
+        active_handler = str(billing_ticket.get("automation_handler") or "").strip()
+        if active_handler == "enablement" and automation_attempt.get("internal_email_to_send"):
+            current_classification["handler_binding_status"] = "active"
+            billing_ticket["route_classification"] = current_classification
+            billing_ticket["internal_email_payload"] = None
         same_automation = (
             prior_action == str(billing_ticket.get("execution_action") or billing_ticket.get("route") or "").strip()
             and prior_handler == str(billing_ticket.get("automation_handler") or "").strip()
         )
         prior_send_status = str(billing_ticket.get("internal_email_send_status") or "").strip()
+        prior_archer = prior_automation_context.get("enablement_archer")
+        archer_recoverable = (
+            active_handler == "enablement"
+            and isinstance(prior_archer, dict)
+            and str(prior_archer.get("outcome") or "").strip()
+            in {"appid_invalid", "project_not_found"}
+        )
         should_send_internal_email = not same_automation or prior_send_status in {
             "",
             "not_ready",
@@ -934,14 +947,50 @@ async def _process_account_customer_reply_impl(
             "retry",
             "failed",
             "skipped_config_missing",
-        }
+        } or archer_recoverable
         if should_send_internal_email:
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
+            if active_handler == "enablement" and automation_attempt.get("internal_email_to_send"):
+                billing_ticket["internal_email_send_status"] = "archer_pending"
     billing_ticket["updated_at"] = timestamp
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
     await _sync(repository.save_ticket, canonical_ticket, new_messages=new_messages)
     await _sync(repository.save_account_case, billing_ticket)
+
+    if (
+        should_send_internal_email
+        and automation_attempt
+        and automation_attempt.get("internal_email_to_send")
+        and str(billing_ticket.get("automation_handler") or "").strip() == "enablement"
+    ):
+        try:
+            archer_result, billing_ticket, reply_job = await _run_enablement_archer_workflow(
+                repository=repository,
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                fallback_email_payload=dict(automation_attempt["internal_email_to_send"]),
+                persona_assignment=persona_assignment,
+                processing_profile=processing_profile,
+                trigger_message_created_at=timestamp,
+            )
+        except Exception as exc:
+            billing_ticket = await _record_execution_failure(
+                repository=repository,
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                handler="enablement",
+                stage="archer_reply_job",
+                reason_code="account_reply_job_creation_failed",
+                detail=exc,
+            )
+            reply_job = None
+        return {
+            **billing_ticket,
+            "messages": canonical_ticket.get("messages", []),
+            "support_ticket_status": canonical_ticket.get("status"),
+            **_reply_job_public(reply_job),
+        }
 
     if should_send_internal_email and automation_attempt and automation_attempt.get("internal_email_to_send"):
         active_handler = str(billing_ticket.get("automation_handler") or "").strip()

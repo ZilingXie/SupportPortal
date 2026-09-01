@@ -21,6 +21,98 @@ from backend.services.billing_automation import build_billing_automation_result
 
 
 class AutomationPersonaTests(unittest.TestCase):
+    def _archer_facts(self, intent: str, outcome: str) -> dict:
+        facts = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent=intent,
+            known_information={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "media rele",
+                "archer_outcome": outcome,
+                **(
+                    {"region": "oversea", "max_subscribe_load": 50}
+                    if outcome == "enabled"
+                    else {}
+                ),
+            },
+            missing_information=[] if outcome == "enabled" else ["app_id"],
+            customer_name="Ada Customer",
+        )
+        if outcome == "enabled":
+            facts["completion_acknowledgement"] = "patience"
+        return facts
+
+    def test_archer_facts_are_canonical_and_forbid_appid(self) -> None:
+        facts = self._archer_facts("enablement_archer_enabled", "enabled")
+        self.assertEqual(
+            facts["known_information"],
+            {
+                "archer_outcome": "enabled",
+                "max_subscribe_load": 50,
+                "region": "oversea",
+                "requested_feature_name": "Media Relay",
+            },
+        )
+        self.assertEqual(facts["customer_first_name"], "Ada")
+        self.assertIn("abcdefabcdefabcdefabcdefabcdefab", facts["_forbidden_values"])
+
+    def test_archer_success_contract_requires_current_configuration_and_closure(self) -> None:
+        facts = self._archer_facts("enablement_archer_enabled", "enabled")
+        valid = (
+            "Thank you for your patience. Media Relay is already enabled for the oversea region with a maximum "
+            "subscribe load of 50. This case will be archived now. If you have further questions, you can open "
+            "a new ticket."
+        )
+        normalized, close = validate_account_reply_contract(valid, facts, close_after_publish=True)
+        self.assertTrue(close)
+        self.assertEqual(normalized["reply_intent"], "enablement_archer_enabled")
+        for invalid in (
+            valid.replace("already enabled", "will be enabled"),
+            valid.replace("oversea region", "configured region"),
+            valid.replace("subscribe load of 50", "subscribe load"),
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(AutomationPersonaError):
+                    validate_account_reply_contract(invalid, facts, close_after_publish=True)
+
+    def test_archer_recoverable_contracts_request_a_replacement_without_overclaim(self) -> None:
+        invalid_facts = self._archer_facts("enablement_appid_invalid", "appid_invalid")
+        not_found_facts = self._archer_facts("enablement_appid_not_found", "project_not_found")
+        validate_account_reply_contract(
+            "The App ID format is invalid. Please provide the correct 32-character App ID.",
+            invalid_facts,
+        )
+        validate_account_reply_contract(
+            "I could not find a matching project for this App ID. Please verify and resend the App ID.",
+            not_found_facts,
+        )
+        for facts, text in (
+            (invalid_facts, "The App ID is invalid. Please send a 32-character App ID; Media Relay is enabled."),
+            (not_found_facts, "No matching project was found. Please verify the App ID. This case is closing."),
+        ):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(AutomationPersonaError, "archer_error_overclaim"):
+                    validate_account_reply_contract(text, facts)
+
+    def test_archer_persona_prompt_keeps_v19_and_excludes_appid(self) -> None:
+        facts = self._archer_facts("enablement_appid_invalid", "appid_invalid")
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="The App ID format is invalid. Please provide the correct 32-character App ID.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and concise"}},
+                account_scope=True,
+            )
+        self.assertEqual(result.prompt_version, "automation-persona-v19")
+        self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
+
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
         facts = build_automation_reply_facts(
             behavior="enablement",

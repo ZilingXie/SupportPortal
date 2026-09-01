@@ -52,6 +52,24 @@ def test_ecs_worker_retains_vendored_ragflow_skill() -> None:
     assert "COPY backend /tmp/backend-src/backend" in dockerfile
 
 
+def test_only_ecs_worker_contains_pinned_pilot_and_archer_skill() -> None:
+    dockerfile = (ROOT / "backend/Dockerfile.automation").read_text(encoding="utf-8")
+    api = _role_block("ecs-api", "ecs-route")
+    route = _role_block("ecs-route", "ecs-worker")
+    worker = _role_block("ecs-worker", "production")
+    skill_root = ROOT / "backend/skills/archer-cross-channel-hosting"
+    installer = (ROOT / "backend/scripts/install_pilot.py").read_text(encoding="utf-8")
+    assert (skill_root / "SKILL.md").is_file()
+    assert (skill_root / "scripts/enable_cross_channel_hosting.py").is_file()
+    assert "cbc83b6ddb7be5da60ae22d989482e7ad14b7cf7c7e62cbef375538b0ec505b0" in installer
+    assert 'test "${AUTOMATION_IMAGE_ROLE}" != "ecs-worker" ||' in dockerfile
+    assert "/app/backend/skills/archer-cross-channel-hosting /app/bin/pilot" in api
+    assert "/app/backend/skills/archer-cross-channel-hosting /app/bin/pilot" in route
+    assert "/app/backend/skills/archer-cross-channel-hosting" not in worker
+    assert "/app/bin/pilot" not in worker
+    assert "self-update" not in installer.lower()
+
+
 def test_ecs_entrypoint_exposes_only_three_long_running_roles() -> None:
     entrypoint = (ROOT / "deployment/automation_ecs_entrypoint.sh").read_text(encoding="utf-8")
     assert "backend.automation_ecs_api:create_app --factory" in entrypoint

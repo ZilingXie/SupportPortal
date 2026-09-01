@@ -89,6 +89,58 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。
 
+## Enablement Archer Worker 发布门禁
+
+包含 `p2-134` 的 Worker 还必须设置：
+
+```text
+PILOT_BIN=/app/bin/pilot
+XDG_CONFIG_HOME=/var/lib/pilot
+pilot-creds EFS volume -> /var/lib/pilot (read/write)
+```
+
+Pilot EFS file system/access point 与 `graph-token-cache` 独立。Worker 使用专用 task
+role；该 role 保留原有 Graph EFS 权限，并增加一条通过 Access Point ARN 条件仅覆盖
+Pilot EFS/AP 的 `elasticfilesystem:ClientMount` 与
+`elasticfilesystem:ClientWrite` policy；不能把现有 graph-token-cache policy 当作
+已授权证据。
+
+发布前先只读回读当前 Production Worker task definition、task role 和 inline
+policies，保存现有 revision 作为 rollback 目标。生成新 revision 时完整保留所有
+现有 environment、secret、Graph EFS volume/mount、execution role、task-role 权限、
+CPU、memory、network mode 和 logging 配置；task role ARN 切换为 Terraform 创建的
+Worker 专用 role，并追加 Pilot 环境、volume 与 mount。注册新 revision 后不要立即
+更新 service。API/Route 继续使用原共享 task role，不得获得 Pilot policy。
+
+使用挂载新 revision 的临时 task，并通过 ECS Exec 交互式 shell 执行 Pilot deposit。
+cookie 只能通过 Pilot 的交互式 deposit 流程进入 `/var/lib/pilot`；不得放入 ECS
+command override、task definition、environment、日志、shell history、仓库或发布
+记录。deposit 完成后退出交互 shell。
+
+仍在临时 task 内，使用一个经过批准且不含客户数据的内部 App ID 执行只读 Archer
+GET probe；只允许调用项目检查/精确搜索接口，不允许 POST 或 PUT。确认 Pilot 登录
+有效、响应可解析且 EFS 中的凭证在新进程可读。probe 失败时立即停止，不得更新
+Worker service，也不得通过修改凭证边界、关闭校验或把 cookie 注入 task override
+来绕过。
+
+probe 成功后才将 Production Worker service 更新到新 revision，并等待稳定
+`running=1 / desired=1 / pending=0`。逐项回读实际 image digest、Pilot mount、task
+role policy、Worker heartbeat、CloudWatch、`health/live`、`health/release`、
+`health/ready`，并确认旧 EC2 `/production` 仍返回 200。任何 provenance mismatch、
+持续错误或 heartbeat 过期都应回滚到发布前 revision。
+
+业务验收只使用全新工单：
+
+1. 有效 App ID：Archer 写后读回为 `status=1, region=2, maxSubscribeLoad=50`；Persona
+   发布公开成功回复，Zendesk solved，execution completed，且没有 Enablement 内部邮件。
+2. 非法格式：公开回复要求正确的 32 位 App ID，Case 保持 open；客户提交更正值后
+   使用新值重新执行。
+3. 查无项目：公开回复要求核对/重发 App ID，Case 保持 open；客户提交更正值后使用
+   新值重新执行。
+
+失败路径仅在自然发生时观察，不得人为破坏 Pilot 凭证。生产验收完成前不得重放或
+修改历史 Case，不得把 `p2-134` 标记 done，也不得把功能移入主功能清单“已完成”。
+
 ## Schema Bootstrap
 
 用一次性 task和 migration身份执行：

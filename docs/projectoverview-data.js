@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T08:47:33Z",
-  "source_base_commit": "845134f0a0efdcf8a82524eab4010936bb3cabbe",
-  "registry_digest": "aaded2b3ec394253b60568f1ad655e0dfc593998a5491c337568d977329b64b5",
+  "generated_at": "2026-09-01T09:36:02Z",
+  "source_base_commit": "0e114d872e5cc0bb62ecd95c23aab58ae76201ec",
+  "registry_digest": "1c514415a693f940d96c7c25bf2968d1fd9705d2938792bac77f0a5058df89f1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -841,6 +841,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Archer、Account、Persona、Human Review 与 Worker 聚焦回归",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_enablement_archer_executor.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_human_review_escalation.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_account_intake.py backend/tests/test_worker.py",
+          "details": "刷新至 origin/main@69e9836 后 448 passed、70 subtests passed；仅 4 个既有 FastAPI on_event deprecation warnings。覆盖四 outcome、严格首行/退出码、超时进程组、脱敏、ownership gate、首次 intake、客户更正 App ID、Human Review 邮件 fallback、未知邮件不重发、nested comment execution 状态、Persona 合同与 close 派生。"
+        },
+        {
+          "type": "test",
+          "label": "最终三角色 linux/amd64 镜像检查",
+          "command": "podman build --platform linux/amd64 -f backend/Dockerfile.automation --build-arg AUTOMATION_IMAGE_ROLE=\u003cecs-api|ecs-route|ecs-worker>；podman inspect/run role checks",
+          "details": "Worker bb04b037...、API 117329f0...、Route 13a9fbb2... 均为 amd64；Worker 中 /app/bin/pilot 可执行、Skill 存在且 executor/intent 可导入；API/Route 中 Pilot 与 Archer Skill 均不存在。Pilot archive 固定 SHA-256 cbc83b6d...。"
+        },
+        {
+          "type": "test",
+          "label": "Terraform 与项目记录门禁",
+          "command": "Terraform 1.9.8 arm64 container fmt -check -recursive、init -backend=false、validate；Project Overview write/check；feature-list verifier",
+          "details": "Terraform 配置 valid；Worker 使用专用 task role，继承 Graph EFS 权限且 Pilot policy 通过 AccessPointArn 条件限权，API/Route 无 Pilot mount 或权限。Project Overview 与功能清单校验通过。"
+        },
+        {
+          "type": "decision",
+          "label": "review-implemented-plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "修复 recoverable Case 的 not_applicable 前态不会重新调用 Archer、共享 task role 泄漏 Pilot EFS 权限、executor 非严格首行与 JSON/Bearer 凭据脱敏不足；修复后聚焦套件与 Terraform validate 通过，无剩余 correctness/security finding。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -946,7 +970,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 27,
+      "task_count": 28,
       "done_count": 15,
       "blocked_count": 0
     },
@@ -9117,6 +9141,84 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-134",
+      "title": "Enablement Media Relay 接入 Archer 自动开启",
+      "status": "active",
+      "owner": "zac",
+      "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona-v19 reply-job 生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
+      "next_action": "由用户执行 Production Pilot deposit、只读 Archer GET probe、Worker service rollout，并用有效 App ID、非法格式、查无项目三类全新工单完成验收；通过前保持 Task active。",
+      "acceptance_criteria": [
+        "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
+        "Archer executor 仅返回 enabled、appid_invalid、project_not_found、enable_failed；退出码与首行双重校验，330 秒总超时会终止脚本进程组，返回 detail 已移除 App ID、凭据类值和控制字符并限长。",
+        "首次 intake 与客户 comment 路径均在 Case 持久化及 Zendesk ownership gate 成功后调用 Archer，且不会持久化可被旧 poller 发送的 Enablement 邮件 payload。",
+        "enabled 创建 enablement_archer_enabled closing reply job；appid_invalid/project_not_found 清除旧 App ID、恢复 missing_fields=[app_id] 并创建对应 open reply intent；客户可提交更正值。",
+        "enable_failed 先执行既有 Human Review escalation，再通过原幂等 delivery claim 发送带脱敏原因的 Enablement 内部邮件；outcome_unknown 只保留在邮件 ledger 且禁止自动重发，Case 与 processing execution 均为 human_review。",
+        "automation-persona-v19 为三个新 intent 生成受合同约束的客户回复；成功 facts 仅含 canonical Media Relay、oversea、max_subscribe_load=50、Archer outcome 和客户姓名，所有 intent 均禁止原始 App ID，Persona 耗尽时不发布并转 Human Review。",
+        "Terraform 仅为 Worker 配置 pilot EFS Access Point、/var/lib/pilot mount、PILOT_BIN/XDG_CONFIG_HOME 及独立 ClientMount/ClientWrite task-role 权限；API/Route 不获得挂载或权限。",
+        "用户 runbook 保留现有 task definition 环境、secret、graph EFS 和 role，先安全 deposit 与只读 Archer GET probe，probe 成功后才 rollout，并验证 1/1/0、digest、挂载、heartbeat、CloudWatch、health 与 EC2 backup。",
+        "生产验收仅使用全新工单：有效 App ID 自动开启并在公开回复读回后 solved；非法格式与查无项目保持 open 并接受更正；失败仅自然观察，不破坏凭证。",
+        "历史 Case、既有 outcome_unknown delivery、EC2 /production、非 Media Relay Enablement 和 n8n 请求契约不重放、不修改。"
+      ],
+      "blockers": [
+        "ECS Production Pilot 凭证 deposit、只读 probe、Worker service rollout 与真实工单验收由用户执行。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Archer、Account、Persona、Human Review 与 Worker 聚焦回归",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_enablement_archer_executor.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_human_review_escalation.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_account_intake.py backend/tests/test_worker.py",
+          "details": "刷新至 origin/main@69e9836 后 448 passed、70 subtests passed；仅 4 个既有 FastAPI on_event deprecation warnings。覆盖四 outcome、严格首行/退出码、超时进程组、脱敏、ownership gate、首次 intake、客户更正 App ID、Human Review 邮件 fallback、未知邮件不重发、nested comment execution 状态、Persona 合同与 close 派生。"
+        },
+        {
+          "type": "test",
+          "label": "最终三角色 linux/amd64 镜像检查",
+          "command": "podman build --platform linux/amd64 -f backend/Dockerfile.automation --build-arg AUTOMATION_IMAGE_ROLE=\u003cecs-api|ecs-route|ecs-worker>；podman inspect/run role checks",
+          "details": "Worker bb04b037...、API 117329f0...、Route 13a9fbb2... 均为 amd64；Worker 中 /app/bin/pilot 可执行、Skill 存在且 executor/intent 可导入；API/Route 中 Pilot 与 Archer Skill 均不存在。Pilot archive 固定 SHA-256 cbc83b6d...。"
+        },
+        {
+          "type": "test",
+          "label": "Terraform 与项目记录门禁",
+          "command": "Terraform 1.9.8 arm64 container fmt -check -recursive、init -backend=false、validate；Project Overview write/check；feature-list verifier",
+          "details": "Terraform 配置 valid；Worker 使用专用 task role，继承 Graph EFS 权限且 Pilot policy 通过 AccessPointArn 条件限权，API/Route 无 Pilot mount 或权限。Project Overview 与功能清单校验通过。"
+        },
+        {
+          "type": "decision",
+          "label": "review-implemented-plan owner review",
+          "command": "review-implemented-plan skill",
+          "details": "修复 recoverable Case 的 not_applicable 前态不会重新调用 Archer、共享 task role 泄漏 Pilot EFS 权限、executor 非严格首行与 JSON/Bearer 凭据脱敏不足；修复后聚焦套件与 Terraform validate 通过，无剩余 correctness/security finding。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/enablement_archer_executor.py",
+        "backend/services/automation_account_intake.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/automation_persona.py",
+        "backend/Dockerfile.automation",
+        "infra/terraform/production",
+        "docs/deploy_automation_ecs_release.md"
+      ],
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-01",
+          "event": "created",
+          "summary": "Owner 批准 Enablement Media Relay 接入 Archer 自动开启；原计划使用 p2-133，但该编号已被当前 main 的 Hermes ECS 任务占用，因此采用下一个未占用编号 p2-134，功能范围与发布边界不变。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "implementation_verified",
+          "summary": "实现、owner review、刷新 main 后 448 项聚焦回归、三角色最终 amd64 镜像与 Terraform validate 通过；Task 保持 active，等待用户执行 Production Pilot deposit、只读 probe、Worker rollout 与三类全新工单验收。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -14433,6 +14535,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [
+        "Enablement 的 Media Relay 请求会通过 Archer 自动开启跨频道连麦，并根据执行结果回复客户或转 Human Review。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]

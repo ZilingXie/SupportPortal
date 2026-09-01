@@ -3738,6 +3738,36 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_account_case.assert_not_called()
         repository.save_account_reply_job.assert_not_called()
 
+    def test_enablement_delivery_retry_does_not_resend_unknown_archer_fallback(self) -> None:
+        account_case = {
+            "account_case_id": "AC-ARCHER-UNKNOWN",
+            "client_ticket_id": "12571",
+            "automation_handler": "enablement",
+            "automation_status": "human_review_required",
+            "missing_fields": [],
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-ARCHER-UNKNOWN:v1",
+                "body": "Archer fallback",
+            },
+            "internal_email_send_status": "delivery_unknown",
+            "automation_context": {
+                "enablement_archer": {"outcome": "enable_failed"}
+            },
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+        repository = Mock()
+        repository.list_billing_tickets.return_value = [account_case]
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "send_enablement_internal_email",
+        ) as send_mail:
+            result = worker.retry_enablement_internal_deliveries_once()
+
+        self.assertEqual(result["examined"], 0)
+        self.assertEqual(result["retried"], 0)
+        send_mail.assert_not_called()
+
     def test_enablement_delivery_retry_does_not_revive_confirmation_after_customer_reply(self) -> None:
         account_case = {
             "account_case_id": "AC-12513",

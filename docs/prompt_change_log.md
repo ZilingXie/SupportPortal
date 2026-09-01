@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-01 - Enablement Archer outcome policies without version-fence advance (p2-134)
+
+- Area or subsystem: Account Automation Persona rendering for Archer-backed Media Relay Enablement.
+- Prompt version: `automation-persona-v19` remains unchanged.
+- Summary: Added intent-specific policies and validators for `enablement_archer_enabled`, `enablement_appid_invalid`, and `enablement_appid_not_found`. Success must state current Media Relay enablement, oversea region, maximum subscribe load 50, immediate archival, and new-ticket guidance. Recoverable errors request a corrected App ID and forbid enablement, handoff, SLA, or closure claims.
+- Version-fence decision: these intents have no historical jobs or payloads, so existing v19 jobs do not require re-rendering and the global Persona version fence is intentionally unchanged.
+- Privacy boundary: raw App IDs remain forbidden values and are excluded from Persona source facts and prompts.
+
 This file is the canonical log for every prompt-related or model-related change in this repository.
 
 For each new entry, record:

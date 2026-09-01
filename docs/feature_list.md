@@ -56,6 +56,7 @@
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
+- Enablement 的 Media Relay 请求会通过 Archer 自动开启跨频道连麦，并根据执行结果回复客户或转 Human Review。
 - 对话支持上传图片和 txt/log/md 文件。
 - 对话支持流式输出。
 

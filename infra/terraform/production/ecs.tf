@@ -186,7 +186,7 @@ resource "aws_ecs_task_definition" "worker" {
   cpu                      = var.worker_cpu
   memory                   = var.worker_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task.arn
+  task_role_arn            = aws_iam_role.ecs_worker_task.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -260,12 +260,25 @@ resource "aws_ecs_task_definition" "worker" {
           name  = "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS"
           value = "180"
         },
+        {
+          name  = "PILOT_BIN"
+          value = "/app/bin/pilot"
+        },
+        {
+          name  = "XDG_CONFIG_HOME"
+          value = "/var/lib/pilot"
+        },
       ])
       secrets = local.worker_secrets
       mountPoints = [
         {
           sourceVolume  = "graph-token-cache"
           containerPath = "/app/.msgraph"
+          readOnly      = false
+        },
+        {
+          sourceVolume  = "pilot-creds"
+          containerPath = "/var/lib/pilot"
           readOnly      = false
         },
       ]
@@ -289,6 +302,20 @@ resource "aws_ecs_task_definition" "worker" {
 
       authorization_config {
         access_point_id = aws_efs_access_point.automation.id
+        iam             = "ENABLED"
+      }
+    }
+  }
+
+  volume {
+    name = "pilot-creds"
+
+    efs_volume_configuration {
+      file_system_id     = var.pilot_efs_file_system_id
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = var.pilot_efs_access_point_id
         iam             = "ENABLED"
       }
     }

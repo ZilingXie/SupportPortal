@@ -649,6 +649,120 @@ def _outcome(response_status: str, **extra):
 
 
 class UsageCaptureAndPrepareTest(unittest.TestCase):
+    def test_enablement_corrected_appid_reaches_archer_after_case_persistence(self):
+        import asyncio
+
+        old_app_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        new_app_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        account_case = {
+            "account_case_id": "AC-13200",
+            "billing_ticket_id": "AC-13200",
+            "client_ticket_id": "13200",
+            "zendesk_ticket_id": "13200",
+            "processing_profile": "production",
+            "automation_status": "automation",
+            "route_status": "automated",
+            "route_family": "automated",
+            "route": "enablement",
+            "execution_action": "enablement",
+            "automation_handler": "enablement",
+            "route_classification": {"handler_binding_status": "active"},
+            "collected_fields": {
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "missing_fields": ["app_id"],
+            "internal_email_payload": None,
+            "internal_email_send_status": "not_applicable",
+            "automation_context": {
+                "enablement_archer": {
+                    "outcome": "appid_invalid",
+                    "reason_code": "archer_appid_invalid",
+                }
+            },
+            "created_at": "2026-09-01T00:00:00Z",
+        }
+        ticket = {
+            "ticket_id": "13200",
+            "status": "open",
+            "subject": "Enable Media Relay",
+            "customer_id": "customer@example.com",
+            "messages": [
+                {"role": "customer", "content": f"My old App ID was {old_app_id}."},
+                {
+                    "role": "assistant",
+                    "content": "Please send the correct App ID.",
+                    "meta": {"asked_field_keys": []},
+                },
+            ],
+        }
+        repository = _FakeRepository()
+        saved_cases: list[dict] = []
+        repository.get_account_case = lambda _case_id: dict(account_case)
+        repository.get_account_case_by_ticket_id = lambda _ticket_id: dict(account_case)
+        repository.get_ticket = lambda _ticket_id: ticket
+        repository.save_ticket = lambda saved, new_messages=None: None
+        repository.save_account_case = lambda saved: saved_cases.append(dict(saved))
+        repository.cancel_pending_account_reply_jobs = lambda *args, **kwargs: None
+        complete_attempt = {
+            "missing_fields": [],
+            "collected_fields": {
+                "app_id": new_app_id,
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "internal_email_payload": {"delivery_key": "enablement:AC-13200:v1"},
+            "internal_email_to_send": {"delivery_key": "enablement:AC-13200:v1"},
+            "internal_email_send_status": "pending",
+            "internal_email_send_reason": "",
+            "requires_human_review": False,
+            "field_extraction": NS(status="ok"),
+        }
+
+        async def archer_workflow(**kwargs):
+            self.assertTrue(saved_cases)
+            self.assertEqual(kwargs["account_case"]["collected_fields"]["app_id"], new_app_id)
+            self.assertIsNone(kwargs["account_case"]["internal_email_payload"])
+            self.assertEqual(kwargs["account_case"]["internal_email_send_status"], "archer_pending")
+            enabled_case = {
+                **kwargs["account_case"],
+                "missing_fields": [],
+                "internal_email_send_status": "not_applicable",
+                "automation_context": {
+                    "enablement_archer": {"outcome": "enabled", "reason_code": "archer_enabled"}
+                },
+            }
+            return NS(outcome="enabled"), enabled_case, {
+                "job_id": "job-archer",
+                "status": "persona_v8_scheduled",
+                "payload": {"reply_intent": "enablement_archer_enabled"},
+            }
+
+        with patch.object(reply_module, "_apply_ownership_gate", return_value=True), patch.object(
+            reply_module, "_build_enablement_attempt", return_value=complete_attempt
+        ) as build_attempt, patch.object(
+            reply_module,
+            "_run_enablement_archer_workflow",
+            new_callable=AsyncMock,
+            side_effect=archer_workflow,
+        ) as run_archer, patch.object(
+            reply_module, "decide_account_route", side_effect=AssertionError("active handler must continue")
+        ):
+            outcome = asyncio.run(
+                reply_module._process_account_customer_reply_impl(
+                    repository=repository,
+                    billing_ticket_id="AC-13200",
+                    message=f"The correct App ID is {new_app_id}.",
+                    source="zendesk-comment",
+                    message_source_id="comment-13200",
+                )
+            )
+
+        build_attempt.assert_called_once()
+        self.assertNotIn("app_id", build_attempt.call_args.kwargs["existing_fields"])
+        run_archer.assert_awaited_once()
+        self.assertEqual(outcome["ai_reply_status"], "persona_v8_scheduled")
+
     def test_runtime_requests_route_without_preparation(self):
         from backend.services.automation_contracts import AutomationEnvironment, RouteResult
 

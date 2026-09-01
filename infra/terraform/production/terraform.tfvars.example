@@ -5,6 +5,10 @@ environment  = "production"
 vpc_id                 = "vpc-0125f57b2ec2f0423"
 public_subnet_ids      = []
 efs_availability_zone_name = "us-east-1b"
+# Required before enable_services=true. These refer to the existing Pilot
+# credential EFS and access point; they are independent from graph-token-cache.
+pilot_efs_file_system_id = ""
+pilot_efs_access_point_id = ""
 rds_security_group_id  = "sg-0e9c3bd50e371fbf4"
 domain_name            = "supportcenter.stellarix.space"
 
