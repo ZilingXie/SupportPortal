@@ -4155,3 +4155,20 @@ For each new entry, record:
 - Historical and runtime scope:
   - Unpublished v16 Persona payloads are regenerated through the existing prompt-version fence. Already published replies and Case 13068 are unchanged; no historical reply is rerun or backfilled.
   - Deployment, stack restart, live Production cases, email, Zendesk writes, and Case 13068 mutations are outside this implementation at the user's request.
+
+## 2026-09-01 - Engineer investigation reply custom agent endpoint routing (p2-130)
+
+- Area or subsystem:
+  - Engineer investigation reply LLM routing (scenario `engineer_investigation_reply`, `_generate_investigation_reply_turn`).
+- Prompt version:
+  - `engineer-investigation-reply` prompt content is unchanged for the official endpoint; new conditional prompt-layer output contract applies only when a custom agent endpoint is configured.
+- Reason:
+  - The investigation turn needs to route to an external agent endpoint (Hermes investigation agent with TencentDB Agent Memory) so turns gain autonomous tool use and long-term team memory. Custom agent endpoints ignore the Responses `text.format` json_schema enforcement the official endpoint applies, so the structured-output contract must be restated in the prompt.
+- Tooling and routing changes:
+  - New env overrides `ENGINEER_INVESTIGATION_REPLY_BASE_URL` / `ENGINEER_INVESTIGATION_REPLY_API_KEY` route the scenario to a custom OpenAI Responses-compatible endpoint; unset values keep the official endpoint and key.
+  - With a custom endpoint, `fallback_models` is empty (model fallback is a model-tier downgrade; an agent endpoint has no tier below it and a same-endpoint retry would repeat a multi-minute investigation turn). The deepseek provider fallback contract is unchanged; provider degradation stays visible in `message_meta.model_name`.
+  - With a custom endpoint, the full investigation reply json_schema is appended inline to the user prompt (single source: `_investigation_reply_extra_payload`), requiring the final reply to be exactly one schema-conforming JSON object.
+- Verification:
+  - `backend/tests/test_llm_profiles.py` + `backend/tests/test_llm_factory.py`: 38 passed (endpoint override two-state coverage; agent-endpoint output-item extraction).
+  - Live end-to-end against the local Hermes agent stack: valid schema-conforming investigation turn (state/message/draft_customer_reply), `generation_status=succeeded`, conversation auto-captured to L0 memory; failure paths retain the existing fail-closed turn.
+  - `backend/tests/test_investigation_flow.py`: 113 passed, 2 pre-existing multi_agent failures reproduced on clean main.

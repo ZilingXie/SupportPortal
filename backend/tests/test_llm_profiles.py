@@ -62,6 +62,24 @@ class LlmProfileTests(unittest.TestCase):
             legacy = resolve_model_profile(INTENT_ROUTER_SCENARIO)
         self.assertEqual(account.base_url, "https://account-gateway.example/v1")
         self.assertIsNone(legacy.base_url)
+
+    def test_engineer_investigation_reply_profile_accepts_agent_endpoint(self) -> None:
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "ENGINEER_INVESTIGATION_REPLY_BASE_URL": "http://127.0.0.1:8642/v1",
+            "ENGINEER_INVESTIGATION_REPLY_API_KEY": "hermes-key",
+        }, clear=False):
+            profile = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
+        self.assertEqual(profile.base_url, "http://127.0.0.1:8642/v1")
+        self.assertEqual(profile.api_key, "hermes-key")
+        self.assertEqual(profile.fallback_models, ())
+
+    def test_engineer_investigation_reply_profile_defaults_to_official_endpoint(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            profile = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
+        self.assertIsNone(profile.base_url)
+        self.assertEqual(profile.fallback_models, ("gpt-5.4-mini",))
+
     def tearDown(self) -> None:
         clear_config_warnings_for_testing()
 
