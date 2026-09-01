@@ -4200,3 +4200,20 @@ For each new entry, record:
   - Public endpoint: `GET /v1/models` 200; real `POST /v1/responses` LLM turn returned valid output and auto-captured to L0 memory (`/search/conversations` hit).
   - EC2 production container probe: profile shows `base_url=https://supportcenter.stellarix.space/v1`, `timeout=300.0`, `fallback_models=()`; `invoke_responses_text` returned successfully and the same turn is persisted in Hermes memory (session `c7a4d9de`), proving the EC2→ALB→Hermes path end to end.
   - EC2 main stack and `/production` public `/health` remain 200; existing ECS three-role services unaffected.
+
+## 2026-09-01 - Reproducible Transformers tooling runtime
+
+- Area or subsystem:
+  - Shared single-host and ECS Python model tooling dependencies.
+- Prompt or model versions:
+  - Prompt content, Prompt Release IDs, model names, providers, reasoning effort, timeouts, and fallback policies are unchanged.
+  - The effective dependency contract is fixed at `transformers==4.46.3`; the full single-host ML profile uses compatible `sentence-transformers==5.7.0` and CPU-only `torch==2.13.0+cpu`.
+- Reason:
+  - Separate pip transactions allowed Sentence Transformers 6.x to replace the explicit Transformers 4.46.3 pin. A single hash-verified dependency graph now rejects that conflict during lock generation instead of changing tooling during deployment.
+- Affected files or config:
+  - Python base/full requirements locks, ML direct requirements, both runtime Dockerfiles, lock tooling, build contracts, and operations documentation.
+- Expected behavior change:
+  - No intended prompt or model-output contract change. Dependency selection becomes deterministic, and CPU-only hosts stop carrying unused CUDA packages.
+- Verification:
+  - The full lock resolves Transformers 4.46.3, Tokenizers 0.20.3, Sentence Transformers 5.7.0, Accelerate 1.14.0, and PyTorch 2.13.0+cpu with SHA256 hashes.
+  - The built full image passed import checks for the Transformers pipeline and embedding runtime, plus `pip check`; the lightweight image retained Transformers 4.46.3 without torch.
