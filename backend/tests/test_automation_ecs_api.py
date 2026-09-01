@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -9,12 +10,97 @@ from fastapi.testclient import TestClient
 
 from backend.automation_ecs_api import _safe_execution_detail, create_app
 from backend.services.automation_ecs_dashboard_auth import DashboardAuthConfig
+from backend.services.automation_ecs_dashboard_reader import (
+    DashboardCaseReader,
+    safe_zendesk_source,
+)
 from backend.services.automation_ecs_contracts import DeliveryStatus
 from backend.tests.test_automation_ecs_store import _event, _settings
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 
 
-def _client() -> tuple[TestClient, InMemoryAutomationEcsStore]:
+class _CaseReader:
+    def __init__(self) -> None:
+        self.list_kwargs: dict[str, Any] = {}
+
+    def list_cases(self, **kwargs: Any) -> dict[str, Any]:
+        self.list_kwargs = kwargs
+        return {
+            "items": [
+                {
+                    "zendesk_ticket_id": "13119",
+                    "title": "Enable Media Relay",
+                    "ticket_status": "open",
+                    "updated_at": "2026-08-29T03:12:00Z",
+                    "automation_status": "completed",
+                    "route": {
+                        "product": "Agora",
+                        "category": "backend_operation",
+                        "category_label": "Backend Operation",
+                        "subcategory": "enablement",
+                        "subcategory_label": "Enablement",
+                    },
+                    "matched_execution_id": "exec-13119",
+                    "current_execution": {"execution_id": "exec-13119", "status": "completed"},
+                    "execution_count": 2,
+                }
+            ],
+            "page": kwargs["page"],
+            "page_size": kwargs["page_size"],
+            "total": 1,
+            "pages": 1,
+            "facets": {
+                "route_groups": {"all": 1, "automation": 1, "backend_operation": 1},
+                "route_subcategories": {"enablement": 1},
+                "ticket_statuses": {"active": 1, "all": 1, "open": 1},
+            },
+            "filter_definitions": [],
+        }
+
+    def get_case(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        if zendesk_ticket_id != "13119":
+            return None
+        return {
+            "zendesk_ticket_id": zendesk_ticket_id,
+            "title": "Enable Media Relay",
+            "source_url": "https://agoraio.zendesk.com/agent/tickets/13119",
+            "automation_status": "completed",
+            "ticket_status": "open",
+            "zendesk_status_synced_at": "2026-08-29T03:12:00Z",
+            "updated_at": "2026-08-29T03:12:00Z",
+            "persona": {"persona_key": "v1Bright", "display_name": "Sid Bright", "version": 1},
+            "route": {
+                "product": "Agora",
+                "category_label": "Backend Operation",
+                "subcategory_label": "Enablement",
+            },
+            "collected_fields": {"app_id": "a" * 32},
+            "conversation": [
+                {
+                    "id": "zendesk:5301",
+                    "source": "zendesk",
+                    "visibility": "internal",
+                    "author_kind": "agent",
+                    "body": "Reviewing with the internal team.",
+                    "created_at": "2026-08-29T02:00:00Z",
+                }
+            ],
+            "pending_reply": {
+                "job_id": "reply-1",
+                "status": "scheduled",
+                "scheduled_for": "2026-08-29T04:00:00Z",
+                "attempt": 0,
+                "preview": "Media Relay is enabled.",
+                "preview_state": "ready",
+            },
+            "current_execution_id": "exec-13119",
+            "executions": [{"execution_id": "exec-13119", "status": "completed"}],
+        }
+
+
+def _client(
+    *, dashboard_reader: DashboardCaseReader | None = None
+) -> tuple[TestClient, InMemoryAutomationEcsStore]:
     settings = _settings("api")
     store = InMemoryAutomationEcsStore(settings)
     store.migrate()
@@ -23,7 +109,12 @@ def _client() -> tuple[TestClient, InMemoryAutomationEcsStore]:
         session_ttl_seconds=120,
     )
     return TestClient(
-        create_app(settings=settings, store=store, dashboard_auth=auth),
+        create_app(
+            settings=settings,
+            store=store,
+            dashboard_auth=auth,
+            dashboard_reader=dashboard_reader,
+        ),
         base_url="https://supportcenter.stellarix.space",
     ), store
 
@@ -249,6 +340,99 @@ def test_dashboard_list_filters_pages_and_detail_are_read_only_and_redacted() ->
         assert write.status_code in {404, 405}
 
 
+def test_dashboard_case_api_requires_session_and_preserves_combined_filters() -> None:
+    reader = _CaseReader()
+    client, _ = _client(dashboard_reader=reader)
+    with client:
+        assert client.get("/automation/production/dashboard/api/cases").status_code == 401
+        assert client.get("/automation/production/dashboard/api/cases/13119").status_code == 401
+        _dashboard_login(client)
+        page = client.get(
+            "/automation/production/dashboard/api/cases",
+            params={
+                "page": 2,
+                "page_size": 50,
+                "zendesk_ticket_id": "13119",
+                "execution_id": "exec-13119",
+                "route_group": "backend_operation",
+                "route_subcategory": "enablement",
+                "ticket_status": "open",
+                "execution_status": "completed",
+                "event_type": "ticket.updated",
+            },
+        )
+        detail = client.get("/automation/production/dashboard/api/cases/13119")
+    assert page.status_code == 200
+    assert page.json()["items"][0]["zendesk_ticket_id"] == "13119"
+    assert reader.list_kwargs == {
+        "page": 2,
+        "page_size": 50,
+        "zendesk_ticket_id": "13119",
+        "execution_id": "exec-13119",
+        "route_group": "backend_operation",
+        "route_subcategory": "enablement",
+        "ticket_status": "open",
+        "execution_status": "completed",
+        "event_type": "ticket.updated",
+    }
+    assert detail.status_code == 200
+    assert detail.json()["pending_reply"]["preview"] == "Media Relay is enabled."
+
+
+def test_dashboard_case_api_defaults_active_and_all_writes_fail_closed() -> None:
+    reader = _CaseReader()
+    client, _ = _client(dashboard_reader=reader)
+    with client:
+        _dashboard_login(client)
+        response = client.get("/automation/production/dashboard/api/cases")
+        assert response.status_code == 200
+        assert reader.list_kwargs["ticket_status"] == "active"
+        for method in ("post", "put", "patch", "delete"):
+            write_list = client.request(
+                method, "/automation/production/dashboard/api/cases", json={}
+            )
+            write_detail = client.request(
+                method, "/automation/production/dashboard/api/cases/13119", json={}
+            )
+            assert write_list.status_code in {404, 405}
+            assert write_detail.status_code in {404, 405}
+
+
+def test_dashboard_case_payload_and_source_do_not_leak_disallowed_values() -> None:
+    reader = _CaseReader()
+    client, _ = _client(dashboard_reader=reader)
+    with client:
+        _dashboard_login(client)
+        detail = client.get("/automation/production/dashboard/api/cases/13119")
+    serialized = detail.text.lower()
+    for forbidden in (
+        "requester_email",
+        "author_id",
+        "author_name",
+        "via_channel",
+        "claim_token",
+        "internal_email_payload",
+        "prompt_snapshot",
+        "automation_db_dsn",
+        "intake_shared_token",
+        '"payload"',
+        '"result"',
+    ):
+        assert forbidden not in serialized
+    assert safe_zendesk_source(
+        "https://agoraio.zendesk.com/agent/tickets/13119", "13119"
+    ) is not None
+    for unsafe in (
+        "http://agoraio.zendesk.com/agent/tickets/13119",
+        "https://zendesk.com.evil.example/agent/tickets/13119",
+        "https://user@agoraio.zendesk.com/agent/tickets/13119",
+        "https://agoraio.zendesk.com/agent/tickets/13119?token=secret",
+        "https://agoraio.zendesk.com/agent/tickets/13119#private",
+        "https://agoraio.zendesk.com/agent/tickets/99999",
+    ):
+        assert safe_zendesk_source(unsafe, "13119") is None
+
+
 def test_dashboard_runtime_and_static_assets_are_available_without_route_shadowing() -> None:
     client, store = _client()
     store.heartbeat(worker_id="route-1", provenance=_settings("route").provenance())
@@ -262,6 +446,8 @@ def test_dashboard_runtime_and_static_assets_are_available_without_route_shadowi
         assert "n8n_request_token" not in asset.text
         assert "localStorage" not in asset.text
         assert "AUTOMATION_INTAKE_SHARED_TOKEN" not in asset.text
+        assert "author_name" not in asset.text
+        assert "via_channel" not in asset.text
         _dashboard_login(client)
         runtime = client.get("/automation/production/dashboard/api/runtime")
         assert runtime.status_code == 200
