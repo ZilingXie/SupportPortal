@@ -4183,6 +4183,24 @@ For each new entry, record:
   - Live end-to-end against the local Hermes agent stack: valid schema-conforming investigation turn (state/message/draft_customer_reply), `generation_status=succeeded`, conversation auto-captured to L0 memory; failure paths retain the existing fail-closed turn.
   - `backend/tests/test_investigation_flow.py`: 113 passed, 2 pre-existing multi_agent failures reproduced on clean main.
 
+## 2026-09-01 - Hermes investigation agent endpoint production cutover (p2-133)
+
+- Area or subsystem:
+  - Engineer investigation reply LLM routing (scenario `engineer_investigation_reply`) — production endpoint configuration, no code change (routing code landed in p2-130).
+- Prompt version:
+  - Unchanged. The custom-endpoint inline JSON schema contract from p2-130 now applies in production because the custom endpoint is configured.
+- Reason:
+  - The Hermes investigation agent stack (hermes-agent + TencentDB AgentMemory memory-core, formerly local podman) was migrated to a dedicated ECS Fargate service so production investigation turns gain autonomous tool use, pilot CLI access (binary baked, credentials bootstrap pending), and long-term team memory, without touching the EC2 `/production` behavior chain.
+- Tooling and routing changes:
+  - Production routing for `engineer_investigation_reply` on EC2 `/production` now resolves to `ENGINEER_INVESTIGATION_REPLY_BASE_URL=https://supportcenter.stellarix.space/v1` with `ENGINEER_INVESTIGATION_REPLY_API_KEY` (SSM `hermes-api-server-key`) and `_TIMEOUT_SECONDS=300` via `~/SupportPortal/.env` (compose `env_file` passthrough); api/worker×2 production containers recreated on image `52df67fcbbfc`.
+  - New ECS service `supportportal-production-hermes` (2-container task: hermes + memory-core, localhost interconnect) exposed through the existing ALB as `/v1,/v1/*` (priority 101, Bearer auth); fresh memory store bootstrapped (admin `usr-yipctouhlx`, team `team-yipeq84apx`, agent `agt-yipfo802v8` with the dual-mode investigation/review prompt).
+  - ECS worker task definition rev14 carries the same three env values (no consumer in the ECS worker until the engineer investigation chain migrates there).
+  - Default behavior when the three env values are removed is byte-for-byte the previous official-endpoint routing; provider fallback and fail-closed contracts unchanged.
+- Verification:
+  - Public endpoint: `GET /v1/models` 200; real `POST /v1/responses` LLM turn returned valid output and auto-captured to L0 memory (`/search/conversations` hit).
+  - EC2 production container probe: profile shows `base_url=https://supportcenter.stellarix.space/v1`, `timeout=300.0`, `fallback_models=()`; `invoke_responses_text` returned successfully and the same turn is persisted in Hermes memory (session `c7a4d9de`), proving the EC2→ALB→Hermes path end to end.
+  - EC2 main stack and `/production` public `/health` remain 200; existing ECS three-role services unaffected.
+
 ## 2026-09-01 - Reproducible Transformers tooling runtime
 
 - Area or subsystem:

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T06:45:01Z",
-  "source_base_commit": "52df67fcbbfcc7b182f589807ae8a4614ceb6a2e",
-  "registry_digest": "eda6ac35c79a9148fea54c2a3f4148ce4cc9f97cacbdc3bc6e47a523ed434477",
+  "generated_at": "2026-09-01T07:41:14Z",
+  "source_base_commit": "b7f8d58a7f2db522d33e41a9eef74d1a82d59a1c",
+  "registry_digest": "950ad07704e8a2e33c5c1b4c7cdaddc71a08d8d027a01f9aac7b3d7ba4bef194",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3114,6 +3114,48 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "End-to-end against live Hermes agent stack",
           "command": "/tmp/p2_e2e_hermes_check.py（worktree 代码直调 _generate_investigation_reply_turn，env 指向 http://127.0.0.1:8642/v1 真栈）",
           "details": "黑屏工单构造输入 → Hermes（gpt-5.6-luna+腾讯 Agent Memory 记忆）返回 state=active、message 语义正确的调查回合（要求 channel name、确认复现范围），message_meta.generation_status=succeeded；中间迭代两次（invalid_json→invalid_fields）由 prompt 层 schema 内联补偿解决；调查对话经 memory 插件自动 capture 进 L0（search/conversations 可检索）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes ECS service live",
+          "command": "~/.local/bin/aws ecs describe-services --cluster supportportal-production --services supportportal-production-hermes",
+          "details": "service RUNNING 1/1，td supportportal-production-hermes:2，双容器 HEALTHY；TG supportportal-production-hermes healthy；公网 /v1/models 200。镜像 ECR supportportal/hermes@sha256:45526d1c...（hermes-20260901，EC2 zacBot 原生 amd64 构建后 push，Mac qemu 构建两次 tsc/vite SIGSEGV 139 不可用）；memory-core@sha256:e4c0f4e6...（crane 从 Docker Hub 复制进 ECR）。"
+        },
+        {
+          "type": "deployment",
+          "label": "One-shot bootstrap via init task",
+          "command": "~/.local/bin/aws ecs run-task --cluster supportportal-production --launch-type FARGATE --task-definition supportportal-production-hermes-init:1 --network-configuration '...' --overrides '\u003ccommand override>'",
+          "details": "无 Session Manager 插件环境改用一次性 init task（hermes-init 容器 dependsOn memory-core HEALTHY）：init-admin 200（预生成 sk-mem-* key，user usr-yipctouhlx）、verify 200、team-yipeq84apx + agt-yipfo802v8 创建成功、INIT_DONE、exit 0。同模式跑 search 验证。team/create 无 upsert，重跑会重复创建（脚本对 409 exit 3 防护）。"
+        },
+        {
+          "type": "test",
+          "label": "Memory loop and real LLM turn through public endpoint",
+          "command": "curl -X POST https://supportcenter.stellarix.space/v1/responses -H 'Authorization: Bearer \u003chermes-api-server-key>' -d '{\"model\":\"hermes-agent\",\"input\":\"...\"}'",
+          "details": "真实 turn 返回 completed（output_text ok，usage 11798 tokens）；turn 内容经 /search/conversations 检索命中（L0 写入闭环）。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 production investigation reply cutover to Hermes",
+          "command": "ssh zacbot 'docker exec deployment-api_production-1 python -c \"...resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)...invoke_responses_text(...)\"'",
+          "details": "EC2 .env 注入三值后按部署变量集（APP_RUNTIME_IMAGE/APP_BUILD_REF/APP_BUILD_TIME/PROMPT_RELEASE_ID/PROMPT_RELEASE_REQUIRED=true）重建三容器；容器内 base_url=https://supportcenter.stellarix.space/v1、timeout=300、fallback=()；invoke_responses_text 返回 ecs-hermes-ok 且该 turn 沉淀于 Hermes 记忆库 session c7a4d9de（07:29:36Z）——EC2 生产容器→ALB→Hermes 全链路实证。EC2 主栈与 /production 公网 /health 200。"
+        },
+        {
+          "type": "decision",
+          "label": "EFS IAM authorization and access-point whitelist",
+          "command": "~/.local/bin/aws iam put-role-policy --role-name supportportal-production-ecs-task-role --policy-name SupportPortalProductionEfsAccess --policy-document file:///tmp/efs-policy.json",
+          "details": "该 EFS 文件系统挂有 IAM policy（仅 ClientRootAccess/ClientWrite），挂载需 task role identity policy 的 ClientMount 且 AccessPointArn 限定白名单；新 3 个 AP 加入既有 inline policy（原仅 graph-token-cache AP）。ECS 卷 authorizationConfig 必须带 iam ENABLED。"
+        },
+        {
+          "type": "decision",
+          "label": "Terminal sandbox precondition revised for Fargate",
+          "command": "",
+          "details": "handoff 曾判定上 ECS 前必须 docker backend 沙箱；Fargate 无特权/dind 不可行，本任务接受 local backend 并以 Fargate task 隔离为边界（无共享宿主/docker socket），pilot 凭证卷仅 hermes 容器挂载（AP 700/uid10000）。"
+        },
+        {
+          "type": "decision",
+          "label": "Two rollback-adjacent incidents caught and corrected",
+          "command": "",
+          "details": "① ECS worker td rev13 误基于旧 rev9 生成（回滚主 thread 镜像），立即基于最新 rev12 重新生成 rev14 纠正——register 前必查当前最新 revision；② EC2 up -d 未带部署变量集导致三容器落到 localhost/supportportal-app:unknown 旧镜像（compose 默认值），按部署日志恢复 APP_RUNTIME_IMAGE=52df67fcbbfc 等变量重建纠正——脱离部署脚本操作必须显式携带全部构建变量。另修复 init 容器 stage2 生成的 API_SERVER_KEY 写入共享 EFS .env（override=True 会覆盖 SSM 注入值）——一次性 fix task 删除该行。"
         }
       ],
       "source_refs": [
@@ -3121,9 +3163,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "active",
-      "task_count": 1,
-      "done_count": 0,
+      "status": "done",
+      "task_count": 2,
+      "done_count": 2,
       "blocked_count": 0
     },
     {
@@ -8736,10 +8778,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-130",
       "title": "调查回合支持自定义 agent 端点路由（Hermes 调查 agent 接线一期）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "engineer investigation reply 场景（_generate_investigation_reply_turn，scenario engineer_investigation_reply）新增端点路由能力：ENGINEER_INVESTIGATION_REPLY_BASE_URL / ENGINEER_INVESTIGATION_REPLY_API_KEY 设置时，OpenAI Responses 调用路由到自定义 OpenAI 兼容 agent 端点（本地 agent-infra 的 Hermes 调查 agent，http://127.0.0.1:8642/v1，记忆后端腾讯 Agent Memory）。自定义端点时 fallback_models 置空（模型级 fallback 是模型分级降级语义，agent 端点无分级且同端点重试会重复一次分钟级调查回合）；deepseek provider fallback 维持既有契约不变（失败降级在 message_meta.model_name 可见）。自定义端点忽略 Responses text.format json_schema 强制，故 prompt 层内联输出契约补偿：user prompt 尾部注入完整 json_schema（与 extra_payload 单一来源动态同步），要求最终回复为单个符合 schema 的 JSON 对象。默认（不设 env）行为逐字段不变。engineer_agent 主链、fail-closed（LlmInvocationError→确定性回退回合）、guardrail、Slack/Zendesk 投递链零改动。",
-      "next_action": "实现、单测与真栈端到端验证已完成，待 finalize 合并、本地官方栈重启验证，以及生产侧（用户节奏）配置 env 灰度启用。",
+      "next_action": "代码、单测与真栈端到端验证已完成；生产灰度（Hermes 栈迁移 ECS + EC2 /production 三 env 注入 + 全链路实证）已由 p2-133 于 2026-09-01 完成并验证，无遗留动作。",
       "acceptance_criteria": [
         "不设 ENGINEER_INVESTIGATION_REPLY_BASE_URL 时 investigation profile 与现状逐字段一致（base_url None、fallback_models 含 mini、api_key 走 OPENAI_API_KEY）。",
         "设置 BASE_URL+API_KEY 时 profile 路由到自定义端点，fallback_models 为空。",
@@ -8972,6 +9014,82 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "event": "completed",
           "summary": "44px 修复经 PR #1015 合并后构建 r20260901-a6f6319，三角色 immutable OCI 已部署至 API :12、Route :13、Worker :12；ECS 1/1/0、健康/provenance/CloudWatch、只读 HTTP、安全扫描、组合筛选、Case/Conversation/Preview/Runtime audit 和三视口生产浏览器验收全部通过，旧 EC2 backup 保持 200。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-133",
+      "title": "Hermes 调查 agent 栈迁移 ECS Fargate 并完成生产灰度接线",
+      "status": "done",
+      "owner": "zac",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "created_at": "2026-09-01",
+      "updated_at": "2026-09-01",
+      "summary": "将本地 podman 的 Hermes 调查 agent 栈（hermes-agent + 腾讯 AgentMemory memory-core，agent-infra 仓库）迁移为 ECS Fargate 独立 service：单 task 双容器 awsvpc 模式 localhost 互通，memory-core 镜像 crane 复制进 ECR 免 Docker Hub 限流，hermes 镜像（含 memory_tencentdb 插件、pilot CLI 钉 sha256、一次性初始化工具）因 qemu 仿真 amd64 下 Node 构建段错误改在 zacBot 原生构建。公网入口 https://supportcenter.stellarix.space/v1（既有 ALB 新增 /v1/* listener rule priority 101，Hermes API_SERVER_KEY Bearer 鉴权，与 RAG 服务同安全模型）。数据全新起步：预生成 admin key（init-admin 支持传入 user_key，消除 volume/key 成对问题）经一次性 init task（run-task + command override，无需 Session Manager 插件）完成 init-admin、team agora-support（team-yipeq84apx）与 investigator agent（agt-yipfo802v8）创建；hermes-home/tdai-data/pilot-creds 三个 EFS Access Point 持久化，task role EFS inline policy 扩白名单 + authorizationConfig iam ENABLED（缺任一即 mount access denied）。生产灰度：EC2 /production（investigation reply 真实消费方，ECS worker 无该链路）.env 注入 ENGINEER_INVESTIGATION_REPLY_BASE_URL=https://supportcenter.stellarix.space/v1、_API_KEY、_TIMEOUT_SECONDS=300 并重建 api/worker×2 三容器；ECS worker td rev14 同步注入三 env（当前无消费方，investigation 链路上 ECS 时直接生效，基于主 thread 最新镜像 rev12 生成）。pilot 凭证首登（device flow）为遗留人工 gate。",
+      "next_action": "下一个真实 needs_investigating 工单到达时观察 message_meta.model_name 指向自定义端点及 Hermes 侧回合质量；pilot 凭证首登（ECS Exec 或一次性 task 内 pilot auth login --device）按需执行；调查回合异步化（20s 同步契约 vs 分钟级回合）为二期。",
+      "acceptance_criteria": [
+        "ECS supportportal-production-hermes service（task definition supportportal-production-hermes，2 容器 hermes+memory-core，hermes dependsOn memory-core HEALTHY）1/1 RUNNING 且双容器 HEALTHY。",
+        "公网 GET /v1/models 与 POST /v1/responses（Bearer hermes-api-server-key）可用；POST /v1/responses 真实 LLM turn 返回合法输出。",
+        "全新记忆库完成 init-admin（预生成 key）与 team/agent 创建；对话自动沉淀 L0 且 /search/conversations 可检索（记忆闭环验证通过）。",
+        "hermes 镜像内 memory_tencentdb 插件、setup_team_agent.py、pilot（sha256 钉版）齐备且 pilot 二进制容器内可执行。",
+        "EC2 /production 三容器（api/worker_query/worker_aux）注入三 env 并以部署镜像 52df67fcbbfc 重建；容器内 resolve_model_profile 呈现 base_url=https://supportcenter.stellarix.space/v1、timeout=300、fallback_models=()，invoke_responses_text 真实调用经 Hermes 成功且该 turn 沉淀于 Hermes 记忆库（session c7a4d9de）。",
+        "EC2 /production 与主栈公网 /health 维持 200；ECS 既有三角色行为不受影响。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "Hermes ECS service live",
+          "command": "~/.local/bin/aws ecs describe-services --cluster supportportal-production --services supportportal-production-hermes",
+          "details": "service RUNNING 1/1，td supportportal-production-hermes:2，双容器 HEALTHY；TG supportportal-production-hermes healthy；公网 /v1/models 200。镜像 ECR supportportal/hermes@sha256:45526d1c...（hermes-20260901，EC2 zacBot 原生 amd64 构建后 push，Mac qemu 构建两次 tsc/vite SIGSEGV 139 不可用）；memory-core@sha256:e4c0f4e6...（crane 从 Docker Hub 复制进 ECR）。"
+        },
+        {
+          "type": "deployment",
+          "label": "One-shot bootstrap via init task",
+          "command": "~/.local/bin/aws ecs run-task --cluster supportportal-production --launch-type FARGATE --task-definition supportportal-production-hermes-init:1 --network-configuration '...' --overrides '\u003ccommand override>'",
+          "details": "无 Session Manager 插件环境改用一次性 init task（hermes-init 容器 dependsOn memory-core HEALTHY）：init-admin 200（预生成 sk-mem-* key，user usr-yipctouhlx）、verify 200、team-yipeq84apx + agt-yipfo802v8 创建成功、INIT_DONE、exit 0。同模式跑 search 验证。team/create 无 upsert，重跑会重复创建（脚本对 409 exit 3 防护）。"
+        },
+        {
+          "type": "test",
+          "label": "Memory loop and real LLM turn through public endpoint",
+          "command": "curl -X POST https://supportcenter.stellarix.space/v1/responses -H 'Authorization: Bearer \u003chermes-api-server-key>' -d '{\"model\":\"hermes-agent\",\"input\":\"...\"}'",
+          "details": "真实 turn 返回 completed（output_text ok，usage 11798 tokens）；turn 内容经 /search/conversations 检索命中（L0 写入闭环）。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 production investigation reply cutover to Hermes",
+          "command": "ssh zacbot 'docker exec deployment-api_production-1 python -c \"...resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)...invoke_responses_text(...)\"'",
+          "details": "EC2 .env 注入三值后按部署变量集（APP_RUNTIME_IMAGE/APP_BUILD_REF/APP_BUILD_TIME/PROMPT_RELEASE_ID/PROMPT_RELEASE_REQUIRED=true）重建三容器；容器内 base_url=https://supportcenter.stellarix.space/v1、timeout=300、fallback=()；invoke_responses_text 返回 ecs-hermes-ok 且该 turn 沉淀于 Hermes 记忆库 session c7a4d9de（07:29:36Z）——EC2 生产容器→ALB→Hermes 全链路实证。EC2 主栈与 /production 公网 /health 200。"
+        },
+        {
+          "type": "decision",
+          "label": "EFS IAM authorization and access-point whitelist",
+          "command": "~/.local/bin/aws iam put-role-policy --role-name supportportal-production-ecs-task-role --policy-name SupportPortalProductionEfsAccess --policy-document file:///tmp/efs-policy.json",
+          "details": "该 EFS 文件系统挂有 IAM policy（仅 ClientRootAccess/ClientWrite），挂载需 task role identity policy 的 ClientMount 且 AccessPointArn 限定白名单；新 3 个 AP 加入既有 inline policy（原仅 graph-token-cache AP）。ECS 卷 authorizationConfig 必须带 iam ENABLED。"
+        },
+        {
+          "type": "decision",
+          "label": "Terminal sandbox precondition revised for Fargate",
+          "command": "",
+          "details": "handoff 曾判定上 ECS 前必须 docker backend 沙箱；Fargate 无特权/dind 不可行，本任务接受 local backend 并以 Fargate task 隔离为边界（无共享宿主/docker socket），pilot 凭证卷仅 hermes 容器挂载（AP 700/uid10000）。"
+        },
+        {
+          "type": "decision",
+          "label": "Two rollback-adjacent incidents caught and corrected",
+          "command": "",
+          "details": "① ECS worker td rev13 误基于旧 rev9 生成（回滚主 thread 镜像），立即基于最新 rev12 重新生成 rev14 纠正——register 前必查当前最新 revision；② EC2 up -d 未带部署变量集导致三容器落到 localhost/supportportal-app:unknown 旧镜像（compose 默认值），按部署日志恢复 APP_RUNTIME_IMAGE=52df67fcbbfc 等变量重建纠正——脱离部署脚本操作必须显式携带全部构建变量。另修复 init 容器 stage2 生成的 API_SERVER_KEY 写入共享 EFS .env（override=True 会覆盖 SSM 注入值）——一次性 fix task 删除该行。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "docs/deploy_hermes_investigator_ecs.md",
+        "docs/project/tasks/p2-130.json",
+        "backend/services/llm_profiles.py",
+        "backend/services/llm_factory.py"
       ]
     },
     {
