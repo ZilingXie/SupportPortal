@@ -3,9 +3,17 @@ from __future__ import annotations
 import os
 from unittest.mock import AsyncMock, Mock, patch
 
-from backend.automation_ecs_worker import AccountBackgroundCycle, AutomationWorker, run_automation_worker
+import pytest
+
+from backend.automation_ecs_worker import (
+    AccountBackgroundCycle,
+    AutomationWorker,
+    _execution_status,
+    run_automation_worker,
+)
 from backend.services.account_internal_email_recipients import AccountInternalEmailRecipientError
 from backend.services.automation_ecs_contracts import JobKind
+from backend.services.automation_ecs_contracts import ExecutionStatus
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
 
@@ -116,6 +124,24 @@ def test_returned_account_human_review_state_is_not_completed() -> None:
     execution = store.get_execution(receipt.execution_id)
     assert execution is not None
     assert execution["status"] == "human_review"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ("enabled", ExecutionStatus.COMPLETED),
+        ("appid_invalid", ExecutionStatus.COMPLETED),
+        ("project_not_found", ExecutionStatus.COMPLETED),
+        ("enable_failed", ExecutionStatus.HUMAN_REVIEW),
+    ],
+)
+def test_comment_trigger_propagates_archer_execution_status(outcome, expected) -> None:
+    trigger = {
+        "automation_status": "human_review_required" if outcome == "enable_failed" else "automation",
+        "internal_email_send_status": "delivery_unknown" if outcome == "enable_failed" else "not_applicable",
+        "automation_context": {"enablement_archer": {"outcome": outcome}},
+    }
+    assert _execution_status({"comment_sync": {"status": "synced"}, "trigger": trigger}) == expected
 
 
 def test_idle_worker_drains_account_reply_and_delivery_cycle() -> None:

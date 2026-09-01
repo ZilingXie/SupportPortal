@@ -24,12 +24,15 @@ COPY ui /tmp/backend-src/ui
 COPY docs /tmp/backend-src/docs
 COPY dictionary /tmp/backend-src/dictionary
 COPY deployment/automation_ecs_entrypoint.sh /app/automation_ecs_entrypoint.sh
+RUN test "${AUTOMATION_IMAGE_ROLE}" != "ecs-worker" || \
+    python /tmp/backend-src/backend/scripts/install_pilot.py
 RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
     cp -a /tmp/backend-src/backend/. /app/backend/ && \
     cp -a /tmp/backend-src/ui/. /app/ui/ && \
     cp -a /tmp/backend-src/docs/. /app/docs/ && \
     cp -a /tmp/backend-src/dictionary/. /app/dictionary/ && \
     if [ "${AUTOMATION_IMAGE_ROLE}" = "ecs-api" ]; then \
+      rm -rf /app/backend/skills/archer-cross-channel-hosting /app/bin/pilot; \
       rm -f /app/backend/main.py \
         /app/backend/worker.py \
         /app/backend/route_service.py \
@@ -51,6 +54,7 @@ RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
       cp /tmp/backend-src/backend/scripts/__init__.py /app/backend/scripts/__init__.py; \
       cp /tmp/backend-src/backend/scripts/automation_ecs_bootstrap.py /app/backend/scripts/automation_ecs_bootstrap.py; \
     elif [ "${AUTOMATION_IMAGE_ROLE}" = "ecs-route" ]; then \
+      rm -rf /app/backend/skills/archer-cross-channel-hosting /app/bin/pilot; \
       rm -f /app/backend/main.py \
         /app/backend/worker.py \
         /app/backend/route_service.py \

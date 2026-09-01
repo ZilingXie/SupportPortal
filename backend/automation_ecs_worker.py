@@ -59,23 +59,34 @@ def _now_iso() -> str:
 
 
 def _execution_status(outcome: dict[str, Any]) -> ExecutionStatus:
-    account_case = outcome.get("account_case")
+    trigger = outcome.get("trigger")
+    effective = trigger if isinstance(trigger, dict) else outcome
+    account_case = effective.get("account_case")
+    if not isinstance(account_case, dict) and isinstance(effective, dict):
+        account_case = effective
     account_status = (
         str(account_case.get("automation_status") or "").strip().lower()
         if isinstance(account_case, dict)
         else ""
     )
     external_statuses = {
-        str(outcome.get("internal_email_send_status") or "").strip().lower(),
+        str(effective.get("internal_email_send_status") or "").strip().lower(),
         (
             str(account_case.get("internal_email_send_status") or "").strip().lower()
             if isinstance(account_case, dict)
             else ""
         ),
     }
+    archer_context = (
+        (account_case.get("automation_context") or {}).get("enablement_archer")
+        if isinstance(account_case, dict)
+        else None
+    )
+    if isinstance(archer_context, dict) and archer_context.get("outcome") == "enable_failed":
+        return ExecutionStatus.HUMAN_REVIEW
     if "outcome_unknown" in external_statuses:
         return ExecutionStatus.OUTCOME_UNKNOWN
-    response_status = str(outcome.get("response_status") or "").strip().lower()
+    response_status = str(effective.get("response_status") or "").strip().lower()
     if response_status in {"human_review", "human_review_required"} or account_status in {
         "human_review",
         "human_review_required",

@@ -49,6 +49,28 @@ variable "efs_availability_zone_name" {
   }
 }
 
+variable "pilot_efs_file_system_id" {
+  description = "Existing EFS file system that stores Pilot credentials for the Worker only."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_services || can(regex("^fs-[0-9a-f]+$", var.pilot_efs_file_system_id))
+    error_message = "pilot_efs_file_system_id must be a valid fs-* ID when services are enabled."
+  }
+}
+
+variable "pilot_efs_access_point_id" {
+  description = "Existing EFS access point for the Worker Pilot credential directory."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_services || can(regex("^fsap-[0-9a-f]+$", var.pilot_efs_access_point_id))
+    error_message = "pilot_efs_access_point_id must be a valid fsap-* ID when services are enabled."
+  }
+}
+
 variable "rds_security_group_id" {
   description = "Existing RDS security group to which ECS access is added."
   type        = string

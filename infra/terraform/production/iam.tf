@@ -26,6 +26,11 @@ resource "aws_iam_role" "ecs_task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
+resource "aws_iam_role" "ecs_worker_task" {
+  name               = "${local.name_prefix}-ecs-worker-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
 data "aws_iam_policy_document" "ecs_task_secrets" {
   statement {
     sid     = "ReadRuntimeSecrets"
@@ -67,6 +72,41 @@ resource "aws_iam_role_policy" "ecs_task_efs" {
   name   = "${local.name_prefix}-efs-token-cache"
   role   = aws_iam_role.ecs_task.id
   policy = data.aws_iam_policy_document.ecs_task_efs.json
+}
+
+resource "aws_iam_role_policy" "ecs_worker_task_efs" {
+  name   = "${local.name_prefix}-efs-token-cache"
+  role   = aws_iam_role.ecs_worker_task.id
+  policy = data.aws_iam_policy_document.ecs_task_efs.json
+}
+
+data "aws_iam_policy_document" "ecs_task_pilot_efs" {
+  count = var.enable_services ? 1 : 0
+
+  statement {
+    sid     = "MountPilotCredentials"
+    effect  = "Allow"
+    actions = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]
+    resources = [
+      "arn:aws:elasticfilesystem:${var.aws_region}:${data.aws_caller_identity.current.account_id}:file-system/${var.pilot_efs_file_system_id}",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "elasticfilesystem:AccessPointArn"
+      values = [
+        "arn:aws:elasticfilesystem:${var.aws_region}:${data.aws_caller_identity.current.account_id}:access-point/${var.pilot_efs_access_point_id}",
+      ]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_task_pilot_efs" {
+  count = var.enable_services ? 1 : 0
+
+  name   = "${local.name_prefix}-efs-pilot-creds"
+  role   = aws_iam_role.ecs_worker_task.id
+  policy = data.aws_iam_policy_document.ecs_task_pilot_efs[0].json
 }
 
 data "aws_iam_policy_document" "github_oidc_assume" {
@@ -151,10 +191,14 @@ data "aws_iam_policy_document" "github_release" {
   }
 
   statement {
-    sid       = "PassEcsRoles"
-    effect    = "Allow"
-    actions   = ["iam:PassRole"]
-    resources = [aws_iam_role.ecs_task_execution.arn, aws_iam_role.ecs_task.arn]
+    sid     = "PassEcsRoles"
+    effect  = "Allow"
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.ecs_task_execution.arn,
+      aws_iam_role.ecs_task.arn,
+      aws_iam_role.ecs_worker_task.arn,
+    ]
   }
 
   statement {

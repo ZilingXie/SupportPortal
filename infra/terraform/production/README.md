@@ -25,6 +25,9 @@ The default apply creates the platform resources only:
 - one cost-first TLS Redis node and its generated AUTH token;
 - encrypted One Zone EFS access point mounted by the Worker for the mutable
   Graph token cache;
+- a Worker-only mount of the existing Pilot credential EFS access point, with
+  a dedicated Worker task role with the existing Graph EFS permission plus a
+  separate Pilot Access Point-scoped ClientMount/ClientWrite policy;
 - versioned, private S3 release-manifest bucket;
 - GitHub Actions OIDC provider and restricted release role.
 
@@ -94,6 +97,11 @@ config containing account-specific state details.
    digest references plus `release_id`, `git_commit`, `build_time` and
    `prompt_release_id`. Enable Zendesk side effects only for the controlled
    Production Case test, then set `enable_services=true`.
+
+Before enabling services, set `pilot_efs_file_system_id` and
+`pilot_efs_access_point_id` to the existing Pilot credential store. The Pilot
+mount is independent from the Terraform-managed Graph token cache and is never
+attached to the API or Route task definitions.
 
 This root is currently a verifiable configuration source only. Review and
 import the manually created `supportportal/production` repository into state

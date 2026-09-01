@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import backend.services.automation_account_intake as intake_module
 from backend.services.automation_account_intake import run_production_account_intake
+from backend.services.enablement_archer_executor import ArcherEnablementResult
 
 
 class _FakeRepository:
@@ -208,6 +209,120 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(outcome["response_status"], "automation")
         self.assertEqual(outcome["reply_job"]["reply_intent"], "account_suspension_contact_confirmation_request")
         self.assertEqual(outcome["internal_email_send_status"], "not_applicable")
+
+    def _run_complete_enablement(self, repository, *, archer_result, **patches):
+        app_id = "0123456789abcdef0123456789abcdef"
+        complete = _automation_result(
+            collected={
+                "app_id": app_id,
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            email={
+                "subject": "Enablement",
+                "delivery_key": "enablement:AC-123:v1",
+                "body": "Enablement request",
+                "body_html": "<p>Enablement request</p>",
+            },
+        )
+        enablement_patches = {
+            "extract_enablement_fields": lambda **kw: complete.extraction,
+            "build_enablement_automation_result_from_fields": lambda **kw: complete,
+            "execute_enablement_archer": lambda value: archer_result,
+        }
+        enablement_patches.update(patches)
+        with self._base_patches(**enablement_patches):
+            return self._run(
+                repository,
+                subject="Enable Media Relay",
+                question=f"Please enable Media Relay for {app_id}",
+                route_decision={**DECISION, "execution_action": "enablement"},
+                route_classification={"automation_handler": "enablement"},
+            )
+
+    def test_enablement_archer_enabled_closes_via_persona_without_email(self):
+        repository = _FakeRepository()
+        sent = []
+        outcome = self._run_complete_enablement(
+            repository,
+            archer_result=ArcherEnablementResult("enabled", "开启结果：成功"),
+            send_enablement_internal_email=lambda payload: sent.append(payload),
+        )
+        self.assertEqual(outcome["reply_job"]["reply_intent"], "enablement_archer_enabled")
+        self.assertTrue(outcome["reply_job"]["close_after_publish"])
+        self.assertEqual(outcome["internal_email_send_status"], "not_applicable")
+        self.assertEqual(sent, [])
+        self.assertIsNone(outcome["account_case"]["internal_email_payload"])
+        event = next(payload for _, event, payload in repository.events if event == "enablement_archer_result")
+        self.assertNotIn("0123456789abcdef0123456789abcdef", str(event))
+
+    def test_enablement_archer_recoverable_outcomes_clear_rejected_appid(self):
+        for archer_outcome, expected_intent in (
+            ("appid_invalid", "enablement_appid_invalid"),
+            ("project_not_found", "enablement_appid_not_found"),
+        ):
+            with self.subTest(archer_outcome=archer_outcome):
+                repository = _FakeRepository()
+                outcome = self._run_complete_enablement(
+                    repository,
+                    archer_result=ArcherEnablementResult(archer_outcome, archer_outcome),
+                )
+                self.assertEqual(outcome["reply_job"]["reply_intent"], expected_intent)
+                self.assertFalse(outcome["reply_job"]["close_after_publish"])
+                self.assertEqual(outcome["reply_job"]["asked_field_keys"], [])
+                self.assertEqual(outcome["account_case"]["missing_fields"], ["app_id"])
+                self.assertNotIn("app_id", outcome["account_case"]["collected_fields"])
+                self.assertEqual(
+                    outcome["account_case"]["route_classification"]["handler_binding_status"],
+                    "active",
+                )
+
+    def test_enablement_archer_failure_escalates_before_fallback_email(self):
+        repository = _FakeRepository()
+        order = []
+
+        def escalate(**kwargs):
+            order.append("escalate")
+            kwargs["account_case"]["automation_status"] = "human_review_required"
+            return NS(status="completed")
+
+        def send(payload):
+            order.append("email")
+            self.assertIn("sanitized Archer failure", payload["body"])
+            return {"status": "outcome_unknown", "reason": "provider timed out"}
+
+        outcome = self._run_complete_enablement(
+            repository,
+            archer_result=ArcherEnablementResult("enable_failed", "sanitized Archer failure"),
+            escalate_account_case_to_human_review=escalate,
+            send_enablement_internal_email=send,
+        )
+        self.assertEqual(order, ["escalate", "email"])
+        self.assertIsNone(outcome["reply_job"])
+        self.assertEqual(outcome["account_case"]["automation_status"], "human_review_required")
+        self.assertEqual(outcome["internal_email_send_status"], "delivery_unknown")
+
+    def test_enablement_ownership_failure_never_calls_archer(self):
+        repository = _FakeRepository()
+        called = []
+        outcome = self._run_complete_enablement(
+            repository,
+            archer_result=ArcherEnablementResult("enabled", "success"),
+            ensure_production_automation_ownership=lambda *a, **kw: NS(
+                fail_closed=True,
+                state="blocked",
+                assignee_id=None,
+                group_id=None,
+                failure_code="ownership_conflict",
+                failure_category="conflict",
+                zendesk_status_code=200,
+                failure_detail="conflict",
+                blocking_comment_id=None,
+            ),
+            execute_enablement_archer=lambda app_id: called.append(app_id),
+        )
+        self.assertEqual(called, [])
+        self.assertEqual(outcome["response_status"], "human_review_required")
 
     def test_extraction_failure_escalates_to_human_queue(self):
         from backend.services.account_verification_field_extractor import AccountVerificationFieldExtraction

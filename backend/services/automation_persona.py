@@ -9,6 +9,9 @@ from backend.services.enablement_automation import customer_visible_enablement_i
 from backend.services.account_reply_jobs import (
     AccountReplyContractError,
     ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
@@ -325,12 +328,21 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     reply_intent = str(facts.get("reply_intent") or "").strip().lower()
     if reply_intent in {
         "enablement_completed_and_close",
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
         "account_suspension_handoff_and_close",
         ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     }:
         facts["performed_actions"] = []
         facts["resolution_status"] = "completed"
         facts["customer_update_commitment"] = "case_closed"
+        return facts
+    if reply_intent in {
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID,
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+    }:
+        facts["performed_actions"] = []
+        facts["next_step"] = None
+        facts["resolution_status"] = "awaiting_customer"
         return facts
     if reply_intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
         facts["resolution_status"] = "internal_handoff_sent"
@@ -729,6 +741,52 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
         )
 
 
+def _assert_enablement_archer_enabled_contract(reply: str, facts: dict[str, Any]) -> None:
+    _assert_enablement_completion_contract(reply, facts)
+    lowered = str(reply or "").casefold()
+    if "media relay" not in lowered:
+        raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_feature")
+    if not re.search(r"\boverseas?\b|\boversea\b", lowered):
+        raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_region")
+    if not re.search(r"\b(?:maximum|max)\b[^.!?\n]{0,50}\b(?:subscribe|subscription)\b[^.!?\n]{0,30}\b50\b", lowered):
+        raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_load")
+
+
+def _assert_no_enablement_error_overclaim(reply: str) -> None:
+    lowered = str(reply or "").casefold()
+    if re.search(
+        r"\b(?:enabled|activated|provisioned|turned\s+on|handoff|sla|archiv(?:e|ed|ing)|clos(?:e|ed|ing))\b"
+        r"|\b24\s*[- ]?hours?\b|\binternal\s+team\b",
+        lowered,
+    ):
+        raise AutomationPersonaError("automation_persona_archer_error_overclaim")
+
+
+def _assert_enablement_appid_invalid_contract(reply: str) -> None:
+    _assert_no_enablement_error_overclaim(reply)
+    lowered = str(reply or "").casefold()
+    if not re.search(r"\b(?:app\s*id|appid)\b", lowered):
+        raise AutomationPersonaError("automation_persona_archer_appid_invalid_contract_failed")
+    if "32" not in lowered or not re.search(r"\b(?:invalid|incorrect|format|not\s+valid)\b", lowered):
+        raise AutomationPersonaError("automation_persona_archer_appid_invalid_contract_failed")
+    if not re.search(r"\b(?:please|provide|send|share|resend|re-send)\b", lowered):
+        raise AutomationPersonaError("automation_persona_archer_appid_invalid_contract_failed")
+
+
+def _assert_enablement_appid_not_found_contract(reply: str) -> None:
+    _assert_no_enablement_error_overclaim(reply)
+    lowered = str(reply or "").casefold()
+    if not re.search(r"\bproject\b", lowered) or not re.search(
+        r"\b(?:not\s+found|could\s+not\s+find|couldn't\s+find|unable\s+to\s+find|no\s+matching)\b",
+        lowered,
+    ):
+        raise AutomationPersonaError("automation_persona_archer_appid_not_found_contract_failed")
+    if not re.search(r"\b(?:app\s*id|appid)\b", lowered) or not re.search(
+        r"\b(?:verify|check|provide|send|share|resend|re-send)\b", lowered
+    ):
+        raise AutomationPersonaError("automation_persona_archer_appid_not_found_contract_failed")
+
+
 def validate_account_reply_contract(
     reply: str,
     reply_facts: dict[str, Any],
@@ -762,6 +820,12 @@ def validate_account_reply_contract(
         _assert_suspension_closing_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         _assert_enablement_completion_contract(normalized_reply, facts)
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED:
+        _assert_enablement_archer_enabled_contract(normalized_reply, facts)
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID:
+        _assert_enablement_appid_invalid_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND:
+        _assert_enablement_appid_not_found_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION:
         _assert_missing_information_contract(
             normalized_reply,
@@ -990,6 +1054,23 @@ def render_automation_reply(
             "have further questions or concerns, need anything else, or need further help, they can open a new "
             "ticket. Do not describe enablement or archival "
             "as delayed or tentative future work; saying the case will be archived now is acceptable. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED:
+        reply_contract_policy = (
+            "For Archer-completed Enablement, thank the customer or appreciate their patience. State that Media "
+            "Relay is already enabled for the oversea region with a maximum subscribe load of 50. Say that the "
+            "case will be archived now and direct any further questions to a new ticket. Do not use future, "
+            "tentative, or delayed enablement wording. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID:
+        reply_contract_policy = (
+            "Explain that the supplied App ID has an invalid format and ask for the correct 32-character App ID. "
+            "Do not claim enablement, handoff, an SLA, or case closure. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND:
+        reply_contract_policy = (
+            "Explain that no matching project was found and ask the customer to verify and resend the App ID. "
+            "Do not claim enablement, handoff, an SLA, or case closure. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE:
         reply_contract_policy = (
