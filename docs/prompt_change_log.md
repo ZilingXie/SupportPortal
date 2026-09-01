@@ -12,6 +12,16 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-09-01 - Enablement submission fixed contract deterministic assembly (p2-131)
+
+- Area or subsystem: Account Automation Persona rendering for Enablement `submission_confirmation` replies.
+- Prompt or model version: `automation-persona-v18` -> `automation-persona-v19`; prompt text and model configuration unchanged, application-owned reply assembly changed.
+- Summary: the application now appends any missing positive `up to 24 hours` SLA and `Monday-Friday` change-window clauses before the existing final Account reply validation. Already-valid model clauses are preserved without duplication. A negative or question-form contract mention is rejected before completion, so deterministic text cannot hide contradictory model output.
+- Reason: production Case 13176 collected the App ID and sent the real Enablement internal email, but all four Persona candidates failed the fixed SLA/change-window contract. The submission confirmation job moved to manual attention and the Case entered Human Review without a public customer reply. Fixed business facts already present in `reply_facts` must not depend on stochastic model wording.
+- Affected files or config: `backend/services/automation_persona.py`, `backend/tests/test_automation_persona.py`, `backend/tests/test_worker.py`.
+- Expected behavior change: an Enablement submission candidate that supplies valid acknowledgement and first-person ownership language but omits one or both fixed contract facts succeeds after one model call with the missing clauses assembled by the application. Contradictory/question-form contract language, ownership violations, signatures, forbidden identifiers, and all other publication fences remain fail closed. Other reply intents are unchanged.
+- Verification: focused Enablement submission contract tests passed (`6 passed`, including 5 subtests); Persona/Account AI/version-fence/Worker regression passed (`185 passed`, 50 subtests); Enablement intake, field extraction, completion classifier, comment sync, Account intake, and ECS Worker regression passed (`276 passed`, 52 subtests).
+
 ## 2026-08-31 - Payment-card gate no longer misfires on E.164 phone numbers (p2-127)
 
 - Area or subsystem: Account verification / fraud_account field extraction sensitive-payment pre-check.
