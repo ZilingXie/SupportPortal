@@ -164,6 +164,17 @@ podman-compose \
   down
 ```
 
+### 2.5.1 更新 Python 运行时依赖
+
+直接依赖由 `requirements.base.txt` 和 `requirements.ml.txt` 维护；容器只安装提交到仓库的 `requirements.base.lock` 或 `requirements.full.lock`。修改任一直接依赖后执行：
+
+```bash
+scripts/ops/update_python_dependency_locks.sh
+scripts/ops/update_python_dependency_locks.sh --check
+```
+
+两个 lock 都包含完整传递依赖和 wheel SHA256。Full profile 使用 CPU-only PyTorch；不要把 CUDA/NVIDIA 包加入 EC2 单机镜像。`backend/Dockerfile`、`backend/Dockerfile.automation` 和 lock 更新脚本必须固定同一个多架构 `python:3.11-slim` OCI index digest。升级 Python 基础镜像时显式修改这三处、重新生成 lock，并通过 full 与 lightweight 镜像验证；日常部署不得自动跟随浮动 tag。
+
 ### 2.6 常见问题
 
 1. 报错 `rootlessport cannot expose privileged port 80`：

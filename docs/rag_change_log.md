@@ -5139,3 +5139,24 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py` (`371 passed`, `61 subtests passed`).
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_verification_automation.py` (`45 passed`, `28 subtests passed`).
+
+## 2026-09-01 - Reproducible CPU-only local embedding runtime
+
+- Summary:
+  - Pinned the shared Python base image to one multi-platform OCI index digest and added hash-verified base/full dependency locks.
+  - The full single-host runtime now installs `torch==2.13.0+cpu`, `sentence-transformers==5.7.0`, and `transformers==4.46.3` in one transaction; the lightweight runtime continues to omit torch and Sentence Transformers.
+  - Added a Docker-backed lock update/check command and pip download cache mount. Deployments no longer resolve mutable Python or ML package versions.
+- Reason:
+  - A mutable `python:3.11-slim` update invalidated the 5.64 GB dependency layer and broad ML ranges selected newer packages during an EC2 deployment. The EC2 host has no NVIDIA device and the CUDA build reported `cuda_available=False`.
+- Affected files/config:
+  - `backend/Dockerfile`, `backend/Dockerfile.automation`
+  - `requirements.base.lock`, `requirements.full.lock`, `requirements.ml.txt`
+  - `scripts/ops/update_python_dependency_locks.sh`
+  - Single-host dependency/build contract tests and deployment documentation
+- Data impact:
+  - No schema, ingestion, chunking, embedding model ID, vector table, index, reset, or backfill change.
+  - Existing embeddings are unchanged. CPU execution remains the effective runtime because the previous CUDA wheel also ran without a usable GPU.
+- Verification:
+  - Hash lock generation and `--check` completed successfully.
+  - Full image built successfully, passed `pip check`, imported PyTorch/Sentence Transformers/Transformers/Accelerate and the embedding provider, contained no CUDA/NVIDIA packages, and measured 489,760,121 bytes versus 3,046,167,508 bytes previously.
+  - Lightweight image built successfully, passed `pip check`, omitted torch, and measured 187,233,165 bytes.
