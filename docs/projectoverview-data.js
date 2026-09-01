@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-01T05:00:03Z",
-  "source_base_commit": "fa1701ce3a83bb52c72d78bf33fe08398ee2ad9b",
-  "registry_digest": "7a157791b8014697f369848c6a75a019e6d615df19e627ffa77cbff2b6435a86",
+  "generated_at": "2026-09-01T06:21:58Z",
+  "source_base_commit": "a6f63191402bd8db9ba541076125309c8462fff6",
+  "registry_digest": "d1fb61e920ce7d9cce4268edc21974f485769fc3d7cd051b44d831cc38cc2f08",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2132,7 +2132,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
-          "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
+          "details": "68 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
         },
         {
           "type": "test",
@@ -2145,6 +2145,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implemented plan owner review",
           "command": "review-implemented-plan skill",
           "details": "修复 Conversation 不必要 author identity/channel 字段、nested collected-fields 任意 JSON 透传、Ticket 卡片状态混淆、移动端隐藏 Sign out、38px header target 与 Runtime audit 长 ID 裁剪；复审后无未处理 correctness/security finding。"
+        },
+        {
+          "type": "pr",
+          "label": "Implementation and production hit-target fix",
+          "command": "PR #1014 + PR #1015",
+          "details": "PR #1014 合并 Ticket-centric 只读 Case Reader/API/UI、安全投影与测试，merge commit fa1701ce3a83bb52c72d78bf33fe08398ee2ad9b；首轮生产验收发现的 44px 点击目标缺口由 PR #1015 修复，最终 merge commit a6f63191402bd8db9ba541076125309c8462fff6。"
+        },
+        {
+          "type": "deployment",
+          "label": "Immutable three-role ECS release",
+          "command": ".deployments/releases/r20260901-a6f6319/release-manifest.json + production ECR readback",
+          "details": "r20260901-a6f6319 基于 a6f63191402bd8db9ba541076125309c8462fff6，build_time=2026-09-01T05:19:59Z，Prompt Release=pr-2bc7aaccb8b0。单一 linux/amd64 digest：API sha256:8d83daa428b9f2d448d4337eed310c2bd0547acd4355acab8bdb0635b3077c07；Route sha256:459447d052f61b153339dac0e2a97404009a48baa4093ce3da3e6ae02a9fb31c；Worker sha256:27d05aaa9db9c97394e2d92cbcaf0fcb69ba78884c9a3727a642a0de566090e4。ECR readback 与 Manifest 一致；仅 API 包含看板，Route/Worker 无 UI，三个镜像均物理排除旧 runtime、backend.main、tests、rerun/reset 和本地 RAG runtime。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production rollout and runtime provenance",
+          "command": "AWS ECS/CloudWatch readback + public health endpoints",
+          "details": "Task Definition 为 API supportportal-production-api:12、Route supportportal-production-route:13、Worker supportportal-production-worker:12；三个 Service 单一 PRIMARY、rolloutState=COMPLETED、failedTasks=0、均为 1/1/0，实际 task imageDigest 与 Release Manifest 一致。health live/release/ready 均 200；API/Route/Worker heartbeat 新鲜且 provenance_mismatches=[]；新 task CloudWatch 无持续 ERROR/Traceback/Exception/failed；旧 EC2 https://support.stellarix.space/production/ 保持 200。"
+        },
+        {
+          "type": "test",
+          "label": "Production read-only dashboard acceptance",
+          "command": "authenticated HTTP + in-app Browser at 1440x900, 1024x768, 390x844",
+          "details": "未认证 Session/Cases/Case detail 与错误登录均 401；登录 cookie 为 Secure/HttpOnly/SameSite=strict、Path=/automation/production/、Cache-Control=no-store。默认 Active 的 Ticket 唯一、更新时间跨页倒序且无 solved/closed，solved-only 与 All 可恢复终态；Category/Subcategory/Ticket Status/Execution ID/Status/Event Type 组合筛选、Case detail、Public/Internal Conversation、计划 Preview、Execution history/steps/jobs/delivery/timeline/provenance/runtime 均通过。五个数据端点的 20 组 POST/PUT/PATCH/DELETE 均 405；API/静态资产敏感字段扫描无命中。三视口无横向溢出或交互遮挡，可见目标最小高度 44px，Console 0 error/0 warning，浏览器退出后返回登录页并重置 viewport。验收客户端未调用 intake 或业务写路由，也未修改 n8n、DNS、Cloudflare 或 EC2 backup。"
+        },
+        {
+          "type": "decision",
+          "label": "Approved fixed administrator Session boundary",
+          "command": "Owner confirmation: admin/admin",
+          "details": "按 Owner 明确确认保留固定 admin/admin 和现有 Session secret，不新增凭据或 Session 数据库。Session token 为 12 小时 stateless 签名 cookie：正常浏览器 logout 会删除 scoped cookie 并使后续浏览器 Session 请求为 401；单独复制的旧 cookie 在 TTL 到期前仍可重放，该限制作为已知边界记录。"
         }
       ],
       "source_refs": [
@@ -2158,7 +2188,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 3,
-      "done_count": 1,
+      "done_count": 2,
       "blocked_count": 0
     },
     {
@@ -8820,10 +8850,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-132",
       "title": "ECS Production 人类可读 Ticket 只读看板",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "将 ECS Production 只读看板重构为面向运营人员的 Ticket/Case 工作台：每个 Ticket 一条、默认隐藏 solved/closed、支持 Category/Subcategory/Ticket Status 与 Execution 条件组合筛选，并安全展示 Case、Conversation、待发布 Preview 和折叠的 Runtime audit。",
-      "next_action": "修复首轮生产浏览器验收发现的 44px 点击目标缺口，通过 finalize workflow 合并后重建三角色 immutable release，并重新部署 ECS 完成最终只读验收。",
+      "next_action": "无；r20260901-a6f6319 已完成三角色 ECS Production 部署与只读看板验收，后续仅按常规运行监控处理。",
       "acceptance_criteria": [
         "默认列表每个 Zendesk Ticket 仅一条，按 Zendesk ticket.updated_at 倒序；缺失时回退 Account Case updated_at，且默认 active 过滤排除 solved/closed。",
         "Ticket Status、Category/Subcategory、Ticket ID、Execution ID、Execution Status 与 Event Type 可组合分页，total、facets 和当前页来自同一只读数据库快照。",
@@ -8842,7 +8872,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
-          "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
+          "details": "68 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
         },
         {
           "type": "test",
@@ -8855,6 +8885,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Implemented plan owner review",
           "command": "review-implemented-plan skill",
           "details": "修复 Conversation 不必要 author identity/channel 字段、nested collected-fields 任意 JSON 透传、Ticket 卡片状态混淆、移动端隐藏 Sign out、38px header target 与 Runtime audit 长 ID 裁剪；复审后无未处理 correctness/security finding。"
+        },
+        {
+          "type": "pr",
+          "label": "Implementation and production hit-target fix",
+          "command": "PR #1014 + PR #1015",
+          "details": "PR #1014 合并 Ticket-centric 只读 Case Reader/API/UI、安全投影与测试，merge commit fa1701ce3a83bb52c72d78bf33fe08398ee2ad9b；首轮生产验收发现的 44px 点击目标缺口由 PR #1015 修复，最终 merge commit a6f63191402bd8db9ba541076125309c8462fff6。"
+        },
+        {
+          "type": "deployment",
+          "label": "Immutable three-role ECS release",
+          "command": ".deployments/releases/r20260901-a6f6319/release-manifest.json + production ECR readback",
+          "details": "r20260901-a6f6319 基于 a6f63191402bd8db9ba541076125309c8462fff6，build_time=2026-09-01T05:19:59Z，Prompt Release=pr-2bc7aaccb8b0。单一 linux/amd64 digest：API sha256:8d83daa428b9f2d448d4337eed310c2bd0547acd4355acab8bdb0635b3077c07；Route sha256:459447d052f61b153339dac0e2a97404009a48baa4093ce3da3e6ae02a9fb31c；Worker sha256:27d05aaa9db9c97394e2d92cbcaf0fcb69ba78884c9a3727a642a0de566090e4。ECR readback 与 Manifest 一致；仅 API 包含看板，Route/Worker 无 UI，三个镜像均物理排除旧 runtime、backend.main、tests、rerun/reset 和本地 RAG runtime。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production rollout and runtime provenance",
+          "command": "AWS ECS/CloudWatch readback + public health endpoints",
+          "details": "Task Definition 为 API supportportal-production-api:12、Route supportportal-production-route:13、Worker supportportal-production-worker:12；三个 Service 单一 PRIMARY、rolloutState=COMPLETED、failedTasks=0、均为 1/1/0，实际 task imageDigest 与 Release Manifest 一致。health live/release/ready 均 200；API/Route/Worker heartbeat 新鲜且 provenance_mismatches=[]；新 task CloudWatch 无持续 ERROR/Traceback/Exception/failed；旧 EC2 https://support.stellarix.space/production/ 保持 200。"
+        },
+        {
+          "type": "test",
+          "label": "Production read-only dashboard acceptance",
+          "command": "authenticated HTTP + in-app Browser at 1440x900, 1024x768, 390x844",
+          "details": "未认证 Session/Cases/Case detail 与错误登录均 401；登录 cookie 为 Secure/HttpOnly/SameSite=strict、Path=/automation/production/、Cache-Control=no-store。默认 Active 的 Ticket 唯一、更新时间跨页倒序且无 solved/closed，solved-only 与 All 可恢复终态；Category/Subcategory/Ticket Status/Execution ID/Status/Event Type 组合筛选、Case detail、Public/Internal Conversation、计划 Preview、Execution history/steps/jobs/delivery/timeline/provenance/runtime 均通过。五个数据端点的 20 组 POST/PUT/PATCH/DELETE 均 405；API/静态资产敏感字段扫描无命中。三视口无横向溢出或交互遮挡，可见目标最小高度 44px，Console 0 error/0 warning，浏览器退出后返回登录页并重置 viewport。验收客户端未调用 intake 或业务写路由，也未修改 n8n、DNS、Cloudflare 或 EC2 backup。"
+        },
+        {
+          "type": "decision",
+          "label": "Approved fixed administrator Session boundary",
+          "command": "Owner confirmation: admin/admin",
+          "details": "按 Owner 明确确认保留固定 admin/admin 和现有 Session secret，不新增凭据或 Session 数据库。Session token 为 12 小时 stateless 签名 cookie：正常浏览器 logout 会删除 scoped cookie 并使后续浏览器 Session 请求为 401；单独复制的旧 cookie 在 TTL 到期前仍可重放，该限制作为已知边界记录。"
         }
       ],
       "source_refs": [
@@ -8889,6 +8949,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-01",
           "event": "production_acceptance_followup",
           "summary": "首轮 r20260901-fa1701c 已部署至 API :11、Route :12、Worker :11，运行健康与只读数据契约通过；真实生产浏览器发现 Advanced Filters、分页、移动端 Back/Source 点击目标低于 44px，Task 保持 active 进行最小 CSS 修复和重新发布。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "completed",
+          "summary": "44px 修复经 PR #1015 合并后构建 r20260901-a6f6319，三角色 immutable OCI 已部署至 API :12、Route :13、Worker :12；ECS 1/1/0、健康/provenance/CloudWatch、只读 HTTP、安全扫描、组合筛选、Case/Conversation/Preview/Runtime audit 和三视口生产浏览器验收全部通过，旧 EC2 backup 保持 200。"
         }
       ]
     },
