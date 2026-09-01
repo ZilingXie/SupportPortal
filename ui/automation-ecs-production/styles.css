@@ -333,7 +333,7 @@ a:focus-visible {
 }
 
 .global-error .button {
-  min-height: 34px;
+  min-height: 44px;
   color: #7f2e2a;
 }
 
@@ -461,8 +461,9 @@ a:focus-visible {
 }
 
 .advanced-filters summary {
-  min-height: 30px;
+  min-height: 44px;
   margin: 0;
+  padding: 7px 0;
   cursor: pointer;
   list-style-position: inside;
 }
@@ -708,7 +709,7 @@ a:focus-visible {
 }
 
 .pagination .button {
-  min-height: 38px;
+  min-height: 44px;
   padding: 7px 10px;
   font-size: 12px;
 }
@@ -1404,7 +1405,7 @@ a:focus-visible {
 
   .mobile-back {
     display: inline-block;
-    min-height: 40px;
+    min-height: 44px;
     padding: 7px 0;
   }
 
@@ -1419,7 +1420,7 @@ a:focus-visible {
   }
 
   .source-link {
-    min-height: 38px;
+    min-height: 44px;
     font-size: 12px;
   }
 

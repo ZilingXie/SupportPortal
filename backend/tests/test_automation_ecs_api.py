@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import re
 from typing import Any
 from unittest.mock import patch
 
@@ -456,3 +457,30 @@ def test_dashboard_runtime_and_static_assets_are_available_without_route_shadowi
         assert {item["role"] for item in runtime.json()["workers"]} == {"route", "worker"}
         assert {item["role"] for item in runtime.json()["active_workers"]} == {"route", "worker"}
         assert all(not item["provenance_mismatches"] for item in runtime.json()["workers"])
+
+
+def test_dashboard_css_keeps_interactive_targets_at_least_44px() -> None:
+    client, _ = _client()
+    with client:
+        response = client.get("/automation/production/styles.css")
+    assert response.status_code == 200
+
+    rules: dict[str, list[str]] = {}
+    for selector_list, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", response.text):
+        for selector in selector_list.split(","):
+            rules.setdefault(selector.strip(), []).append(declarations)
+
+    for selector in (
+        ".global-error .button",
+        ".advanced-filters summary",
+        ".pagination .button",
+        ".mobile-back",
+        ".source-link",
+    ):
+        heights = [
+            int(value)
+            for declarations in rules.get(selector, [])
+            for value in re.findall(r"min-height:\s*(\d+)px", declarations)
+        ]
+        assert heights, f"{selector} must declare a minimum target height"
+        assert min(heights) >= 44, f"{selector} must remain at least 44px tall"
