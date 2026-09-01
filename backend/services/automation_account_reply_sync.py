@@ -717,7 +717,7 @@ async def _process_account_customer_reply_impl(
             prompt_snapshots=dict(route_prompt_snapshots or {}),
             stage_attempts=list(route_payload.get("stage_attempts") or []),
         )
-    elif prior_classification.get("handler_binding_status") == "active" and prior_handler:
+    if prior_classification.get("handler_binding_status") == "active" and prior_handler:
         candidate_attempt = build_automation_attempt(prior_handler, prior_action)
         candidate_collected = dict(candidate_attempt["collected_fields"])
         candidate_missing = list(candidate_attempt["missing_fields"])
@@ -736,14 +736,15 @@ async def _process_account_customer_reply_impl(
                 ),
                 None,
             )
-            route_result = decide_account_route(
-                customer_message,
-                ticket_subject=str(canonical_ticket.get("subject") or billing_ticket.get("title") or ""),
-                ticket_context=ticket_context,
-                latest_assistant_message=latest_assistant_message,
-                current_ticket_status=str(canonical_ticket.get("status") or ""),
-                require_latest=True,
-            )
+            if route_result is None:
+                route_result = decide_account_route(
+                    customer_message,
+                    ticket_subject=str(canonical_ticket.get("subject") or billing_ticket.get("title") or ""),
+                    ticket_context=ticket_context,
+                    latest_assistant_message=latest_assistant_message,
+                    current_ticket_status=str(canonical_ticket.get("status") or ""),
+                    require_latest=True,
+                )
             probe_classification = route_result.classification
             probe_action = str(route_result.decision.execution_action or route_result.decision.route or "").strip()
             field_progress = any(

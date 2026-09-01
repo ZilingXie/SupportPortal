@@ -5101,3 +5101,23 @@ For each new entry, record:
 - Verification:
   - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_release_manifest.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_billing_automation_email.py backend/tests/test_rag_service_client.py backend/tests/test_rag_executor.py backend/tests/test_ragflow_docs_search_skill.py backend/tests/test_automation_production_runtime_contract.py backend/tests/test_worker.py` (`446 passed`, `44 subtests passed`).
   - `rtk git diff --check` (exit 0).
+
+## 2026-09-01 - Partial Fraud field replies remain in the handoff workflow (p2-110)
+
+- Summary:
+  - Restored the legacy Production active-handler continuation check when the ECS Worker receives an authoritative precomputed Route Worker result.
+  - A Fraud customer reply that adds any requested field now completes the one-follow-up policy: the remaining missing fields are included in the internal handoff email and the final 24-hour confirmation is queued without a second missing-information request.
+  - A genuinely off-topic/no-progress reply whose precomputed route targets Agora product support still enters the existing RAGFlow fallback.
+- Reason:
+  - Ticket 13182 supplied one of three requested fields, but the precomputed route branch skipped Fraud field-progress detection and incorrectly sent the short reply to RAG, whose insufficient-evidence outcome escalated the case.
+- Affected files/config:
+  - `backend/services/automation_account_reply_sync.py`
+  - `backend/services/automation_account_intake.py`
+  - Focused ECS comment-sync and intake tests
+  - No prompt, model, RAG endpoint, credential, or environment change
+- Data impact:
+  - No schema, ingestion, chunking, embedding, vector-table, index, or backfill changes.
+  - No historical case is replayed. Ticket 13182 remains unchanged.
+- Verification:
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py` (`371 passed`, `61 subtests passed`).
+  - `rtk /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_verification_automation.py` (`45 passed`, `28 subtests passed`).

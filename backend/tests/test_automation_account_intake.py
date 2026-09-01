@@ -48,7 +48,16 @@ def _extraction(*, missing=None, collected=None, requires_human_review=False, st
     )
 
 
-def _automation_result(*, missing=None, collected=None, email=None, requires_human_review=False, extraction=None):
+def _automation_result(
+    *,
+    missing=None,
+    collected=None,
+    email=None,
+    requires_human_review=False,
+    extraction=None,
+    follow_up_count=0,
+    proceed_with_missing_fields=False,
+):
     resolved = extraction or _extraction(missing=missing, collected=collected)
     return NS(
         missing_fields=list(missing or []),
@@ -59,6 +68,8 @@ def _automation_result(*, missing=None, collected=None, email=None, requires_hum
         extraction=resolved,
         customer_reply="",
         prompt_snapshots={},
+        follow_up_count=follow_up_count,
+        proceed_with_missing_fields=proceed_with_missing_fields,
     )
 
 
@@ -147,6 +158,30 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(outcome["reply_job"]["asked_field_keys"], ["account_type"])
         self.assertEqual(outcome["internal_email_send_status"], "not_ready")
         self.assertEqual(repository.saved_engineer_cases, [])
+
+    def test_fraud_missing_fields_persists_follow_up_context(self):
+        repository = _FakeRepository()
+        incomplete = _automation_result(
+            missing=["office_address", "contact_number"],
+            collected={"account_type": "company"},
+            follow_up_count=1,
+        )
+        with self._base_patches(
+            build_account_verification_automation_result=lambda **kw: incomplete,
+        ):
+            outcome = self._run(repository)
+
+        self.assertEqual(
+            outcome["account_case"]["automation_context"],
+            {
+                "handler": "fraud_account",
+                "extractor_version": None,
+                "extraction_status": "ok",
+                "follow_up_count": 0,
+                "follow_up_scheduled": True,
+                "proceed_with_missing_fields": False,
+            },
+        )
 
     def test_fraud_complete_fields_sends_email_and_confirmation_job(self):
         repository = _FakeRepository()
