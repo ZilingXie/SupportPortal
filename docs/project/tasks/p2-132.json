@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "将 ECS Production 只读看板重构为面向运营人员的 Ticket/Case 工作台：每个 Ticket 一条、默认隐藏 solved/closed、支持 Category/Subcategory/Ticket Status 与 Execution 条件组合筛选，并安全展示 Case、Conversation、待发布 Preview 和折叠的 Runtime audit。",
-  "next_action": "完成 owner review、定向测试、浏览器验证和 PR 合并；随后构建三角色 immutable release、部署 ECS 并完成只读生产验收。",
+  "next_action": "通过 finalize workflow 合并实现 PR 并验证 official local stack；随后构建三角色 immutable release、部署 ECS 并完成只读生产验收。",
   "acceptance_criteria": [
     "默认列表每个 Zendesk Ticket 仅一条，按 Zendesk ticket.updated_at 倒序；缺失时回退 Account Case updated_at，且默认 active 过滤排除 solved/closed。",
     "Ticket Status、Category/Subcategory、Ticket ID、Execution ID、Execution Status 与 Event Type 可组合分页，total、facets 和当前页来自同一只读数据库快照。",
@@ -25,6 +25,18 @@
       "label": "ECS dashboard and runtime regression",
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -rs backend/tests/test_automation_ecs_*.py",
       "details": "67 passed, 4 skipped；Dashboard Reader integration 1 项与既有 ECS Store integration 3 项因未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 跳过。覆盖管理员 Session、Ticket 分页/组合筛选/详情、敏感字段投影、Conversation 去重、Preview、Execution audit、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform。"
+    },
+    {
+      "type": "test",
+      "label": "Local responsive browser verification",
+      "command": "in-app Browser at 1440x900, 1024x768, and 390x844 against memory-only ECS API fixture",
+      "details": "退出后显示登录页，admin/admin 登录恢复看板；Category/Subcategory、Ticket Status 默认 Active、Clear、列表/详情切换、三个独立状态、长 Conversation、Preview、Runtime audit、移动端 Sign out 与 44px 焦点目标正常。三视口 body scrollWidth=clientWidth；长 Execution ID 无内部溢出；console 0 error/0 warning，DOM/资产无长期凭据标识。请求仅为静态资源、Session、runtime、cases、case detail、execution detail 与登录/退出，无 intake 或业务写请求。"
+    },
+    {
+      "type": "decision",
+      "label": "Implemented plan owner review",
+      "command": "review-implemented-plan skill",
+      "details": "修复 Conversation 不必要 author identity/channel 字段、nested collected-fields 任意 JSON 透传、Ticket 卡片状态混淆、移动端隐藏 Sign out、38px header target 与 Runtime audit 长 ID 裁剪；复审后无未处理 correctness/security finding。"
     }
   ],
   "source_refs": [
@@ -49,6 +61,11 @@
       "at": "2026-09-01",
       "event": "created",
       "summary": "Owner 批准将 ECS Production 看板从 Execution 表格重构为 Ticket-centric 只读工作台；原拟使用 p2-131，因该编号随后被合并任务占用，Owner 再次确认改用 p2-132。"
+    },
+    {
+      "at": "2026-09-01",
+      "event": "implemented",
+      "summary": "完成只读 Case Reader、Ticket-centric API、响应式 UI、脱敏与定向测试；owner review 和三视口浏览器验证通过，Task 保持 active 等待 PR、release、ECS 部署与生产验收。"
     }
   ]
 }

@@ -278,7 +278,7 @@ a:focus-visible {
 }
 
 .app-header .button-secondary {
-  min-height: 38px;
+  min-height: 44px;
   border-color: #40505f;
   background: #22303d;
   color: #e6edf3;
@@ -289,7 +289,7 @@ a:focus-visible {
 }
 
 .header-signout {
-  min-height: 38px;
+  min-height: 44px;
   color: #d5e1ea;
 }
 
@@ -1097,8 +1097,12 @@ a:focus-visible {
 }
 
 .execution-history button strong {
+  overflow: visible;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .execution-history button small {
@@ -1303,13 +1307,12 @@ a:focus-visible {
     flex-basis: 30px;
   }
 
-  .app-identity small,
-  .header-signout {
+  .app-identity small {
     display: none;
   }
 
   .app-identity strong {
-    max-width: 142px;
+    max-width: 80px;
     overflow: hidden;
     font-size: 13px;
     text-overflow: ellipsis;
@@ -1321,7 +1324,7 @@ a:focus-visible {
   }
 
   .app-header .button {
-    min-height: 38px;
+    min-height: 44px;
     padding: 7px 9px;
     font-size: 12px;
   }
