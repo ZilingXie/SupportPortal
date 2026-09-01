@@ -21,6 +21,7 @@ from backend.services.account_verification_field_extractor import (
     validate_account_verification_follow_up,
 )
 from backend.services.account_suspension_automation import suspension_contact_confirmation
+from backend.services.llm_profiles import ACCOUNT_EXTRACTOR_SCENARIO
 
 
 def _provided(group: str, value: str, quote: str) -> dict[str, object]:
@@ -209,6 +210,42 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
         self.assertEqual(result.status, "missing")
         self.assertEqual(result.missing_fields, all_missing)
 
+    def test_partial_reply_extracts_office_address_without_rag_semantics(self) -> None:
+        missing_fields = [
+            key for key in ACCOUNT_VERIFICATION_REQUIRED_GROUPS if key != "office_address"
+        ]
+
+        result = extract_account_verification_fields(
+            ticket_subject="Fraud review",
+            customer_messages=[
+                {
+                    "message_id": "comment-13190",
+                    "role": "customer",
+                    "content": "my office is in shanghai",
+                }
+            ],
+            invoke=lambda **_: {
+                "status": "missing",
+                "fields": {
+                    "office_address": {
+                        **_provided(
+                            "office_address",
+                            "Shanghai",
+                            "my office is in shanghai",
+                        ),
+                        "source_message_id": "comment-13190",
+                    },
+                    **{key: {"status": "missing"} for key in missing_fields},
+                },
+                "missing_fields": missing_fields,
+            },
+        )
+
+        self.assertEqual(result.status, "missing")
+        self.assertEqual(result.collected_fields["office_address"], "Shanghai")
+        self.assertEqual(result.missing_fields, missing_fields)
+        self.assertFalse(result.requires_human_review)
+
     def test_seven_fields_are_required(self) -> None:
         result = extract_account_verification_fields(
             ticket_subject="Account verification",
@@ -315,6 +352,30 @@ class AccountVerificationFieldExtractorTests(unittest.TestCase):
 
 
 class AccountVerificationAutomationTests(unittest.TestCase):
+    def test_builder_uses_account_extractor_scenario_by_default(self) -> None:
+        scenarios: list[str] = []
+        extraction = AccountVerificationFieldExtraction(
+            status="missing",
+            collected_fields={},
+            missing_fields=list(ACCOUNT_VERIFICATION_REQUIRED_GROUPS),
+            grounding_status="passed",
+        )
+
+        def extract(**kwargs: object) -> AccountVerificationFieldExtraction:
+            scenarios.append(str(kwargs["model_scenario"]))
+            return extraction
+
+        build_account_verification_automation_result(
+            ticket_subject="Fraud review",
+            customer_messages=[{"role": "customer", "content": "Please review our account."}],
+            ticket_id="13190",
+            account_case_id="AC-13190",
+            customer_email="customer@example.com",
+            extract=extract,
+        )
+
+        self.assertEqual(scenarios, [ACCOUNT_EXTRACTOR_SCENARIO])
+
     def test_missing_information_is_followed_up_only_once(self) -> None:
         extraction = AccountVerificationFieldExtraction(
             status="missing",
