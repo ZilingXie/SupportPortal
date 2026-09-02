@@ -588,8 +588,6 @@ def _archer_reply_facts(
     intent = intent_by_outcome[outcome]
     known_information = dict(collected_fields)
     known_information["archer_outcome"] = outcome
-    if outcome == "enabled":
-        known_information.update(region="oversea", max_subscribe_load=50)
     facts = build_automation_reply_facts(
         behavior="enablement",
         reply_intent=intent,

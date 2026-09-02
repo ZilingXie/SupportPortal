@@ -30,11 +30,6 @@ class AutomationPersonaTests(unittest.TestCase):
                 "requested_feature": "media_relay",
                 "requested_feature_label": "media rele",
                 "archer_outcome": outcome,
-                **(
-                    {"region": "oversea", "max_subscribe_load": 50}
-                    if outcome == "enabled"
-                    else {}
-                ),
             },
             missing_information=[] if outcome == "enabled" else ["app_id"],
             customer_name="Ada Customer",
@@ -49,25 +44,22 @@ class AutomationPersonaTests(unittest.TestCase):
             facts["known_information"],
             {
                 "archer_outcome": "enabled",
-                "max_subscribe_load": 50,
-                "region": "oversea",
                 "requested_feature_name": "Media Relay",
             },
         )
         self.assertEqual(facts["customer_first_name"], "Ada")
         self.assertIn("abcdefabcdefabcdefabcdefabcdefab", facts["_forbidden_values"])
 
-    def test_archer_success_contract_requires_current_configuration_and_closure(self) -> None:
+    def test_archer_success_contract_requires_current_enablement_and_closure(self) -> None:
         facts = self._archer_facts("enablement_archer_enabled", "enabled")
         valid = (
-            "Thank you for your patience. Media Relay is already enabled for the oversea region with a maximum "
-            "subscribe load of 50. This case will be archived now. If you have further questions, you can open "
-            "a new ticket."
+            "Thank you for your patience. Media Relay is already enabled on your project. This case will be "
+            "archived now. If you have further questions, you can open a new ticket."
         )
         natural_style = (
-            "Thanks for waiting on this - good news: Media Relay is already enabled for your project in the "
-            "oversea region, with a maximum subscribe load of 50, so you're all set. I'm closing this case now, "
-            "but if any questions come up later, feel free to open a new ticket and we'll take it from there."
+            "Thanks for waiting on this - good news: Media Relay is already enabled on your project, so you're "
+            "all set. I'm closing this case now, but if any questions come up later, feel free to open a new "
+            "ticket and we'll take it from there."
         )
         for valid_reply in (valid, natural_style):
             with self.subTest(valid_reply=valid_reply):
@@ -78,12 +70,23 @@ class AutomationPersonaTests(unittest.TestCase):
                 self.assertEqual(normalized["reply_intent"], "enablement_archer_enabled")
         for invalid in (
             valid.replace("already enabled", "will be enabled"),
-            valid.replace("oversea region", "configured region"),
-            valid.replace("subscribe load of 50", "subscribe load"),
+            valid.replace("Media Relay", "the feature"),
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(AutomationPersonaError):
                     validate_account_reply_contract(invalid, facts, close_after_publish=True)
+
+    def test_archer_success_contract_allows_configuration_detail_when_customer_asks(self) -> None:
+        # region/load are no longer required, but a reply that mentions them (for
+        # example when the customer asked about capacity) must not be rejected
+        facts = self._archer_facts("enablement_archer_enabled", "enabled")
+        with_detail = (
+            "Thank you for your patience. Media Relay is already enabled on your project in the oversea region "
+            "with a maximum subscribe load of 50. This case will be archived now. If you have further "
+            "questions, you can open a new ticket."
+        )
+        _, close = validate_account_reply_contract(with_detail, facts, close_after_publish=True)
+        self.assertTrue(close)
 
     def test_archer_recoverable_contracts_request_a_replacement_without_overclaim(self) -> None:
         invalid_facts = self._archer_facts("enablement_appid_invalid", "appid_invalid")
