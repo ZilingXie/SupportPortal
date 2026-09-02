@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T08:27:21Z",
-  "source_base_commit": "c5541a306edac5dfe8bffca09c35f8fcf9ee4f74",
-  "registry_digest": "91bc4ca53211fa5755d16bf2e14cb2d49277dd5db75f2204f9f674e4ad08ec4a",
+  "generated_at": "2026-09-02T08:39:30Z",
+  "source_base_commit": "17fd23ab2fa74cf8f81aaeee578d96e8077ca2b4",
+  "registry_digest": "69aae75fe028ee9d24afafc8832bc26d4435936bbaceb66009ea78c692245954",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -9266,7 +9266,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "done",
       "owner": "zac",
       "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona reply-job（p2-135 后为 v20）生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
-      "next_action": "已完成：直连鉴权（PR#1023）、生产 rollout r20260902-70a9af2（含 #1029 文案修复与 #1030 回调 host 白名单）、archer_auth_review 复核与三项加固决策、docs/archer_direct_auth_architecture.md 复用文档、四类真实工单验收（13218 enabled 幂等 / 13223 创建分支 / 13226 查无项目+Persona 兜底+升级后忽略评论 / 13228 非法格式零网络）全部闭环。后续增强不属本任务：跟单型触发（any update?）persona 合同漂移稳定掉人工（失败模式安全，p2-135 式调优候选）；reply job 首次 claim 生成必挂一次、排定窗口重试成功的模式待观察；Track 1 service credential 争取继续走同事线。",
+      "next_action": "已完成：直连鉴权（PR#1023）、生产 rollout r20260902-70a9af2（含 #1029 文案修复与 #1030 回调 host 白名单）、archer_auth_review 复核与三项加固决策、docs/archer_direct_auth_architecture.md 复用文档、四类真实工单验收（13218 enabled 幂等 / 13223 创建分支 / 13226 查无项目+Persona 兜底+升级后忽略评论 / 13228 非法格式零网络）全部闭环。后续增强不属本任务：跟单型触发（any update? 等）的 persona 合同漂移稳定掉人工——政策要求复述「查无项目+重新提供 App ID」而跟单语境下生成答进度、未复述要素，4 次重试全挂校验后按设计转 Human Review（失败模式安全，p2-135 式 prompt/校验调优候选）；Track 1 service credential 争取继续走同事线。勘误（2026-09-02）：早前记录的「reply job 首次 claim 生成必挂一次」系误读——attempt_count 计认领次数（claim_account_reply_jobs 每次认领自增），published=2 为「生成认领+发布认领」两阶段正常生命周期（13228 首认领即 persona_render_status=generated 实证），该观察撤回。",
       "acceptance_criteria": [
         "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
         "Archer executor 仅返回 enabled、appid_invalid、project_not_found、enable_failed；退出码与首行双重校验，330 秒总超时会终止脚本进程组，返回 detail 已移除 App ID、凭据类值和控制字符并限长。",
