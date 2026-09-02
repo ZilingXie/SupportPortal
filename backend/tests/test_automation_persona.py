@@ -871,6 +871,82 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         self.assertEqual(result.content.lower().count("hi"), 1)
 
+    def test_engineer_investigation_reply_intent_reuses_guided_contracts(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Hi Ziling, the investigation confirmed the missing native library. "
+                "Please add abiFilters arm64-v8a in build.gradle and rebuild."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            result = render_automation_reply(
+                reply_facts={
+                    "behavior": "engineer_support",
+                    "reply_intent": "engineer_investigation_reply",
+                    "provided_answer": (
+                        "Conclusion: APK is missing Agora arm64-v8a native libraries.\n"
+                        "Suggested resolution: Add abiFilters arm64-v8a in build.gradle."
+                    ),
+                    "customer_first_name": "Ziling Xie",
+                },
+                persona_assignment={"content": {"instruction": "Warm"}},
+            )
+        self.assertTrue(result.content.startswith("Hi Ziling"))
+        self.assertEqual(result.prompt_version, "engineer-investigation-persona-v1")
+
+    def test_engineer_investigation_reply_requires_provided_answer(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile):
+            with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_missing_provided_answer"):
+                render_automation_reply(
+                    reply_facts={
+                        "behavior": "engineer_support",
+                        "reply_intent": "engineer_investigation_reply",
+                        "customer_first_name": "Ziling Xie",
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                )
+
+    def test_engineer_investigation_reply_rejects_invented_identifier(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Hi Ziling, please check ticket 99999 for the fix.",
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ):
+            with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_guided_source_value_invented"):
+                render_automation_reply(
+                    reply_facts={
+                        "behavior": "engineer_support",
+                        "reply_intent": "engineer_investigation_reply",
+                        "provided_answer": "Add abiFilters arm64-v8a in build.gradle.",
+                        "customer_first_name": "Ziling Xie",
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                )
+
+    def test_engineer_investigation_reply_requires_customer_name(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile):
+            self.assertRaisesRegex(
+                AutomationPersonaError,
+                "automation_persona_guided_customer_name_missing",
+                render_automation_reply,
+                reply_facts={
+                    "behavior": "engineer_support",
+                    "reply_intent": "engineer_investigation_reply",
+                    "provided_answer": "Please retry after the packaging fix.",
+                    "customer_first_name": "customer@example.com",
+                },
+                persona_assignment={"content": {"instruction": "Warm"}},
+            )
+
     def test_engineer_guided_reply_requires_customer_name(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile):

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T11:07:19Z",
-  "source_base_commit": "7d6294498f86b3fd5d596466a6f9899b11a9c500",
-  "registry_digest": "ab43e50551d230ee4e980c4c2a09e2bf7c2a9750456459c30e1ee18469876610",
+  "generated_at": "2026-09-02T11:48:00Z",
+  "source_base_commit": "4e9b77d4baf7d5db7eaf2a018134e85b875c14b0",
+  "registry_digest": "587d09578012e9fb08be1598181ff708db7132b0a46d8647d9541b0aa6003c6b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -919,12 +919,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "Core five files + reroute/ECS periphery",
-          "command": "TICKET_DB_DSN=... pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_slack_n8n.py -q 以及 pytest backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_full_reroute.py backend/tests/test_recover_account_rerun.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_verification_automation.py -q",
-          "details": "核心五文件 377 passed + 72 subtests（含 intake 全链改断言：closing job 无 close、ticket 非 resolved、回复无 clos/reopen、24 hours 保留；新增 worker 用例 test_public_suspension_closing_delivery_hands_off_to_reviewer：suspension 公开交付→assign reviewer 31116644140308→case human_review_required→workflow closed；fake persona 两段文案更新）。外围 134 passed（dispatch 33 含 close 断言改写；唯一失败 test_apply_recovery_persona_unavailable... 为 p2-123 起既有基线，root main 同挂已对照）。"
-        },
-        {
-          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1030,7 +1024,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 31,
+      "task_count": 30,
       "done_count": 16,
       "blocked_count": 0
     },
@@ -2168,6 +2162,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "2026-09-02 p2-113 canary 实证三处摩擦后用户决策：readiness backend 重判定整体移除（采信 Hermes 自报）、guardrail 入口检查删除（六项确定性检查直查）、approve 前评论快照改为 intake 基线+实时 Zendesk 兜底。guardrail 五项文本检查与两段人工 approve 保留。"
         },
         {
+          "type": "decision",
+          "label": "Persona-assembled engineer replies under p2-138",
+          "details": "2026-09-02 用户决策:Hermes 纯调查,persona 组装客户回复(新 intent),guardrail+人工 approve 不变;同时根除双重问候并恢复客户名称呼(account case 名链)。"
+        },
+        {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
@@ -3291,6 +3290,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression after readiness removal",
           "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_investigation_flow.py backend/tests/test_engineer_execute_agent.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_automation_account_intake.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_api.py -q",
           "details": "212 passed + 7 subtests。删除 5 个已移除行为的测试（anchors 拒绝/proof 前置/conclusion 缺失拒绝/symptom 恢复/prior root-cause draft 改写），改 3 处断言为透传语义（blockers 保留原样、advisory 分流断言删除），guardrail 新增自报 ready 正例（无 proof_summary 亦通过 proof 检查），intake fake 增加 sync_account_case_comments 并断言基线 revision 非空。期间发现并修复误删的双用途函数 _contains_strong_root_cause_claim（prompt 脱敏仍依赖，已恢复）。"
+        },
+        {
+          "type": "test",
+          "label": "Focused regression for persona-assembled replies",
+          "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_engineer_execute_agent.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_api.py backend/tests/test_prompt_modules.py -q",
+          "details": "314 passed + 48 subtests。新增：collab 组装三用例（awaiting 组装含 facts 蒸馏/persona_meta/事件 Persona 前缀+guardrail 按钮；persona 失败落事件 502；active 不触发）；persona 新 intent 四用例（渲染/prompt 版本/provided_answer 必填/防幻觉标识符/客户名缺失）；investigation_flow awaiting 无 draft 正例（schema 放宽）；prompt_modules 断言更新至 v10 纯调查语义（含三条已删客户文案规则的 NotIn）。"
         }
       ],
       "source_refs": [
@@ -3299,8 +3304,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 3,
-      "done_count": 3,
+      "task_count": 4,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -6681,6 +6686,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Engineer approval chain relaxed under p2-137",
           "details": "2026-09-02 p2-113 canary 实证三处摩擦后用户决策：readiness backend 重判定整体移除（采信 Hermes 自报）、guardrail 入口检查删除（六项确定性检查直查）、approve 前评论快照改为 intake 基线+实时 Zendesk 兜底。guardrail 五项文本检查与两段人工 approve 保留。"
+        },
+        {
+          "type": "decision",
+          "label": "Persona-assembled engineer replies under p2-138",
+          "details": "2026-09-02 用户决策:Hermes 纯调查,persona 组装客户回复(新 intent),guardrail+人工 approve 不变;同时根除双重问候并恢复客户名称呼(account case 名链)。"
         }
       ],
       "source_refs": [
@@ -9578,51 +9588,45 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-138",
-      "title": "account_suspension 终态改为回复客户+assign Suhrid 复核，不再自动关单",
-      "status": "active",
+      "title": "Hermes 纯调查 + Persona 组装客户回复",
+      "status": "done",
       "owner": "zac",
-      "summary": "用户决策：suspension 全链终态从'AI 问联系方式→客户回复→closing 回复+solved 关单'改为'AI 问联系方式→客户回复→closing 回复+assign reviewer(Suhrid)+不关单'，措辞对齐 fraud（relevant team will reach out within 24 hours，去掉 close/reopen 表述，首轮追问预告同步修正）。实现：①ACCOUNT_REPLY_CLOSE_INTENTS 移除 account_suspension_handoff_and_close（intent 名保留以兼容历史 pending job，_and_close 成为遗留命名）；reply_sync 与 main 的 closing 排队点删 close_after_publish=True。②复用 fraud handoff：_hand_off_fraud_review_after_public_reply 守卫扩展到 execution_action=account_suspension + intent=account_suspension_handoff_and_close，函数更名 _hand_off_review_after_public_reply，assign 成功后 case→human_review_required（对齐 AC-13212 行为）；reviewer env ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID 双环境已是 suhrid。③persona 措辞 v20→v21：suspension closing 合同改为仅 24h 联系承诺（fraud 同款）、policy 重写、_normalize_ownership_facts 移出 case_closed、首轮 contact 合同去 close/reopen 预告、closing_reply_facts ownership_state 对齐 fraud。代码单点改动，/production 与 /automation/production 双 runtime 同时生效（ECS worker 挂载共享发布链，已核实无独立实现）。",
-      "next_action": "实现与目标测试已完成,待 finalize 合并与用户双侧部署（EC2 /production + ECS /automation/production）后各以一单 suspension 工单验收。",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "created_at": "2026-09-02",
+      "updated_at": "2026-09-02",
+      "summary": "按用户 2026-09-02 架构决策重构 engineer 审批链分工：Hermes 只做调查（Slack thread 与工程师交流、报告结论/证据/下一步），自报 awaiting_confirmation 时由 automation-persona 自动组装客户回复（新 intent engineer_investigation_reply，复用 guided 合同：provided_answer 唯一权威+source-values 防幻觉标识符+客户名缺失合同），Persona 产物写回 draft_customer_reply 同一字段使 guardrail/approve/投递全下游无感兼容。双收益：①双重问候根除（Hermes 不再写客户文案，Persona 统一装配 Hi {first_name} 单层问候）②客户名修复（customer_first_name=account_case.customer_name→ticket.requester，p2-126 同链）。prompt engineer-investigation-reply v9→v10（纯调查角色，draft_customer_reply 变 optional 且系统忽略）；engineer_agent schema required 移除 draft+删 missing_draft fail-closed；collab awaiting 分支自动组装+persona 失败落 engineer_ai_response_failed 事件并 502；EC2 legacy investigation 已停用不受影响。",
+      "next_action": "部署含本 PR 的 release（api+worker）后用全新工单验收：@bot 调查→自报结论→Slack 同步出现调查报告+Persona 草稿（单层问候带客户名）+Run Guardrail 按钮→approve→Zendesk 公开评论 readback。",
       "acceptance_criteria": [
-        "suspension 全链：客户确认联系邮箱后收到 fraud 风格回复（含 24 hours 联系承诺、无 close/reopen 表述），工单 assign 给 reviewer（ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID）且不 solved，case 转 human_review_required。",
-        "首轮 contact 追问不再预告工单将关闭可重开。",
-        "fraud handoff 原行为零回归（7 用例）。",
-        "account_suspension_handoff_and_close 不再派生 close_after_publish（version fence 更新）；reply_sync/main/intake/reroute 全部排队点不传 close。",
-        "prompt 版本 v21 + prompt_change_log 记录；AUTOMATION_PERSONA 测试同步。",
-        "既有测试按新语义更新后全绿；finalize 成功。"
+        "awaiting 回合后 active_investigation.draft_customer_reply=Persona content（Hi {名} 单层问候），readiness.source_mode=persona_assembled 且 ready=true，guardrail 六项文本检查照常。",
+        "persona 组装失败落 engineer_ai_response_failed Slack 事件并返回 502（工程师可重发消息重试）。",
+        "active（继续调查）回合不触发 Persona，无按钮。",
+        "prompt v10：调查员角色，draft optional；schema awaiting 无 draft 不再 fail-closed。",
+        "新 intent 合同：provided_answer 必填、reply 不得引入调查结论没有的标识符/URL、客户名缺失即报 automation_persona_guided_customer_name_missing。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "test",
-          "label": "Core five files + reroute/ECS periphery",
-          "command": "TICKET_DB_DSN=... pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_slack_n8n.py -q 以及 pytest backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_full_reroute.py backend/tests/test_recover_account_rerun.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_verification_automation.py -q",
-          "details": "核心五文件 377 passed + 72 subtests（含 intake 全链改断言：closing job 无 close、ticket 非 resolved、回复无 clos/reopen、24 hours 保留；新增 worker 用例 test_public_suspension_closing_delivery_hands_off_to_reviewer：suspension 公开交付→assign reviewer 31116644140308→case human_review_required→workflow closed；fake persona 两段文案更新）。外围 134 passed（dispatch 33 含 close 断言改写；唯一失败 test_apply_recovery_persona_unavailable... 为 p2-123 起既有基线，root main 同挂已对照）。"
+          "label": "Focused regression for persona-assembled replies",
+          "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_engineer_execute_agent.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_api.py backend/tests/test_prompt_modules.py -q",
+          "details": "314 passed + 48 subtests。新增：collab 组装三用例（awaiting 组装含 facts 蒸馏/persona_meta/事件 Persona 前缀+guardrail 按钮；persona 失败落事件 502；active 不触发）；persona 新 intent 四用例（渲染/prompt 版本/provided_answer 必填/防幻觉标识符/客户名缺失）；investigation_flow awaiting 无 draft 正例（schema 放宽）；prompt_modules 断言更新至 v10 纯调查语义（含三条已删客户文案规则的 NotIn）。"
         }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-113",
+        "p2-137"
       ],
       "source_refs": [
-        "backend/services/account_reply_jobs.py",
-        "backend/services/automation_account_reply_sync.py",
-        "backend/worker.py",
+        "backend/services/prompts/engineer_investigation_reply.py",
+        "backend/services/engineer_agent.py",
         "backend/services/automation_persona.py",
-        "backend/services/account_suspension_automation.py",
-        "backend/tests/test_account_intake.py",
-        "backend/tests/test_worker.py"
-      ],
-      "created_at": "2026-09-02",
-      "updated_at": "2026-09-02",
-      "history": [
-        {
-          "at": "2026-09-02",
-          "event": "created",
-          "summary": "用户明确新终态语义（回复+assign Suhrid+fraud 风格措辞，双环境）；探索确认 ECS 无独立实现（一处改动双生效）、fraud handoff 可直接扩展、措辞合同三处+首轮合同需同步。"
-        }
-      ],
-      "legacy_refs": [],
-      "legacy_ids": [],
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop"
+        "backend/services/automation_engineer_collab.py",
+        "backend/tests/test_automation_engineer_collab_assembly.py"
+      ]
     },
     {
       "schema_version": 2,
@@ -15021,7 +15025,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源），产出 Draft 后经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
+        "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源）；Hermes 自报调查结论就绪后由 **automation-persona 自动组装客户回复**（engineer_investigation_reply intent：调查结论是唯一技术事实权威、单层 Hi {客户名} 问候、禁止引入结论之外的标识符），Draft 经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
         "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],

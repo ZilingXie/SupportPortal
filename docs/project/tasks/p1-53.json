@@ -221,6 +221,11 @@
       "type": "decision",
       "label": "Engineer approval chain relaxed under p2-137",
       "details": "2026-09-02 p2-113 canary 实证三处摩擦后用户决策：readiness backend 重判定整体移除（采信 Hermes 自报）、guardrail 入口检查删除（六项确定性检查直查）、approve 前评论快照改为 intake 基线+实时 Zendesk 兜底。guardrail 五项文本检查与两段人工 approve 保留。"
+    },
+    {
+      "type": "decision",
+      "label": "Persona-assembled engineer replies under p2-138",
+      "details": "2026-09-02 用户决策:Hermes 纯调查,persona 组装客户回复(新 intent),guardrail+人工 approve 不变;同时根除双重问候并恢复客户名称呼(account case 名链)。"
     }
   ],
   "source_refs": [
