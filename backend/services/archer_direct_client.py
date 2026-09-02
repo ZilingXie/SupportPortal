@@ -22,6 +22,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from typing import Any
@@ -39,6 +40,9 @@ ARCHER_AUTHORIZE_URL = (
     "&redirect_uri=https%3A%2F%2Farcher.agora.io%2Fapi%2Fv1%2FhandleSSO"
 )
 ARCHER_JWT_COOKIE_NAME = "archer_token_jwt_202003"
+# Must stay in sync with the redirect_uri host embedded in ARCHER_AUTHORIZE_URL;
+# the renewal chain rejects authorize redirects to any other host.
+ARCHER_SSO_CALLBACK_HOST = "archer.agora.io"
 ARCHER_PROJECT_MISSING_MESSAGE = "项目不存在"
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -162,6 +166,9 @@ def obtain_archer_jwt(*, force: bool = False) -> str:
         raise ArcherCredentialError("archer SSO authorize redirected to an unexpected location")
     if not location.startswith("http://") and not location.startswith("https://"):
         raise ArcherCredentialError("archer SSO authorize returned a relative redirect")
+    redirect_host = (urllib.parse.urlparse(location).hostname or "").lower()
+    if redirect_host != ARCHER_SSO_CALLBACK_HOST:
+        raise ArcherCredentialError("archer SSO authorize redirected to an unexpected location")
 
     status, headers, _ = _request(
         "GET",

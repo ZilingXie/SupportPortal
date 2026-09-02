@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona reply-job（p2-135 后为 v20）生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
-  "next_action": "13218 验收通过但 enabled 回复不应向客户披露 oversea region / load 50；已改为仅告知 Media Relay 已开启（intake facts 注入、persona 政策、校验器三处协同，Skill 不动）。待合并部署后用下一张全新 enablement 工单（建议选尚无 typeId=6 配置的项目以覆盖创建分支）验证新文案，并补齐非法格式/查无项目两类验收后转 done。",
+  "next_action": "直连鉴权已上生产并通过 archer_auth_review 复核；本轮补齐 redirect 回调 host 白名单（review 第①项加固，第②③项按 review 结论不加）并沉淀 docs/archer_direct_auth_architecture.md 复用文档。待本轮合并后由用户重建 worker 镜像并 rollout（含 #1029 文案修复与本轮白名单），随后用全新 enablement 工单（建议选尚无 typeId=6 配置的项目以覆盖创建分支）验证新文案，并补齐非法格式/查无项目两类验收后转 done。",
   "acceptance_criteria": [
     "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
     "Archer executor 仅返回 enabled、appid_invalid、project_not_found、enable_failed；退出码与首行双重校验，330 秒总超时会终止脚本进程组，返回 detail 已移除 App ID、凭据类值和控制字符并限长。",
@@ -19,7 +19,7 @@
     "历史 Case、既有 outcome_unknown delivery、EC2 /production、非 Media Relay Enablement 和 n8n 请求契约不重放、不修改。"
   ],
   "blockers": [
-    "ECS Production Pilot 凭证 deposit、只读 probe、Worker service rollout 与真实工单验收由用户执行。"
+    "ECS Worker 镜像重建、service rollout（含 #1029 文案修复与回调 host 白名单）与真实工单验收由用户执行。"
   ],
   "evidence": [
     {
@@ -57,6 +57,12 @@
       "label": "review-implemented-plan owner review",
       "command": "review-implemented-plan skill",
       "details": "修复 recoverable Case 的 not_applicable 前态不会重新调用 Archer、共享 task role 泄漏 Pilot EFS 权限、executor 非严格首行与 JSON/Bearer 凭据脱敏不足；修复后聚焦套件与 Terraform validate 通过，无剩余 correctness/security finding。"
+    },
+    {
+      "type": "test",
+      "label": "Archer redirect callback host whitelist",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_archer_direct_client.py backend/tests/test_enablement_archer_executor.py; python -m py_compile backend/services/archer_direct_client.py",
+      "details": "archer_auth_review.md 复核后落实第①项加固：续期链 authorize 的 redirect Location 在既有包含性校验（handleSSO 路径+code=+绝对 URL）之上增加回调 host 白名单（ARCHER_SSO_CALLBACK_HOST 与 authorize 常量的 redirect_uri host 绑定，其余 host 一律 ArcherCredentialError fail-closed）；第②项启动/周期凭证探测与第③项 JWT 签名校验按 review 结论不实施（理由记录于 docs/archer_direct_auth_architecture.md 决策表）。新增 foreign-host 用例（路径全过但 host 不同必须拒绝）；既有 renewal 用例的 Location 均为 archer.agora.io host，不受影响。同时沉淀 docs/archer_direct_auth_architecture.md 直连鉴权复用文档（适用场景判定/两级凭证模型/信任边界/决策记录/复用 Checklist/已知限制）。"
     }
   ],
   "source_refs": [
@@ -66,7 +72,8 @@
     "backend/services/automation_persona.py",
     "backend/Dockerfile.automation",
     "infra/terraform/production",
-    "docs/deploy_automation_ecs_release.md"
+    "docs/deploy_automation_ecs_release.md",
+    "docs/archer_direct_auth_architecture.md"
   ],
   "created_at": "2026-09-01",
   "updated_at": "2026-09-02",
@@ -100,6 +107,11 @@
       "at": "2026-09-02",
       "event": "archer_enabled_reply_information_scope",
       "summary": "13218 验收反馈：enabled 回复不再向客户披露 oversea region 与 max subscribe load 50。改动位于 persona 层三处（facts 注入/政策/校验器），Skill 输出与内部审计 detail 不变。"
+    },
+    {
+      "at": "2026-09-02",
+      "event": "archer_redirect_host_whitelist_and_reuse_doc",
+      "summary": "archer_auth_review.md 复核结论落地：续期链 redirect Location 增加回调 host 白名单（fail-closed，锚定 authorize redirect_uri host）；启动/周期凭证探测与 JWT 签名校验两项按 review 理由不做。新增 docs/archer_direct_auth_architecture.md 作为内网系统直连鉴权的可复用参考架构。"
     }
   ]
 }
