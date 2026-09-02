@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "以生产 Case 13200 确认的目标风格为准,将 Automation Persona 的渲染 prompt 从要点清单式改为第一人称范例式,并定向放宽校验:删除感谢句模式与新工单指引大正则,handoff 24h 承诺句由逐字校验放宽为正则族,enabled/archive 将来时禁令收窄为误导性将来搭配。安全底线(forbidden values、overclaim)、missing-information 格式合同与 ownership 合同保留且 prompt 强化第一人称 ownership。prompt version automation-persona-v19 -> v20。",
-  "next_action": "代码、测试与记录已完成并通过聚焦回归；待 finalize 合并到 main 后，由用户重建三角色 ECS release 并 rollout Worker（可与 p2-134 直连方案同车部署），用受控新工单观察回复风格与残留校验的 human-review 频率。",
+  "next_action": "代码、测试、记录与本地官方栈验证均已完成；仅剩用户侧:重建三角色 ECS release 并 rollout Worker（可与 p2-134 直连方案同车部署），用受控新工单观察回复风格与残留校验的 human-review 频率，通过后将本任务置 done。",
   "acceptance_criteria": [
     "render_automation_reply 的 system prompt 增加第一人称 ownership 与句式自然性指令;各主要 intent 的 contract policy 改为必达事实 + 风格参考范例(标注不得照抄)。",
     "删除 enablement 完成合同的感谢句模式匹配与新工单指引大正则校验。",
@@ -35,6 +35,12 @@
       "label": "Owner 风格与校验取舍确认",
       "command": "会话确认",
       "details": "Owner 认可以 13200 改写版为目标风格;missing-information 格式合同与安全底线保留;ownership 在 prompt 中强化第一人称;fraud/suspension 24h 逐字句放宽为正则族;全部主要 intent 一次到位;persona version 三层架构调整明确移出本任务。"
+    },
+    {
+      "type": "deployment",
+      "label": "PR 合并、官方栈重启与 build 溯源",
+      "command": "PR #1026 合并(main ce369ad)后: bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote; main 前进至 00bac2f(PR #1027)后按规则重跑同命令并 bash scripts/workflow/inspect_single_host_stack_mode.sh",
+      "details": "官方重启 lightweight、官方栈模式 deployment、辅助栈不存在;最终 /health status=ok、app_build.ref=00bac2fad2f3 与当前 main 完全一致、build_provenance_status=matched、rag_service ok、prompt_runtime loaded(code release, 28 prompts)。纯 backend persona 改动,无 live marker 要求。"
     }
   ],
   "source_refs": [
@@ -61,6 +67,11 @@
       "at": "2026-09-02",
       "event": "implementation_verified",
       "summary": "完成 prompt 风格化改写(第一人称 ownership + 各 intent 风格参考范例)、校验定向放宽(24h 正则族、删感谢/新工单正则、将来时禁令收窄为误导性搭配、closing 接受客户词汇)、v19->v20 与 engineer-guided v2->v3 bump、测试反转/新增与记录更新;聚焦回归通过(唯一组合失败为既有顺序污染,干净 main 可复现)。"
+    },
+    {
+      "at": "2026-09-02",
+      "event": "local_stack_verified",
+      "summary": "PR #1026 经 finalize_task_to_main 合并(main ce369ad)后完成本地官方栈验证:lightweight 重启两轮(第二轮因 main 前进至 00bac2f 按溯源规则重跑),最终 /health ok、app_build.ref=00bac2fad2f3 与当前 main 一致、build_provenance matched、无辅助栈。Task 保持 active 仅待用户 ECS rollout 与受控工单验收。"
     }
   ]
 }
