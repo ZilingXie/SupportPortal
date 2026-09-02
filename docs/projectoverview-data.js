@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T08:23:59Z",
-  "source_base_commit": "2cdc27e3e4757f8b88414e66c94197b32e0eafba",
-  "registry_digest": "98505943f81a8e49a1db68aa5465e7f1a02e901cc292f9718fdfe64634cde497",
+  "generated_at": "2026-09-02T08:27:21Z",
+  "source_base_commit": "c5541a306edac5dfe8bffca09c35f8fcf9ee4f74",
+  "registry_digest": "91bc4ca53211fa5755d16bf2e14cb2d49277dd5db75f2204f9f674e4ad08ec4a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -883,6 +883,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Production acceptance: four outcome classes on live ECS tickets",
+          "command": "生产 DB（SSM automation-db-dsn，supportportal_production schema）account case + enablement_archer_result 事件 + reply job 状态追踪；Zendesk tickets/{id}/comments API 对证；对象工单 13218/13223/13226/13228（2026-09-02，r20260902-70a9af2 生产，api:18/route:17/worker:18）",
+          "details": "四类验收全绿：①13218=enabled（已有配置走幂等「无需更新」，公开回复后 solved）；②13223=创建分支（尚无 typeId=6 配置项目，写入+读回验证）；③13226=查无项目（15:44 Archer 只读返回查无→清 app_id+missing_fields=[app_id]+不发内部邮件→15:53 公开回复索要正确 App ID→pending 接受更正）；④13228=非法格式（appid frhug123→executor 32-hex 格式短路零网络 appid_invalid→公开回复说明 32-character App ID 要求→pending）。附带实证两条设计兜底：13226 第二轮跟单 any update? 触发 persona 4/4 次合同失败→不发布转 Human Review+私有备注+回源队列（p2-136 前的 Persona 兜底标准）；升级后客户后续评论（含非法 appid）被 comment-sync 按设计忽略（0 事件 0 job）。已知观察项（不阻塞）：跟单型触发的 persona 合同漂移、reply job 首次 claim 生成必挂一次后排定窗口重试成功。"
+        },
+        {
+          "type": "test",
           "label": "Persona 合同与渲染聚焦回归",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py",
           "details": "53 passed、42 subtests passed。覆盖:13200 改写版自然样本过 completed/archer 合同(正向新增)、fraud 24h 承诺 paraphrase 反转为通过、缺 24h/无联系动作/否定/疑问仍拒、重试与耗尽链路用真实无效样本、missing-info deterministic 组装逐字断言不变、版本断言 v20。"
@@ -1019,7 +1025,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 30,
-      "done_count": 15,
+      "done_count": 16,
       "blocked_count": 0
     },
     {
@@ -9257,10 +9263,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-134",
       "title": "Enablement Media Relay 接入 Archer 自动开启",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona reply-job（p2-135 后为 v20）生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
-      "next_action": "直连鉴权已上生产并通过 archer_auth_review 复核；本轮补齐 redirect 回调 host 白名单（review 第①项加固，第②③项按 review 结论不加）并沉淀 docs/archer_direct_auth_architecture.md 复用文档。待本轮合并后由用户重建 worker 镜像并 rollout（含 #1029 文案修复与本轮白名单），随后用全新 enablement 工单（建议选尚无 typeId=6 配置的项目以覆盖创建分支）验证新文案，并补齐非法格式/查无项目两类验收后转 done。",
+      "next_action": "已完成：直连鉴权（PR#1023）、生产 rollout r20260902-70a9af2（含 #1029 文案修复与 #1030 回调 host 白名单）、archer_auth_review 复核与三项加固决策、docs/archer_direct_auth_architecture.md 复用文档、四类真实工单验收（13218 enabled 幂等 / 13223 创建分支 / 13226 查无项目+Persona 兜底+升级后忽略评论 / 13228 非法格式零网络）全部闭环。后续增强不属本任务：跟单型触发（any update?）persona 合同漂移稳定掉人工（失败模式安全，p2-135 式调优候选）；reply job 首次 claim 生成必挂一次、排定窗口重试成功的模式待观察；Track 1 service credential 争取继续走同事线。",
       "acceptance_criteria": [
         "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
         "Archer executor 仅返回 enabled、appid_invalid、project_not_found、enable_failed；退出码与首行双重校验，330 秒总超时会终止脚本进程组，返回 detail 已移除 App ID、凭据类值和控制字符并限长。",
@@ -9273,9 +9279,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "生产验收仅使用全新工单：有效 App ID 自动开启并在公开回复读回后 solved；非法格式与查无项目保持 open 并接受更正；失败仅自然观察，不破坏凭证。",
         "历史 Case、既有 outcome_unknown delivery、EC2 /production、非 Media Relay Enablement 和 n8n 请求契约不重放、不修改。"
       ],
-      "blockers": [
-        "ECS Worker 镜像重建、service rollout（含 #1029 文案修复与回调 host 白名单）与真实工单验收由用户执行。"
-      ],
+      "blockers": [],
       "evidence": [
         {
           "type": "test",
@@ -9318,6 +9322,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Archer redirect callback host whitelist",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_archer_direct_client.py backend/tests/test_enablement_archer_executor.py; python -m py_compile backend/services/archer_direct_client.py",
           "details": "archer_auth_review.md 复核后落实第①项加固：续期链 authorize 的 redirect Location 在既有包含性校验（handleSSO 路径+code=+绝对 URL）之上增加回调 host 白名单（ARCHER_SSO_CALLBACK_HOST 与 authorize 常量的 redirect_uri host 绑定，其余 host 一律 ArcherCredentialError fail-closed）；第②项启动/周期凭证探测与第③项 JWT 签名校验按 review 结论不实施（理由记录于 docs/archer_direct_auth_architecture.md 决策表）。新增 foreign-host 用例（路径全过但 host 不同必须拒绝）；既有 renewal 用例的 Location 均为 archer.agora.io host，不受影响。同时沉淀 docs/archer_direct_auth_architecture.md 直连鉴权复用文档（适用场景判定/两级凭证模型/信任边界/决策记录/复用 Checklist/已知限制）。"
+        },
+        {
+          "type": "test",
+          "label": "Production acceptance: four outcome classes on live ECS tickets",
+          "command": "生产 DB（SSM automation-db-dsn，supportportal_production schema）account case + enablement_archer_result 事件 + reply job 状态追踪；Zendesk tickets/{id}/comments API 对证；对象工单 13218/13223/13226/13228（2026-09-02，r20260902-70a9af2 生产，api:18/route:17/worker:18）",
+          "details": "四类验收全绿：①13218=enabled（已有配置走幂等「无需更新」，公开回复后 solved）；②13223=创建分支（尚无 typeId=6 配置项目，写入+读回验证）；③13226=查无项目（15:44 Archer 只读返回查无→清 app_id+missing_fields=[app_id]+不发内部邮件→15:53 公开回复索要正确 App ID→pending 接受更正）；④13228=非法格式（appid frhug123→executor 32-hex 格式短路零网络 appid_invalid→公开回复说明 32-character App ID 要求→pending）。附带实证两条设计兜底：13226 第二轮跟单 any update? 触发 persona 4/4 次合同失败→不发布转 Human Review+私有备注+回源队列（p2-136 前的 Persona 兜底标准）；升级后客户后续评论（含非法 appid）被 comment-sync 按设计忽略（0 事件 0 job）。已知观察项（不阻塞）：跟单型触发的 persona 合同漂移、reply job 首次 claim 生成必挂一次后排定窗口重试成功。"
         }
       ],
       "source_refs": [
@@ -9367,6 +9377,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-02",
           "event": "archer_redirect_host_whitelist_and_reuse_doc",
           "summary": "archer_auth_review.md 复核结论落地：续期链 redirect Location 增加回调 host 白名单（fail-closed，锚定 authorize redirect_uri host）；启动/周期凭证探测与 JWT 签名校验两项按 review 理由不做。新增 docs/archer_direct_auth_architecture.md 作为内网系统直连鉴权的可复用参考架构。"
+        },
+        {
+          "at": "2026-09-02",
+          "event": "production_acceptance_completed",
+          "summary": "生产 r20260902-70a9af2（含 #1029 文案修复与 #1030 回调 host 白名单）四类真实工单验收全绿：13218 enabled 幂等、13223 创建分支、13226 查无项目（附带实证 Persona 合同失败转 Human Review 与升级后忽略后续评论两条兜底）、13228 非法格式零网络短路。Task 转 done；遗留观察项（跟单型 persona 合同漂移、reply job 首次生成重试模式）与 Track 1 service credential 不属本任务范围。"
         }
       ]
     },
