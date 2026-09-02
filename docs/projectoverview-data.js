@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T03:08:03Z",
-  "source_base_commit": "a1ce0e603298517e47311df8439112488011852b",
-  "registry_digest": "87aad0429146c74483185b43bc976821de5e8ea987e9d1985e715e32818cf771",
+  "generated_at": "2026-09-02T03:32:58Z",
+  "source_base_commit": "46370fa9c6c3dffc99c37b52482b722415d86436",
+  "registry_digest": "b39eca35f7b6047cac0d132a5683e5ff4c9a67103e2089efce14930fd4443947",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -871,6 +871,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Persona 合同与渲染聚焦回归",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py",
+          "details": "53 passed、42 subtests passed。覆盖:13200 改写版自然样本过 completed/archer 合同(正向新增)、fraud 24h 承诺 paraphrase 反转为通过、缺 24h/无联系动作/否定/疑问仍拒、重试与耗尽链路用真实无效样本、missing-info deterministic 组装逐字断言不变、版本断言 v20。"
+        },
+        {
+          "type": "test",
+          "label": "Worker 与组合回归",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_worker.py; 同解释器组合运行 persona/worker/intake/comment_sync/automation_account_intake/version_fence/archer 七套件",
+          "details": "worker 单独 119 passed、17 subtests;组合 412 passed、74 subtests,唯一失败 test_non_ecs_worker_keeps_legacy_rag_service_executor 为既有顺序污染(干净 main 同组合同样失败、单独运行通过),非本任务引入。"
+        },
+        {
+          "type": "decision",
+          "label": "Owner 风格与校验取舍确认",
+          "command": "会话确认",
+          "details": "Owner 认可以 13200 改写版为目标风格;missing-information 格式合同与安全底线保留;ownership 在 prompt 中强化第一人称;fraud/suspension 24h 逐字句放宽为正则族;全部主要 intent 一次到位;persona version 三层架构调整明确移出本任务。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -976,7 +994,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 28,
+      "task_count": 29,
       "done_count": 15,
       "blocked_count": 0
     },
@@ -9183,7 +9201,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Enablement Media Relay 接入 Archer 自动开启",
       "status": "active",
       "owner": "zac",
-      "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona-v19 reply-job 生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
+      "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona reply-job（p2-135 后为 v20）生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
       "next_action": "直连方案已实现并通过定向测试（DirectArcherClient + SSO JWT 无头续期 + ARCHER_OAUTH_COOKIE SSM/Terraform 接线）；待 finalize 合并后：SSM 写入 /supportportal/production/archer-oauth-cookie（oauth2-token 对），构建三角色 release，Worker task definition 基于当前最新 revision 注册新 revision（保留 hermes env 与 Graph EFS 挂载），按 deploy_automation_ecs_release.md 的顺序用三类全新工单验收（非法格式→查无项目→有效 App ID）；Pilot/EFS pilot-creds/device flow 路径已废弃，Track 1 继续等 Pilot 开发答复长期凭证方案。",
       "acceptance_criteria": [
         "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
@@ -9191,7 +9209,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "首次 intake 与客户 comment 路径均在 Case 持久化及 Zendesk ownership gate 成功后调用 Archer，且不会持久化可被旧 poller 发送的 Enablement 邮件 payload。",
         "enabled 创建 enablement_archer_enabled closing reply job；appid_invalid/project_not_found 清除旧 App ID、恢复 missing_fields=[app_id] 并创建对应 open reply intent；客户可提交更正值。",
         "enable_failed 先执行既有 Human Review escalation，再通过原幂等 delivery claim 发送带脱敏原因的 Enablement 内部邮件；outcome_unknown 只保留在邮件 ledger 且禁止自动重发，Case 与 processing execution 均为 human_review。",
-        "automation-persona-v19 为三个新 intent 生成受合同约束的客户回复；成功 facts 仅含 canonical Media Relay、oversea、max_subscribe_load=50、Archer outcome 和客户姓名，所有 intent 均禁止原始 App ID，Persona 耗尽时不发布并转 Human Review。",
+        "automation-persona-v20 为三个新 intent 生成受合同约束的客户回复（p2-135 放宽为自然语言风格 + 24h 承诺正则族；成功 facts 的 Media Relay/oversea/50 三要素与 App ID 禁令不变）；成功 facts 仅含 canonical Media Relay、oversea、max_subscribe_load=50、Archer outcome 和客户姓名，所有 intent 均禁止原始 App ID，Persona 耗尽时不发布并转 Human Review。",
         "Terraform 仅为 Worker 配置 pilot EFS Access Point、/var/lib/pilot mount、PILOT_BIN/XDG_CONFIG_HOME 及独立 ClientMount/ClientWrite task-role 权限；API/Route 不获得挂载或权限。",
         "用户 runbook 保留现有 task definition 环境、secret、graph EFS 和 role，先安全 deposit 与只读 Archer GET probe，probe 成功后才 rollout，并验证 1/1/0、digest、挂载、heartbeat、CloudWatch、health 与 EC2 backup。",
         "生产验收仅使用全新工单：有效 App ID 自动开启并在公开回复读回后 solved；非法格式与查无项目保持 open 并接受更正；失败仅自然观察，不破坏凭证。",
@@ -9263,6 +9281,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-02",
           "event": "archer_direct_auth_transport",
           "summary": "Pilot 凭证链路被证不可行（device flow 端点 404、deposit 不下发到 ECS）后，经 Mac 只读探针定稿直连方案：Archer v2 API 认证=archer_token_jwt_202003 JWT cookie（24h），SSO 会话oauth2-token+.sig 可静默续期；executor 弃用 pilot subprocess 改为进程内直连，新增ARCHER_OAUTH_COOKIE SSM/Terraform 接线，发布门禁文档改为直连契约。"
+        },
+        {
+          "at": "2026-09-02",
+          "event": "persona_version_reference_updated",
+          "summary": "p2-135 将 Automation Persona prompt 版本 bump 至 v20 并放宽措辞级校验（24h 承诺正则族、删感谢/新工单正则、收窄将来时禁令）；本任务尚未 rollout，验收标准的 persona 版本引用同步更新为 v20，三个 Archer intent 的 Media Relay/oversea/50 三要素与 App ID 禁令不变，用户部署时以 v20 生效。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-135",
+      "title": "Automation Persona 客户回复自然化(prompt 范例式 + 校验定向放宽)",
+      "status": "active",
+      "owner": "zac",
+      "summary": "以生产 Case 13200 确认的目标风格为准,将 Automation Persona 的渲染 prompt 从要点清单式改为第一人称范例式,并定向放宽校验:删除感谢句模式与新工单指引大正则,handoff 24h 承诺句由逐字校验放宽为正则族,enabled/archive 将来时禁令收窄为误导性将来搭配。安全底线(forbidden values、overclaim)、missing-information 格式合同与 ownership 合同保留且 prompt 强化第一人称 ownership。prompt version automation-persona-v19 -> v20。",
+      "next_action": "代码、测试与记录已完成并通过聚焦回归；待 finalize 合并到 main 后，由用户重建三角色 ECS release 并 rollout Worker（可与 p2-134 直连方案同车部署），用受控新工单观察回复风格与残留校验的 human-review 频率。",
+      "acceptance_criteria": [
+        "render_automation_reply 的 system prompt 增加第一人称 ownership 与句式自然性指令;各主要 intent 的 contract policy 改为必达事实 + 风格参考范例(标注不得照抄)。",
+        "删除 enablement 完成合同的感谢句模式匹配与新工单指引大正则校验。",
+        "fraud/suspension handoff 承诺句放宽为正则族(联系动作 + 24 hours),paraphrase 可通过;missing-information 回复仍禁止 24h 联系承诺语义。",
+        "enabled/archive 将来时禁令收窄:仅拒 will/would/be going to 与 enabled/archived 的直接将来搭配,非误导将来表述不再被拒。",
+        "forbidden values、guided source、appid overclaim、Archer 三要素、enablement submission 24h+Mon-Fri、suspension email 询问与 close/reopen、missing-information 格式合同、ownership 合同全部保留不变。",
+        "AUTOMATION_PERSONA_PROMPT_VERSION bump 至 v20;所有硬编码版本断言同步更新。",
+        "锚定被改校验的测试反转或删除;新增自然风格样本(含 13200 改写版)能过 completed/archer 合同的正向测试。",
+        "聚焦回归全绿;prompt_change_log 记录 v19->v20;p2-134 验收标准中的版本引用同步为 v20;Project Overview 再生成并 check 通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Persona 合同与渲染聚焦回归",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py",
+          "details": "53 passed、42 subtests passed。覆盖:13200 改写版自然样本过 completed/archer 合同(正向新增)、fraud 24h 承诺 paraphrase 反转为通过、缺 24h/无联系动作/否定/疑问仍拒、重试与耗尽链路用真实无效样本、missing-info deterministic 组装逐字断言不变、版本断言 v20。"
+        },
+        {
+          "type": "test",
+          "label": "Worker 与组合回归",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_worker.py; 同解释器组合运行 persona/worker/intake/comment_sync/automation_account_intake/version_fence/archer 七套件",
+          "details": "worker 单独 119 passed、17 subtests;组合 412 passed、74 subtests,唯一失败 test_non_ecs_worker_keeps_legacy_rag_service_executor 为既有顺序污染(干净 main 同组合同样失败、单独运行通过),非本任务引入。"
+        },
+        {
+          "type": "decision",
+          "label": "Owner 风格与校验取舍确认",
+          "command": "会话确认",
+          "details": "Owner 认可以 13200 改写版为目标风格;missing-information 格式合同与安全底线保留;ownership 在 prompt 中强化第一人称;fraud/suspension 24h 逐字句放宽为正则族;全部主要 intent 一次到位;persona version 三层架构调整明确移出本任务。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_worker.py",
+        "docs/prompt_change_log.md",
+        "docs/project/tasks/p2-134.json"
+      ],
+      "created_at": "2026-09-02",
+      "updated_at": "2026-09-02",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-02",
+          "event": "created",
+          "summary": "Owner 确认以 Case 13200 改写风格为目标:保留安全底线、missing-information 格式合同与 ownership;fraud/suspension 24h 承诺句放宽为正则族;全部主要 intent 一次到位;persona version 三层架构调整明确不在本任务范围。"
+        },
+        {
+          "at": "2026-09-02",
+          "event": "implementation_verified",
+          "summary": "完成 prompt 风格化改写(第一人称 ownership + 各 intent 风格参考范例)、校验定向放宽(24h 正则族、删感谢/新工单正则、将来时禁令收窄为误导性搭配、closing 接受客户词汇)、v19->v20 与 engineer-guided v2->v3 bump、测试反转/新增与记录更新;聚焦回归通过(唯一组合失败为既有顺序污染,干净 main 可复现)。"
         }
       ]
     },

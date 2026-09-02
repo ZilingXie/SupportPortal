@@ -41,11 +41,10 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v19"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v20"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
-ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v2"
+ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 
-_HANDOFF_COMMITMENT_SENTENCE = "The relevant team will contact you within 24 hours."
 _ENABLEMENT_SUBMISSION_24_HOUR_PATTERN = r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"
 _ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN = (
     r"(?:\bmonday\s*(?:-|to|through)\s*friday\b|\bmon\s*(?:-|to)\s*fri\b|\bweekdays\b)"
@@ -371,14 +370,6 @@ def _reply_clauses(reply: str) -> list[str]:
     ]
 
 
-def _standalone_sentences(reply: str) -> set[str]:
-    return {
-        " ".join(sentence.split())
-        for sentence in re.split(r"(?<=[.!?])[^\S\r\n]+|[\r\n]+", str(reply or ""))
-        if sentence.strip()
-    }
-
-
 def _is_positive_clause(clause: str) -> bool:
     if "?" in clause:
         return False
@@ -398,6 +389,17 @@ def _has_positive_clause(reply: str, *patterns: str) -> bool:
 
 def _assert_24_hour_commitment(reply: str, *, error_code: str) -> None:
     if not _has_positive_clause(reply, r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"):
+        raise AutomationPersonaError(error_code)
+
+
+def _assert_handoff_commitment(reply: str, *, error_code: str) -> None:
+    """A natural sentence promising that someone will contact the customer within 24 hours."""
+    if not _has_positive_clause(
+        reply,
+        r"\b(?:will|shall|'ll)\b",
+        r"(?:contact\w*|reach\w*\s+out|follow\w*\s+up|(?:get\w*|be)\s+in\s+touch|get\w*\s+back|touch\w*\s+base|respond\w*|repl\w*)",
+        r"\b(?:(?:within\s+)?24\s*[- ]?\s*hours?|24h)\b",
+    ):
         raise AutomationPersonaError(error_code)
 
 
@@ -447,8 +449,10 @@ def _deterministic_enablement_submission_reply(reply: str) -> str:
 
 
 def _assert_fraud_handoff_contract(reply: str) -> None:
-    if _HANDOFF_COMMITMENT_SENTENCE not in _standalone_sentences(reply):
-        raise AutomationPersonaError("automation_persona_fraud_handoff_contract_failed")
+    _assert_handoff_commitment(
+        reply,
+        error_code="automation_persona_fraud_handoff_contract_failed",
+    )
 
 
 def _assert_missing_information_contract(
@@ -456,11 +460,6 @@ def _assert_missing_information_contract(
     missing_information: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     """A missing-information ask must not promise any handoff/SLA follow-up."""
-    sentences = _standalone_sentences(reply)
-    if _HANDOFF_COMMITMENT_SENTENCE in sentences:
-        raise AutomationPersonaError(
-            "automation_persona_missing_information_contract_failed"
-        )
     _assert_missing_information_format_contract(reply, missing_information or [])
     if _has_positive_clause(
         reply,
@@ -647,8 +646,10 @@ def _assert_suspension_contact_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
     if "ticket" not in lowered or "email" not in lowered:
         raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    if _HANDOFF_COMMITMENT_SENTENCE not in _standalone_sentences(reply):
-        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
+    _assert_handoff_commitment(
+        reply,
+        error_code="automation_persona_suspension_contact_contract_failed",
+    )
     if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
         reply,
         r"\breopen\b",
@@ -657,8 +658,10 @@ def _assert_suspension_contact_contract(reply: str) -> None:
 
 
 def _assert_suspension_closing_contract(reply: str) -> None:
-    if _HANDOFF_COMMITMENT_SENTENCE not in _standalone_sentences(reply):
-        raise AutomationPersonaError("automation_persona_completion_contract_failed")
+    _assert_handoff_commitment(
+        reply,
+        error_code="automation_persona_completion_contract_failed",
+    )
     if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
         reply,
         r"\breopen\b",
@@ -666,78 +669,64 @@ def _assert_suspension_closing_contract(reply: str) -> None:
         raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
-def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) -> None:
-    acknowledgement = str(facts.get("completion_acknowledgement") or "").strip().lower()
-    if acknowledgement == "additional_information":
-        has_acknowledgement = _has_positive_clause(
-            reply,
-            r"\bthank(?:s|\s+you)\b",
-            r"\b(?:provid(?:e|ed|ing)|shar(?:e|ed|ing)|send|sent|suppl(?:y|ied|ying))\b",
-            r"\b(?:information|details?)\b",
-        )
-    elif acknowledgement == "patience":
-        has_acknowledgement = _has_positive_clause(
-            reply,
-            r"\b(?:thank(?:s|\s+you)|appreciat(?:e|ed|ing))\b",
-            r"\b(?:patience|waiting)\b",
-        ) and not re.search(
-            r"\badditional\s+(?:information|details?)\b",
-            str(reply or ""),
-            flags=re.IGNORECASE,
-        )
-    else:
-        has_acknowledgement = False
-    if not has_acknowledgement:
-        raise AutomationPersonaError(
-            "automation_persona_completion_contract_failed_acknowledgement"
-        )
+_FUTURE_ENABLEMENT_CLAIM_RE = re.compile(
+    r"(?i)\b(?:will|would|'ll|shall)\s+(?:be\s+|get\s+)?(?:enabled|activated|provisioned)\b"
+    r"|\b(?:will|'ll)\s+(?:enable|activate|provision)\b"
+    r"|\bgoing\s+to\s+(?:be\s+)?(?:enable|activate|provision)\w*"
+    r"|\b(?:plan|planned|schedule|scheduled|expect|expected)\s+to\s+(?:be\s+)?(?:enable|activate|provision)\w*"
+    r"|\bwill\s+turn\w*\s+(?:it|this|that|the\s+\w+)\s+on\b"
+    r"|\b(?:enabled|activated|provisioned)\s+(?:tomorrow|later|soon|next\s+\w+)\b"
+)
+_FUTURE_ARCHIVE_CLAIM_RE = re.compile(
+    r"(?i)\b(?:will|would|'ll|shall)\s+(?:be\s+|get\s+)?(?:archived|closed)\b"
+    r"|\b(?:will|'ll)\s+(?:archive|close)\b"
+    r"|\bgoing\s+to\s+(?:be\s+)?(?:archive|close)\w*"
+    r"|\b(?:plan|planned|schedule|scheduled|expect|expected)\s+to\s+(?:be\s+)?(?:archive|close)\w*"
+    r"|\b(?:archiv|clos)\w*\s+(?:the\s+)?(?:case|ticket)\s+(?:tomorrow|later|soon|next\s+\w+)\b"
+)
+_IMMEDIATE_CLAUSE_RE = re.compile(r"(?i)\b(?:now|currently|already|immediately)\b")
 
+
+def _has_misleading_future_claim(reply: str, pattern: re.Pattern[str]) -> bool:
+    """Only future claims without an immediacy marker in the same clause mislead the customer."""
+    return any(
+        pattern.search(clause) and not _IMMEDIATE_CLAUSE_RE.search(clause)
+        for clause in _reply_clauses(reply)
+    )
+
+
+def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) -> None:
     enabled_clauses = [
         clause
         for clause in _reply_clauses(reply)
         if re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", clause)
     ]
     if not enabled_clauses or any(
-        not _is_positive_clause(clause)
-        or re.search(
-            r"\b(?:will|would|going\s+to|plans?\s+to|scheduled\s+to|expected\s+to|tomorrow|later)\b",
-            clause,
-        )
-        for clause in enabled_clauses
+        not _is_positive_clause(clause) for clause in enabled_clauses
     ):
         raise AutomationPersonaError(
             "automation_persona_completion_contract_failed_enabled_state"
         )
+    if _has_misleading_future_claim(reply, _FUTURE_ENABLEMENT_CLAIM_RE):
+        raise AutomationPersonaError(
+            "automation_persona_completion_contract_failed_enabled_state"
+        )
 
-    archive_clauses = [
+    closing_clauses = [
         clause
         for clause in _reply_clauses(reply)
         if re.search(r"\b(?:case|ticket)\b", clause)
-        and re.search(r"\barchiv(?:e|ed|ing|es)\b", clause)
+        and re.search(r"\b(?:archiv(?:e|ed|ing|es)|clos(?:e|ed|ing|es))\b", clause)
     ]
-    if not archive_clauses or any(
-        not _is_positive_clause(clause)
-        or (
-            re.search(
-                r"\b(?:will|would|going\s+to|plans?\s+to|scheduled\s+to|expected\s+to|tomorrow|later)\b",
-                clause,
-            )
-            and not re.search(r"\b(?:now|currently|already|immediately)\b", clause)
-        )
-        for clause in archive_clauses
+    if not closing_clauses or any(
+        not _is_positive_clause(clause) for clause in closing_clauses
     ):
         raise AutomationPersonaError(
             "automation_persona_completion_contract_failed_archive"
         )
-
-    if not _has_positive_clause(
-        reply,
-        r"\b(?:questions?|concerns?|need\s+(?:anything\s+else|further\s+help))\b",
-        r"(?:\bplease\b[^.!?\n]{0,35}|\byou\s+(?:can|may|could)\b[^.!?\n]{0,35}|\bfeel\s+free\s+to\b[^.!?\n]{0,20})"
-        r"\b(?:open|create|submit|start|raise)\b[^.!?\n]{0,40}\bnew\s+(?:support\s+)?(?:ticket|case)\b",
-    ):
+    if _has_misleading_future_claim(reply, _FUTURE_ARCHIVE_CLAIM_RE):
         raise AutomationPersonaError(
-            "automation_persona_completion_contract_failed_new_ticket_guidance"
+            "automation_persona_completion_contract_failed_archive"
         )
 
 
@@ -1016,51 +1005,64 @@ def render_automation_reply(
     behavior = str(facts.get("behavior") or "").strip().lower()
     if behavior == "enablement" and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
         reply_contract_policy = (
-            "For an Enablement submission, explicitly say activation may take up to 24 hours and that the change "
-            "window is Monday-Friday (or an equally clear weekday window). Do not omit either fact. "
+            "For an Enablement submission, make two facts clear in your own words: activation may take up to 24 "
+            "hours, and changes roll out on weekdays (Monday-Friday). Weave them into your sentences rather than "
+            "quoting them like a policy line. Style reference (match the tone and rhythm, do not copy the "
+            "wording): 'Thanks for sending this over - I've logged the request and will handle the rest on my "
+            "side. Activation usually completes within 24 hours and changes go out on weekdays, so I'll keep an "
+            "eye on it and update you once it's live.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
         reply_contract_policy = (
-            "For a Fraud handoff, include this exact standalone sentence: "
-            f"'{_HANDOFF_COMMITMENT_SENTENCE}' Do not paraphrase or omit it. "
+            "For a Fraud handoff, commit clearly that someone from the relevant team will contact the customer "
+            "within 24 hours - keep the 24-hour promise exact, but phrase it in your own natural words rather "
+            "than a fixed sentence. Style reference (match the tone and rhythm, do not copy the wording): "
+            "'Thanks for sending this over - I've looped in the relevant team, and someone from their side will "
+            "reach out to you within 24 hours, so there's nothing you need to chase on your end.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION:
         reply_contract_policy = (
-            "For the first Account Suspension reply, ask which email is most convenient and whether the email on "
-            "the ticket should be used. Include this exact standalone sentence: "
-            f"'{_HANDOFF_COMMITMENT_SENTENCE}' Do not paraphrase it. Also explain that "
-            "the ticket will close after confirmed contact and handoff, and the customer may reopen it if nobody "
-            "contacts them within 24 hours. "
+            "For the first Account Suspension reply, ask the customer which email is most convenient and "
+            "whether the email already on the ticket should be used. Commit that someone from the relevant team "
+            "will contact them within 24 hours, phrased in your own natural words. Explain that the ticket will "
+            "close once contact and handoff are confirmed, and that they can reopen it if nobody contacts them "
+            "within 24 hours. Style reference (match the tone and rhythm, do not copy the wording): 'Before I "
+            "hand this over, could you tell me which email works best for you - would the one on this ticket be "
+            "fine? Once that's confirmed, the ticket will close after the handoff, and you're welcome to reopen "
+            "it if nobody reaches out within 24 hours. I've already alerted the relevant team, and someone from "
+            "their side will contact you within 24 hours.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
         reply_contract_policy = (
-            "For an Account Suspension handoff, include this exact standalone sentence: "
-            f"'{_HANDOFF_COMMITMENT_SENTENCE}' Do not paraphrase it. State that the ticket is closing after the "
-            "handoff, and that the customer may reopen it if nobody contacts "
-            "them within 24 hours. "
+            "For an Account Suspension handoff, commit that someone from the relevant team will contact the "
+            "customer within 24 hours, phrased in your own natural words. State that the ticket is closing after "
+            "the handoff, and that the customer may reopen it if nobody contacts them within 24 hours. Style "
+            "reference (match the tone and rhythm, do not copy the wording): 'Thanks for confirming. I've handed "
+            "the case over to the relevant team, and someone from their side will reach out to you within 24 "
+            "hours - this ticket will close now, and if nobody gets in touch within that window, feel free to "
+            "reopen it and I'll pick it back up.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
-        acknowledgement = str(facts.get("completion_acknowledgement") or "").strip().lower()
-        acknowledgement_policy = (
-            "Thank the customer for providing the additional information. "
-            if acknowledgement == "additional_information"
-            else "Thank the customer or express appreciation for their patience without implying that they "
-            "provided additional information. "
-        )
         reply_contract_policy = (
-            f"For completed Enablement, {acknowledgement_policy}Explicitly state that the feature is already "
-            "enabled, activated, provisioned, or turned on. Say that the case will be archived now; customer-facing "
-            "archive wording is independent of the system's internal solved status. Tell the customer that if they "
-            "have further questions or concerns, need anything else, or need further help, they can open a new "
-            "ticket. Do not describe enablement or archival "
-            "as delayed or tentative future work; saying the case will be archived now is acceptable. "
+            "For completed Enablement, deliver the good news warmly and clearly: the feature is already enabled "
+            "- never describe the enablement as pending, delayed, or future work - and this case is closing now, "
+            "in natural customer wording (for example 'closing this case'). Acknowledge the customer's wait or "
+            "their latest message in your own words. Invite them to open a new ticket if anything else comes up, "
+            "as a light closing line rather than a formal disclaimer. Style reference (match the tone and "
+            "rhythm, do not copy the wording): 'Thanks for waiting on this one - I'm happy to confirm the "
+            "feature is already enabled on your project, so you should be all set. I'm closing this case now, "
+            "but if any questions come up later, feel free to open a new ticket and we'll take it from there.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED:
         reply_contract_policy = (
-            "For Archer-completed Enablement, thank the customer or appreciate their patience. State that Media "
-            "Relay is already enabled for the oversea region with a maximum subscribe load of 50. Say that the "
-            "case will be archived now and direct any further questions to a new ticket. Do not use future, "
-            "tentative, or delayed enablement wording. "
+            "For Archer-completed Enablement, use the same warm, natural tone as a completed Enablement reply, "
+            "and make three facts clear in your own sentences: Media Relay is already enabled, it covers the "
+            "oversea region, and the maximum subscribe load is 50 - weave them naturally into the good news "
+            "rather than listing them like specifications. Close the case in natural customer wording. Style "
+            "reference (match the tone and rhythm, do not copy the wording): 'Thanks for waiting on this - good "
+            "news: Media Relay is already enabled for your project in the oversea region, with a maximum "
+            "subscribe load of 50, so you're all set. I'm closing this case now, but if any questions come up "
+            "later, feel free to open a new ticket and we'll take it from there.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID:
         reply_contract_policy = (
@@ -1119,6 +1121,11 @@ def render_automation_reply(
                 "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
                 "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
                 "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
+                "You are the human owner of this case: speak in first person (I/we) and never present an internal "
+                "team, a job title, or a system as the party responsible for handling or contacting the customer. "
+                "Vary sentence structure and rhythm - combine related points with natural connectors or a dash "
+                "instead of one flat sentence per fact, and use customer vocabulary (for example 'closing this "
+                "case' rather than 'archiving this case'). "
                 f"{ownership_policy}"
                 "Do not repeat identifier values that the customer has already supplied, including App IDs, "
                 "unless the supplied facts explicitly say the identifier is needed to distinguish multiple objects. "
