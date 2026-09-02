@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-02 - Archer Enablement success reply drops region/load disclosure (p2-134)
+
+- Area or subsystem: Account Automation Persona rendering for Archer-backed Media Relay Enablement.
+- Prompt version: `automation-persona-v19` remains unchanged.
+- Summary: The `enablement_archer_enabled` reply facts no longer inject `region`/`max_subscribe_load`, the intent policy now requires only that Media Relay is already enabled (with an explicit instruction not to mention regions, subscribe load, capacity numbers, or internal configuration details), and the deterministic contract validator no longer rejects replies that omit the oversea region or the load-50 statement. Feature mention, completed tense, and closure semantics are still enforced; recoverable-error intents and the failure path are unchanged.
+- Reason: Ticket 13218 acceptance feedback - customers should be told Media Relay is enabled, not the internal region/capacity configuration.
+- Version-fence decision: the previously published 13218 job is terminal and never re-rendered; no queued jobs exist for this intent, so the global Persona version fence stays unchanged (same decision as the 2026-09-01 p2-134 entry).
+- Privacy boundary: raw App IDs remain forbidden values and are excluded from Persona source facts and prompts.
+
 ## 2026-09-02 - Persona reply naturalization: style-reference prompts and targeted contract relaxation (p2-135)
 
 - Area or subsystem: Account Automation Persona rendering prompts and reply publication contracts for all major intents.

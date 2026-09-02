@@ -735,10 +735,6 @@ def _assert_enablement_archer_enabled_contract(reply: str, facts: dict[str, Any]
     lowered = str(reply or "").casefold()
     if "media relay" not in lowered:
         raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_feature")
-    if not re.search(r"\boverseas?\b|\boversea\b", lowered):
-        raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_region")
-    if not re.search(r"\b(?:maximum|max)\b[^.!?\n]{0,50}\b(?:subscribe|subscription)\b[^.!?\n]{0,30}\b50\b", lowered):
-        raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_load")
 
 
 def _assert_no_enablement_error_overclaim(reply: str) -> None:
@@ -1056,13 +1052,12 @@ def render_automation_reply(
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED:
         reply_contract_policy = (
             "For Archer-completed Enablement, use the same warm, natural tone as a completed Enablement reply, "
-            "and make three facts clear in your own sentences: Media Relay is already enabled, it covers the "
-            "oversea region, and the maximum subscribe load is 50 - weave them naturally into the good news "
-            "rather than listing them like specifications. Close the case in natural customer wording. Style "
-            "reference (match the tone and rhythm, do not copy the wording): 'Thanks for waiting on this - good "
-            "news: Media Relay is already enabled for your project in the oversea region, with a maximum "
-            "subscribe load of 50, so you're all set. I'm closing this case now, but if any questions come up "
-            "later, feel free to open a new ticket and we'll take it from there.' "
+            "and deliver one clear fact in your own sentences: Media Relay is already enabled on the customer's "
+            "project - do not mention regions, subscribe load, capacity numbers, or any other internal "
+            "configuration details. Close the case in natural customer wording. Style reference (match the tone "
+            "and rhythm, do not copy the wording): 'Thanks for waiting on this - good news: Media Relay is "
+            "already enabled on your project, so you're all set. I'm closing this case now, but if any questions "
+            "come up later, feel free to open a new ticket and we'll take it from there.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID:
         reply_contract_policy = (

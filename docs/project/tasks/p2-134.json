@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona reply-job（p2-135 后为 v20）生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
-  "next_action": "直连方案已实现并通过定向测试（DirectArcherClient + SSO JWT 无头续期 + ARCHER_OAUTH_COOKIE SSM/Terraform 接线）；待 finalize 合并后：SSM 写入 /supportportal/production/archer-oauth-cookie（oauth2-token 对），构建三角色 release，Worker task definition 基于当前最新 revision 注册新 revision（保留 hermes env 与 Graph EFS 挂载），按 deploy_automation_ecs_release.md 的顺序用三类全新工单验收（非法格式→查无项目→有效 App ID）；Pilot/EFS pilot-creds/device flow 路径已废弃，Track 1 继续等 Pilot 开发答复长期凭证方案。",
+  "next_action": "13218 验收通过但 enabled 回复不应向客户披露 oversea region / load 50；已改为仅告知 Media Relay 已开启（intake facts 注入、persona 政策、校验器三处协同，Skill 不动）。待合并部署后用下一张全新 enablement 工单（建议选尚无 typeId=6 配置的项目以覆盖创建分支）验证新文案，并补齐非法格式/查无项目两类验收后转 done。",
   "acceptance_criteria": [
     "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
     "Archer executor 仅返回 enabled、appid_invalid、project_not_found、enable_failed；退出码与首行双重校验，330 秒总超时会终止脚本进程组，返回 detail 已移除 App ID、凭据类值和控制字符并限长。",
@@ -22,6 +22,12 @@
     "ECS Production Pilot 凭证 deposit、只读 probe、Worker service rollout 与真实工单验收由用户执行。"
   ],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Archer enabled reply drops region/load disclosure",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_worker.py backend/tests/test_enablement_archer_executor.py backend/tests/test_archer_direct_client.py",
+      "details": "13218 全链验收通过（intake→route→Archer enabled→无内部邮件→公开回复→solved）后按用户反馈收紧客户可见信息面：移除 _archer_reply_facts 的 region/max_subscribe_load 注入（automation_account_intake.py）、重写 enablement_archer_enabled 政策为仅要求 Media Relay already enabled 且明确不提 region/load/容量/内部配置、校验器删除 contract_failed_region/load 两断言（feature 提及/完成时态/关单语义保留，并新增「客户主动问到时允许提及」用例）。247 passed、62 subtests；prompt_change_log 记录（persona v19 不变，version fence 沿用 p2-134 先例）。"
+    },
     {
       "type": "test",
       "label": "Archer direct-auth executor and client regression",
@@ -89,6 +95,11 @@
       "at": "2026-09-02",
       "event": "persona_version_reference_updated",
       "summary": "p2-135 将 Automation Persona prompt 版本 bump 至 v20 并放宽措辞级校验（24h 承诺正则族、删感谢/新工单正则、收窄将来时禁令）；本任务尚未 rollout，验收标准的 persona 版本引用同步更新为 v20，三个 Archer intent 的 Media Relay/oversea/50 三要素与 App ID 禁令不变，用户部署时以 v20 生效。"
+    },
+    {
+      "at": "2026-09-02",
+      "event": "archer_enabled_reply_information_scope",
+      "summary": "13218 验收反馈：enabled 回复不再向客户披露 oversea region 与 max subscribe load 50。改动位于 persona 层三处（facts 注入/政策/校验器），Skill 输出与内部审计 detail 不变。"
     }
   ]
 }
