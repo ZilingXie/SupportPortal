@@ -4,7 +4,7 @@
   "title": "Enablement Media Relay 接入 Archer 自动开启",
   "status": "active",
   "owner": "zac",
-  "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona-v19 reply-job 生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
+  "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona reply-job（p2-135 后为 v20）生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
   "next_action": "直连方案已实现并通过定向测试（DirectArcherClient + SSO JWT 无头续期 + ARCHER_OAUTH_COOKIE SSM/Terraform 接线）；待 finalize 合并后：SSM 写入 /supportportal/production/archer-oauth-cookie（oauth2-token 对），构建三角色 release，Worker task definition 基于当前最新 revision 注册新 revision（保留 hermes env 与 Graph EFS 挂载），按 deploy_automation_ecs_release.md 的顺序用三类全新工单验收（非法格式→查无项目→有效 App ID）；Pilot/EFS pilot-creds/device flow 路径已废弃，Track 1 继续等 Pilot 开发答复长期凭证方案。",
   "acceptance_criteria": [
     "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
@@ -12,7 +12,7 @@
     "首次 intake 与客户 comment 路径均在 Case 持久化及 Zendesk ownership gate 成功后调用 Archer，且不会持久化可被旧 poller 发送的 Enablement 邮件 payload。",
     "enabled 创建 enablement_archer_enabled closing reply job；appid_invalid/project_not_found 清除旧 App ID、恢复 missing_fields=[app_id] 并创建对应 open reply intent；客户可提交更正值。",
     "enable_failed 先执行既有 Human Review escalation，再通过原幂等 delivery claim 发送带脱敏原因的 Enablement 内部邮件；outcome_unknown 只保留在邮件 ledger 且禁止自动重发，Case 与 processing execution 均为 human_review。",
-    "automation-persona-v19 为三个新 intent 生成受合同约束的客户回复；成功 facts 仅含 canonical Media Relay、oversea、max_subscribe_load=50、Archer outcome 和客户姓名，所有 intent 均禁止原始 App ID，Persona 耗尽时不发布并转 Human Review。",
+    "automation-persona-v20 为三个新 intent 生成受合同约束的客户回复（p2-135 放宽为自然语言风格 + 24h 承诺正则族；成功 facts 的 Media Relay/oversea/50 三要素与 App ID 禁令不变）；成功 facts 仅含 canonical Media Relay、oversea、max_subscribe_load=50、Archer outcome 和客户姓名，所有 intent 均禁止原始 App ID，Persona 耗尽时不发布并转 Human Review。",
     "Terraform 仅为 Worker 配置 pilot EFS Access Point、/var/lib/pilot mount、PILOT_BIN/XDG_CONFIG_HOME 及独立 ClientMount/ClientWrite task-role 权限；API/Route 不获得挂载或权限。",
     "用户 runbook 保留现有 task definition 环境、secret、graph EFS 和 role，先安全 deposit 与只读 Archer GET probe，probe 成功后才 rollout，并验证 1/1/0、digest、挂载、heartbeat、CloudWatch、health 与 EC2 backup。",
     "生产验收仅使用全新工单：有效 App ID 自动开启并在公开回复读回后 solved；非法格式与查无项目保持 open 并接受更正；失败仅自然观察，不破坏凭证。",
@@ -84,6 +84,11 @@
       "at": "2026-09-02",
       "event": "archer_direct_auth_transport",
       "summary": "Pilot 凭证链路被证不可行（device flow 端点 404、deposit 不下发到 ECS）后，经 Mac 只读探针定稿直连方案：Archer v2 API 认证=archer_token_jwt_202003 JWT cookie（24h），SSO 会话oauth2-token+.sig 可静默续期；executor 弃用 pilot subprocess 改为进程内直连，新增ARCHER_OAUTH_COOKIE SSM/Terraform 接线，发布门禁文档改为直连契约。"
+    },
+    {
+      "at": "2026-09-02",
+      "event": "persona_version_reference_updated",
+      "summary": "p2-135 将 Automation Persona prompt 版本 bump 至 v20 并放宽措辞级校验（24h 承诺正则族、删感谢/新工单正则、收窄将来时禁令）；本任务尚未 rollout，验收标准的 persona 版本引用同步更新为 v20，三个 Archer intent 的 Media Relay/oversea/50 三要素与 App ID 禁令不变，用户部署时以 v20 生效。"
     }
   ]
 }
