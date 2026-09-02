@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T09:54:35Z",
-  "source_base_commit": "b4ddd8b034d9880b1846d2b42d2e5e54728ae17f",
-  "registry_digest": "f1cd0751c62af5f3a8c561169df2296af6783b67a3d154aa4b3a132f79c69bb2",
+  "generated_at": "2026-09-02T11:07:19Z",
+  "source_base_commit": "7d6294498f86b3fd5d596466a6f9899b11a9c500",
+  "registry_digest": "ab43e50551d230ee4e980c4c2a09e2bf7c2a9750456459c30e1ee18469876610",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2274,6 +2274,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Approved fixed administrator Session boundary",
           "command": "Owner confirmation: admin/admin",
           "details": "按 Owner 明确确认保留固定 admin/admin 和现有 Session secret，不新增凭据或 Session 数据库。Session token 为 12 小时 stateless 签名 cookie：正常浏览器 logout 会删除 scoped cookie 并使后续浏览器 Session 请求为 401；单独复制的旧 cookie 在 TTL 到期前仍可重放，该限制作为已知边界记录。"
+        },
+        {
+          "type": "test",
+          "label": "Image & build suites",
+          "command": "TICKET_DB_DSN=... pytest backend/tests/test_automation_ecs_images.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_agent_config.py -q",
+          "details": "15 passed。断言重写：installer 文件不存在、Dockerfile 无 install_pilot 与 /app/bin/pilot 字面量、archer skill 的 api/route 排除与 worker 保留不变。"
         }
       ],
       "source_refs": [
@@ -2286,7 +2292,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 3,
+      "task_count": 4,
       "done_count": 2,
       "blocked_count": 0
     },
@@ -9617,6 +9623,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-139",
+      "title": "ECS worker 镜像移除 Pilot 二进制安装（下载源无签名轮换二进制，运行时不使用）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "r20260903-7d62944 构建被 worker 镜像的 Pilot 安装步骤阻塞：pilot.touchingtalk.com 下载源在两小时内更换了无签名的 Linux 二进制（两次独立下载 checksum 稳定为 43bba510...，与 pinned 的 cbc83b6d... 失配，构建 fail closed）。Pilot 二进制自 p2-134 Archer 直连改造后运行时已不使用（ARCHER_OAUTH_COOKIE 纯 HTTP 链），仅作为遗留保留在镜像内。用户决策：移除安装。改动：backend/Dockerfile.automation 删除 install_pilot 的 RUN 步骤与 prune 行的 /app/bin/pilot 引用；删除 backend/scripts/install_pilot.py；test_automation_ecs_images 的 pinned-pilot 断言改为无 pilot 断言（Archer skill 保留断言不变）；runbook 表述同步。",
+      "next_action": "实现与测试已完成,待 finalize 合并后重建 release 并继续 ECS 部署。",
+      "acceptance_criteria": [
+        "三个 ECS 镜像不再包含或安装 Pilot 二进制；Dockerfile 无 install_pilot 引用；install_pilot.py 已删除。",
+        "Archer 直连链（ARCHER_OAUTH_COOKIE）与 archer-cross-channel-hosting skill 的镜像保留不变。",
+        "test_automation_ecs_images 断言更新为无 pilot；构建测试零回归。",
+        "runbook 表述同步。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Image & build suites",
+          "command": "TICKET_DB_DSN=... pytest backend/tests/test_automation_ecs_images.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_agent_config.py -q",
+          "details": "15 passed。断言重写：installer 文件不存在、Dockerfile 无 install_pilot 与 /app/bin/pilot 字面量、archer skill 的 api/route 排除与 worker 保留不变。"
+        }
+      ],
+      "source_refs": [
+        "backend/Dockerfile.automation",
+        "backend/tests/test_automation_ecs_images.py",
+        "docs/deploy_automation_ecs_release.md"
+      ],
+      "created_at": "2026-09-02",
+      "updated_at": "2026-09-02",
+      "history": [
+        {
+          "at": "2026-09-02",
+          "event": "created",
+          "summary": "r20260903-7d62944 构建实证 pilot 源轮换二进制（checksum 失配稳定复现，b4ddd8b 一小时前构建仍正常）；用户在移除安装/更新 checksum/问同事三选项中选择移除。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration"
     },
     {
       "schema_version": 2,

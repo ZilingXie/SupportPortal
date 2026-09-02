@@ -102,7 +102,7 @@ SSM 参数值是一整串 SSO cookie 头：`oauth2-token=<值>; oauth2-token.sig
 是唯一需要人工维护的凭证。Archer API 使用的 `archer_token_jwt_202003` JWT（24 小时）
 由 Worker 自动续期：`GET oauth/authorize`（带 SSO cookie）→ 302 `handleSSO?code=` →
 Set-Cookie 新 JWT；全程纯 HTTP，无需 Pilot 二进制、pilot-creds EFS 卷或 pilot-server。
-镜像内已有的 pilot 安装保留但运行时不使用。
+p2-139 起镜像不再安装 Pilot 二进制（下载源无签名且轮换二进制，运行时也不使用）。
 
 SSO 会话失效的特征：authorize 不再返回 302（返回登录页 200）→ Worker 按既有
 `enable_failed` 契约降级（escalate + 兜底内部邮件，工单转人工 queue）。恢复方式：
