@@ -62,6 +62,7 @@ locals {
     enablement_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/enablement-internal-email-recipients"
     fraud_internal_email_recipients      = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/fraud-internal-email-recipients"
     suspension_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/account-suspension-internal-email-recipients"
+    archer_oauth_cookie                  = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/archer-oauth-cookie"
   }
 
   manifest_bucket_name = trimspace(var.manifest_bucket_name) != "" ? trimspace(var.manifest_bucket_name) : "${var.project_name}-${var.environment}-release-manifests-${data.aws_caller_identity.current.account_id}"
@@ -236,6 +237,10 @@ locals {
     {
       name      = "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
       valueFrom = local.runtime_parameter_arns.suspension_internal_email_recipients
+    },
+    {
+      name      = "ARCHER_OAUTH_COOKIE"
+      valueFrom = local.runtime_parameter_arns.archer_oauth_cookie
     },
   ])
 }
