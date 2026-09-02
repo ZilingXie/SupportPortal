@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T06:41:17Z",
-  "source_base_commit": "51a60682ea0d26e529c3c011e0c6bf32553fd3bd",
-  "registry_digest": "1b72bafb28806fe6950ff14b69d38d6297deb2d01b6e33ba09727277d72c55f4",
+  "generated_at": "2026-09-02T08:20:40Z",
+  "source_base_commit": "70a9af2adb0e9808bcbe6e3799d3c4d7520fadc7",
+  "registry_digest": "a1fb0f1b470aa826fc456e6742428f2a019235d48cb52183ce9da9336340eb3d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -907,6 +907,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Confirmation semantics + consumer regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_verification_automation.py -q 以及 pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_full_reroute.py backend/tests/test_automation_account_intake.py backend/tests/test_account_slack_n8n.py backend/tests/test_route_service_contract.py -q",
+          "details": "18 passed（判定用例重写：13225 双邮箱→confirmed+owen@、纯文本/否定/无地址→confirmed+ticket 邮箱、空消息→awaiting、非 awaiting→ignored）；376 passed + 33 subtests（suspension 消费链 closing/handoff/reroute/slack/route 契约零回归）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1012,7 +1018,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 29,
+      "task_count": 30,
       "done_count": 15,
       "blocked_count": 0
     },
@@ -9418,6 +9424,50 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "summary": "PR #1026 经 finalize_task_to_main 合并(main ce369ad)后完成本地官方栈验证:lightweight 重启两轮(第二轮因 main 前进至 00bac2f 按溯源规则重跑),最终 /health ok、app_build.ref=00bac2fad2f3 与当前 main 一致、build_provenance matched、无辅助栈。Task 保持 active 仅待用户 ECS rollout 与受控工单验收。"
         }
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-136",
+      "title": "放宽 suspension 联系邮箱确认：客户任何非空回复即确认，不再因多邮箱/无邮箱转人工",
+      "status": "active",
+      "owner": "zac",
+      "summary": "Case 13225（account_suspension）实测：AI 追问联系邮箱后客户回复 'My agora account email is business@kira.art. you can contact me with owen@kira.art'——语义清晰指定了联系邮箱，但 suspension_contact_confirmation（account_suspension_automation.py:66-78）的去重邮箱数>1 即无条件转人工（multiple_contact_emails），另有 conflicting_email_confirmation/different_email_required/ambiguous_contact_confirmation 三个熔断分支同样过于保守，导致语义清晰的确认被转人工（后经 reconciliation 兜底退队列+人工接手）。用户决策：放宽为任何非空客户回复即确认（fail-closed 改为 confirm-on-reply），联系邮箱按优先级自动取值（第一个不等于工单邮箱的邮箱 → 第一个邮箱 → 工单邮箱），不再要求回复必须恰好包含一个邮箱或特定肯定句式。空消息仍等待（awaiting），非 awaiting 状态仍 ignored，状态机与幂等不变；closing reply + handoff + close 消费链零改动（confirmed_email 的空值兜底已存在于消费侧）。",
+      "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后由下一单 suspension 工单自然复测。",
+      "acceptance_criteria": [
+        "13225 同款回复（双邮箱，账号邮箱=工单邮箱）→ confirmed 且联系邮箱取 owen@kira.art，走 closing reply + handoff + close，不再转人工。",
+        "无邮箱纯文本回复（如 yes please）→ confirmed，联系邮箱回落工单邮箱。",
+        "单邮箱回复 → confirmed 用该邮箱（既有行为不变）。",
+        "空消息 → 仍 awaiting；非 awaiting 状态 → 仍 ignored。",
+        "四个熔断分支（multiple_contact_emails/conflicting_email_confirmation/different_email_required/ambiguous_contact_confirmation）不再触发 human_review。",
+        "既有测试按新语义更新后全绿；closing/handoff 链零回归。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Confirmation semantics + consumer regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_account_verification_automation.py -q 以及 pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_full_reroute.py backend/tests/test_automation_account_intake.py backend/tests/test_account_slack_n8n.py backend/tests/test_route_service_contract.py -q",
+          "details": "18 passed（判定用例重写：13225 双邮箱→confirmed+owen@、纯文本/否定/无地址→confirmed+ticket 邮箱、空消息→awaiting、非 awaiting→ignored）；376 passed + 33 subtests（suspension 消费链 closing/handoff/reroute/slack/route 契约零回归）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/account_suspension_automation.py",
+        "backend/tests/test_account_suspension_automation.py"
+      ],
+      "created_at": "2026-09-02",
+      "updated_at": "2026-09-02",
+      "history": [
+        {
+          "at": "2026-09-02",
+          "event": "created",
+          "summary": "AC-13225 全链诊断（workflow.failure_reason=multiple_contact_emails + Zendesk audits + reconciliation 兜底行为 + 07:58 用户手动 handover suhrid 人工闭环）；用户决策放宽为 confirm-on-reply 并批准实施。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,
