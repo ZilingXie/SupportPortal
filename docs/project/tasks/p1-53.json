@@ -211,6 +211,11 @@
       "type": "decision",
       "label": "Slack Engineer Case ECS implementation staged under p2-113",
       "details": "2026-09-01 p2-113 将 Engineer Slack 协作落到 ECS：automation_ecs_api 新增 collab 三端点（处理语义经用户确认为 Hermes 调查回合，非 EC2 guided reply parity）+ intake not_automated opening 回合；Terraform api/worker secrets 双轨补齐。rollout 前置 p2-134 Pilot deposit + Archer GET probe 硬门禁，之后按 p2-113 双门禁（测试模式零发布+真模式 canary Zendesk readback）验收。"
+    },
+    {
+      "type": "deployment",
+      "label": "Slack Engineer Case live on ECS via p2-113",
+      "details": "2026-09-02 p2-113 全链 canary 通过（工单 13220，Hermes 调查语义），EC2 Slack bot 停用；验收矩阵中 Slack Engineer Case 行从延期转为 live（thread binding/@bot inbound/guardrail/Final Approve 均实测，Zendesk 公开评论 readback 成功）。"
     }
   ],
   "source_refs": [

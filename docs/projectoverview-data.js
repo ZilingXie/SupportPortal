@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T08:20:40Z",
-  "source_base_commit": "70a9af2adb0e9808bcbe6e3799d3c4d7520fadc7",
-  "registry_digest": "a1fb0f1b470aa826fc456e6742428f2a019235d48cb52183ce9da9336340eb3d",
+  "generated_at": "2026-09-02T08:23:59Z",
+  "source_base_commit": "2cdc27e3e4757f8b88414e66c94197b32e0eafba",
+  "registry_digest": "98505943f81a8e49a1db68aa5465e7f1a02e901cc292f9718fdfe64634cde497",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2146,6 +2146,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "2026-09-01 p2-113 将 Engineer Slack 协作落到 ECS：automation_ecs_api 新增 collab 三端点（处理语义经用户确认为 Hermes 调查回合，非 EC2 guided reply parity）+ intake not_automated opening 回合；Terraform api/worker secrets 双轨补齐。rollout 前置 p2-134 Pilot deposit + Archer GET probe 硬门禁，之后按 p2-113 双门禁（测试模式零发布+真模式 canary Zendesk readback）验收。"
         },
         {
+          "type": "deployment",
+          "label": "Slack Engineer Case live on ECS via p2-113",
+          "details": "2026-09-02 p2-113 全链 canary 通过（工单 13220，Hermes 调查语义），EC2 Slack bot 停用；验收矩阵中 Slack Engineer Case 行从延期转为 live（thread binding/@bot inbound/guardrail/Final Approve 均实测，Zendesk 公开评论 readback 成功）。"
+        },
+        {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
@@ -2485,6 +2490,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "API prompt runtime lazy initialization fix",
           "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py -q",
           "details": "Phase C 实测暴露:api 角色进程从未初始化 prompt runtime(过去不需要 LLM prompt),messages 端点 500(RuntimeError: Prompt runtime was not initialized)。修复=_engineer_ticket_repository 工厂首次调用时 initialize_prompt_runtime_from_environment(service_name=automation-ecs-api),幂等且不拖累启动/readiness。19 passed(含新用例:工厂触发初始化且不重复)。"
+        },
+        {
+          "type": "deployment",
+          "label": "Full-chain canary on ticket 13220 and EC2 slack bot retirement",
+          "command": "aws logs filter-log-events --log-group-name /ecs/supportportal/production --filter-pattern '\"13220\"'",
+          "details": "release r20260903-51a6068（含 #1024 端点+#1027 prompt runtime 惰性初始化）rollout 后：n8n 真实投递 ticket 13220（agora_technical→not_automated→engineer case 13220-1→Slack root+opening delivered）；@bot 多轮 Hermes 真调查（记忆 L0 沉淀检索 score 0.935，证据源=LLM 知识+记忆库已记录缺口）；guardrail 真实拦截 application-signature 一轮后通过；final approve→delivery ledger 五连 delivered（customer sync/guardrail×2/approve/publish）→Zendesk 13220 公开评论 readback 成功（08:18 UTC agent 公开回复含根因与修复）。期间处理：api:16 被主 thread 误诊回滚误伤后随其重部署恢复共存；hermes healthCheck 循环=hermes-fix task stage2 再污染 .env（已清理+fix td rev2 注入 secret 根治）；prompt runtime 未初始化 500（PR#1027）。EC2 侧 PRODUCTION_ENGINEER_SLACK_* 已删并按当前部署变量（69e98363511b）重建，drain paused、/health 200，零双发。"
         },
         {
           "type": "test",
@@ -2867,7 +2878,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 22,
-      "done_count": 9,
+      "done_count": 10,
       "blocked_count": 0
     },
     {
@@ -6631,6 +6642,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Slack Engineer Case ECS implementation staged under p2-113",
           "details": "2026-09-01 p2-113 将 Engineer Slack 协作落到 ECS：automation_ecs_api 新增 collab 三端点（处理语义经用户确认为 Hermes 调查回合，非 EC2 guided reply parity）+ intake not_automated opening 回合；Terraform api/worker secrets 双轨补齐。rollout 前置 p2-134 Pilot deposit + Archer GET probe 硬门禁，之后按 p2-113 双门禁（测试模式零发布+真模式 canary Zendesk readback）验收。"
+        },
+        {
+          "type": "deployment",
+          "label": "Slack Engineer Case live on ECS via p2-113",
+          "details": "2026-09-02 p2-113 全链 canary 通过（工单 13220，Hermes 调查语义），EC2 Slack bot 停用；验收矩阵中 Slack Engineer Case 行从延期转为 live（thread binding/@bot inbound/guardrail/Final Approve 均实测，Zendesk 公开评论 readback 成功）。"
         }
       ],
       "source_refs": [
@@ -7837,10 +7853,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-113",
       "title": "/automation/production 替代 /production：Phase E Slack 协作收口（纯移植）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "Phase E：把旧栈 Engineer Case Slack 协作闭环搬进 /automation/production——新增 backend/services/automation_engineer_collab.py：Slack @bot 消息显式触发调查 AI 回合，actions 执行 guardrail 与 final_approve，thread binding resolver 校验固定 Team/Channel/thread。Zendesk 客户评论分支只持久化最新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知；不会自动运行 AI。刻意省略（登记）：multi-agent Plan/Execute/Review 刷新分支（两条 split 入向均 multi_agent_enabled=False）与 _normalize_engineer_case_payload_for_read 读取整形。",
-      "next_action": "ECS API 三端点与 intake opening 回合已实现（2026-09-01，见 evidence）；待 p2-134 Pilot deposit + Archer GET probe 门禁通过后构建新 release 并 rollout（api/worker td 补 TICKET_DB_DSN/n8n token/engineer Slack env/Hermes 三值），随后双门禁验收：①测试模式（Hermes SOUL 测试段：@bot 回合只查库汇报、guardrail 被 ready=false 阻断、零 Zendesk delivery，CloudWatch 日志归因 ECS consumer）；②真模式 canary（回滚测试段后用全新受控工单完成 guardrail→final_approve→delivery ledger→Zendesk public comment 直接 readback）。n8n 两个 ingress workflow 各 2 处 URL（Resolve GET + Send POST 共 4 处）切到 /automation/production 并保留回改快照。之后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
+      "next_action": "全链验收完成（2026-09-02 工单 13220 canary：route→engineer case→Slack→@bot 调查→guardrail→final approve→Zendesk 公开评论 readback，五连 delivered 全 ECS 归因；EC2 Slack bot 已停用）。已知缺口移交后续 task：readiness anchors 过严（工程师权威覆盖）、comments snapshot 首次 approve 409（基线/实时兜底）、guardrail 后修订需全量重试。",
       "acceptance_criteria": [
         "三个入向端点在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致；messages/actions 按 event_id/interaction_id 幂等。",
         "评论触发链 Engineer 分支：客户评论→持久化调查上下文并使旧 Draft/审批失效→单个无正文 zendesk_customer_comment 通知；只有后续 Slack @bot 才触发调查 AI 回合与 engineer_ai_response。",
@@ -7872,6 +7888,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "API prompt runtime lazy initialization fix",
           "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py -q",
           "details": "Phase C 实测暴露:api 角色进程从未初始化 prompt runtime(过去不需要 LLM prompt),messages 端点 500(RuntimeError: Prompt runtime was not initialized)。修复=_engineer_ticket_repository 工厂首次调用时 initialize_prompt_runtime_from_environment(service_name=automation-ecs-api),幂等且不拖累启动/readiness。19 passed(含新用例:工厂触发初始化且不重复)。"
+        },
+        {
+          "type": "deployment",
+          "label": "Full-chain canary on ticket 13220 and EC2 slack bot retirement",
+          "command": "aws logs filter-log-events --log-group-name /ecs/supportportal/production --filter-pattern '\"13220\"'",
+          "details": "release r20260903-51a6068（含 #1024 端点+#1027 prompt runtime 惰性初始化）rollout 后：n8n 真实投递 ticket 13220（agora_technical→not_automated→engineer case 13220-1→Slack root+opening delivered）；@bot 多轮 Hermes 真调查（记忆 L0 沉淀检索 score 0.935，证据源=LLM 知识+记忆库已记录缺口）；guardrail 真实拦截 application-signature 一轮后通过；final approve→delivery ledger 五连 delivered（customer sync/guardrail×2/approve/publish）→Zendesk 13220 公开评论 readback 成功（08:18 UTC agent 公开回复含根因与修复）。期间处理：api:16 被主 thread 误诊回滚误伤后随其重部署恢复共存；hermes healthCheck 循环=hermes-fix task stage2 再污染 .env（已清理+fix td rev2 注入 secret 根治）；prompt runtime 未初始化 500（PR#1027）。EC2 侧 PRODUCTION_ENGINEER_SLACK_* 已删并按当前部署变量（69e98363511b）重建，drain paused、/health 200，零双发。"
         }
       ],
       "source_refs": [
@@ -7883,7 +7905,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-09-01",
+      "updated_at": "2026-09-02",
       "history": [
         {
           "at": "2026-08-24",
