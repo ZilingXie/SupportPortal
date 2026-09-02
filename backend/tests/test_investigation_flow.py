@@ -4977,6 +4977,81 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIn("Please upgrade", deliveries[0]["immutable_content"])
         self.assertNotIn("Best Regards", deliveries[0]["immutable_content"])
 
+    def test_engineer_internal_message_awaiting_without_draft_is_accepted(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-NODRAFT",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "i got black screen, what should i do?",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+            active_investigation={
+                "id": "INV-LLM-NODRAFT",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [],
+            },
+        )
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "Investigation concluded and ready for persona assembly.",
+          "draft_customer_reply": "",
+          "reply_readiness": {
+            "has_conclusion": true,
+            "has_proof": true,
+            "has_solution_or_next_step": true,
+            "reply_scope": "root_cause_confirmed",
+            "conclusion_summary": "Missing native library packaging.",
+            "proof_summary": "UnsatisfiedLinkError on first join.",
+            "proof_anchors": [],
+            "solution_or_next_step": "Add arm64-v8a abiFilters.",
+            "blockers": [],
+            "advisory_followups": [],
+            "critique": "",
+            "ready_for_customer_reply": true
+          },
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "Crash on join.",
+            "knowledge_summary": "Packaging issue.",
+            "why_not_solved": "Needs rebuild.",
+            "goal": "Deliver fix steps.",
+            "known_facts": [],
+            "missing_information": [],
+            "next_request_for_engineer": "Approve the assembled reply.",
+            "resolution_hypothesis": "Missing arm64 library.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text=llm_text, model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-NODRAFT-1/investigation/messages",
+                json={"engineer_id": "eng", "message": "confirmed root cause with logs"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
+        self.assertTrue(
+            payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"]
+        )
+
     def test_engineer_internal_message_uses_investigation_reply_model_and_records_metadata(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-LLM-102",
@@ -5077,7 +5152,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v9")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v10")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(

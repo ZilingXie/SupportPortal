@@ -4306,3 +4306,18 @@ For each new entry, record:
   - Final approve falls back to a live Zendesk ownership snapshot when no comment-sync baseline exists (mirrors the legacy /production path; ZendeskCommentError → 503), and account intake writes an empty-comments baseline snapshot when the engineer case is created, so first approvals no longer depend on a prior customer comment.
 - Verification:
   - Focused regression (investigation flow, execute agent, guardrail, intake, slack, comment sync, ECS api): 212 passed + 7 subtests; five removed-behavior tests deleted, passthrough assertions updated, new positive case for self-reported readiness and the intake baseline assertion added.
+
+## 2026-09-02 - Hermes pure investigation + persona-assembled customer replies (p2-138)
+
+- Area or subsystem:
+  - Engineer investigation reply (agent role), automation persona (new intent), Slack collab assembly step.
+- Prompt version:
+  - `engineer-investigation-reply` v9 → **v10** (pure investigator: report findings/evidence/next steps; never write the customer draft).
+  - New persona prompt version `engineer-investigation-persona-v1` for the new `engineer_investigation_reply` intent (guided contracts reused: provided_answer sole authority, source-value invention blocked, customer-name-missing contract).
+- Reason:
+  - User decision 2026-09-02: Hermes investigates, the automation persona assembles the customer reply, guardrail plus human approval stay as the gates. This also structurally removes the double-greeting defect (ticket 13234: persona prepends generic greeting while the agent's own bare "Hello," survived stripping) and restores customer-name greetings via the account-case name chain.
+- Tooling and routing changes:
+  - `automation_engineer_collab.process_engineer_investigation_message`: when the investigation turn self-reports awaiting_confirmation, facts are distilled (conclusion/evidence/known_facts/solution) into `provided_answer` and `render_automation_reply` runs immediately with the new intent; the persona content becomes `active_investigation.draft_customer_reply`, readiness gets `source_mode=persona_assembled` with ready=true, persona metadata is recorded, and the Slack thread event carries the persona header plus the Run Guardrail button. Persona failures persist an `engineer_ai_response_failed` event and surface 502.
+  - `engineer_agent` schema: `draft_customer_reply` optional (missing-draft fail-closed removed); agent drafts are ignored by the ECS chain.
+- Verification:
+  - Focused regression across persona/collab/agent/investigation/guardrail/slack/intake/api/prompt suites: 314 passed + 48 subtests; new suites cover assembly happy path, failure path, active-skip, intent contracts, and the schema relaxation.

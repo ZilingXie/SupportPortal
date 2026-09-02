@@ -29,6 +29,7 @@ from backend.services.investigation_flow import (
     append_engineer_investigation_message,
     build_internal_message,
     default_investigation_prompt,
+    latest_customer_message,
 )
 
 from backend.services.automation_account_reply_sync import (
@@ -139,6 +140,113 @@ async def process_engineer_investigation_message(
         message_role=message_role,
         message_meta=message_meta,
     )
+    # When the investigation turn concludes (awaiting_confirmation), assemble the
+    # customer-facing reply with the automation persona from the verified findings;
+    # the investigation agent itself never writes the customer draft.
+    persona_meta: dict[str, Any] | None = None
+    if str((result.get("active_investigation") or {}).get("state") or "").strip().lower() == "awaiting_confirmation":
+        from backend.services.automation_persona import (
+            ENGINEER_INVESTIGATION_REPLY_INTENT,
+            AutomationPersonaError,
+            render_automation_reply,
+        )
+
+        agent_state_snapshot = dict(
+            case_context.get("engineer_agent_state")
+            if isinstance(case_context.get("engineer_agent_state"), dict)
+            else {}
+        )
+        readiness_snapshot = dict(agent_state_snapshot.get("reply_readiness") or {})
+        findings: list[str] = []
+        conclusion = str(readiness_snapshot.get("conclusion_summary") or "").strip()
+        proof = str(readiness_snapshot.get("proof_summary") or "").strip()
+        solution = str(readiness_snapshot.get("solution_or_next_step") or "").strip()
+        if conclusion:
+            findings.append(f"Conclusion: {conclusion}")
+        if proof:
+            findings.append(f"Evidence: {proof}")
+        for known_fact in [str(item or "").strip() for item in agent_state_snapshot.get("known_facts") or [] if str(item or "").strip()][:8]:
+            findings.append(f"Verified fact: {known_fact}")
+        if solution:
+            findings.append(f"Suggested resolution: {solution}")
+        provided_answer = "\n".join(findings).strip()
+        client_ticket_id = str((engineer_case_payload.get("client_ticket_ref") or {}).get("ticket_id") or "")
+        if provided_answer and client_ticket_id:
+            account_case_snapshot = repository.get_account_case_by_ticket_id(client_ticket_id) or {}
+            latest_customer = latest_customer_message(ticket)
+            public_messages = [
+                str(item.get("content") or "").strip()
+                for item in list(ticket.get("messages") or [])[-12:]
+                if str(item.get("role") or "").strip().lower() in {"customer", "assistant"}
+                and str(item.get("content") or "").strip()
+            ]
+            facts = {
+                "behavior": "engineer_support",
+                "reply_intent": ENGINEER_INVESTIGATION_REPLY_INTENT,
+                "provided_answer": provided_answer,
+                "latest_customer_message": latest_customer,
+                "recent_public_conversation": "\n".join(public_messages[-6:]),
+                "subject": str(account_case_snapshot.get("title") or ticket.get("subject") or "").strip(),
+                "customer_language": detect_customer_reply_language(latest_customer, provided_answer),
+                "customer_first_name": str(
+                    account_case_snapshot.get("customer_name") or ticket.get("requester") or ""
+                ).strip(),
+            }
+            try:
+                persona_assignment = await _sync(
+                    repository.resolve_account_persona,
+                    client_ticket_id,
+                )
+                rendered = await _sync(
+                    render_automation_reply,
+                    reply_facts=facts,
+                    persona_assignment=persona_assignment,
+                    account_scope=False,
+                )
+            except AutomationPersonaError as exc:
+                failure_code = str(getattr(exc, "code", "") or "").strip() or "automation_persona_failed"
+                failed_event = build_engineer_case_thread_event(
+                    event_id=f"{slack_event_id or engineer_case.get('engineer_case_id')}:draft-failed",
+                    event_type="engineer_ai_response_failed",
+                    engineer_case_id=str(engineer_case.get("engineer_case_id") or ticket_id),
+                    message_text=f"Unable to assemble the customer draft. Failure: {failure_code}",
+                    investigation_id=str((result.get("active_investigation") or {}).get("id") or "") or None,
+                    failure_code=failure_code,
+                )
+                repository.save_engineer_case(engineer_case, new_messages=[], slack_events=[failed_event])
+                raise ReplySyncError(502, failure_code) from exc
+            persona_meta = {
+                "source": "automation_persona",
+                "persona_key": str((persona_assignment or {}).get("persona_key") or ""),
+                "persona_version": str((persona_assignment or {}).get("version") or ""),
+                "model": rendered.model,
+                "prompt_version": rendered.prompt_version,
+            }
+            active_investigation = result.get("active_investigation") or {}
+            active_investigation["draft_customer_reply"] = rendered.content
+            active_investigation["state"] = "awaiting_confirmation"
+            active_investigation["final_confirmation_requested_at"] = timestamp
+            active_investigation["updated_at"] = timestamp
+            result["active_investigation"] = active_investigation
+            case_context["active_investigation"] = active_investigation
+            agent_state_snapshot["reply_readiness"] = {
+                "has_conclusion": bool(readiness_snapshot.get("has_conclusion")),
+                "has_proof": bool(readiness_snapshot.get("has_proof")),
+                "has_solution_or_next_step": bool(solution),
+                "reply_scope": str(readiness_snapshot.get("reply_scope") or ""),
+                "conclusion_summary": conclusion,
+                "proof_summary": proof,
+                "proof_anchors": [str(item) for item in readiness_snapshot.get("proof_anchors") or []],
+                "solution_or_next_step": solution,
+                "blockers": [],
+                "advisory_followups": [],
+                "critique": "",
+                "source_mode": "persona_assembled",
+                "ready_for_customer_reply": True,
+            }
+            agent_state_snapshot["guided_reply_generation"] = persona_meta
+            agent_state_snapshot["ready_to_reply"] = True
+            case_context["engineer_agent_state"] = agent_state_snapshot
     engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
     if preserved_state:
         merged_state = dict(
@@ -212,7 +320,12 @@ async def process_engineer_investigation_message(
         ]
         analysis = ai_messages[-1] if ai_messages else "Engineer AI updated the investigation."
         message_text = analysis
-        if current_draft:
+        if persona_meta:
+            message_text = (
+                f"{analysis}\n\nPersona: {persona_meta.get('persona_key')} v{persona_meta.get('persona_version')}"
+                f"\n\nCustomer draft:\n{current_draft}"
+            )
+        elif current_draft:
             message_text = f"{analysis}\n\nCustomer draft:\n{current_draft}"
         slack_events.append(
             build_engineer_case_thread_event(

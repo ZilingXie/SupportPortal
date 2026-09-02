@@ -44,6 +44,9 @@ _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_C
 AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v21"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
+ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
+ENGINEER_INVESTIGATION_PERSONA_PROMPT_VERSION = "engineer-investigation-persona-v1"
+_ENGINEER_SOURCED_REPLY_INTENTS = {ENGINEER_GUIDED_REPLY_INTENT, ENGINEER_INVESTIGATION_REPLY_INTENT}
 
 _ENABLEMENT_SUBMISSION_24_HOUR_PATTERN = r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"
 _ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN = (
@@ -848,7 +851,7 @@ def _validated_automation_reply_content(
     if account_scope:
         validate_account_reply_contract(reply, facts)
     rendered_content = f"{greeting}\n\n{reply}"
-    if str(facts.get("reply_intent") or "").strip().lower() == ENGINEER_GUIDED_REPLY_INTENT:
+    if str(facts.get("reply_intent") or "").strip().lower() in _ENGINEER_SOURCED_REPLY_INTENTS:
         _assert_guided_source_values(rendered_content, str(facts.get("provided_answer") or ""))
     else:
         _assert_no_forbidden_values(
@@ -945,14 +948,14 @@ def render_automation_reply(
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
     if (
         str(facts.get("reply_intent") or "").strip().lower()
-        in {ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER, ENGINEER_GUIDED_REPLY_INTENT}
+        in {ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER} | _ENGINEER_SOURCED_REPLY_INTENTS
         and not str(facts.get("provided_answer") or "").strip()
     ):
         raise AutomationPersonaError("automation_persona_missing_provided_answer")
 
     first_name = customer_first_name(facts.get("customer_first_name"))
     intent = str(facts.get("reply_intent") or "").strip().lower()
-    if intent == ENGINEER_GUIDED_REPLY_INTENT and first_name == "Customer":
+    if intent in _ENGINEER_SOURCED_REPLY_INTENTS and first_name == "Customer":
         raise AutomationPersonaError("automation_persona_guided_customer_name_missing")
     greeting = f"Hi {first_name}"
     deterministic_missing_information = _uses_deterministic_missing_information(facts)
@@ -990,6 +993,8 @@ def render_automation_reply(
     prompt_version = (
         ENGINEER_GUIDED_PERSONA_PROMPT_VERSION
         if intent == ENGINEER_GUIDED_REPLY_INTENT
+        else ENGINEER_INVESTIGATION_PERSONA_PROMPT_VERSION
+        if intent == ENGINEER_INVESTIGATION_REPLY_INTENT
         else AUTOMATION_PERSONA_PROMPT_VERSION
     )
     behavior = str(facts.get("behavior") or "").strip().lower()
@@ -1082,6 +1087,17 @@ def render_automation_reply(
             "subject, and customer_language only to choose language, resolve references, avoid contradictions, and "
             "write a relevant acknowledgement. Do not derive or add any diagnosis, recommendation, promise, link, "
             "identifier, internal detail, or technical fact from that context. Do not mention Slack or the engineer. "
+        )
+    elif intent == ENGINEER_INVESTIGATION_REPLY_INTENT:
+        reply_contract_policy = (
+            "For an Engineer investigation reply, provided_answer contains the verified AI investigation findings "
+            "and is the only authority for customer-facing technical claims, root-cause statements, instructions, "
+            "versions, URLs, steps, and commitments. Preserve all of that source content while polishing its "
+            "language and organization. Use latest_customer_message, recent_public_conversation, subject, and "
+            "customer_language only to choose language, resolve references, avoid contradictions, and write a "
+            "relevant acknowledgement. Do not derive or add any diagnosis, recommendation, promise, link, "
+            "identifier, internal detail, or technical fact from that context. Do not mention Slack, the engineer, "
+            "AI investigation, or any internal tooling. "
         )
     validated: dict[str, Any] = {}
 

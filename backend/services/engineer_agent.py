@@ -598,7 +598,7 @@ def _investigation_reply_extra_payload() -> dict[str, Any]:
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["state", "message", "draft_customer_reply", "reply_readiness", "engineer_agent_state"],
+                    "required": ["state", "message", "reply_readiness", "engineer_agent_state"],
                     "properties": {
                         "state": {
                             "type": "string",
@@ -890,16 +890,6 @@ def _generate_investigation_reply_turn(
             model_name=model_name,
             reasoning_effort=reasoning_effort,
             error="engineer_investigation_reply_invalid_fields",
-        )
-    if next_state == _AWAITING_CONFIRMATION_STATE and not draft_customer_reply:
-        return _fail_closed_investigation_reply_turn(
-            ticket,
-            handoff_packet,
-            investigation=investigation,
-            now_value=now_value,
-            model_name=model_name,
-            reasoning_effort=reasoning_effort,
-            error="engineer_investigation_reply_missing_draft",
         )
     if next_state == _ACTIVE_STATE:
         draft_customer_reply = ""

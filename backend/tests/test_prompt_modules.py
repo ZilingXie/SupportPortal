@@ -468,13 +468,15 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertEqual(
             ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
-            "engineer-investigation-reply-v9",
+            "engineer-investigation-reply-v10",
         )
         self.assertIn("## Role", system_prompt)
         self.assertIn("You are Sid inside an internal support investigation workflow.", system_prompt)
-        self.assertIn("Do not self-identify or add an assistant name", system_prompt)
-        self.assertIn("formal customer email", system_prompt)
-        self.assertIn("do not write a signoff, name, job title, or signature", system_prompt)
+        self.assertIn("You are an investigator only", system_prompt)
+        self.assertIn("assembled separately by the automation persona", system_prompt)
+        self.assertIn("draft_customer_reply is optional and ignored by the system", system_prompt)
+        self.assertNotIn("formal customer email", system_prompt)
+        self.assertNotIn("do not write a signoff, name, job title, or signature", system_prompt)
         self.assertNotIn('end with exactly "Best Regards," followed by "Sid"', system_prompt)
         self.assertIn("symptom_and_workaround_only", system_prompt)
         self.assertIn("root_cause_confirmed", system_prompt)
@@ -484,10 +486,8 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("Without an explicit conclusion, you may only use symptom_and_workaround_only", system_prompt)
         self.assertIn("known_facts must only contain current customer reports, verified reproduction details, logs, versions, config facts, or cited evidence.", system_prompt)
         self.assertIn("Do not put Sid/client AI candidate answers, draft recommendations, or unverified suggestions into known_facts.", system_prompt)
-        self.assertIn(
-            "If earlier thread messages contain an unverified root-cause claim, ignore that wording and regenerate the customer draft from the verified symptom proof and conservative workaround.",
-            system_prompt,
-        )
+        self.assertIn("Proof must be traceable internal evidence", system_prompt)
+        self.assertIn("Use proof_anchors to quote short exact phrases", system_prompt)
         self.assertIn("Return strict JSON only", system_prompt)
         self.assertIn('"state"', system_prompt)
         self.assertIn('"draft_customer_reply"', system_prompt)
