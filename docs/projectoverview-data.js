@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T03:32:58Z",
-  "source_base_commit": "46370fa9c6c3dffc99c37b52482b722415d86436",
-  "registry_digest": "b39eca35f7b6047cac0d132a5683e5ff4c9a67103e2089efce14930fd4443947",
+  "generated_at": "2026-09-02T05:11:00Z",
+  "source_base_commit": "ce369adc84c15e64bf447560a5a1d3dfc1f471bf",
+  "registry_digest": "5f21c1a8b11b68812fa31d16a24a292b8890d3089275613bd8e86cbe6b490d19",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2455,6 +2455,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS API engineer inbound endpoints and intake opening round",
           "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py backend/tests/test_automation_account_intake.py -q",
           "details": "automation_ecs_api.py 新增 thread-bindings/resolve|messages|actions 三端点（X-N8n-Request-Token 鉴权、复用 automation_engineer_collab 调查链、TICKET_DB_DSN 缺失时端点级 503 降级不影响 readiness）；automation_account_intake.py not_automated 分支补确定性 opening investigation 回合（零 LLM）并追加 engineer_ai_response Slack thread 事件。31 passed + 2 subtests（含新契约用例 401/503/422/resolve 语义与 opening 消息/事件断言）。Terraform production root api_secrets/worker_secrets 补齐 TICKET_DB_DSN/n8n_request_token/engineer Slack team+channel/Hermes SSM 参数，ecs.tf 双角色加 ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300，docker terraform validate 通过。处理语义经用户确认由 EC2 guided reply（Persona 润色）切换为 Hermes 调查回合，feature_list 与 prompt_change_log 已同步。"
+        },
+        {
+          "type": "pr",
+          "label": "API prompt runtime lazy initialization fix",
+          "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py -q",
+          "details": "Phase C 实测暴露:api 角色进程从未初始化 prompt runtime(过去不需要 LLM prompt),messages 端点 500(RuntimeError: Prompt runtime was not initialized)。修复=_engineer_ticket_repository 工厂首次调用时 initialize_prompt_runtime_from_environment(service_name=automation-ecs-api),幂等且不拖累启动/readiness。19 passed(含新用例:工厂触发初始化且不重复)。"
         },
         {
           "type": "test",
@@ -7836,6 +7842,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS API engineer inbound endpoints and intake opening round",
           "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py backend/tests/test_automation_account_intake.py -q",
           "details": "automation_ecs_api.py 新增 thread-bindings/resolve|messages|actions 三端点（X-N8n-Request-Token 鉴权、复用 automation_engineer_collab 调查链、TICKET_DB_DSN 缺失时端点级 503 降级不影响 readiness）；automation_account_intake.py not_automated 分支补确定性 opening investigation 回合（零 LLM）并追加 engineer_ai_response Slack thread 事件。31 passed + 2 subtests（含新契约用例 401/503/422/resolve 语义与 opening 消息/事件断言）。Terraform production root api_secrets/worker_secrets 补齐 TICKET_DB_DSN/n8n_request_token/engineer Slack team+channel/Hermes SSM 参数，ecs.tf 双角色加 ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300，docker terraform validate 通过。处理语义经用户确认由 EC2 guided reply（Persona 润色）切换为 Hermes 调查回合，feature_list 与 prompt_change_log 已同步。"
+        },
+        {
+          "type": "pr",
+          "label": "API prompt runtime lazy initialization fix",
+          "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py -q",
+          "details": "Phase C 实测暴露:api 角色进程从未初始化 prompt runtime(过去不需要 LLM prompt),messages 端点 500(RuntimeError: Prompt runtime was not initialized)。修复=_engineer_ticket_repository 工厂首次调用时 initialize_prompt_runtime_from_environment(service_name=automation-ecs-api),幂等且不拖累启动/readiness。19 passed(含新用例:工厂触发初始化且不重复)。"
         }
       ],
       "source_refs": [

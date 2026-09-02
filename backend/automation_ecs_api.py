@@ -242,15 +242,20 @@ def _engineer_ticket_repository() -> Any:
 
     The API role otherwise only touches the coordination schema, so a missing
     TICKET_DB_DSN degrades just these endpoints to 503 instead of failing
-    startup or readiness.
+    startup or readiness. The engineer investigation prompts are initialized
+    on first use for the same reason — the API role never needed them before.
     """
     global _TICKET_REPOSITORY
     if _TICKET_REPOSITORY is None:
         if not str(os.getenv("TICKET_DB_DSN") or "").strip():
             raise HTTPException(status_code=503, detail="engineer inbound endpoints require TICKET_DB_DSN")
         from backend.repositories.ticket_repository import create_ticket_repository
+        from backend.services.prompt_runtime import (
+            initialize_prompt_runtime_from_environment,
+        )
 
         _TICKET_REPOSITORY = create_ticket_repository()
+        initialize_prompt_runtime_from_environment(service_name="automation-ecs-api")
     return _TICKET_REPOSITORY
 
 
