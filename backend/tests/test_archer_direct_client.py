@@ -114,6 +114,24 @@ def test_unexpected_redirect_location_is_rejected(monkeypatch: pytest.MonkeyPatc
         obtain_archer_jwt()
 
 
+def test_redirect_with_matching_path_on_foreign_host_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # passes every containment check (handleSSO path, code=, absolute URL);
+    # only the host differs, so the callback-host whitelist must reject it
+    monkeypatch.setattr(
+        client_module,
+        "_request",
+        lambda *args, **kwargs: (
+            302,
+            _Headers({"Location": "https://evil.example/api/v1/handleSSO?code=x"}),
+            b"",
+        ),
+    )
+    with pytest.raises(ArcherCredentialError, match="unexpected location"):
+        obtain_archer_jwt()
+
+
 def test_missing_jwt_set_cookie_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     responses = [
         (302, _Headers({"Location": "https://archer.agora.io/api/v1/handleSSO?code=c"}), b""),
