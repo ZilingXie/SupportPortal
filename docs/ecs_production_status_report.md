@@ -1,6 +1,6 @@
 # ECS Production 当前状态与迁移盘点
 
-日期：2026-09-01  
+日期：2026-09-02（增量更新：Fraud Suhrid handoff 配置修复与 AC-13212 验收）  
 范围：SupportPortal `/automation/production`、Hermes 调查 agent、最近两天已合并的 Account/Enablement/Fraud 变更。  
 当前结论：ECS 基础运行环境已经可用，但在 Archer 新 release 和三类业务 Case 全部验收前，不能下架 EC2 `/production`。
 
@@ -61,12 +61,20 @@ Hermes 的“腾讯 DB”不是 AWS 中单独新增的 RDS 实例，而是 `memo
 - 修复 `+86` 电话号码被 Luhn 规则误判为银行卡号，恢复“客户补齐字段后回复 + assign Suhrid + Human Review”的闭环。
 - 当前 release `r20260901-69e9836` 已包含上述 Fraud 修复；近期聚焦回归为 430 passed、91 subtests passed。
 
+### 2.5 Fraud handoff assignee SSM 配置漂移修复（2026-09-02，已完成并验收）
+
+- 现象：AC-13196（2026-09-01 受控 Fraud Case）全链处理正常，但最终 handoff assign 给了 xieziling（31116634341396）而非 suhrid.das（31116644140308）。
+- 根因：ECS Worker 的 `ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID` 经容器级 secrets 从手工管理的 SSM SecureString `/supportportal/production/zendesk-fraud-review-assignee-id` 注入；8 月 29 日 ECS 部署时写入的是 8 月 24 日之前的旧 reviewer 值，而 8 月 24 日"reviewer 换 suhrid"的变更只更新了 EC2 `.env`，两个配置面互不相通。DB 事件 `zendesk_fraud_review_handoff` payload 中 `reviewer_email=xieziling@agora.io` 为直接证据，处理代码链路本身无缺陷。
+- 修复：SSM 参数覆盖为 `31116644140308`（Version 2）并 `force-new-deployment` 重启 Worker（task definition rev16 不变，无代码变更）；AC-13196 的 assignee 已手动改回 suhrid；本地 `.env` 同步新值。
+- 验收：AC-13212（2026-09-02）完整通过 partial reply（追问 office address）→ 客户补料 → 内部 handoff（`support_owned_after_internal_handoff`）→ 客户 24 小时说明 → Suhrid assignment（DB 事件 assignee_id=31116644140308、reviewer_email=suhrid.das@agora.io，Zendesk 工单 assignee/group/tags readback 一致）→ `human_review_required`。
+- 教训：EC2 `.env` 变更不会同步 ECS；ECS Worker 运行配置面是 SSM `/supportportal/production/*`，修改后必须重启 task 才生效。
+
 ## 3. 当前验收矩阵
 
 | 范围 | 代码/基础设施 | 当前 ECS 是否已部署 | 业务验收状态 |
 | --- | --- | --- | --- |
 | Account 基础链路 | Intake、Route、Processing、邮件回复、RAGFlow、Delivery ledger、heartbeat | 是 | 等待新的受控 Account Case readback |
-| Fraud | partial reply、字段提取、sensitive reconciliation、内部邮件、Suhrid handoff | 是，随 `r20260901-69e9836` | 等待新的全新 Fraud Case |
+| Fraud | partial reply、字段提取、sensitive reconciliation、内部邮件、Suhrid handoff | 是，随 `r20260901-69e9836` | **已通过（AC-13212，2026-09-02，含 2.5 节 SSM 修复后的 Suhrid assignment readback）** |
 | Enablement | Archer executor、Pilot、Persona/reply contracts | 代码在 `main`，当前 ECS 尚未部署 #1021 | 必须先 build/deploy Archer release，再做三类 Enablement Case |
 | Account Suspension | 既有两阶段确认、handoff 邮件、客户回复和状态流 | 是，沿用 Account Worker | 等待新的全新 Account Suspension Case |
 | Hermes | 独立 ECS service、Tencent AgentMemory memory-core、`/v1` | 是，`supportportal-production-hermes:2` | 运行级验证已通过；下一真实 needs-investigating Case 继续观察质量 |
@@ -82,7 +90,7 @@ Hermes 的“腾讯 DB”不是 AWS 中单独新增的 RDS 实例，而是 `memo
    - 有效 App ID：Archer enabled、客户公开回复成功、工单 solved；
    - 非法 App ID：客户收到纠正提示，Case 保持 open/pending，可继续提交；
    - 查无项目：客户收到核对/重发提示，Case 保持 open/pending，可继续提交。
-4. Fraud 全新 Case 通过 partial reply、内部邮件、客户 24 小时说明、Suhrid assignment 和 Human Review。
+4. ~~Fraud 全新 Case 通过 partial reply、内部邮件、客户 24 小时说明、Suhrid assignment 和 Human Review。~~ 已完成（AC-13212，2026-09-02）。
 5. Account Suspension 全新 Case 通过 contact confirmation、内部 handoff 邮件、客户回复、指派和不自动关闭语义。
 6. 每类 Case 都完成 Execution、Processing Job、Reply Job、Delivery ledger、Zendesk comment/status/assignee 的直接 readback；不能只以 HTTP 200、ECS `RUNNING` 或 ALB healthy 作为验收。
 7. 新 release 连续观察至少两个 Outlook poll 周期，health/readiness、heartbeat provenance、CloudWatch 无持续错误，且没有无关的 Execution/Job/Delivery 增长。
@@ -100,6 +108,6 @@ Hermes 的“腾讯 DB”不是 AWS 中单独新增的 RDS 实例，而是 `memo
 
 1. 构建并发布包含 #1021 的新 ECS release。
 2. 完成 Pilot deposit 和 Archer GET probe，部署三角色并做稳定性观察。
-3. 由用户手动创建新的 Enablement、Fraud、Account Suspension 测试工单，逐条做业务 readback。
+3. 由用户手动创建新的 Enablement、Account Suspension 测试工单，逐条做业务 readback（Fraud 已由 AC-13212 完成，见 2.5 节）。
 4. 三类全部通过后，再执行 n8n 流量固定和 EC2 backup 的受控下线。
 
