@@ -536,3 +536,44 @@ def test_engineer_inbound_endpoints_enforce_n8n_token_and_degradation(monkeypatc
     )
     assert response.status_code == 200
     assert response.json() == {"status": "ignored_unbound"}
+
+
+def test_engineer_repository_factory_initializes_prompt_runtime(monkeypatch) -> None:
+    import backend.automation_ecs_api as api_module
+    from backend.services.prompt_runtime import reset_prompt_runtime_for_tests
+
+    monkeypatch.delenv("TICKET_DB_DSN", raising=False)
+    monkeypatch.delenv("PROMPT_RELEASE_ID", raising=False)
+    monkeypatch.setattr(api_module, "_TICKET_REPOSITORY", None)
+    reset_prompt_runtime_for_tests()
+
+    class _Repo:
+        pass
+
+    initialized: list[str] = []
+
+    def _fake_repo():
+        return _Repo()
+
+    def _fake_init(*, service_name: str):
+        initialized.append(service_name)
+        from backend.services.prompt_runtime import initialize_prompt_runtime
+
+        return initialize_prompt_runtime(service_name=service_name)
+
+    monkeypatch.setattr(
+        "backend.repositories.ticket_repository.create_ticket_repository", _fake_repo
+    )
+    monkeypatch.setenv("TICKET_DB_DSN", "postgresql://stub")
+    monkeypatch.setattr(
+        "backend.services.prompt_runtime.initialize_prompt_runtime_from_environment",
+        _fake_init,
+    )
+
+    repository = api_module._engineer_ticket_repository()
+    assert isinstance(repository, _Repo)
+    assert initialized == ["automation-ecs-api"]
+    # second call must not re-initialize
+    assert api_module._engineer_ticket_repository() is repository
+    assert initialized == ["automation-ecs-api"]
+    reset_prompt_runtime_for_tests()
