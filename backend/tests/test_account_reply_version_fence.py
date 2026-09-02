@@ -114,17 +114,24 @@ class AccountReplyVersionFenceTests(unittest.TestCase):
             )
 
     def test_close_is_derived_from_canonical_intent(self) -> None:
+        # p2-138: the legacy "_and_close" suspension intent hands off to the
+        # reviewer and no longer derives a close.
         facts, intent, close_after_publish = normalize_account_reply_contract(
             {"reply_intent": "account_suspension_handoff_and_close"},
         )
         self.assertEqual(intent, facts["reply_intent"])
-        self.assertTrue(close_after_publish)
+        self.assertFalse(close_after_publish)
 
         with self.assertRaisesRegex(AccountReplyContractError, "account_reply_close_intent_conflict"):
             normalize_account_reply_contract(
-                {"reply_intent": "fraud_handoff_confirmation"},
+                {"reply_intent": "account_suspension_handoff_and_close"},
                 close_after_publish=True,
             )
+
+        invoice_facts, _invoice_intent, invoice_close = normalize_account_reply_contract(
+            {"reply_intent": "detailed_invoice_completed_and_close"},
+        )
+        self.assertTrue(invoice_close)
 
     def test_detailed_invoice_completion_intent_derives_close(self) -> None:
         facts, intent, close_after_publish = normalize_account_reply_contract(
@@ -152,7 +159,8 @@ class AccountReplyVersionFenceTests(unittest.TestCase):
             job["payload"]["reply_facts"]["reply_intent"],
             job["payload"]["reply_intent"],
         )
-        self.assertTrue(job["payload"]["close_after_publish"])
+        # p2-138: suspension handoff keeps AI-owned publication without close.
+        self.assertIsNot(job["payload"].get("close_after_publish"), True)
 
     def test_unpublished_legacy_fraud_close_is_rejected(self) -> None:
         with self.assertRaisesRegex(AccountReplyContractError, "legacy_fraud_handoff_close_intent"):

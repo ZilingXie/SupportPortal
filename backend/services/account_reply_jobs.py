@@ -43,11 +43,13 @@ ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE = "resolution_update"
 # skip both the legacy re-generation path and the automation persona render.
 ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER = "rag_fallback_answer"
 
+# The suspension handoff intent keeps its legacy "_and_close" name for
+# compatibility with persisted jobs, but p2-138 moved its terminal action to
+# reviewer assignment: it no longer derives close_after_publish.
 ACCOUNT_REPLY_CLOSE_INTENTS = frozenset(
     {
         ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
         ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
-        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
         ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     }
 )

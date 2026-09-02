@@ -102,8 +102,9 @@ def closing_reply_facts(*, confirmed_email: str, customer_name: Any = None) -> d
         "missing_information": [],
         "performed_actions": ["Submitted the suspension request to the relevant team."],
         "next_step": "The relevant team will reach out within 24 hours.",
-        "resolution_status": "completed",
+        "resolution_status": "internal_handoff_sent",
         "customer_language": "en",
         "customer_first_name": str(customer_name or "Customer").strip() or "Customer",
-        "ownership_state": "case_closed",
+        # p2-138: the ticket goes to the reviewer instead of being solved.
+        "ownership_state": "support_owned_after_internal_handoff",
     }

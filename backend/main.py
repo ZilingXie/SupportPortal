@@ -5889,7 +5889,8 @@ async def _create_account_intake_impl(
                     automation_delivery_key=str(
                         (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
                     ),
-                    close_after_publish=route == "account_suspension",
+                    # p2-138: the suspension closing intent no longer closes.
+                    close_after_publish=False,
                     reply_intent=(
                         "fraud_handoff_confirmation"
                         if route == "fraud_account"
@@ -7346,7 +7347,8 @@ async def _resume_account_rerun_side_effect(
                 persona_assignment=None,
                 automation_delivery_key=str((account_case.get("internal_email_payload") or {}).get("delivery_key") or ""),
                 rerun_job_id=rerun_job_id,
-                close_after_publish=stored_reply_intent == SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+                # p2-138: the suspension closing intent no longer closes.
+                close_after_publish=False,
                 reply_intent=stored_reply_intent or None,
             )
         except Exception as exc:
@@ -10323,9 +10325,10 @@ async def _process_account_customer_reply_impl(
                 asked_field_keys=[],
                 persona_assignment=persona_assignment,
                 automation_delivery_key=str(
-                    (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                    (billing_ticket.get("internal_email_payload") or "").get("delivery_key") or ""
                 ),
-                close_after_publish=True,
+                # p2-138: the suspension closing reply no longer solves the
+                # ticket; the reviewer assignment happens after publication.
                 reply_intent="account_suspension_handoff_and_close",
             )
         except Exception as exc:
@@ -10833,7 +10836,8 @@ async def _process_account_customer_reply_impl(
                 ),
                 # Closing/handoff intents describe the completed handoff; a
                 # missing-information ask must keep its nested intent only.
-                close_after_publish=bool(reply_ready and followup_action == "account_suspension"),
+                # p2-138: suspension no longer solves the ticket on handoff.
+                close_after_publish=False,
                 reply_intent=(
                     "fraud_handoff_confirmation"
                     if reply_ready and followup_action == "fraud_account"

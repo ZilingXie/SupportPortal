@@ -1255,7 +1255,8 @@ async def run_production_account_intake(
                     automation_delivery_key=str(
                         (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
                     ),
-                    close_after_publish=route == "account_suspension",
+                    # p2-138: the suspension closing intent no longer closes.
+                    close_after_publish=False,
                     processing_profile=normalized_processing_profile,
                     reply_intent=(
                         "fraud_handoff_confirmation"

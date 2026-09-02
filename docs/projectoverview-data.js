@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T09:06:45Z",
-  "source_base_commit": "e970557f2561d7ddda7344acfa0a574739ce7807",
-  "registry_digest": "60061ffd886073d6549a25960cde4ef2c90aadd574648feb6685798849098bf5",
+  "generated_at": "2026-09-02T09:54:35Z",
+  "source_base_commit": "b4ddd8b034d9880b1846d2b42d2e5e54728ae17f",
+  "registry_digest": "f1cd0751c62af5f3a8c561169df2296af6783b67a3d154aa4b3a132f79c69bb2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -919,6 +919,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Core five files + reroute/ECS periphery",
+          "command": "TICKET_DB_DSN=... pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_slack_n8n.py -q 以及 pytest backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_full_reroute.py backend/tests/test_recover_account_rerun.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_verification_automation.py -q",
+          "details": "核心五文件 377 passed + 72 subtests（含 intake 全链改断言：closing job 无 close、ticket 非 resolved、回复无 clos/reopen、24 hours 保留；新增 worker 用例 test_public_suspension_closing_delivery_hands_off_to_reviewer：suspension 公开交付→assign reviewer 31116644140308→case human_review_required→workflow closed；fake persona 两段文案更新）。外围 134 passed（dispatch 33 含 close 断言改写；唯一失败 test_apply_recovery_persona_unavailable... 为 p2-123 起既有基线，root main 同挂已对照）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1024,7 +1030,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 30,
+      "task_count": 31,
       "done_count": 16,
       "blocked_count": 0
     },
@@ -9562,6 +9568,55 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/engineer_guardrail_agent.py",
         "backend/services/automation_account_intake.py"
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-138",
+      "title": "account_suspension 终态改为回复客户+assign Suhrid 复核，不再自动关单",
+      "status": "active",
+      "owner": "zac",
+      "summary": "用户决策：suspension 全链终态从'AI 问联系方式→客户回复→closing 回复+solved 关单'改为'AI 问联系方式→客户回复→closing 回复+assign reviewer(Suhrid)+不关单'，措辞对齐 fraud（relevant team will reach out within 24 hours，去掉 close/reopen 表述，首轮追问预告同步修正）。实现：①ACCOUNT_REPLY_CLOSE_INTENTS 移除 account_suspension_handoff_and_close（intent 名保留以兼容历史 pending job，_and_close 成为遗留命名）；reply_sync 与 main 的 closing 排队点删 close_after_publish=True。②复用 fraud handoff：_hand_off_fraud_review_after_public_reply 守卫扩展到 execution_action=account_suspension + intent=account_suspension_handoff_and_close，函数更名 _hand_off_review_after_public_reply，assign 成功后 case→human_review_required（对齐 AC-13212 行为）；reviewer env ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID 双环境已是 suhrid。③persona 措辞 v20→v21：suspension closing 合同改为仅 24h 联系承诺（fraud 同款）、policy 重写、_normalize_ownership_facts 移出 case_closed、首轮 contact 合同去 close/reopen 预告、closing_reply_facts ownership_state 对齐 fraud。代码单点改动，/production 与 /automation/production 双 runtime 同时生效（ECS worker 挂载共享发布链，已核实无独立实现）。",
+      "next_action": "实现与目标测试已完成,待 finalize 合并与用户双侧部署（EC2 /production + ECS /automation/production）后各以一单 suspension 工单验收。",
+      "acceptance_criteria": [
+        "suspension 全链：客户确认联系邮箱后收到 fraud 风格回复（含 24 hours 联系承诺、无 close/reopen 表述），工单 assign 给 reviewer（ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID）且不 solved，case 转 human_review_required。",
+        "首轮 contact 追问不再预告工单将关闭可重开。",
+        "fraud handoff 原行为零回归（7 用例）。",
+        "account_suspension_handoff_and_close 不再派生 close_after_publish（version fence 更新）；reply_sync/main/intake/reroute 全部排队点不传 close。",
+        "prompt 版本 v21 + prompt_change_log 记录；AUTOMATION_PERSONA 测试同步。",
+        "既有测试按新语义更新后全绿；finalize 成功。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Core five files + reroute/ECS periphery",
+          "command": "TICKET_DB_DSN=... pytest backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_persona.py backend/tests/test_account_slack_n8n.py -q 以及 pytest backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_full_reroute.py backend/tests/test_recover_account_rerun.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_verification_automation.py -q",
+          "details": "核心五文件 377 passed + 72 subtests（含 intake 全链改断言：closing job 无 close、ticket 非 resolved、回复无 clos/reopen、24 hours 保留；新增 worker 用例 test_public_suspension_closing_delivery_hands_off_to_reviewer：suspension 公开交付→assign reviewer 31116644140308→case human_review_required→workflow closed；fake persona 两段文案更新）。外围 134 passed（dispatch 33 含 close 断言改写；唯一失败 test_apply_recovery_persona_unavailable... 为 p2-123 起既有基线，root main 同挂已对照）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/account_reply_jobs.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/worker.py",
+        "backend/services/automation_persona.py",
+        "backend/services/account_suspension_automation.py",
+        "backend/tests/test_account_intake.py",
+        "backend/tests/test_worker.py"
+      ],
+      "created_at": "2026-09-02",
+      "updated_at": "2026-09-02",
+      "history": [
+        {
+          "at": "2026-09-02",
+          "event": "created",
+          "summary": "用户明确新终态语义（回复+assign Suhrid+fraud 风格措辞，双环境）；探索确认 ECS 无独立实现（一处改动双生效）、fraud handoff 可直接扩展、措辞合同三处+首轮合同需同步。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop"
     },
     {
       "schema_version": 2,

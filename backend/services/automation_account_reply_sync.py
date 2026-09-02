@@ -601,7 +601,8 @@ async def _process_account_customer_reply_impl(
                 automation_delivery_key=str(
                     (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
                 ),
-                close_after_publish=True,
+                # p2-138: the suspension closing reply no longer solves the
+                # ticket; the reviewer assignment happens after publication.
                 reply_intent="account_suspension_handoff_and_close",
                     processing_profile=processing_profile,
             )
@@ -1035,7 +1036,8 @@ async def _process_account_customer_reply_impl(
                     if not requested_field_keys
                     else None
                 ),
-                close_after_publish=bool(reply_ready and followup_action == "account_suspension"),
+                # p2-138: suspension no longer solves the ticket on handoff.
+                close_after_publish=False,
                 reply_intent=(
                     "fraud_handoff_confirmation"
                     if reply_ready and followup_action == "fraud_account"
