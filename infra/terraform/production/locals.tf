@@ -64,6 +64,7 @@ locals {
     suspension_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/account-suspension-internal-email-recipients"
     hermes_base_url                      = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/hermes-base-url"
     hermes_api_server_key                = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/hermes-api-server-key"
+    archer_oauth_cookie                  = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/archer-oauth-cookie"
   }
 
   manifest_bucket_name = trimspace(var.manifest_bucket_name) != "" ? trimspace(var.manifest_bucket_name) : "${var.project_name}-${var.environment}-release-manifests-${data.aws_caller_identity.current.account_id}"
@@ -275,6 +276,10 @@ locals {
     {
       name      = "ENGINEER_INVESTIGATION_REPLY_API_KEY"
       valueFrom = local.runtime_parameter_arns.hermes_api_server_key
+    },
+    {
+      name      = "ARCHER_OAUTH_COOKIE"
+      valueFrom = local.runtime_parameter_arns.archer_oauth_cookie
     },
   ])
 }

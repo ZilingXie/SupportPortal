@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T03:06:26Z",
-  "source_base_commit": "a748869d6e84b28700bc63df090c37c99c766768",
-  "registry_digest": "13fef0cb92a2fd25badd9b41f16b58b4b0f75103e770d18e174b6e20e1459e36",
+  "generated_at": "2026-09-02T03:08:03Z",
+  "source_base_commit": "a1ce0e603298517e47311df8439112488011852b",
+  "registry_digest": "87aad0429146c74483185b43bc976821de5e8ea987e9d1985e715e32818cf771",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -838,6 +838,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Enablement intake and ECS compatibility regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_enablement_automation.py backend/tests/test_enablement_field_extractor.py backend/tests/test_enablement_completion_classifier.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py -q",
           "details": "276 passed + 52 subtests；字段提取、内部邮件、完成/未完成分类、comment sync、Account intake 与 ECS Worker 零回归。"
+        },
+        {
+          "type": "test",
+          "label": "Archer direct-auth executor and client regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_archer_direct_client.py backend/tests/test_enablement_archer_executor.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_ecs_images.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_enablement_completion_classifier.py; python -m py_compile backend/services/archer_direct_client.py backend/services/enablement_archer_executor.py",
+          "details": "新增 archer_direct_client（urllib 直调 archer.agora.io，cookie archer_token_jwt_202003；401 续期一次重试；400 项目不存在翻译为 data:null；elements 信封展开）与无头续期链（oauth.agoralab.co/oauth/authorize 带 oauth2-token+.sig → 302 handleSSO → Set-Cookie 24h JWT）；executor 改为进程内加载 vendored skill 并注入 client，公开 API 不变，四种 outcome 映射经真实skill enable() 驱动验证（创建/幂等/更新/查无/读回不一致/写拒绝/非法格式零网络）。2026-09-02 Mac 只读探针实证：check-simple-vendor 200、查无项目=HTTP 400 项目不存在、uap-app/6/uap 返回 elements 信封、续期链三次全通、最小 cookie 集=oauth2-token 对。306 passed、15 subtests、py_compile 通过；测试零真实 Archer/邮件/Zendesk 外呼。"
         },
         {
           "type": "test",
@@ -9178,7 +9184,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "将 ECS /automation/production 的 Media Relay Enablement 从内部邮件主路径改为调用 vendored Archer Skill 自动开启；结果继续通过 automation-persona-v19 reply-job 生成客户回复，格式错误或查无项目时重新索取 App ID，执行失败时保留脱敏内部邮件人工闭环。ECS Production 发布、Pilot 凭证 deposit 和真实新工单验收由用户执行，EC2 /production、非 Media Relay、n8n 契约和历史 Case 不变。",
-      "next_action": "由用户执行 Production Pilot deposit、只读 Archer GET probe、Worker service rollout，并用有效 App ID、非法格式、查无项目三类全新工单完成验收；通过前保持 Task active。",
+      "next_action": "直连方案已实现并通过定向测试（DirectArcherClient + SSO JWT 无头续期 + ARCHER_OAUTH_COOKIE SSM/Terraform 接线）；待 finalize 合并后：SSM 写入 /supportportal/production/archer-oauth-cookie（oauth2-token 对），构建三角色 release，Worker task definition 基于当前最新 revision 注册新 revision（保留 hermes env 与 Graph EFS 挂载），按 deploy_automation_ecs_release.md 的顺序用三类全新工单验收（非法格式→查无项目→有效 App ID）；Pilot/EFS pilot-creds/device flow 路径已废弃，Track 1 继续等 Pilot 开发答复长期凭证方案。",
       "acceptance_criteria": [
         "vendored Archer Skill 与固定 SHA-256 的 amd64 Pilot 仅存在于 ECS Worker 镜像；API/Route 镜像不包含 Skill 或 Pilot，Worker 禁止 self-update。",
         "Archer executor 仅返回 enabled、appid_invalid、project_not_found、enable_failed；退出码与首行双重校验，330 秒总超时会终止脚本进程组，返回 detail 已移除 App ID、凭据类值和控制字符并限长。",
@@ -9195,6 +9201,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "ECS Production Pilot 凭证 deposit、只读 probe、Worker service rollout 与真实工单验收由用户执行。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Archer direct-auth executor and client regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_archer_direct_client.py backend/tests/test_enablement_archer_executor.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_automation_ecs_images.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_enablement_completion_classifier.py; python -m py_compile backend/services/archer_direct_client.py backend/services/enablement_archer_executor.py",
+          "details": "新增 archer_direct_client（urllib 直调 archer.agora.io，cookie archer_token_jwt_202003；401 续期一次重试；400 项目不存在翻译为 data:null；elements 信封展开）与无头续期链（oauth.agoralab.co/oauth/authorize 带 oauth2-token+.sig → 302 handleSSO → Set-Cookie 24h JWT）；executor 改为进程内加载 vendored skill 并注入 client，公开 API 不变，四种 outcome 映射经真实skill enable() 驱动验证（创建/幂等/更新/查无/读回不一致/写拒绝/非法格式零网络）。2026-09-02 Mac 只读探针实证：check-simple-vendor 200、查无项目=HTTP 400 项目不存在、uap-app/6/uap 返回 elements 信封、续期链三次全通、最小 cookie 集=oauth2-token 对。306 passed、15 subtests、py_compile 通过；测试零真实 Archer/邮件/Zendesk 外呼。"
+        },
         {
           "type": "test",
           "label": "Archer、Account、Persona、Human Review 与 Worker 聚焦回归",
@@ -9230,7 +9242,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/deploy_automation_ecs_release.md"
       ],
       "created_at": "2026-09-01",
-      "updated_at": "2026-09-01",
+      "updated_at": "2026-09-02",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -9246,6 +9258,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-01",
           "event": "implementation_verified",
           "summary": "实现、owner review、刷新 main 后 448 项聚焦回归、三角色最终 amd64 镜像与 Terraform validate 通过；Task 保持 active，等待用户执行 Production Pilot deposit、只读 probe、Worker rollout 与三类全新工单验收。"
+        },
+        {
+          "at": "2026-09-02",
+          "event": "archer_direct_auth_transport",
+          "summary": "Pilot 凭证链路被证不可行（device flow 端点 404、deposit 不下发到 ECS）后，经 Mac 只读探针定稿直连方案：Archer v2 API 认证=archer_token_jwt_202003 JWT cookie（24h），SSO 会话oauth2-token+.sig 可静默续期；executor 弃用 pilot subprocess 改为进程内直连，新增ARCHER_OAUTH_COOKIE SSM/Terraform 接线，发布门禁文档改为直连契约。"
         }
       ]
     },

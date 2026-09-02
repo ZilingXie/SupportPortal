@@ -136,6 +136,7 @@ def test_internal_email_recipient_parameters_are_worker_only() -> None:
         "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
         "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
         "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "ARCHER_OAUTH_COOKIE",
     )
     for name in names:
         assert name not in api_secrets
