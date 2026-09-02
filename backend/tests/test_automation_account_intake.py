@@ -17,6 +17,7 @@ class _FakeRepository:
         self.saved_route_executions: list[dict] = []
         self.saved_engineer_cases: list[dict] = []
         self.engineer_case_saves: list[tuple] = []
+        self.comment_sync_baselines: list[dict] = []
         self.events: list[tuple] = []
 
     def save_ticket(self, ticket, new_messages=None):
@@ -34,6 +35,16 @@ class _FakeRepository:
     def save_engineer_case(self, engineer_case, new_messages=None, slack_events=None):
         self.saved_engineer_cases.append(dict(engineer_case))
         self.engineer_case_saves.append((list(new_messages or []), list(slack_events or [])))
+
+    def sync_account_case_comments(self, *, ticket_id, account_case_id, snapshot, synced_at):
+        self.comment_sync_baselines.append(
+            {
+                "ticket_id": ticket_id,
+                "account_case_id": account_case_id,
+                "comments_revision": str(getattr(snapshot, "comments_revision", "") or ""),
+                "synced_at": synced_at,
+            }
+        )
 
     def record_event(self, ticket_id, event_type, payload):
         self.events.append((ticket_id, event_type, payload))
@@ -376,6 +387,8 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertIn("engineer_ai_response", event_types)
         opening_events = [event for event in slack_events if str(event.get("event_type")) == "engineer_ai_response"]
         self.assertTrue(str(opening_events[0].get("message_text") or "").strip())
+        self.assertEqual(len(repository.comment_sync_baselines), 1)
+        self.assertTrue(str(repository.comment_sync_baselines[0]["comments_revision"] or "").strip())
 
     def test_ownership_gate_fail_closed_escalates_and_skips_reply(self):
         repository = _FakeRepository()

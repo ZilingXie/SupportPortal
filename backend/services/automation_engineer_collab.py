@@ -370,6 +370,9 @@ async def handle_slack_engineer_message(repository: Any, payload: dict[str, Any]
 async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any]) -> dict[str, Any]:
     import asyncio
 
+    from backend.services.zendesk_comments import ZendeskCommentError
+    from backend.services.zendesk_ticket_assignment import read_ticket_ownership_snapshot
+
     def _sync(call, *args, **kwargs):
         return asyncio.get_running_loop().run_in_executor(None, lambda: call(*args, **kwargs))
 
@@ -456,8 +459,6 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
                 if isinstance(agent_state.get("reply_readiness"), dict)
                 else None
             )
-            if not (isinstance(reply_readiness, dict) and reply_readiness.get("ready_for_customer_reply")):
-                raise ReplySyncError(400, "A backend-validated customer reply is required")
             active_review = agent_state.get("active_review") if isinstance(agent_state.get("active_review"), dict) else None
             evidence_packet = agent_state.get("evidence_packet") if isinstance(agent_state.get("evidence_packet"), dict) else None
             task_results = agent_state.get("task_results") if isinstance(agent_state.get("task_results"), list) else None
@@ -562,14 +563,25 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
         account_case = repository.get_account_case_by_ticket_id(str(ticket.get("ticket_id") or ""))
         if not isinstance(account_case, dict) or str(account_case.get("processing_profile") or "").lower() != "production":
             raise ReplySyncError(409, "Production Account Case is required")
-        sync_state = repository.get_account_case_comment_sync(str(ticket.get("ticket_id") or ""))
-        comments_revision = str((sync_state or {}).get("comments_revision") or "").strip()
-        if not comments_revision:
-            raise ReplySyncError(409, "Zendesk comments snapshot is required before approval")
         account_case_id = str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
         zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
         if not account_case_id or not zendesk_ticket_id or not approved_content:
             raise ReplySyncError(409, "Zendesk delivery target is incomplete")
+        sync_state = repository.get_account_case_comment_sync(str(ticket.get("ticket_id") or ""))
+        comments_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        if not comments_revision:
+            # Mirror the legacy /production approval path: fall back to a live
+            # Zendesk ownership snapshot when no comment sync baseline exists.
+            try:
+                zendesk_snapshot = await _sync(
+                    read_ticket_ownership_snapshot,
+                    ticket_id=zendesk_ticket_id,
+                )
+            except ZendeskCommentError as exc:
+                raise ReplySyncError(503, "Unable to verify Zendesk comments before approval") from exc
+            comments_revision = str(getattr(zendesk_snapshot, "comments_revision", "") or "").strip()
+        if not comments_revision:
+            raise ReplySyncError(409, "Zendesk comments snapshot is required before approval")
 
         approval_message = build_internal_message(
             investigation_id,

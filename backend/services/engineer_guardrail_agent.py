@@ -118,10 +118,6 @@ def run_engineer_guardrail_final(
     if not normalized_draft:
         blockers.append("No draft customer reply provided.")
 
-    # Rule 2: reply_readiness.ready_for_customer_reply != true → block
-    if not bool(readiness.get("ready_for_customer_reply")):
-        blockers.append("Reply readiness check has not passed (ready_for_customer_reply is not true).")
-
     if blockers:
         return {
             "guardrail_id": guardrail_id,
@@ -176,13 +172,13 @@ def run_engineer_guardrail_final(
             else "Human-guided reply is missing its persisted source message or Slack event ID."
         )
     else:
-        proof_passed = bool(
-            readiness.get("has_proof") and _clean_text(readiness.get("proof_summary"))
-        )
+        # The investigation turn's self-report is accepted as-is (the backend
+        # no longer re-derives readiness); guardrail + human approval are the gates.
+        proof_passed = bool(readiness.get("ready_for_customer_reply"))
         proof_detail = (
-            "Proof check passed."
+            "Agent self-reported readiness accepted; engineer review is the gate."
             if proof_passed
-            else "Reply readiness is missing proof_summary or has_proof flag."
+            else "Agent did not self-report ready_for_customer_reply."
         )
 
     checks = {

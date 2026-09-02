@@ -141,13 +141,32 @@ class EngineerGuardrailAgentTests(unittest.TestCase):
     def test_guardrail_blocks_when_proof_missing(self):
         packet = run_engineer_guardrail_final(
             draft_customer_reply="Hi, Taylor\n\nPlease try again.",
-            reply_readiness=_reply_readiness(has_proof=False, proof_summary=""),
+            reply_readiness=_reply_readiness(
+                has_proof=False,
+                proof_summary="",
+                ready_for_customer_reply=False,
+            ),
             requester="Taylor",
             customer_id="C-001",
             language_hint="en",
         )
         self.assertEqual(packet["decision"], "blocked")
         self.assertFalse(packet["checks"]["proof"]["passed"])
+
+    def test_guardrail_accepts_agent_self_reported_readiness_without_derived_proof(self):
+        packet = run_engineer_guardrail_final(
+            draft_customer_reply="Hi, Taylor\n\nPlease try again after the packaging fix.",
+            reply_readiness=_reply_readiness(
+                has_proof=False,
+                proof_summary="",
+                ready_for_customer_reply=True,
+            ),
+            requester="Taylor",
+            customer_id="C-001",
+            language_hint="en",
+        )
+        self.assertEqual(packet["decision"], "approved_for_final_engineer_review")
+        self.assertTrue(packet["checks"]["proof"]["passed"])
 
     def test_guardrail_accepts_persisted_human_guidance_without_investigation_proof(self):
         packet = run_engineer_guardrail_final(

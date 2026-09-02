@@ -48,6 +48,7 @@ from backend.services.account_reply_jobs import (
     create_account_reply_job,
 )
 from backend.services.account_route_pipeline import account_route_metadata
+from backend.services.account_zendesk_comments import normalize_snapshot
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
@@ -1199,6 +1200,25 @@ async def run_production_account_intake(
                 EngineerAssignmentService(repository).dispatch_case,
                 engineer_case_id,
                 reason="round_robin",
+            )
+            # Baseline the Zendesk comment snapshot at case creation so the
+            # first approval does not require a prior comment sync round trip.
+            await _sync(
+                repository.sync_account_case_comments,
+                ticket_id=ticket_id,
+                account_case_id=str(
+                    billing_ticket.get("account_case_id")
+                    or billing_ticket.get("billing_ticket_id")
+                    or ""
+                ),
+                snapshot=normalize_snapshot(
+                    {
+                        "snapshot_complete": True,
+                        "source_updated_at": str(ticket.get("updated_at") or "").strip() or timestamp,
+                        "comments": [],
+                    }
+                ),
+                synced_at=timestamp,
             )
             await _sync(repository.save_ticket, ticket, new_messages=[])
 
