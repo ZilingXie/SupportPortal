@@ -468,18 +468,46 @@ class AccountSuspensionContactConfirmationTests(unittest.TestCase):
         self.assertEqual(result["status"], "confirmed")
         self.assertEqual(result["email"], "customer@example.com")
 
-    def test_ambiguous_or_conflicting_confirmation_goes_to_human_review(self) -> None:
-        ambiguous = suspension_contact_confirmation(
+    def test_any_non_empty_reply_confirms(self) -> None:
+        # AC-13225: the customer's answer no longer has to carry exactly one
+        # address — any reply confirms, and the contact address prefers the
+        # address that differs from the ticket email.
+        multiple = suspension_contact_confirmation(
+            "My agora account email is business@kira.art. you can contact me with owen@kira.art",
+            ticket_email="business@kira.art",
+        )
+        plain = suspension_contact_confirmation(
             "I'm not sure which address is best.",
             ticket_email="customer@example.com",
         )
-        conflicting = suspension_contact_confirmation(
+        negative = suspension_contact_confirmation(
             "No, do not use customer@example.com; please use customer@example.com instead.",
             ticket_email="customer@example.com",
         )
+        no_address = suspension_contact_confirmation(
+            "yes please",
+            ticket_email="customer@example.com",
+        )
 
-        self.assertEqual(ambiguous["status"], "human_review")
-        self.assertEqual(conflicting["status"], "human_review")
+        self.assertEqual(multiple["status"], "confirmed")
+        self.assertEqual(multiple["email"], "owen@kira.art")
+        self.assertEqual(plain["status"], "confirmed")
+        self.assertEqual(plain["email"], "customer@example.com")
+        self.assertEqual(negative["status"], "confirmed")
+        self.assertEqual(negative["email"], "customer@example.com")
+        self.assertEqual(no_address["status"], "confirmed")
+        self.assertEqual(no_address["email"], "customer@example.com")
+
+    def test_empty_reply_keeps_waiting(self) -> None:
+        result = suspension_contact_confirmation("", ticket_email="customer@example.com")
+        self.assertEqual(result["status"], "awaiting_confirmation")
+
+        ignored = suspension_contact_confirmation(
+            "any reply",
+            ticket_email="customer@example.com",
+            state="handoff_pending",
+        )
+        self.assertEqual(ignored["status"], "ignored")
 
 
 if __name__ == "__main__":

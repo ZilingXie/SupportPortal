@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-02 - Suspension contact confirmation confirms on any non-empty reply (p2-136)
+
+- Area or subsystem: Account suspension contact-confirmation workflow (first-stage gate before closing reply + handoff).
+- Prompt or model version: prompt text and model configuration unchanged; deterministic confirmation gate behavior relaxed.
+- Summary: `suspension_contact_confirmation` no longer requires the customer reply to carry exactly one address or an affirmative phrase — any non-empty reply confirms. The contact address prefers an address from the reply that differs from the ticket email, then the first address in the reply, then the ticket email. The four fail-closed branches (multiple_contact_emails, conflicting_email_confirmation, different_email_required, ambiguous_contact_confirmation) are removed together with the affirmative/negative regexes.
+- Reason: production Case AC-13225 — the customer clearly designated a contact address ("account email is business@kira.art, contact me with owen@kira.art") yet the multi-address rule forced human review; the user decided the gate should trust any customer reply.
+- Affected files or config: `backend/services/account_suspension_automation.py`, `backend/tests/test_account_verification_automation.py`.
+- Expected behavior change: suspension cases confirm and proceed to closing reply + handoff + close on any customer reply (empty messages still wait; non-awaiting states still ignored). Replies that previously escalated (multi-address, ambiguous, negative phrasing) now confirm, with the contact address derived by preference order.
+- Verification: confirmation unit suite rewritten for the new semantics (18 passed); worker/intake/reroute/full-reroute/ecs-intake/slack/route-contract regression 376 passed + 33 subtests.
+
 ## 2026-09-02 - Archer Enablement success reply drops region/load disclosure (p2-134)
 
 - Area or subsystem: Account Automation Persona rendering for Archer-backed Media Relay Enablement.

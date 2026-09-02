@@ -15,15 +15,6 @@ SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION = "account_suspension_contact_confi
 SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE = "account_suspension_handoff_and_close"
 
 _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
-_AFFIRMATIVE_TICKET_EMAIL_RE = re.compile(
-    r"(?i)\b(?:yes|yeah|yep|correct|right|that's right|that is right|please use|you can use)\b"
-)
-# Keep uncertainty such as "not sure" out of the explicit-negative branch.
-# A bare "not" is only meaningful here when it negates an address/choice.
-_NEGATIVE_RE = re.compile(
-    r"(?i)\b(?:no|different|instead|rather than|do not use|don't use|not use)\b"
-    r"|\bnot\s+(?=\S+@)"
-)
 
 
 def normalize_contact_email(value: Any) -> str | None:
@@ -56,7 +47,15 @@ def suspension_contact_confirmation(
     ticket_email: Any = None,
     state: Any = SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
 ) -> dict[str, Any]:
-    """Parse only explicit customer confirmation; ambiguous input fails closed."""
+    """Confirm on any non-empty customer reply (AC-13225 decision).
+
+    The reply no longer has to carry exactly one address or a specific
+    affirmative phrase: whatever the customer answers counts as confirmation.
+    The contact address is derived from the reply — preferring an address that
+    differs from the ticket email, since that is the one the customer chose
+    for contact — and falls back to the ticket email. An empty message keeps
+    waiting for the customer.
+    """
     normalized_state = str(state or SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION).strip().lower()
     if normalized_state != SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION:
         return {"status": "ignored", "reason": "workflow_not_awaiting_confirmation"}
@@ -65,17 +64,14 @@ def suspension_contact_confirmation(
         return {"status": "awaiting_confirmation", "reason": "empty_message"}
     emails = list(dict.fromkeys(item.lower() for item in _EMAIL_RE.findall(text)))
     normalized_ticket_email = normalize_contact_email(ticket_email)
-    if len(emails) > 1:
-        return {"status": "human_review", "reason": "multiple_contact_emails"}
-    if emails:
-        if _NEGATIVE_RE.search(text) and normalized_ticket_email and emails[0] == normalized_ticket_email:
-            return {"status": "human_review", "reason": "conflicting_email_confirmation"}
-        return {"status": "confirmed", "email": emails[0], "reason": "explicit_email"}
-    if normalized_ticket_email and _AFFIRMATIVE_TICKET_EMAIL_RE.search(text) and not _NEGATIVE_RE.search(text):
-        return {"status": "confirmed", "email": normalized_ticket_email, "reason": "explicit_ticket_email_confirmation"}
-    if _NEGATIVE_RE.search(text):
-        return {"status": "awaiting_confirmation", "reason": "different_email_required"}
-    return {"status": "human_review", "reason": "ambiguous_contact_confirmation"}
+    chosen = next((email for email in emails if email != normalized_ticket_email), None)
+    if chosen is None and emails:
+        chosen = emails[0]
+    if chosen is not None:
+        return {"status": "confirmed", "email": chosen, "reason": "customer_reply_with_email"}
+    if normalized_ticket_email:
+        return {"status": "confirmed", "email": normalized_ticket_email, "reason": "customer_reply_ticket_email"}
+    return {"status": "confirmed", "email": None, "reason": "customer_reply_no_email_available"}
 
 
 def contact_confirmation_reply_facts(*, ticket_email: Any = None, customer_name: Any = None) -> dict[str, Any]:
