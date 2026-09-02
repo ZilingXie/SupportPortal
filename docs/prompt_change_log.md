@@ -4281,3 +4281,18 @@ For each new entry, record:
   - `backend/tests/test_automation_ecs_api.py` + `backend/tests/test_automation_account_intake.py`: 31 passed, 2 subtests passed (new endpoint contract coverage: 401/503/422/resolve semantics; opening round messages and slack events).
   - Terraform production root `validate` passed (docker hashicorp/terraform on zacBot).
   - Live acceptance (test-mode gate then real-mode canary with full guardrail/final approve/Zendesk readback) is tracked in p2-113 and runs after the p2-134 pilot/probe gate and rollout.
+
+## 2026-09-02 - Engineer approval chain relaxation: agent self-report trusted (p2-137)
+
+- Area or subsystem:
+  - Engineer investigation reply readiness, Slack guardrail action, final approve preconditions.
+- Prompt version:
+  - Prompt content unchanged; the backend reply-readiness re-derivation layer is removed.
+- Reason:
+  - p2-113 canary (ticket 13220) proved the split-era readiness contract (all-anchors-verbatim `all()` corpus check, symptom recovery, state downgrade) unusable in practice: every revision round required re-pasting evidence phrases verbatim, and the first approval on any ticket 409'd without a prior customer comment. User decision 2026-09-02: remove the readiness gate entirely, keep the deterministic guardrail checks plus two-step human approval as the only gates.
+- Tooling and routing changes:
+  - `_normalize_reply_readiness` is now a structural passthrough of the agent's self-reported reply_readiness (anchors verification, symptom-level recovery, state downgrade, and blocker injection removed; dead helpers deleted; the dual-use `_contains_strong_root_cause_claim` kept for prompt-context sanitization).
+  - Slack guardrail action no longer requires `ready_for_customer_reply` at the endpoint; guardrail Rule 2 removed; the proof check now trusts the self-reported `ready_for_customer_reply`.
+  - Final approve falls back to a live Zendesk ownership snapshot when no comment-sync baseline exists (mirrors the legacy /production path; ZendeskCommentError → 503), and account intake writes an empty-comments baseline snapshot when the engineer case is created, so first approvals no longer depend on a prior customer comment.
+- Verification:
+  - Focused regression (investigation flow, execute agent, guardrail, intake, slack, comment sync, ECS api): 212 passed + 7 subtests; five removed-behavior tests deleted, passthrough assertions updated, new positive case for self-reported readiness and the intake baseline assertion added.

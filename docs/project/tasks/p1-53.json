@@ -216,6 +216,11 @@
       "type": "deployment",
       "label": "Slack Engineer Case live on ECS via p2-113",
       "details": "2026-09-02 p2-113 全链 canary 通过（工单 13220，Hermes 调查语义），EC2 Slack bot 停用；验收矩阵中 Slack Engineer Case 行从延期转为 live（thread binding/@bot inbound/guardrail/Final Approve 均实测，Zendesk 公开评论 readback 成功）。"
+    },
+    {
+      "type": "decision",
+      "label": "Engineer approval chain relaxed under p2-137",
+      "details": "2026-09-02 p2-113 canary 实证三处摩擦后用户决策：readiness backend 重判定整体移除（采信 Hermes 自报）、guardrail 入口检查删除（六项确定性检查直查）、approve 前评论快照改为 intake 基线+实时 Zendesk 兜底。guardrail 五项文本检查与两段人工 approve 保留。"
     }
   ],
   "source_refs": [

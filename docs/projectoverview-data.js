@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T08:27:21Z",
-  "source_base_commit": "c5541a306edac5dfe8bffca09c35f8fcf9ee4f74",
-  "registry_digest": "91bc4ca53211fa5755d16bf2e14cb2d49277dd5db75f2204f9f674e4ad08ec4a",
+  "generated_at": "2026-09-02T09:06:24Z",
+  "source_base_commit": "17fd23ab2fa74cf8f81aaeee578d96e8077ca2b4",
+  "registry_digest": "3f691826b3e097c1e3f3e0b5f6ab0a4ae509653d43bdc31b43438b9ed092b3fa",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2157,6 +2157,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "2026-09-02 p2-113 全链 canary 通过（工单 13220，Hermes 调查语义），EC2 Slack bot 停用；验收矩阵中 Slack Engineer Case 行从延期转为 live（thread binding/@bot inbound/guardrail/Final Approve 均实测，Zendesk 公开评论 readback 成功）。"
         },
         {
+          "type": "decision",
+          "label": "Engineer approval chain relaxed under p2-137",
+          "details": "2026-09-02 p2-113 canary 实证三处摩擦后用户决策：readiness backend 重判定整体移除（采信 Hermes 自报）、guardrail 入口检查删除（六项确定性检查直查）、approve 前评论快照改为 intake 基线+实时 Zendesk 兜底。guardrail 五项文本检查与两段人工 approve 保留。"
+        },
+        {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
@@ -3268,6 +3273,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Two rollback-adjacent incidents caught and corrected",
           "command": "",
           "details": "① ECS worker td rev13 误基于旧 rev9 生成（回滚主 thread 镜像），立即基于最新 rev12 重新生成 rev14 纠正——register 前必查当前最新 revision；② EC2 up -d 未带部署变量集导致三容器落到 localhost/supportportal-app:unknown 旧镜像（compose 默认值），按部署日志恢复 APP_RUNTIME_IMAGE=52df67fcbbfc 等变量重建纠正——脱离部署脚本操作必须显式携带全部构建变量。另修复 init 容器 stage2 生成的 API_SERVER_KEY 写入共享 EFS .env（override=True 会覆盖 SSM 注入值）——一次性 fix task 删除该行。"
+        },
+        {
+          "type": "test",
+          "label": "Focused regression after readiness removal",
+          "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_investigation_flow.py backend/tests/test_engineer_execute_agent.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_automation_account_intake.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_api.py -q",
+          "details": "212 passed + 7 subtests。删除 5 个已移除行为的测试（anchors 拒绝/proof 前置/conclusion 缺失拒绝/symptom 恢复/prior root-cause draft 改写），改 3 处断言为透传语义（blockers 保留原样、advisory 分流断言删除），guardrail 新增自报 ready 正例（无 proof_summary 亦通过 proof 检查），intake fake 增加 sync_account_case_comments 并断言基线 revision 非空。期间发现并修复误删的双用途函数 _contains_strong_root_cause_claim（prompt 脱敏仍依赖，已恢复）。"
         }
       ],
       "source_refs": [
@@ -3276,8 +3287,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 2,
-      "done_count": 2,
+      "task_count": 3,
+      "done_count": 3,
       "blocked_count": 0
     },
     {
@@ -6653,6 +6664,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Slack Engineer Case live on ECS via p2-113",
           "details": "2026-09-02 p2-113 全链 canary 通过（工单 13220，Hermes 调查语义），EC2 Slack bot 停用；验收矩阵中 Slack Engineer Case 行从延期转为 live（thread binding/@bot inbound/guardrail/Final Approve 均实测，Zendesk 公开评论 readback 成功）。"
+        },
+        {
+          "type": "decision",
+          "label": "Engineer approval chain relaxed under p2-137",
+          "details": "2026-09-02 p2-113 canary 实证三处摩擦后用户决策：readiness backend 重判定整体移除（采信 Hermes 自报）、guardrail 入口检查删除（六项确定性检查直查）、approve 前评论快照改为 intake 基线+实时 Zendesk 兜底。guardrail 五项文本检查与两段人工 approve 保留。"
         }
       ],
       "source_refs": [
@@ -9505,6 +9521,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-137",
+      "title": "Engineer 审批链放宽：移除 readiness 重判定、guardrail 直查、approve 评论快照双兜底",
+      "status": "done",
+      "owner": "zac",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "created_at": "2026-09-02",
+      "updated_at": "2026-09-02",
+      "summary": "按用户 2026-09-02 决策放宽 engineer 审批链（p2-113 canary 实证的三处摩擦）：①移除 backend readiness 重判定——_normalize_reply_readiness 改为结构化透传（anchors 逐字 all() 校验、symptom 恢复、state 打回、blockers 注入全部删除），调查回合的 state/draft/readiness 采信 Hermes 自报，guardrail 六项确定性检查+两段人工 approve 是唯一闸门；②collab guardrail 入口的 ready_for_customer_reply 400 检查移除（闸 2）；③guardrail Rule 2 删除、proof 检查改为采信自报 ready；④approve 前 comments_revision 缺失时按 EC2 旧栈路径实时拉 Zendesk ownership snapshot 兜底（ZendeskCommentError→503），且 intake not_automated 建 engineer case 时同步写入空评论基线 snapshot（normalize_snapshot 构造），新工单首次 approve 不再依赖客户先回评论。保留：prompt 上下文 root-cause 脱敏（_sanitize_unverified_root_cause_text 及其依赖恢复）、guardrail 其余五项检查、draft_version/investigation stale 防护、两段 approve、delivery 幂等。",
+      "next_action": "部署含本 PR 的 release 后用全新工单复验审批链（预期：Hermes 自报 ready 即出按钮、guardrail 只拦文本问题、首次 approve 不再 409）。",
+      "acceptance_criteria": [
+        "调查回合 awaiting_confirmation + 自报 ready=true 时 state/draft/按钮链原样保留（无 backend 打回、无 symptom 降级）。",
+        "guardrail 入口不再要求 backend-validated readiness；六项检查中 proof=自报 ready。",
+        "无 comment sync 基线时 approve 实时拉 Zendesk 成功用其 comments_revision；拉取失败 503；仍无 revision 才 409。",
+        "intake not_automated 建案时写入 comments 基线（revision 非空）。",
+        "EC2 /production 与既有非 engineer 链路行为不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Focused regression after readiness removal",
+          "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_investigation_flow.py backend/tests/test_engineer_execute_agent.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_automation_account_intake.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_api.py -q",
+          "details": "212 passed + 7 subtests。删除 5 个已移除行为的测试（anchors 拒绝/proof 前置/conclusion 缺失拒绝/symptom 恢复/prior root-cause draft 改写），改 3 处断言为透传语义（blockers 保留原样、advisory 分流断言删除），guardrail 新增自报 ready 正例（无 proof_summary 亦通过 proof 检查），intake fake 增加 sync_account_case_comments 并断言基线 revision 非空。期间发现并修复误删的双用途函数 _contains_strong_root_cause_claim（prompt 脱敏仍依赖，已恢复）。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-113"
+      ],
+      "source_refs": [
+        "backend/services/engineer_agent.py",
+        "backend/services/automation_engineer_collab.py",
+        "backend/services/engineer_guardrail_agent.py",
+        "backend/services/automation_account_intake.py"
+      ]
     },
     {
       "schema_version": 2,
