@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import tempfile
-import textwrap
-import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from backend.services.archer_direct_client import ArcherDirectError
 from backend.services.enablement_archer_executor import (
     ARCHER_SKILL_SCRIPT,
     ArcherEnablementResult,
@@ -22,142 +21,164 @@ APP_ID = "0123456789abcdef0123456789abcdef"
 MOCK_PILOT = Path(__file__).resolve().parent / "fixtures" / "archer_mock_pilot.py"
 
 
-def _stub(tmp_path: Path, body: str) -> Path:
-    script = tmp_path / "stub.py"
-    script.write_text(textwrap.dedent(body), encoding="utf-8")
-    return script
+def _project() -> dict[str, Any]:
+    # live check-simple-vendor shape (probed 2026-09-02)
+    return {
+        "vendorId": 1322905,
+        "projectName": "Mock Project",
+        "appid": APP_ID,
+        "companyId": 1138100,
+        "projectId": "eqpDzxHNn",
+        "projectType": "PAAS",
+    }
 
 
-@pytest.mark.parametrize(
-    ("exit_code", "first_line", "outcome"),
-    [
-        (0, "开启结果：成功", "enabled"),
-        (2, "关键词必须为整数或 32 位字符串", "appid_invalid"),
-        (3, "查无项目", "project_not_found"),
-        (1, "开启结果：失败", "enable_failed"),
-    ],
-)
-def test_maps_only_the_four_frozen_outcomes(
-    tmp_path: Path, exit_code: int, first_line: str, outcome: str
-) -> None:
-    script = _stub(
-        tmp_path,
-        f"""
-        import sys
-        print({first_line!r})
-        raise SystemExit({exit_code})
-        """,
-    )
-    assert execute_enablement_archer(APP_ID, script_path=script).outcome == outcome
+def _config(status: int, region: int, load: int) -> dict[str, Any]:
+    # live uap-app/6/uap elements shape
+    return {
+        "id": 200179442,
+        "typeId": 6,
+        "vendorId": 1322905,
+        "appKey": APP_ID,
+        "companyId": 1138100,
+        "projectName": "Mock Project",
+        "maxSubscribeLoad": load,
+        "status": status,
+        "region": region,
+        "projectId": "eqpDzxHNn",
+    }
 
 
-@pytest.mark.parametrize(
-    ("exit_code", "first_line"),
-    [(0, "查无项目"), (2, "开启结果：成功"), (3, "开启结果：失败")],
-)
-def test_exit_code_and_first_line_must_both_match(
-    tmp_path: Path, exit_code: int, first_line: str
-) -> None:
-    script = _stub(
-        tmp_path,
-        f"""
-        import sys
-        print({first_line!r})
-        raise SystemExit({exit_code})
-        """,
-    )
-    assert execute_enablement_archer(APP_ID, script_path=script).outcome == "enable_failed"
+class FakeArcherClient:
+    """Drives the real vendored skill with live-shaped Archer responses."""
+
+    def __init__(self, scenario: str) -> None:
+        self.scenario = scenario
+        self.calls: list[tuple[str, str]] = []
+        initial = {
+            "create": None,
+            "not_found": None,
+            "update": _config(0, 1, 10),
+            "already_enabled": _config(1, 2, 50),
+            "readback_mismatch": _config(0, 1, 10),
+            "write_400": _config(0, 1, 10),
+        }
+        self._config: dict[str, Any] | None = initial[scenario]
+
+    def call(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        self.calls.append((method, path))
+        if "check-simple-vendor" in path:
+            if self.scenario == "not_found":
+                # live shape: HTTP 400 "项目不存在" -> client-level translation
+                return {"data": None, "message": "项目不存在"}
+            return _project()
+        if "search-project" in path:
+            return [_project()]
+        if "/uap-app/6/uap" in path and method == "GET":
+            # DirectArcherClient already unwrapped the live `elements` envelope
+            elements = [] if self._config is None else [dict(self._config)]
+            return elements
+        if path.endswith("/uap-type/6") and method in {"POST", "PUT"}:
+            if self.scenario == "write_400":
+                raise ArcherDirectError("archer request failed with HTTP 400")
+            if self.scenario != "readback_mismatch":
+                if method == "POST":
+                    assert body is not None
+                    self._config = dict(body)
+                    self._config.setdefault("appKey", APP_ID)
+                else:
+                    assert body is not None
+                    self._config = dict(self._config or {"appKey": APP_ID})
+                    self._config.update(body)
+            return {"data": {"success": True}}
+        raise AssertionError(f"unexpected archer call: {method} {path}")
 
 
-def test_success_marker_must_be_the_literal_first_line(tmp_path: Path) -> None:
-    script = _stub(
-        tmp_path,
-        """
-        print()
-        print("开启结果：成功")
-        """,
-    )
-    assert execute_enablement_archer(APP_ID, script_path=script).outcome == "enable_failed"
-
-
-def test_missing_script_is_enable_failed(tmp_path: Path) -> None:
-    result = execute_enablement_archer(APP_ID, script_path=tmp_path / "missing.py")
-    assert result.outcome == "enable_failed"
-    assert result.detail
-
-
-def test_environment_explicitly_supplies_pilot_and_config_home(tmp_path: Path) -> None:
-    script = _stub(
-        tmp_path,
-        """
-        import os
-        assert os.environ["PILOT_BIN"] == "/custom/pilot"
-        assert os.environ["XDG_CONFIG_HOME"] == "/custom/config"
-        print("开启结果：成功")
-        """,
-    )
-    result = execute_enablement_archer(
-        APP_ID,
-        script_path=script,
-        pilot_bin="/custom/pilot",
-        xdg_config_home="/custom/config",
-    )
+def test_create_missing_config_enables_and_succeeds() -> None:
+    client = FakeArcherClient("create")
+    result = execute_enablement_archer(APP_ID, client=client)
     assert result.outcome == "enabled"
+    assert result.detail.startswith("开启结果：成功")
+    assert "操作：创建" in result.detail
+    # exact call sequence: check -> search -> uap GET -> POST -> readback GET
+    methods = [method for method, _ in client.calls]
+    assert methods == ["GET", "GET", "GET", "POST", "GET"]
 
 
-def test_detail_removes_app_ids_secrets_controls_and_is_bounded(tmp_path: Path) -> None:
-    script = _stub(
-        tmp_path,
-        f"""
-        import sys
-        print("开启结果：失败")
-        print('AppID：{APP_ID} token=top-secret cookie:session-value\\x01 ' +
-              '\"authorization\": \"Bearer bearer-secret\" password=two word secret;' + "x" * 1000)
-        raise SystemExit(1)
-        """,
-    )
-    result = execute_enablement_archer(APP_ID, script_path=script)
+def test_existing_matching_config_is_idempotent_success() -> None:
+    client = FakeArcherClient("already_enabled")
+    result = execute_enablement_archer(APP_ID, client=client)
+    assert result.outcome == "enabled"
+    assert "操作：无需更新" in result.detail
+    assert [method for method, _ in client.calls] == ["GET", "GET", "GET"]
+
+
+def test_mismatched_config_is_updated_then_verified() -> None:
+    client = FakeArcherClient("update")
+    result = execute_enablement_archer(APP_ID, client=client)
+    assert result.outcome == "enabled"
+    assert "操作：更新" in result.detail
+    assert [method for method, _ in client.calls] == ["GET", "GET", "GET", "PUT", "GET"]
+
+
+def test_project_not_found_maps_to_recovery_outcome() -> None:
+    client = FakeArcherClient("not_found")
+    result = execute_enablement_archer(APP_ID, client=client)
+    assert result == ArcherEnablementResult("project_not_found", "查无项目")
+    assert [method for method, _ in client.calls] == ["GET"]
+
+
+def test_readback_mismatch_is_enable_failed() -> None:
+    # POST "succeeds" but the readback still mismatches -> skill raises
+    client = FakeArcherClient("readback_mismatch")
+    result = execute_enablement_archer(APP_ID, client=client)
     assert result.outcome == "enable_failed"
+    assert "读回不一致" in result.detail
+
+
+def test_write_rejection_is_enable_failed() -> None:
+    client = FakeArcherClient("write_400")
+    result = execute_enablement_archer(APP_ID, client=client)
+    assert result.outcome == "enable_failed"
+    assert "HTTP 400" in result.detail
+
+
+@pytest.mark.parametrize(
+    "app_id", ["", "  ", "not-an-app-id", "0123456789abcdef", "0" * 33, "g" * 32]
+)
+def test_non_32_hex_app_id_is_rejected_without_any_network_call(app_id: str) -> None:
+    client = FakeArcherClient("create")
+    result = execute_enablement_archer(app_id, client=client)
+    assert result.outcome == "appid_invalid"
+    assert client.calls == []
+
+
+def test_success_detail_redacts_the_app_id() -> None:
+    client = FakeArcherClient("already_enabled")
+    result = execute_enablement_archer(APP_ID, client=client)
+    assert result.outcome == "enabled"
     assert APP_ID not in result.detail
-    assert "top-secret" not in result.detail
-    assert "session-value" not in result.detail
-    assert "bearer-secret" not in result.detail
-    assert "two word secret" not in result.detail
-    assert "\x01" not in result.detail
+    assert "[REDACTED_APP_ID]" in result.detail
+
+
+def test_skill_error_detail_is_sanitized_and_bounded() -> None:
+    class LeakyClient:
+        def call(self, method: str, path: str, body: Any = None) -> Any:
+            raise RuntimeError(f"token=super-secret cookie={APP_ID} " + "x" * 900)
+
+    result = execute_enablement_archer(APP_ID, client=LeakyClient())
+    assert result.outcome == "enable_failed"
+    assert "super-secret" not in result.detail
+    assert APP_ID not in result.detail
     assert len(result.detail) <= 500
 
 
-def test_timeout_terminates_skill_and_pilot_child_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pid_file = tmp_path / "child.pid"
-    monkeypatch.setenv("CHILD_PID_FILE", str(pid_file))
-    script = _stub(
-        tmp_path,
-        """
-        import os
-        import subprocess
-        import sys
-        import time
-
-        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-        with open(os.environ["CHILD_PID_FILE"], "w", encoding="utf-8") as handle:
-            handle.write(str(child.pid))
-        time.sleep(60)
-        """,
-    )
-    result = execute_enablement_archer(APP_ID, script_path=script, timeout_seconds=0.2)
-    assert result == ArcherEnablementResult("enable_failed", "Archer Skill timed out")
-    child_pid = int(pid_file.read_text(encoding="utf-8"))
-    for _ in range(20):
-        try:
-            os.kill(child_pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.05)
-    else:
-        os.kill(child_pid, signal.SIGKILL)
-        pytest.fail("Pilot child process survived the executor timeout")
+def test_invalid_app_id_short_circuits_before_default_client() -> None:
+    # no ARCHER_OAUTH_COOKIE in the test environment: a valid-shaped App ID
+    # with the default client would raise credential errors, but an invalid
+    # App ID never reaches any transport at all
+    result = execute_enablement_archer("zzz")
+    assert result.outcome == "appid_invalid"
 
 
 @pytest.mark.parametrize(

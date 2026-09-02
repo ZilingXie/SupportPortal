@@ -91,43 +91,38 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 ## Enablement Archer Worker 发布门禁
 
-包含 `p2-134` 的 Worker 还必须设置：
+包含 `p2-134` 的 Worker 通过 `ARCHER_OAUTH_COOKIE` secret 直连 Archer：
 
 ```text
-PILOT_BIN=/app/bin/pilot
-XDG_CONFIG_HOME=/var/lib/pilot
-pilot-creds EFS volume -> /var/lib/pilot (read/write)
+secret ARCHER_OAUTH_COOKIE <- SSM SecureString /supportportal/production/archer-oauth-cookie
 ```
 
-Pilot EFS file system/access point 与 `graph-token-cache` 独立。Worker 使用专用 task
-role；该 role 保留原有 Graph EFS 权限，并增加一条通过 Access Point ARN 条件仅覆盖
-Pilot EFS/AP 的 `elasticfilesystem:ClientMount` 与
-`elasticfilesystem:ClientWrite` policy；不能把现有 graph-token-cache policy 当作
-已授权证据。
+SSM 参数值是一整串 SSO cookie 头：`oauth2-token=<值>; oauth2-token.sig=<值>`。
+该 cookie 对来自 `oauth.agoralab.co`（有浏览器者登录 `archer.agora.io` 后在该域下导出），
+是唯一需要人工维护的凭证。Archer API 使用的 `archer_token_jwt_202003` JWT（24 小时）
+由 Worker 自动续期：`GET oauth/authorize`（带 SSO cookie）→ 302 `handleSSO?code=` →
+Set-Cookie 新 JWT；全程纯 HTTP，无需 Pilot 二进制、pilot-creds EFS 卷或 pilot-server。
+镜像内已有的 pilot 安装保留但运行时不使用。
 
-发布前先只读回读当前 Production Worker task definition、task role 和 inline
-policies，保存现有 revision 作为 rollback 目标。生成新 revision 时完整保留所有
-现有 environment、secret、Graph EFS volume/mount、execution role、task-role 权限、
-CPU、memory、network mode 和 logging 配置；task role ARN 切换为 Terraform 创建的
-Worker 专用 role，并追加 Pilot 环境、volume 与 mount。注册新 revision 后不要立即
-更新 service。API/Route 继续使用原共享 task role，不得获得 Pilot policy。
+SSO 会话失效的特征：authorize 不再返回 302（返回登录页 200）→ Worker 按既有
+`enable_failed` 契约降级（escalate + 兜底内部邮件，工单转人工 queue）。恢复方式：
+人工重新登录 Archer 后更新 SSM 参数并 force new deployment。cookie 值不得进入
+ECS command override、task definition 明文、环境变量清单、日志、shell history、
+仓库或发布记录。
 
-使用挂载新 revision 的临时 task，并通过 ECS Exec 交互式 shell 执行 Pilot deposit。
-cookie 只能通过 Pilot 的交互式 deposit 流程进入 `/var/lib/pilot`；不得放入 ECS
-command override、task definition、environment、日志、shell history、仓库或发布
-记录。deposit 完成后退出交互 shell。
+发布前先只读回读当前 Production Worker task definition（register 前必须确认基于
+当前最新 revision 生成新 revision，完整保留既有 environment、secret、Graph EFS
+volume/mount、role、CPU/memory/network/logging 配置），并保存现有 revision 作为
+rollback 目标。Terraform `locals.tf` 的 `worker_secrets` 已含
+`ARCHER_OAUTH_COOKIE` 引用，与手工注册的 task definition 保持一致。
 
-仍在临时 task 内，使用一个经过批准且不含客户数据的内部 App ID 执行只读 Archer
-GET probe；只允许调用项目检查/精确搜索接口，不允许 POST 或 PUT。确认 Pilot 登录
-有效、响应可解析且 EFS 中的凭证在新进程可读。probe 失败时立即停止，不得更新
-Worker service，也不得通过修改凭证边界、关闭校验或把 cookie 注入 task override
-来绕过。
+首个新工单验收顺序（同时充当 ECS 侧网络/认证探针，全部使用全新工单）：
 
-probe 成功后才将 Production Worker service 更新到新 revision，并等待稳定
-`running=1 / desired=1 / pending=0`。逐项回读实际 image digest、Pilot mount、task
-role policy、Worker heartbeat、CloudWatch、`health/live`、`health/release`、
-`health/ready`，并确认旧 EC2 `/production` 仍返回 200。任何 provenance mismatch、
-持续错误或 heartbeat 过期都应回滚到发布前 revision。
+1. 非法格式 App ID：只触发只读 GET（check-simple-vendor 前的本地校验直接拒绝，
+   零网络调用），公开回复要求正确的 32 位 App ID，Case 保持 open。
+2. 查无项目：只触发只读 GET；公开回复要求核对/重发 App ID，Case 保持 open。
+3. 有效 App ID：Archer 写后读回为 `status=1, region=2, maxSubscribeLoad=50`；Persona
+   发布公开成功回复，Zendesk solved，execution completed，且没有 Enablement 内部邮件。
 
 业务验收只使用全新工单：
 
