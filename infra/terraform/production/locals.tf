@@ -62,6 +62,8 @@ locals {
     enablement_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/enablement-internal-email-recipients"
     fraud_internal_email_recipients      = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/fraud-internal-email-recipients"
     suspension_internal_email_recipients = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/account-suspension-internal-email-recipients"
+    hermes_base_url                      = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/hermes-base-url"
+    hermes_api_server_key                = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/hermes-api-server-key"
     archer_oauth_cookie                  = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/supportportal/production/archer-oauth-cookie"
   }
 
@@ -140,6 +142,33 @@ locals {
     {
       name      = "AUTOMATION_DASHBOARD_SESSION_SECRET"
       valueFrom = aws_secretsmanager_secret.runtime["dashboard_session_secret"].arn
+    },
+    # Engineer Slack inbound endpoints (investigation chain via Hermes):
+    # resolve/messages/actions need the ticket repository, the n8n request
+    # token, the configured Slack destination, and the Hermes endpoint env.
+    {
+      name      = "TICKET_DB_DSN"
+      valueFrom = aws_secretsmanager_secret.runtime["ticket_db_dsn"].arn
+    },
+    {
+      name      = "n8n_request_token"
+      valueFrom = aws_secretsmanager_secret.runtime["n8n_request_token"].arn
+    },
+    {
+      name      = "ENGINEER_SLACK_TEAM_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["engineer_slack_team_id"].arn
+    },
+    {
+      name      = "ENGINEER_SLACK_CHANNEL_ID"
+      valueFrom = aws_secretsmanager_secret.runtime["engineer_slack_channel_id"].arn
+    },
+    {
+      name      = "ENGINEER_INVESTIGATION_REPLY_BASE_URL"
+      valueFrom = local.runtime_parameter_arns["hermes_base_url"]
+    },
+    {
+      name      = "ENGINEER_INVESTIGATION_REPLY_API_KEY"
+      valueFrom = local.runtime_parameter_arns["hermes_api_server_key"]
     },
   ]
 
@@ -237,6 +266,16 @@ locals {
     {
       name      = "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
       valueFrom = local.runtime_parameter_arns.suspension_internal_email_recipients
+    },
+    # Engineer investigation reply routes to the ECS Hermes endpoint
+    # (p2-130/p2-133); the worker is the LLM consumer for async turns.
+    {
+      name      = "ENGINEER_INVESTIGATION_REPLY_BASE_URL"
+      valueFrom = local.runtime_parameter_arns.hermes_base_url
+    },
+    {
+      name      = "ENGINEER_INVESTIGATION_REPLY_API_KEY"
+      valueFrom = local.runtime_parameter_arns.hermes_api_server_key
     },
     {
       name      = "ARCHER_OAUTH_COOKIE"

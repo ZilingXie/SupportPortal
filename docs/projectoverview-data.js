@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T02:56:40Z",
-  "source_base_commit": "a748869d6e84b28700bc63df090c37c99c766768",
-  "registry_digest": "e3a08ff86ac5303fa0399d4ba95086f9985ff6b4de0e040a75f3c0c5ff9dc3d9",
+  "generated_at": "2026-09-02T03:08:03Z",
+  "source_base_commit": "a1ce0e603298517e47311df8439112488011852b",
+  "registry_digest": "87aad0429146c74483185b43bc976821de5e8ea987e9d1985e715e32818cf771",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2099,6 +2099,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "API:7、Route:8、Worker:7均使用r20260831-badbb5d并稳定1/1/0、rollout completed，实际task imageDigest与Release Manifest一致；公网live/release/ready为200，新Route/Worker heartbeat的provenance_mismatches均为空。新task运行12分钟覆盖至少两个300秒Outlook poll间隔，三条CloudWatch stream的ERROR/Traceback/Exception/failed计数均为0。Ticket 13155仍只有部署前的ticket.created与comment.created两条Execution；exec-aa84651d0003404bb38ca463075c09b7保持outcome_unknown、automation_AttributeError、1条delivery和原更新时间，未重放或修改。"
         },
         {
+          "type": "decision",
+          "label": "Slack Engineer Case ECS implementation staged under p2-113",
+          "details": "2026-09-01 p2-113 将 Engineer Slack 协作落到 ECS：automation_ecs_api 新增 collab 三端点（处理语义经用户确认为 Hermes 调查回合，非 EC2 guided reply parity）+ intake not_automated opening 回合；Terraform api/worker secrets 双轨补齐。rollout 前置 p2-134 Pilot deposit + Archer GET probe 硬门禁，之后按 p2-113 双门禁（测试模式零发布+真模式 canary Zendesk readback）验收。"
+        },
+        {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
@@ -2426,6 +2431,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Customer comment notification-only trigger",
           "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/pytest -q backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_comment_sync.py backend/tests/test_engineer_slack.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py",
           "details": "276 tests、22 subtests 通过；验证两套 Production 客户评论只更新 Engineer investigation、推进 conversation/draft fencing、清除旧审批状态并发送固定 Slack 通知，不产生自动 AI Draft，同时覆盖 Slack outbox、Guardrail/Final Approve 与 worker 回归。"
+        },
+        {
+          "type": "pr",
+          "label": "ECS API engineer inbound endpoints and intake opening round",
+          "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py backend/tests/test_automation_account_intake.py -q",
+          "details": "automation_ecs_api.py 新增 thread-bindings/resolve|messages|actions 三端点（X-N8n-Request-Token 鉴权、复用 automation_engineer_collab 调查链、TICKET_DB_DSN 缺失时端点级 503 降级不影响 readiness）；automation_account_intake.py not_automated 分支补确定性 opening investigation 回合（零 LLM）并追加 engineer_ai_response Slack thread 事件。31 passed + 2 subtests（含新契约用例 401/503/422/resolve 语义与 opening 消息/事件断言）。Terraform production root api_secrets/worker_secrets 补齐 TICKET_DB_DSN/n8n_request_token/engineer Slack team+channel/Hermes SSM 参数，ecs.tf 双角色加 ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300，docker terraform validate 通过。处理语义经用户确认由 EC2 guided reply（Persona 润色）切换为 Hermes 调查回合，feature_list 与 prompt_change_log 已同步。"
         },
         {
           "type": "test",
@@ -6567,6 +6578,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS comment route contract Production rollout",
           "command": "aws ecs/elbv2/logs readback; public health live/release/ready; protected Execution API readback",
           "details": "API:7、Route:8、Worker:7均使用r20260831-badbb5d并稳定1/1/0、rollout completed，实际task imageDigest与Release Manifest一致；公网live/release/ready为200，新Route/Worker heartbeat的provenance_mismatches均为空。新task运行12分钟覆盖至少两个300秒Outlook poll间隔，三条CloudWatch stream的ERROR/Traceback/Exception/failed计数均为0。Ticket 13155仍只有部署前的ticket.created与comment.created两条Execution；exec-aa84651d0003404bb38ca463075c09b7保持outcome_unknown、automation_AttributeError、1条delivery和原更新时间，未重放或修改。"
+        },
+        {
+          "type": "decision",
+          "label": "Slack Engineer Case ECS implementation staged under p2-113",
+          "details": "2026-09-01 p2-113 将 Engineer Slack 协作落到 ECS：automation_ecs_api 新增 collab 三端点（处理语义经用户确认为 Hermes 调查回合，非 EC2 guided reply parity）+ intake not_automated opening 回合；Terraform api/worker secrets 双轨补齐。rollout 前置 p2-134 Pilot deposit + Archer GET probe 硬门禁，之后按 p2-113 双门禁（测试模式零发布+真模式 canary Zendesk readback）验收。"
         }
       ],
       "source_refs": [
@@ -7776,7 +7792,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "Phase E：把旧栈 Engineer Case Slack 协作闭环搬进 /automation/production——新增 backend/services/automation_engineer_collab.py：Slack @bot 消息显式触发调查 AI 回合，actions 执行 guardrail 与 final_approve，thread binding resolver 校验固定 Team/Channel/thread。Zendesk 客户评论分支只持久化最新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知；不会自动运行 AI。刻意省略（登记）：multi-agent Plan/Execute/Review 刷新分支（两条 split 入向均 multi_agent_enabled=False）与 _normalize_engineer_case_payload_for_read 读取整形。",
-      "next_action": "待用户 EC2 部署 + n8n Slack 入向工作流（App Mention/Interaction→Engineer）切到 /automation/production 端点后做全链验收（工程师消息→AI 回合→guardrail→final_approve→Zendesk 公开评论投递，投递由 automation_production_worker 的 engineer zendesk delivery drain 执行）。随后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
+      "next_action": "ECS API 三端点与 intake opening 回合已实现（2026-09-01，见 evidence）；待 p2-134 Pilot deposit + Archer GET probe 门禁通过后构建新 release 并 rollout（api/worker td 补 TICKET_DB_DSN/n8n token/engineer Slack env/Hermes 三值），随后双门禁验收：①测试模式（Hermes SOUL 测试段：@bot 回合只查库汇报、guardrail 被 ready=false 阻断、零 Zendesk delivery，CloudWatch 日志归因 ECS consumer）；②真模式 canary（回滚测试段后用全新受控工单完成 guardrail→final_approve→delivery ledger→Zendesk public comment 直接 readback）。n8n 两个 ingress workflow 各 2 处 URL（Resolve GET + Send POST 共 4 处）切到 /automation/production 并保留回改快照。之后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
       "acceptance_criteria": [
         "三个入向端点在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致；messages/actions 按 event_id/interaction_id 幂等。",
         "评论触发链 Engineer 分支：客户评论→持久化调查上下文并使旧 Draft/审批失效→单个无正文 zendesk_customer_comment 通知；只有后续 Slack @bot 才触发调查 AI 回合与 engineer_ai_response。",
@@ -7796,6 +7812,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Customer comment notification-only trigger",
           "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/pytest -q backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_comment_sync.py backend/tests/test_engineer_slack.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py",
           "details": "276 tests、22 subtests 通过；验证两套 Production 客户评论只更新 Engineer investigation、推进 conversation/draft fencing、清除旧审批状态并发送固定 Slack 通知，不产生自动 AI Draft，同时覆盖 Slack outbox、Guardrail/Final Approve 与 worker 回归。"
+        },
+        {
+          "type": "pr",
+          "label": "ECS API engineer inbound endpoints and intake opening round",
+          "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py backend/tests/test_automation_account_intake.py -q",
+          "details": "automation_ecs_api.py 新增 thread-bindings/resolve|messages|actions 三端点（X-N8n-Request-Token 鉴权、复用 automation_engineer_collab 调查链、TICKET_DB_DSN 缺失时端点级 503 降级不影响 readiness）；automation_account_intake.py not_automated 分支补确定性 opening investigation 回合（零 LLM）并追加 engineer_ai_response Slack thread 事件。31 passed + 2 subtests（含新契约用例 401/503/422/resolve 语义与 opening 消息/事件断言）。Terraform production root api_secrets/worker_secrets 补齐 TICKET_DB_DSN/n8n_request_token/engineer Slack team+channel/Hermes SSM 参数，ecs.tf 双角色加 ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300，docker terraform validate 通过。处理语义经用户确认由 EC2 guided reply（Persona 润色）切换为 Hermes 调查回合，feature_list 与 prompt_change_log 已同步。"
         }
       ],
       "source_refs": [
@@ -7807,7 +7829,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-08-26",
+      "updated_at": "2026-09-01",
       "history": [
         {
           "at": "2026-08-24",
@@ -7818,6 +7840,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-26",
           "event": "customer_comment_trigger_controlled",
           "summary": "与旧 /production 对齐：客户评论仅更新调查上下文并发送内容无关 Slack 通知，Engineer AI 只由后续有效 @bot 消息触发。"
+        },
+        {
+          "at": "2026-09-01",
+          "event": "ecs_api_endpoints_and_opening_round",
+          "summary": "承载环境由退役的 EC2 split /automation/* 改为 ECS /automation/production：ECS API 挂载 collab 三端点（Hermes 调查语义，用户确认放弃 EC2 guided reply parity）+ intake not_automated 补 opening 回合；Terraform api/worker secrets 与 env 双轨补齐。待 p2-134 门禁后 rollout 并做双门禁验收。"
         }
       ],
       "legacy_refs": [
@@ -14593,7 +14620,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production Non automated Case 会创建一个 active Engineer Case；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 指导与按钮交互。首次有效指导会为 Case 随机固定一个已发布 Persona，AI 仅以该指导作为技术事实来源进行润色，再经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成 Draft。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
+        "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源），产出 Draft 后经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
         "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],

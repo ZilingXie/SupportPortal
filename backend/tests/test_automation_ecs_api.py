@@ -484,3 +484,55 @@ def test_dashboard_css_keeps_interactive_targets_at_least_44px() -> None:
         ]
         assert heights, f"{selector} must declare a minimum target height"
         assert min(heights) >= 44, f"{selector} must remain at least 44px tall"
+
+
+class _StubTicketRepository:
+    def resolve_engineer_slack_thread_binding(self, **_: Any) -> dict[str, Any] | None:
+        return None
+
+
+def test_engineer_inbound_endpoints_enforce_n8n_token_and_degradation(monkeypatch) -> None:
+    client, _ = _client()
+    base = "/automation/production/api/integrations/slack/engineer-cases"
+
+    resolve_url = f"{base}/thread-bindings/resolve?team_id=T1&channel_id=C1&thread_ts=123"
+    for method, path, kwargs in (
+        ("get", resolve_url, {}),
+        ("post", f"{base}/messages", {"json": {}}),
+        ("post", f"{base}/actions", {"json": {}}),
+    ):
+        response = getattr(client, method)(path, **kwargs)
+        assert response.status_code == 401, (method, path, response.status_code)
+
+    monkeypatch.setenv("n8n_request_token", "token-1")
+    response = client.post(f"{base}/messages", headers={"X-N8n-Request-Token": "wrong"}, json={})
+    assert response.status_code == 401
+
+    monkeypatch.delenv("TICKET_DB_DSN", raising=False)
+    headers = {"X-N8n-Request-Token": "token-1"}
+    response = client.post(f"{base}/messages", headers=headers, json={})
+    assert response.status_code == 503
+    response = client.get(resolve_url, headers=headers)
+    assert response.status_code == 503
+
+    monkeypatch.setattr("backend.automation_ecs_api._TICKET_REPOSITORY", _StubTicketRepository())
+    monkeypatch.setenv("TICKET_DB_DSN", "postgresql://stub")
+    response = client.post(
+        f"{base}/messages",
+        headers=headers,
+        json={"schema_version": 2, "event_id": "e1", "engineer_case_id": "c1", "text": "hi"},
+    )
+    assert response.status_code == 422
+
+    monkeypatch.setenv("ENGINEER_SLACK_TEAM_ID", "T1")
+    monkeypatch.setenv("ENGINEER_SLACK_CHANNEL_ID", "C1")
+    response = client.get(resolve_url, headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored_unbound"}
+
+    response = client.get(
+        f"{base}/thread-bindings/resolve?team_id=OTHER&channel_id=C1&thread_ts=123",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored_unbound"}

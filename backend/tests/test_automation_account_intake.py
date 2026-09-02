@@ -16,6 +16,7 @@ class _FakeRepository:
         self.saved_cases: list[dict] = []
         self.saved_route_executions: list[dict] = []
         self.saved_engineer_cases: list[dict] = []
+        self.engineer_case_saves: list[tuple] = []
         self.events: list[tuple] = []
 
     def save_ticket(self, ticket, new_messages=None):
@@ -32,6 +33,7 @@ class _FakeRepository:
 
     def save_engineer_case(self, engineer_case, new_messages=None, slack_events=None):
         self.saved_engineer_cases.append(dict(engineer_case))
+        self.engineer_case_saves.append((list(new_messages or []), list(slack_events or [])))
 
     def record_event(self, ticket_id, event_type, payload):
         self.events.append((ticket_id, event_type, payload))
@@ -354,6 +356,26 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(outcome["engineer_case_id"], "123-1")
         self.assertEqual(len(repository.saved_engineer_cases), 1)
         self.assertEqual(repository.saved_engineer_cases[0]["thread_id"], "123-1-round-1")
+
+    def test_not_automated_opening_round_persists_messages_and_thread_event(self):
+        repository = _FakeRepository()
+        with self._base_patches():
+            outcome = self._run(
+                repository,
+                route_decision={**DECISION, "route_family": "billing_review", "execution_action": "human_review_required", "not_automated_reason": "outside_scope"},
+                route_classification={},
+            )
+        self.assertEqual(outcome["response_status"], "not_automated")
+        self.assertEqual(len(repository.engineer_case_saves), 1)
+        new_messages, slack_events = repository.engineer_case_saves[0]
+        self.assertTrue(
+            any(str(message.get("role") or "") == "engineer_ai" for message in new_messages)
+        )
+        event_types = [str(event.get("event_type") or "") for event in slack_events]
+        self.assertTrue(any(event.get("event") == "opened" for event in slack_events))
+        self.assertIn("engineer_ai_response", event_types)
+        opening_events = [event for event in slack_events if str(event.get("event_type")) == "engineer_ai_response"]
+        self.assertTrue(str(opening_events[0].get("message_text") or "").strip())
 
     def test_ownership_gate_fail_closed_escalates_and_skips_reply(self):
         repository = _FakeRepository()

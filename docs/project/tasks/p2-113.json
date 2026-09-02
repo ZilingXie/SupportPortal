@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "Phase E：把旧栈 Engineer Case Slack 协作闭环搬进 /automation/production——新增 backend/services/automation_engineer_collab.py：Slack @bot 消息显式触发调查 AI 回合，actions 执行 guardrail 与 final_approve，thread binding resolver 校验固定 Team/Channel/thread。Zendesk 客户评论分支只持久化最新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知；不会自动运行 AI。刻意省略（登记）：multi-agent Plan/Execute/Review 刷新分支（两条 split 入向均 multi_agent_enabled=False）与 _normalize_engineer_case_payload_for_read 读取整形。",
-  "next_action": "待用户 EC2 部署 + n8n Slack 入向工作流（App Mention/Interaction→Engineer）切到 /automation/production 端点后做全链验收（工程师消息→AI 回合→guardrail→final_approve→Zendesk 公开评论投递，投递由 automation_production_worker 的 engineer zendesk delivery drain 执行）。随后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
+  "next_action": "ECS API 三端点与 intake opening 回合已实现（2026-09-01，见 evidence）；待 p2-134 Pilot deposit + Archer GET probe 门禁通过后构建新 release 并 rollout（api/worker td 补 TICKET_DB_DSN/n8n token/engineer Slack env/Hermes 三值），随后双门禁验收：①测试模式（Hermes SOUL 测试段：@bot 回合只查库汇报、guardrail 被 ready=false 阻断、零 Zendesk delivery，CloudWatch 日志归因 ECS consumer）；②真模式 canary（回滚测试段后用全新受控工单完成 guardrail→final_approve→delivery ledger→Zendesk public comment 直接 readback）。n8n 两个 ingress workflow 各 2 处 URL（Resolve GET + Send POST 共 4 处）切到 /automation/production 并保留回改快照。之后 Phase F：邮箱闭环（开 AUTOMATION_PRODUCTION_REPLY_POLL_ENABLED，[automation] 前缀，fraud/enablement 完成识别，detailed_invoice 分支跳过）。",
   "acceptance_criteria": [
     "三个入向端点在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致；messages/actions 按 event_id/interaction_id 幂等。",
     "评论触发链 Engineer 分支：客户评论→持久化调查上下文并使旧 Draft/审批失效→单个无正文 zendesk_customer_comment 通知；只有后续 Slack @bot 才触发调查 AI 回合与 engineer_ai_response。",
@@ -25,6 +25,12 @@
       "label": "Customer comment notification-only trigger",
       "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/pytest -q backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_comment_sync.py backend/tests/test_engineer_slack.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py",
       "details": "276 tests、22 subtests 通过；验证两套 Production 客户评论只更新 Engineer investigation、推进 conversation/draft fencing、清除旧审批状态并发送固定 Slack 通知，不产生自动 AI Draft，同时覆盖 Slack outbox、Guardrail/Final Approve 与 worker 回归。"
+    },
+    {
+      "type": "pr",
+      "label": "ECS API engineer inbound endpoints and intake opening round",
+      "command": ".venv/bin/python -m pytest backend/tests/test_automation_ecs_api.py backend/tests/test_automation_account_intake.py -q",
+      "details": "automation_ecs_api.py 新增 thread-bindings/resolve|messages|actions 三端点（X-N8n-Request-Token 鉴权、复用 automation_engineer_collab 调查链、TICKET_DB_DSN 缺失时端点级 503 降级不影响 readiness）；automation_account_intake.py not_automated 分支补确定性 opening investigation 回合（零 LLM）并追加 engineer_ai_response Slack thread 事件。31 passed + 2 subtests（含新契约用例 401/503/422/resolve 语义与 opening 消息/事件断言）。Terraform production root api_secrets/worker_secrets 补齐 TICKET_DB_DSN/n8n_request_token/engineer Slack team+channel/Hermes SSM 参数，ecs.tf 双角色加 ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300，docker terraform validate 通过。处理语义经用户确认由 EC2 guided reply（Persona 润色）切换为 Hermes 调查回合，feature_list 与 prompt_change_log 已同步。"
     }
   ],
   "source_refs": [
@@ -36,7 +42,7 @@
     "docs/integrations/n8n/automation_environments_cutover.md"
   ],
   "created_at": "2026-08-24",
-  "updated_at": "2026-08-26",
+  "updated_at": "2026-09-01",
   "history": [
     {
       "at": "2026-08-24",
@@ -47,6 +53,11 @@
       "at": "2026-08-26",
       "event": "customer_comment_trigger_controlled",
       "summary": "与旧 /production 对齐：客户评论仅更新调查上下文并发送内容无关 Slack 通知，Engineer AI 只由后续有效 @bot 消息触发。"
+    },
+    {
+      "at": "2026-09-01",
+      "event": "ecs_api_endpoints_and_opening_round",
+      "summary": "承载环境由退役的 EC2 split /automation/* 改为 ECS /automation/production：ECS API 挂载 collab 三端点（Hermes 调查语义，用户确认放弃 EC2 guided reply parity）+ intake not_automated 补 opening 回合；Terraform api/worker secrets 与 env 双轨补齐。待 p2-134 门禁后 rollout 并做双门禁验收。"
     }
   ],
   "legacy_refs": [

@@ -87,14 +87,21 @@ from backend.services.enablement_archer_executor import (
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.engineer_assignment import EngineerAssignmentService
 from backend.services.engineer_cases import (
+    apply_case_context_to_engineer_case,
+    build_engineer_case_context,
     build_new_engineer_case,
     derive_engineer_case_title,
 )
-from backend.services.engineer_slack import build_engineer_case_opened_event
+from backend.services.engineer_slack import (
+    build_engineer_case_opened_event,
+    build_engineer_case_thread_event,
+)
 from backend.services.investigation_flow import (
     INVESTIGATING_STATUS,
     OPEN_STATUS,
+    build_investigation_opening_context,
     normalize_ticket_status,
+    start_or_refresh_investigation,
 )
 from backend.services.quota_field_extractor import QuotaFieldExtraction
 from backend.services.support_products import normalize_support_product
@@ -1128,19 +1135,20 @@ async def run_production_account_intake(
 
     engineer_case_id: str | None = None
     if response_status == "not_automated":
+        engineer_trigger_reason = str(
+            route_decision.get("not_automated_reason")
+            or route_decision.get("reason")
+            or route_classification.get("route_reason_code")
+            or "not_automated"
+        ).strip()
         engineer_case = build_new_engineer_case(
             ticket,
             engineer_case_id=f"{ticket_id}-{int(ticket.get('engineer_case_count') or 0) + 1}",
-            case_sequence=int(ticket.get("engineer_case_count") or 0) + 1,
+            case_sequence=int(ticket.get('engineer_case_count') or 0) + 1,
             title=derive_engineer_case_title(ticket),
             status=INVESTIGATING_STATUS,
             trigger_source="account_not_automated",
-            trigger_reason=str(
-                route_decision.get("not_automated_reason")
-                or route_decision.get("reason")
-                or route_classification.get("route_reason_code")
-                or "not_automated"
-            ).strip(),
+            trigger_reason=engineer_trigger_reason,
             now_value=timestamp,
         )
         engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip() or None
@@ -1152,17 +1160,49 @@ async def run_production_account_intake(
                 "round_number": 1,
                 "round_state": "active",
             }
+            case_context = build_engineer_case_context(ticket, engineer_case)
+            opening_context = build_investigation_opening_context(
+                case_context,
+                trigger_reason=engineer_trigger_reason,
+            )
+            investigation_result = await _sync(
+                start_or_refresh_investigation,
+                case_context,
+                trigger_reason=engineer_trigger_reason,
+                trigger_source="account_not_automated",
+                now_value=timestamp,
+                next_status=INVESTIGATING_STATUS,
+                opening_context=opening_context,
+            )
+            engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+            opening_messages = list(investigation_result.get("new_internal_messages") or [])
+            opening_event = None
+            for message in reversed(opening_messages):
+                if str(message.get("role") or "") == "engineer_ai" and str(message.get("content") or "").strip():
+                    active_investigation = case_context.get("active_investigation") or {}
+                    opening_event = build_engineer_case_thread_event(
+                        event_id=f"{engineer_case_id}:opening",
+                        event_type="engineer_ai_response",
+                        engineer_case_id=engineer_case_id,
+                        message_text=str(message.get("content") or "").strip(),
+                        investigation_id=str(active_investigation.get("id") or "").strip() or None,
+                    )
+                    break
             await _sync(
                 repository.save_engineer_case,
                 engineer_case,
-                new_messages=[],
-                slack_events=[build_engineer_case_opened_event(account_case=billing_ticket, engineer_case=engineer_case)],
+                new_messages=opening_messages,
+                slack_events=[
+                    build_engineer_case_opened_event(account_case=billing_ticket, engineer_case=engineer_case),
+                    *([opening_event] if opening_event else []),
+                ],
             )
             await _sync(
                 EngineerAssignmentService(repository).dispatch_case,
                 engineer_case_id,
                 reason="round_robin",
             )
+            await _sync(repository.save_ticket, ticket, new_messages=[])
 
     if attempt and attempt.get("internal_email_to_send"):
         sender = send_enablement_internal_email if automation_handler == "enablement" else send_billing_internal_email
