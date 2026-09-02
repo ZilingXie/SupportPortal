@@ -4235,3 +4235,20 @@ For each new entry, record:
 - Verification:
   - The full lock resolves Transformers 4.46.3, Tokenizers 0.20.3, Sentence Transformers 5.7.0, Accelerate 1.14.0, and PyTorch 2.13.0+cpu with SHA256 hashes.
   - The built full image passed import checks for the Transformers pipeline and embedding runtime, plus `pip check`; the lightweight image retained Transformers 4.46.3 without torch.
+
+## 2026-09-01 - Engineer Slack inbound switches to Hermes investigation turns (p2-113)
+
+- Area or subsystem:
+  - Engineer Slack collaboration on `/automation/production` (ECS API inbound endpoints `api/integrations/slack/engineer-cases/*`; account intake not_automated branch).
+- Prompt version:
+  - Prompt content unchanged; the processing semantics behind `@bot` messages switch from "engineer guidance as the technical fact source + Persona polish" (EC2 guided reply) to the investigation turn chain (`automation_engineer_collab` → `investigation_flow` → Hermes agent endpoint, scenario `engineer_investigation_reply` with inline JSON schema contract from p2-130).
+- Reason:
+  - Technical (not_automated) cases on ECS are handled by the Hermes investigation agent: opening rounds are deterministic (zero LLM) at engineer-case creation, and each `@bot` message drives a Hermes investigation turn with Tencent AgentMemory recall; guardrail and final approve human gates are unchanged before any Zendesk delivery.
+- Tooling and routing changes:
+  - New ECS API endpoints `thread-bindings/resolve|messages|actions` (X-N8n-Request-Token auth, idempotent via ticket repository; degrades to 503 without TICKET_DB_DSN instead of failing readiness).
+  - Account intake not_automated branch now persists the opening investigation round (`start_or_refresh_investigation`, deterministic) plus an `engineer_ai_response` Slack thread event next to `engineer_case_opened`.
+  - Terraform `api_secrets`/`worker_secrets` gain TICKET_DB_DSN, n8n token, engineer Slack team/channel, and the Hermes endpoint SSM parameters; `ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300` for both roles.
+- Verification:
+  - `backend/tests/test_automation_ecs_api.py` + `backend/tests/test_automation_account_intake.py`: 31 passed, 2 subtests passed (new endpoint contract coverage: 401/503/422/resolve semantics; opening round messages and slack events).
+  - Terraform production root `validate` passed (docker hashicorp/terraform on zacBot).
+  - Live acceptance (test-mode gate then real-mode canary with full guardrail/final approve/Zendesk readback) is tracked in p2-113 and runs after the p2-134 pilot/probe gate and rollout.

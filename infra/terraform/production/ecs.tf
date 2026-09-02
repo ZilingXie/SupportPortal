@@ -45,6 +45,10 @@ resource "aws_ecs_task_definition" "api" {
           name  = "AUTOMATION_IMAGE_DIGEST"
           value = local.image_digests.api
         },
+        {
+          name  = "ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS"
+          value = "300"
+        },
       ])
       secrets = local.api_secrets
       logConfiguration = {
@@ -203,6 +207,10 @@ resource "aws_ecs_task_definition" "worker" {
         {
           name  = "AUTOMATION_IMAGE_DIGEST"
           value = local.image_digests.worker
+        },
+        {
+          name  = "ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS"
+          value = "300"
         },
         {
           name  = "PROMPT_RUNTIME_SERVICE"

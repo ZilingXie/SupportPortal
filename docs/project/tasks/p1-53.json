@@ -206,6 +206,11 @@
       "label": "ECS comment route contract Production rollout",
       "command": "aws ecs/elbv2/logs readback; public health live/release/ready; protected Execution API readback",
       "details": "API:7、Route:8、Worker:7均使用r20260831-badbb5d并稳定1/1/0、rollout completed，实际task imageDigest与Release Manifest一致；公网live/release/ready为200，新Route/Worker heartbeat的provenance_mismatches均为空。新task运行12分钟覆盖至少两个300秒Outlook poll间隔，三条CloudWatch stream的ERROR/Traceback/Exception/failed计数均为0。Ticket 13155仍只有部署前的ticket.created与comment.created两条Execution；exec-aa84651d0003404bb38ca463075c09b7保持outcome_unknown、automation_AttributeError、1条delivery和原更新时间，未重放或修改。"
+    },
+    {
+      "type": "decision",
+      "label": "Slack Engineer Case ECS implementation staged under p2-113",
+      "details": "2026-09-01 p2-113 将 Engineer Slack 协作落到 ECS：automation_ecs_api 新增 collab 三端点（处理语义经用户确认为 Hermes 调查回合，非 EC2 guided reply parity）+ intake not_automated opening 回合；Terraform api/worker secrets 双轨补齐。rollout 前置 p2-134 Pilot deposit + Archer GET probe 硬门禁，之后按 p2-113 双门禁（测试模式零发布+真模式 canary Zendesk readback）验收。"
     }
   ],
   "source_refs": [

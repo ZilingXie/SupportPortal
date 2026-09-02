@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import os
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path as FilePath
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -233,8 +234,35 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
 
-def create_app(
-    *,
+_TICKET_REPOSITORY: Any = None
+
+
+def _engineer_ticket_repository() -> Any:
+    """Lazy ticket repository for the engineer Slack inbound endpoints.
+
+    The API role otherwise only touches the coordination schema, so a missing
+    TICKET_DB_DSN degrades just these endpoints to 503 instead of failing
+    startup or readiness.
+    """
+    global _TICKET_REPOSITORY
+    if _TICKET_REPOSITORY is None:
+        if not str(os.getenv("TICKET_DB_DSN") or "").strip():
+            raise HTTPException(status_code=503, detail="engineer inbound endpoints require TICKET_DB_DSN")
+        from backend.repositories.ticket_repository import create_ticket_repository
+
+        _TICKET_REPOSITORY = create_ticket_repository()
+    return _TICKET_REPOSITORY
+
+
+def _require_n8n_request_token(
+    request_token: str | None = Header(default=None, alias="X-N8n-Request-Token"),
+) -> None:
+    expected = str(os.getenv("n8n_request_token") or "").strip()
+    if not expected or not hmac.compare_digest(str(request_token or ""), expected):
+        raise HTTPException(status_code=401, detail="invalid automation execution token")
+
+
+def create_app(    *,
     settings: AutomationEcsSettings | None = None,
     store: AutomationEcsStore | None = None,
     dashboard_auth: DashboardAuthConfig | None = None,
@@ -553,6 +581,59 @@ def create_app(
             content=jsonable_encoder(runtime_status),
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get(
+        f"{base}/api/integrations/slack/engineer-cases/thread-bindings/resolve",
+        dependencies=[Depends(_require_n8n_request_token)],
+    )
+    async def ecs_resolve_engineer_thread_binding(
+        team_id: str = Query(min_length=1, max_length=128),
+        channel_id: str = Query(min_length=1, max_length=128),
+        thread_ts: str = Query(min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        from backend.services.automation_account_reply_sync import ReplySyncError
+        from backend.services.automation_engineer_collab import (
+            resolve_slack_engineer_thread_binding,
+        )
+
+        try:
+            return await asyncio.to_thread(
+                resolve_slack_engineer_thread_binding,
+                _engineer_ticket_repository(),
+                team_id=team_id,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+            )
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post(
+        f"{base}/api/integrations/slack/engineer-cases/messages",
+        dependencies=[Depends(_require_n8n_request_token)],
+    )
+    async def ecs_post_engineer_case_message(http_request: Request) -> dict[str, Any]:
+        from backend.services.automation_account_reply_sync import ReplySyncError
+        from backend.services.automation_engineer_collab import handle_slack_engineer_message
+
+        payload = await http_request.json()
+        try:
+            return await handle_slack_engineer_message(_engineer_ticket_repository(), payload)
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post(
+        f"{base}/api/integrations/slack/engineer-cases/actions",
+        dependencies=[Depends(_require_n8n_request_token)],
+    )
+    async def ecs_post_engineer_case_action(http_request: Request) -> dict[str, Any]:
+        from backend.services.automation_account_reply_sync import ReplySyncError
+        from backend.services.automation_engineer_collab import handle_slack_engineer_action
+
+        payload = await http_request.json()
+        try:
+            return await handle_slack_engineer_action(_engineer_ticket_repository(), payload)
+        except ReplySyncError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     dashboard_dir = FilePath(__file__).resolve().parents[1] / "ui" / "automation-ecs-production"
     if not dashboard_dir.is_dir():
