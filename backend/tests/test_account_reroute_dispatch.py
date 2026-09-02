@@ -636,7 +636,8 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
         assert job is not None
         payload = job["payload"]
         self.assertEqual(payload["reply_intent"], SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE)
-        self.assertTrue(payload["close_after_publish"])
+        # p2-138: the suspension closing intent no longer closes the ticket.
+        self.assertNotIn("close_after_publish", payload)
         self.assertEqual(
             payload["reply_facts"]["reply_intent"],
             SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,

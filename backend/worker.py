@@ -164,7 +164,11 @@ from backend.services.billing_automation import (
     record_billing_request_reply,
 )
 from backend.services.internal_email_template import namespaced_internal_email_subject
-from backend.services.account_suspension_automation import SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION
+from backend.services.account_suspension_automation import (
+    SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
+    SUSPENSION_STATE_CLOSED,
+)
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
     send_enablement_internal_email,
@@ -1452,7 +1456,7 @@ def _deliver_production_account_reply_to_zendesk(
                 claim.get("target_status") or "none",
             )
             if delivery_is_public:
-                _hand_off_fraud_review_after_public_reply(
+                _hand_off_review_after_public_reply(
                     account_case=account_case,
                     ticket_id=ticket_id,
                     job_id=effective_job_id,
@@ -1463,8 +1467,15 @@ def _deliver_production_account_reply_to_zendesk(
 
 FRAUD_REVIEW_HANDOFF_EVENT_TYPE = "zendesk_fraud_review_handoff"
 
+# The final public reply intents that hand the ticket to the reviewer once
+# published. Interim replies (missing-information asks) keep AI ownership.
+_REVIEW_HANDOFF_FINAL_INTENTS_BY_ACTION = {
+    "fraud_account": {ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION},
+    "account_suspension": {ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE},
+}
 
-def _hand_off_fraud_review_after_public_reply(
+
+def _hand_off_review_after_public_reply(
     *,
     account_case: dict[str, Any],
     ticket_id: str,
@@ -1472,21 +1483,25 @@ def _hand_off_fraud_review_after_public_reply(
     message_id: str | None = None,
     reply_intent: str | None = None,
 ) -> None:
-    """After the final fraud confirmation reply lands, hand the ticket to the reviewer.
+    """After the final confirmation reply lands, hand the ticket to the reviewer.
 
-    The reply is already published at this point, so a handoff failure is an
-    owner-visible signal (event + log), never a delivery failure.
+    Fraud and Account Suspension share this handoff: once the final public
+    reply is published, the ticket moves to the configured reviewer instead of
+    keeping AI ownership. The reply is already published at this point, so a
+    handoff failure is an owner-visible signal (event + log), never a delivery
+    failure.
     """
     execution_action = str(
         account_case.get("execution_action") or account_case.get("route") or ""
     ).strip()
-    if execution_action != "fraud_account":
+    final_intents = _REVIEW_HANDOFF_FINAL_INTENTS_BY_ACTION.get(execution_action)
+    if final_intents is None:
         return
-    if str(reply_intent or "").strip() != ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
+    if str(reply_intent or "").strip() not in final_intents:
         # Missing-information and other interim public replies keep AI ownership;
-        # only the final 24h confirmation reply completes the fraud handoff.
+        # only the final 24h confirmation reply completes the handoff.
         LOGGER.info(
-            "fraud_review_handoff_deferred job_id=%s ticket_id=%s message_id=%s "
+            "review_handoff_deferred job_id=%s ticket_id=%s message_id=%s "
             "failure_code=pending_final_confirmation reply_intent=%s",
             str(job_id or "").strip() or "unknown",
             ticket_id,
@@ -1573,6 +1588,21 @@ def _hand_off_fraud_review_after_public_reply(
     # route_status, and routes the Zendesk ticket back to the queue.
     account_case["automation_status"] = "human_review_required"
     account_case["updated_at"] = timestamp
+    if execution_action == "account_suspension":
+        # Close out the suspension contact workflow so later customer replies
+        # hit the terminal idempotency branch instead of reopening the loop.
+        automation_context = (
+            dict(account_case["automation_context"])
+            if isinstance(account_case.get("automation_context"), dict)
+            else {}
+        )
+        suspension_workflow = automation_context.get(SUSPENSION_CONTACT_WORKFLOW_KEY)
+        if isinstance(suspension_workflow, dict):
+            suspension_workflow = dict(suspension_workflow)
+            suspension_workflow["state"] = SUSPENSION_STATE_CLOSED
+            suspension_workflow["updated_at"] = timestamp
+            automation_context[SUSPENSION_CONTACT_WORKFLOW_KEY] = suspension_workflow
+            account_case["automation_context"] = automation_context
     mark_production_ownership_handed_to_reviewer(
         account_case,
         updated_at=timestamp,

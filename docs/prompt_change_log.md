@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-02 - Suspension terminal action moves to reviewer handoff without closing (p2-138)
+
+- Area or subsystem: Account suspension contact workflow terminal reply, review handoff, and Persona wording contracts.
+- Prompt or model version: `automation-persona-v20` → `automation-persona-v21`.
+- Summary: the suspension closing intent (`account_suspension_handoff_and_close`, legacy name kept for persisted jobs) no longer derives `close_after_publish`: the closing reply publishes without solving the ticket, and the shared post-delivery handoff assigns the ticket to the reviewer (env `ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID`) exactly like the fraud confirmation, marking the case `human_review_required` and closing the contact workflow. Wording contracts for both the first contact ask and the closing reply dropped the mandatory close/reopen statements; the closing reply now only requires the 24-hour contact commitment, and ownership facts moved from `case_closed` to the fraud-style `internal_handoff_sent` family.
+- Reason: user decision — suspension cases should end with the ticket assigned to the reviewer (Suhrid) for human follow-up instead of being auto-solved, matching the fraud terminal flow and its "relevant team will reach out within 24 hours" message.
+- Affected files or config: `backend/services/account_reply_jobs.py`, `backend/services/automation_account_reply_sync.py`, `backend/services/automation_account_intake.py`, `backend/main.py`, `backend/worker.py`, `backend/services/automation_persona.py`, `backend/services/account_suspension_automation.py`, plus tests.
+- Expected behavior change: both `/production` and `/automation/production` (shared code path) now deliver the suspension closing reply, keep the ticket open, assign it to the reviewer, and set the case to human review; fraud handoff behavior is unchanged. Neither suspension stage announces closing/reopening any more.
+- Verification: intake full-chain case updated to assert no-close publication, no close/reopen wording, and open ticket; new worker handoff case covers suspension public delivery → reviewer assignment with workflow closure; version-fence, reroute, dispatch, ECS-worker shell, persona, and slack suites green (510+ tests; the one remaining failure is the pre-existing p2-123 baseline case, failing on root main as well).
+
 ## 2026-09-02 - Suspension contact confirmation confirms on any non-empty reply (p2-136)
 
 - Area or subsystem: Account suspension contact-confirmation workflow (first-stage gate before closing reply + handoff).

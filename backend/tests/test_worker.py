@@ -388,7 +388,7 @@ class FraudReviewHandoffTests(unittest.TestCase):
         ), patch.object(
             worker, "assign_ticket_to_reviewer", return_value=assignment
         ):
-            worker._hand_off_fraud_review_after_public_reply(
+            worker._hand_off_review_after_public_reply(
                 account_case=account_case,
                 ticket_id="PRD-12895",
                 job_id="reply-fraud",
@@ -531,6 +531,76 @@ class FraudReviewHandoffTests(unittest.TestCase):
         ]
         self.assertEqual(len(event_calls), 1)
         self.assertEqual(event_calls[0].args[2]["state"], "skipped")
+
+    def test_public_suspension_closing_delivery_hands_off_to_reviewer(self) -> None:
+        # p2-138: the suspension closing reply publishes without solving the
+        # ticket and hands it to the reviewer like the fraud confirmation.
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-SUSP",
+            "client_ticket_id": "13225",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "13225",
+            "route_family": "automated",
+            "route_status": "automated",
+            "execution_action": "account_suspension",
+            "automation_handler": "account_suspension",
+            "automation_context": {
+                "zendesk_ownership": {
+                    "state": "assigned",
+                    "assignee_id": "48557297720084",
+                    "group_id": "29388501432596",
+                    "source_group_id": "27216253642772",
+                },
+                "account_suspension_contact_workflow": {
+                    "state": "closing_reply_pending",
+                    "version": 1,
+                },
+            },
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        assignment = ZendeskAssignmentResult(
+            ticket_id="13225",
+            assignee_id="31116644140308",
+            assignee_email="suhrid@agora.io",
+            assignee_name="Suhrid Das",
+            group_id="27216254064148",
+            previous_group_id="29388501432596",
+            group_changed=True,
+            status_code=200,
+            already_assigned=False,
+        )
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116644140308"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer", return_value=assignment
+        ) as assign_reviewer:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-13225",
+                message_id="m-susp",
+                job_id="reply-susp",
+                reply_intent="account_suspension_handoff_and_close",
+            )
+
+        assign_reviewer.assert_called_once_with(
+            ticket_id="13225",
+            reviewer_user_id="31116644140308",
+        )
+        saved_case = repository.save_account_case.call_args.args[0]
+        self.assertEqual(saved_case["automation_status"], "human_review_required")
+        self.assertEqual(
+            saved_case["automation_context"]["account_suspension_contact_workflow"]["state"],
+            "closed",
+        )
 
 
 class WorkerResilienceTests(unittest.TestCase):
@@ -5977,7 +6047,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "We are archiving this case now. If you have further questions, you can open a new ticket."
             ),
             model="persona-model",
-            prompt_version="automation-persona-v20",
+            prompt_version="automation-persona-v21",
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -5985,12 +6055,12 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._publish_account_reply_job(job)
 
-        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v20")
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v21")
         self.assertEqual(
             render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v20")
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v21")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:

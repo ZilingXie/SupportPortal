@@ -41,7 +41,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v20"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v21"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 
@@ -328,7 +328,6 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     if reply_intent in {
         "enablement_completed_and_close",
         ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
-        "account_suspension_handoff_and_close",
         ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     }:
         facts["performed_actions"] = []
@@ -343,7 +342,12 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
         facts["next_step"] = None
         facts["resolution_status"] = "awaiting_customer"
         return facts
-    if reply_intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
+    if reply_intent in {
+        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
+        # The legacy "_and_close" name persists for old jobs, but the ticket
+        # now goes to the reviewer instead of being solved (p2-138).
+        "account_suspension_handoff_and_close",
+    }:
         facts["resolution_status"] = "internal_handoff_sent"
         facts["ownership_state"] = "support_owned_after_internal_handoff"
         facts["customer_update_commitment"] = "relevant_team_contact_within_24_hours"
@@ -650,11 +654,6 @@ def _assert_suspension_contact_contract(reply: str) -> None:
         reply,
         error_code="automation_persona_suspension_contact_contract_failed",
     )
-    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
-        reply,
-        r"\breopen\b",
-    ):
-        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
 
 
 def _assert_suspension_closing_contract(reply: str) -> None:
@@ -662,11 +661,6 @@ def _assert_suspension_closing_contract(reply: str) -> None:
         reply,
         error_code="automation_persona_completion_contract_failed",
     )
-    if not _has_positive_clause(reply, r"\bclos(?:e|ed|ing|es)\b") or not _has_positive_clause(
-        reply,
-        r"\breopen\b",
-    ):
-        raise AutomationPersonaError("automation_persona_completion_contract_failed")
 
 
 _FUTURE_ENABLEMENT_CLAIM_RE = re.compile(
@@ -1020,23 +1014,20 @@ def render_automation_reply(
         reply_contract_policy = (
             "For the first Account Suspension reply, ask the customer which email is most convenient and "
             "whether the email already on the ticket should be used. Commit that someone from the relevant team "
-            "will contact them within 24 hours, phrased in your own natural words. Explain that the ticket will "
-            "close once contact and handoff are confirmed, and that they can reopen it if nobody contacts them "
-            "within 24 hours. Style reference (match the tone and rhythm, do not copy the wording): 'Before I "
-            "hand this over, could you tell me which email works best for you - would the one on this ticket be "
-            "fine? Once that's confirmed, the ticket will close after the handoff, and you're welcome to reopen "
-            "it if nobody reaches out within 24 hours. I've already alerted the relevant team, and someone from "
-            "their side will contact you within 24 hours.' "
+            "will contact them within 24 hours, phrased in your own natural words. Do not state that the ticket "
+            "will close, archive, or that the customer should reopen it. Style reference (match the tone and "
+            "rhythm, do not copy the wording): 'Before I hand this over, could you tell me which email works "
+            "best for you - would the one on this ticket be fine? I've already alerted the relevant team, and "
+            "someone from their side will contact you within 24 hours.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
         reply_contract_policy = (
-            "For an Account Suspension handoff, commit that someone from the relevant team will contact the "
-            "customer within 24 hours, phrased in your own natural words. State that the ticket is closing after "
-            "the handoff, and that the customer may reopen it if nobody contacts them within 24 hours. Style "
-            "reference (match the tone and rhythm, do not copy the wording): 'Thanks for confirming. I've handed "
-            "the case over to the relevant team, and someone from their side will reach out to you within 24 "
-            "hours - this ticket will close now, and if nobody gets in touch within that window, feel free to "
-            "reopen it and I'll pick it back up.' "
+            "For an Account Suspension handoff, confirm that the case has been handed to the relevant team and "
+            "commit that someone from that team will contact the customer within 24 hours, phrased in your own "
+            "natural words. Do not state that the ticket is closing, archiving, or that the customer should "
+            "reopen it. Style reference (match the tone and rhythm, do not copy the wording): 'Thanks for "
+            "confirming. I've handed the case over to the relevant team, and someone from their side will reach "
+            "out to you within 24 hours with an update.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         reply_contract_policy = (

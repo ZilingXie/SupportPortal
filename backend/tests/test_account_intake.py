@@ -385,13 +385,12 @@ def _fake_render_automation_reply(**kwargs: object) -> AutomationPersonaResult:
     elif intent == "account_suspension_contact_confirmation_request":
         body = (
             "Which email is most convenient for you, and should we use the email on this ticket? "
-            "The relevant team will contact you within 24 hours. This ticket will close after contact "
-            "confirmation and handoff; if nobody contacts you within 24 hours, you can reopen it."
+            "The relevant team will contact you within 24 hours."
         )
     elif intent == "account_suspension_handoff_and_close":
         body = (
-            "The relevant team will contact you within 24 hours. This ticket is closing after the handoff; "
-            "if nobody contacts you within 24 hours, you can reopen it."
+            "Thanks for confirming. I've handed the case over to the relevant team, and someone from "
+            "their side will reach out to you within 24 hours with an update."
         )
     elif intent == "enablement_completed_and_close":
         body = "The feature is enabled, and this ticket is closing."
@@ -5961,7 +5960,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertIsNone(payload["automation_handler"])
         self.assertIsNone(payload["ai_reply_status"])
 
-    def test_account_suspension_automation_requires_confirmation_before_handoff_and_closes_after_reply(self) -> None:
+    def test_account_suspension_automation_requires_confirmation_before_handoff_and_hands_off_after_reply(self) -> None:
         extraction = AccountSuspensionFieldExtraction(
             status="partial",
             collected_fields={"suspension_status_or_error": "account suspended"},
@@ -6004,8 +6003,9 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertIn("which email", first_reply.lower())
             self.assertIn("ticket", first_reply.lower())
             self.assertIn("24 hours", first_reply.lower())
-            self.assertIn("close", first_reply.lower())
-            self.assertIn("reopen", first_reply.lower())
+            # p2-138: neither stage announces closing/reopening any more.
+            self.assertNotIn("clos", first_reply.lower())
+            self.assertNotIn("reopen", first_reply.lower())
             self.assertNotIn("Support Engineer", first_reply)
 
             confirmed = self.client.post(
@@ -6025,7 +6025,9 @@ class AccountIntakeApiTests(unittest.TestCase):
                 closing_job["payload"]["reply_intent"],
                 "account_suspension_handoff_and_close",
             )
-            self.assertTrue(closing_job["payload"]["close_after_publish"])
+            # p2-138: the closing reply publishes without solving the ticket;
+            # the reviewer assignment happens after publication.
+            self.assertIsNot(closing_job["payload"].get("close_after_publish"), True)
             workflow = self.repository.get_account_case(created["account_case_id"])[
                 "automation_context"
             ]["account_suspension_contact_workflow"]
@@ -6033,16 +6035,12 @@ class AccountIntakeApiTests(unittest.TestCase):
 
             self._publish_latest_account_reply(created["ticket_id"])
             ticket = self.repository.get_ticket(created["ticket_id"])
-            self.assertEqual(ticket["status"], "resolved")
+            self.assertNotEqual(ticket["status"], "resolved")
             closing_reply = ticket["messages"][-1]["content"]
             self.assertIn("24 hours", closing_reply.lower())
-            self.assertIn("closing", closing_reply.lower())
-            self.assertIn("reopen", closing_reply.lower())
+            self.assertNotIn("clos", closing_reply.lower())
+            self.assertNotIn("reopen", closing_reply.lower())
             self.assertNotIn("Support Engineer", closing_reply)
-            workflow = self.repository.get_account_case(created["account_case_id"])[
-                "automation_context"
-            ]["account_suspension_contact_workflow"]
-            self.assertEqual(workflow["state"], "closed")
 
     def test_billing_tickets_detail_by_canonical_ticket_id(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
