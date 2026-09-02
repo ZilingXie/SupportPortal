@@ -126,3 +126,12 @@ aws ecs execute-command --cluster supportportal-production --task <task> --conta
 ```
 
 Archer 线走 pilot-server 共享 cookie(有浏览器的同事 `pilot archer deposit --cookie`,ECS 侧零人工);refresh token 一次性轮换,EFS 持久化是必需(已挂)。SSO token 失效需人工重做 device flow(故障预案)。
+
+## Engineer Slack 链路上 ECS(p2-113,2026-09-02 canary 通过)
+
+- **ECS api 三端点**:`{base}/api/integrations/slack/engineer-cases/thread-bindings/resolve|messages|actions`(X-N8n-Request-Token 鉴权,n8n_request_token 与 EC2 同值;TICKET_DB_DSN/n8n token/engineer Slack team+channel/Hermes 三值已在 api td:17+ 与 Terraform locals)。api 侧 prompt runtime 由 `_engineer_ticket_repository` 工厂惰性初始化(PR#1027)。
+- **n8n ingress**:两个 workflow 各 2 处 URL(Resolve GET+Send POST,共 4 处)指向 `https://supportcenter.stellarix.space/automation/production/api/...`;HTTP 节点超时≥300s。
+- **处理语义**:Hermes 调查回合(collab investigation 链,非 EC2 guided reply;用户 2026-09-01 确认切换)。intake not_automated 自动产生确定性 opening 回合+`engineer_ai_response` thread 事件。
+- **canary 验收记录(工单 13220)**:route agora_technical→engineer case→Slack root+opening delivered;@bot 多轮真调查(记忆 L0 沉淀 score 0.935);guardrail 真实拦截一次 application-signature;final approve→delivery ledger 五连 delivered→**Zendesk 公开评论 readback 成功**。全部投递 ECS worker 归因(EC2 对照零)。
+- **EC2 Slack bot 已停用(2026-09-02)**:`~SupportPortal/.env` 删 `PRODUCTION_ENGINEER_SLACK_*` 四行,按部署变量集(APP_RUNTIME_IMAGE=69e98363511b 等,从容器 env 现取)重建三容器;drain paused(fail-closed,queued 保留);/health 200。恢复=写回四行重建。
+- **已知缺口(放宽 PR 待做)**:①`_proof_anchors_verified` 要求全部 anchor 逐字匹配本轮 engineer 语料——每轮修订需重贴证据短语,过严;②`comments_revision` 仅由 comment sync 写入,新工单首次 approve 必 409(需 ticket intake 建基线或 approve 实时拉取兜底,EC2 版有后者);③guardrail 通过后按钮重生成依赖新一轮 @bot 全量重试。④Hermes 调查证据源目前=LLM 训练知识+记忆库,无可验证检索(RAGFlow/pilot 接入是可信调查的必需品,另行规划)。
