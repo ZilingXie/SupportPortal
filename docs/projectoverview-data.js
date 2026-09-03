@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T09:07:28Z",
-  "source_base_commit": "9bab06584cf858457eb2f52757e6171737a030cb",
-  "registry_digest": "71c1fd7e9a864e0098b9a8edaf843c1abdfa9e58cd4796d07c205e0b6e59585b",
+  "generated_at": "2026-09-03T09:21:11Z",
+  "source_base_commit": "8e7ee5b680ce903d8f49231752a85eadfd62f571",
+  "registry_digest": "33e2f12a605960f8731c1a55970ab71ccb0714acc2490bb12ea69b1ce555df41",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -945,7 +945,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS direct-handoff and recipient release gate integration",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_account_internal_email_recipients.py",
-          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。ECS线上仍是旧镜像，通知邮件真实readback待授权发布与用户新工单。"
+          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。p2-143 已按用户决定移除 assign 后冗余 reviewer 通知；ECS线上验证待本次正式发布与用户新工单。"
         },
         {
           "type": "test",
@@ -2231,6 +2231,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Persona-assembled engineer replies under p2-138",
           "details": "2026-09-02 用户决策:Hermes 纯调查,persona 组装客户回复(新 intent),guardrail+人工 approve 不变;同时根除双重问候并恢复客户名称呼(account case 名链)。"
+        },
+        {
+          "type": "test",
+          "label": "Production Terraform remote state import and zero-drift gate",
+          "command": "Terraform 1.9.8 bootstrap plan/apply; production init -reconfigure; six terraform imports; terraform plan -detailed-exitcode -input=false -lock-timeout=60s -no-color",
+          "details": "bootstrap计划严格为6 add/0 change/0 destroy，仅创建AES256加密、版本控制开启且四项公共访问阻断的S3 state bucket与ACTIVE/PAY_PER_REQUEST/LockID DynamoDB锁表。Production root导入supportportal/production ECR、Automation target group、priority 10 listener rule和API/Route/Worker三个service；仅按线上属性补齐AZ rebalancing、listener forward/stickiness和Terraform本地wait语义后，真实远程state plan连续返回exit 0 No changes。Production root从未apply，task_definition仍仅归正式发布脚本所有。"
         },
         {
           "type": "test",
@@ -6542,13 +6548,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。2026-09-03 代码基线已补齐 ECS Production Suspension 一段式合同、Prompt Release 同 ID 内容门禁、唯一正式 ECS deploy 命令和 Terraform 稳定资源所有权；本轮未执行生产发布。线上 ECS 仍是旧镜像 0fea0ee，API/Route/Worker task definition revision 23/18/21、均为 1/1/0，因此不能把合并代码视为已上线。新 production Terraform root 仅 import/manage ECR、Automation target group、priority 10 listener rule 和三 service 稳定配置，并忽略 task_definition 指针；cluster、共享 ALB/listener/ACM/security group/log group/SSM/roles、Graph EFS、Redis 与 Hermes 均为外部 data/输入。Worker 发布合同明确拒绝 Pilot 环境或 pilot-creds 挂载；Archer 保留纯 HTTP cookie 链。EC2 support.stellarix.space/production 继续作为未修改 backup，n8n 尚未切流，真实新工单 readback 尚未执行。",
-      "next_action": "先配置 production remote backend 并逐项 import，取得真实 terraform plan exit 0（0 add/0 change/0 destroy）。获得单独生产授权后，从当时最新干净 main 构建/晋升同一组三角色 linux/amd64 digest，先运行 deploy_automation_ecs_release.sh --check-only，再用正式命令完成目标 Prompt candidate 同步、Route/Worker→heartbeat→API→公网/CloudWatch/EC2 backup 门禁及最后激活；确认新 Worker digest 无 Pilot 并 readback Suspension 收件人 secret。随后由用户创建全新 Enablement、Fraud、Account Suspension Case 完成业务与外部 readback；全部通过并观察稳定后才切 n8n，新流量切换前不重放历史任务或 outcome_unknown。",
+      "next_action": "production remote backend、六项import与真实Terraform零漂移已完成。finalize后从最新干净main构建三角色linux/amd64 OCI，以owner已批准的local-oci bootstrap模式直发Production，先运行deploy_automation_ecs_release.sh --check-only，再完成目标Prompt同步、Route/Worker→heartbeat→API→公网/CloudWatch/EC2 backup门禁及最后激活。确认新Worker无Pilot并完成收件人、Archer、Graph、Zendesk只读readback后，等待用户提供全新Enablement、Fraud、Account Suspension工单号；不处理n8n，不重放历史任务或outcome_unknown。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
         "Production Terraform使用远程加密版本化 state 和 DynamoDB lock，仅 import/manage ECR、Automation target group/listener rule及三 ECS service稳定配置；task_definition指针归发布脚本，线上共享 cluster/ALB/ACM/security group/log/SSM/IAM/EFS/Redis/Hermes不由该 root创建或删除。",
         "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker完成分类且仅对已有父Ticket的后续事件读取Persona，Automation Worker在ticket.created Processing先持久化父Ticket再固定Persona并执行AI、远端RAG与外部动作；角色之间通过隔离RDS schema内的durable Jobs交接，不依赖Redis/SQS或EC2 runtime。",
-        "Release先以 role tag上传 supportportal/preproduction并按 digest部署 Preproduction，通过 schema/Prompt、API readiness、Route/Worker heartbeat、远端 RAG、Zendesk/邮件/Slack与外部 readback门禁后，才复制相同 OCI manifest到 supportportal/production；晋升过程禁止 rebuild。",
+        "常规Release先以role tag上传supportportal/preproduction并按digest部署Preproduction，通过验收后复制相同OCI manifest到supportportal/production且禁止rebuild；Preproduction建立前获批的首次Production bootstrap允许从经Manifest验证的本地OCI直接发布，并必须记录source_repository=local-oci及保持digest完全一致。",
         "ECS Production切换后，support.stellarix.space/production及其独立 schema/Redis/worker长期保持为 EC2 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回该 endpoint，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
         "Preproduction与 Production使用隔离的 ECS Service、RDS schema、job namespace、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
         "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
@@ -6769,6 +6775,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Persona-assembled engineer replies under p2-138",
           "details": "2026-09-02 用户决策:Hermes 纯调查,persona 组装客户回复(新 intent),guardrail+人工 approve 不变;同时根除双重问候并恢复客户名称呼(account case 名链)。"
+        },
+        {
+          "type": "test",
+          "label": "Production Terraform remote state import and zero-drift gate",
+          "command": "Terraform 1.9.8 bootstrap plan/apply; production init -reconfigure; six terraform imports; terraform plan -detailed-exitcode -input=false -lock-timeout=60s -no-color",
+          "details": "bootstrap计划严格为6 add/0 change/0 destroy，仅创建AES256加密、版本控制开启且四项公共访问阻断的S3 state bucket与ACTIVE/PAY_PER_REQUEST/LockID DynamoDB锁表。Production root导入supportportal/production ECR、Automation target group、priority 10 listener rule和API/Route/Worker三个service；仅按线上属性补齐AZ rebalancing、listener forward/stickiness和Terraform本地wait语义后，真实远程state plan连续返回exit 0 No changes。Production root从未apply，task_definition仍仅归正式发布脚本所有。"
         }
       ],
       "source_refs": [
@@ -9839,14 +9851,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
-      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④suspension 收尾 assign（assigned/already_assigned）后 Graph 发 reviewer 通知邮件（resolve_account_internal_email_recipients 公开函数），状态持久化 workflow.reviewer_notify_email（sent 幂等/failed 记事件不回滚），新事件 zendesk_reviewer_notify_email；fraud 不加。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "保持 active。代码合并后先完成官方lightweight栈build ref、direct-handoff和automation-persona-v23 marker验证；获得单独生产授权后由正式ECS deploy命令readback并校验Suspension收件人secret、发布新三角色digest。最后由用户创建全新工单（不重放13225）验收intake handoff邮件→closing回复→assign→通知邮件实收suhrid→未solved。",
+      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
+      "next_action": "保持 active。由正式ECS deploy命令发布包含automation-persona-v25与direct-handoff的新三角色digest，完成Suspension收件人及依赖readback；随后等待用户提供全新ECS工单号，验收intake handoff邮件→v25 closing回复仅称this request且无类别词→assign→无冗余reviewer通知→未solved，不重放历史工单。",
       "acceptance_criteria": [
         "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
         "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
         "多客户工单称呼取当条客户消息作者名（双实现），无效逐级回退；消息 meta 带 author_name/author_kind。",
         "ECS 评论路径 payload.persona 逐字段进入四个 reply job 出口且 resolver 零调用；旧栈入口 resolve 一次复用。",
-        "suspension 收尾链：公开回复→assign reviewer（事件 assigned）→通知邮件（事件 zendesk_reviewer_notify_email state=sent，workflow.reviewer_notify_email=sent）；已 sent 重入不重发；失败仅记事件不回滚；工单未 solved。",
+        "suspension 收尾链：内部 handoff 邮件 sent→唯一公开回复→assign reviewer（事件 assigned）且无 zendesk_reviewer_notify_email 事件、不写 workflow.reviewer_notify_email；工单未 solved。",
         "S1/E1/E2/F1 剧本断言独立于生产 validator；S1 为一段式链路（无问邮箱环节）且不再断言 solved。"
       ],
       "blockers": [],
@@ -9855,7 +9867,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS direct-handoff and recipient release gate integration",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_account_internal_email_recipients.py",
-          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。ECS线上仍是旧镜像，通知邮件真实readback待授权发布与用户新工单。"
+          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。p2-143 已按用户决定移除 assign 后冗余 reviewer 通知；ECS线上验证待本次正式发布与用户新工单。"
         },
         {
           "type": "test",
@@ -9949,7 +9961,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
       "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
-      "next_action": "finalize 合并后官方栈重启+v25 marker；用户部署 EC2 /production 后受控 suspension 单复测（首封 'Thank you for submitting this request.' 无类别词、xieziling 仅收 2 封邮件），通过后置 done。",
+      "next_action": "保持 active。由正式 ECS deploy 命令发布 automation-persona-v25 与 direct-handoff 三角色 digest，完成收件人及依赖只读 readback；随后等待用户提供全新 ECS Suspension 工单号，复测首封仅称 'this request' 且无类别词、assign 后无冗余 reviewer 通知、工单未 solved，通过后置 done。",
       "acceptance_criteria": [
         "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
         "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
@@ -15293,7 +15305,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
         "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
-        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。同一组环境中立 OCI manifest 经 Preproduction 验收后按 digest 晋升 Production；最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime。现有 EC2 `/production`、旧 release builder 与 n8n workflow 保持不变。",
+        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 使用同一组环境中立 OCI manifest 经 Preproduction 验收后按 digest 晋升 Production；Preproduction 建立前获批的首次 Production bootstrap 可直接发布经 Manifest 验证的本地 OCI，并在 Promotion Record 明确记录 `source_repository=local-oci`。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime。现有 EC2 `/production`、旧 release builder 与 n8n workflow 保持不变。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [
@@ -15334,7 +15346,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
         "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源）；Hermes 自报调查结论就绪后由 **automation-persona 自动组装客户回复**（engineer_investigation_reply intent：调查结论是唯一技术事实权威、单层 Hi {客户名} 问候、禁止引入结论之外的标识符），Draft 经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
-        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ 首封公开回复确认收到并承诺 24 小时内相关团队联系 → 指派复审人（不关单），客户后续回复由人工处理。",
+        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v25 首封公开回复仅称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [

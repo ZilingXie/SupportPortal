@@ -176,6 +176,7 @@ def test_promotion_record_must_match_all_manifest_digests(tmp_path: Path) -> Non
             {
                 "schema_version": "automation-promotion-v1",
                 "release_id": "release-42",
+                "source_repository": "local-oci",
                 "target_repository": "supportportal/production",
                 "registry_id": "123456789012",
                 "region": "us-east-1",
@@ -197,6 +198,12 @@ def test_promotion_record_must_match_all_manifest_digests(tmp_path: Path) -> Non
     payload["components"]["worker"]["target_digest"] = "sha256:" + "9" * 64
     record.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="worker target digest mismatch"):
+        validate_promotion(manifest, record)
+
+    payload["components"]["worker"]["target_digest"] = "sha256:" + "3" * 64
+    payload["source_repository"] = "unverified-source"
+    record.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="source repository is not approved"):
         validate_promotion(manifest, record)
 
 
@@ -242,6 +249,10 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert route_worker < heartbeat < api_update < activation
     assert "rollback_services" in script
     assert "requires reconciliation" in script
+    assert "https://support.stellarix.space/health" in script
+    assert "AUTOMATION_TERRAFORM_BIN" in script
+    assert "-lock-timeout=60s" in script
+    assert "-lock=false" not in script
     check_only = script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = script.index("backend.scripts.prompt_release sync")
     register = script.index("aws ecs register-task-definition")

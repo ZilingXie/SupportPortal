@@ -124,7 +124,7 @@ variable "desired_count" {
 
 variable "automation_target_group_name" {
   type    = string
-  default = "supportportal-production-api"
+  default = "supportportal-production-tg"
 }
 
 variable "automation_listener_rule_priority" {

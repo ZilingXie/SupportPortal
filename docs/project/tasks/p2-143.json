@@ -10,7 +10,7 @@
   "created_at": "2026-09-03",
   "updated_at": "2026-09-03",
   "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
-  "next_action": "finalize 合并后官方栈重启+v25 marker；用户部署 EC2 /production 后受控 suspension 单复测（首封 'Thank you for submitting this request.' 无类别词、xieziling 仅收 2 封邮件），通过后置 done。",
+  "next_action": "保持 active。由正式 ECS deploy 命令发布 automation-persona-v25 与 direct-handoff 三角色 digest，完成收件人及依赖只读 readback；随后等待用户提供全新 ECS Suspension 工单号，复测首封仅称 'this request' 且无类别词、assign 后无冗余 reviewer 通知、工单未 solved，通过后置 done。",
   "acceptance_criteria": [
     "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
     "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
