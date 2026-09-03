@@ -452,7 +452,7 @@ class PromptReleaseSyncTests(unittest.TestCase):
             load_prompt_release_snapshot(self.source, active["release_id"]).prompts,
         )
 
-    def test_sync_keeps_source_read_only_and_initializes_target(self) -> None:
+    def test_sync_does_not_run_schema_initialization_on_source_or_target(self) -> None:
         active = self.source.get_active_prompt_release()
 
         with patch.object(self.source, "initialize", wraps=self.source.initialize) as source_initialize, patch.object(
@@ -463,7 +463,7 @@ class PromptReleaseSyncTests(unittest.TestCase):
             self._sync_via_cli(active["release_id"])
 
         source_initialize.assert_not_called()
-        target_initialize.assert_called_once_with()
+        target_initialize.assert_not_called()
 
     def test_sync_is_idempotent(self) -> None:
         active = self.source.get_active_prompt_release()

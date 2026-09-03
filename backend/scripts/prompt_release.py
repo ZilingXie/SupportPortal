@@ -112,7 +112,6 @@ def _sync_release(
     source_versions = _collect_release_versions(repository, release)
     source_fingerprint = _release_content_fingerprint(source_versions)
 
-    target_repository.initialize()
     PromptVersionService(target_repository).sync_catalog()
     replicated_release = dict(release)
     if defer_activation and replicated_release.get("status") == "active":
