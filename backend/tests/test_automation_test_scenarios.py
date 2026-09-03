@@ -183,9 +183,9 @@ class ScenarioEngineTests(unittest.TestCase):
         hint = next(data for kind, data in engine.events if kind == "approval_required")
         self.assertIn("[Enablement Request] Media Relay", hint["internal_email_subject_prefix"])
         completion_step = next(
-            step for step in engine.steps if step.step == "completion reply contract published"
+            step for step in engine.steps if step.step == "completion reply content published"
         )
-        self.assertIn("acknowledgement=patience", completion_step.detail)
+        self.assertIn("content check passed", completion_step.detail)
 
     def test_e2_followup_completion_acknowledges_additional_information(self) -> None:
         engine = ScriptedEngine()
@@ -231,9 +231,9 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertTrue(engine.all_passed())
         self.assertEqual(len(engine.sent_emails), 3)
         completion_step = next(
-            step for step in engine.steps if step.step == "completion reply contract published"
+            step for step in engine.steps if step.step == "completion reply content published"
         )
-        self.assertIn("acknowledgement=additional_information", completion_step.detail)
+        self.assertIn("content check passed", completion_step.detail)
 
     def test_e1_assertion_failure_marks_failed_step(self) -> None:
         engine = ScriptedEngine()
@@ -272,7 +272,14 @@ class ScenarioEngineTests(unittest.TestCase):
                 "reply_intent": "fraud_handoff_confirmation",
                 "close_after_publish": None,
             }]),
-            ("FROM support_ticket_events", [{"id": 1}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "content": (
+                    "Thanks for sending this over - I've looped in the relevant team, and someone from their "
+                    "side will reach out to you within 24 hours, so there's nothing you need to chase on your end."
+                ),
+            }]),
+            ("FROM support_ticket_events", [{"id": 1, "payload": {"state": "assigned"}}]),
             ("WHERE account_case_id", [{"zendesk_ticket_status": "open"}]),
             ("COUNT(*) AS intent_count", [{"intent_count": 1}]),
         ]
@@ -285,6 +292,103 @@ class ScenarioEngineTests(unittest.TestCase):
         final_step = engine.steps[-1]
         self.assertEqual(final_step.step, "missing information requested exactly once")
         self.assertEqual(final_step.detail, "request_missing_information_count=1")
+
+    def test_s1_scripted_confirm_handoff_notify_and_open_ticket(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [{
+                "account_case_id": "AC-13025",
+                "client_ticket_id": "13025",
+                "zendesk_ticket_id": "13025",
+                "title": engine.tagged("Account suspended after balance ran out"),
+            }]),
+            ("WHERE account_case_id", [{"execution_action": "account_suspension"}]),
+            ("WHERE account_case_id", [{
+                "automation_context": {
+                    "account_suspension_contact_workflow": {
+                        "state": "awaiting_contact_confirmation"
+                    }
+                }
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "account_suspension_contact_confirmation_request",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "content": (
+                    "Before I hand this over, could you tell me which email works best for you - would the one "
+                    "on this ticket be fine? The relevant team will contact you within 24 hours."
+                ),
+            }]),
+            ("WHERE account_case_id", [{"internal_email_send_status": "sent"}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "account_suspension_handoff_and_close",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "content": (
+                    "Thanks for confirming. I've handed the case over to the relevant team, and someone from "
+                    "their side will reach out to you within 24 hours with an update."
+                ),
+            }]),
+            ("FROM support_ticket_events", [{"id": 1, "payload": {"state": "assigned"}}]),
+            ("FROM support_ticket_events", [{"id": 2, "payload": {"state": "sent"}}]),
+            ("WHERE account_case_id", [{"zendesk_ticket_status": "open"}]),
+            ("WHERE account_case_id", [{
+                "automation_context": {
+                    "account_suspension_contact_workflow": {"state": "closed"}
+                }
+            }]),
+        ]
+
+        engine.run_scenario("S1")
+
+        self.assertTrue(engine.all_passed())
+        self.assertEqual(len(engine.sent_emails), 2)
+        step_names = [step.step for step in engine.steps]
+        self.assertIn("assigned to suspension reviewer", step_names)
+        self.assertIn("reviewer notify email sent", step_names)
+        self.assertIn("ticket NOT auto-solved", step_names)
+
+    def test_s1_affirmative_close_claim_fails_content_check(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [{
+                "account_case_id": "AC-13026",
+                "client_ticket_id": "13026",
+                "zendesk_ticket_id": "13026",
+                "title": engine.tagged("Account suspended after balance ran out"),
+            }]),
+            ("WHERE account_case_id", [{"execution_action": "account_suspension"}]),
+            ("WHERE account_case_id", [{
+                "automation_context": {
+                    "account_suspension_contact_workflow": {
+                        "state": "awaiting_contact_confirmation"
+                    }
+                }
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "account_suspension_contact_confirmation_request",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "content": (
+                    "Which email works best for you? We will close this ticket after the handoff, and you can "
+                    "reopen it if nobody contacts you within 24 hours."
+                ),
+            }]),
+        ]
+        with self.assertRaises(AssertionError):
+            engine.run_scenario("S1")
+        failed = [step for step in engine.steps if step.status == "FAIL"]
+        self.assertTrue(failed)
+        self.assertIn("affirmative close claim", failed[0].detail)
 
 
 class FakeEngine:

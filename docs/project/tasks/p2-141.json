@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-141",
+  "title": "回复质量与称呼正确性：v23 校验降为安全地板 + 消息级称呼 + persona 贯通 + suspension reviewer 邮件通知",
+  "status": "active",
+  "owner": "zac",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "created_at": "2026-09-03",
+  "updated_at": "2026-09-03",
+  "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④suspension 收尾 assign（assigned/already_assigned）后 Graph 发 reviewer 通知邮件（resolve_account_internal_email_recipients 公开函数），状态持久化 workflow.reviewer_notify_email（sent 幂等/failed 记事件不回滚），新事件 zendesk_reviewer_notify_email；fraud 不加。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
+  "next_action": "定向测试与剧本 S1 一段式适配完成后 finalize 合并；合并后官方栈重启读回 automation-persona-v23 marker；生产验收需用户授权 ECS release 部署 + 全新工单（不重放 13225），对收件人 JSON 做 runtime readback 后走 suspension 一段式全链（intake handoff 邮件→closing 回复→assign→通知邮件实收 suhrid→未 solved）。",
+  "acceptance_criteria": [
+    "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
+    "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
+    "多客户工单称呼取当条客户消息作者名（双实现），无效逐级回退；消息 meta 带 author_name/author_kind。",
+    "ECS 评论路径 payload.persona 逐字段进入四个 reply job 出口且 resolver 零调用；旧栈入口 resolve 一次复用。",
+    "suspension 收尾链：公开回复→assign reviewer（事件 assigned）→通知邮件（事件 zendesk_reviewer_notify_email state=sent，workflow.reviewer_notify_email=sent）；已 sent 重入不重发；失败仅记事件不回滚；工单未 solved。",
+    "S1/E1/E2/F1 剧本断言独立于生产 validator；S1 为一段式链路（无问邮箱环节）且不再断言 solved。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Focused regression after fusing with p2-140 one-shot handoff (persona v23)",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_route_service_contract.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_investigation_flow.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_verification_automation.py",
+      "details": "690 passed + 123 subtests。含与 p2-140 一段式融合后的三件新验证：suspension closing 追加句（漏 24h 承诺追加修复+close 声明不可修复仍拒）、主语绑定 close-claim（否定句/close-the-loop 不误杀）、reroute/full_reroute/dispatch（main 新增 intake_mode 分流）与本任务改动共存全绿。两个 investigation_flow multi-agent 失败为 clean main 预存在（root main 同样失败）。"
+    }
+  ],
+  "history": [],
+  "legacy_ids": [],
+  "legacy_refs": [
+    "p2-126",
+    "p2-135",
+    "p2-138",
+    "p2-140",
+    "p1-53",
+    "p2-129"
+  ],
+  "source_refs": [
+    "backend/services/automation_persona.py",
+    "backend/services/automation_account_reply_sync.py",
+    "backend/main.py",
+    "backend/worker.py",
+    "backend/automation_ecs_worker.py",
+    "backend/services/automation_engineer_collab.py",
+    "backend/services/route_preparation.py",
+    "backend/services/automation_test_scenarios.py"
+  ]
+}

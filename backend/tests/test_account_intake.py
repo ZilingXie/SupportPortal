@@ -7598,8 +7598,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(facts["behavior"], "rag_fallback_answer")
         self.assertEqual(facts["references"], ["https://docs.agora.io/en/get-started"])
         # The greeting name comes from the account case, not the ticket
-        # requester (which is always an email address).
-        self.assertEqual(facts["customer_first_name"], "Ziling Xie")
+        # requester (which is always an email address); the shared projection
+        # returns the first name directly.
+        self.assertEqual(facts["customer_first_name"], "Ziling")
         self.assertEqual(job["payload"]["reply_intent"], "rag_fallback_answer")
         self.assertEqual(job["payload"]["reply_pipeline"], "automation_persona_v8")
 

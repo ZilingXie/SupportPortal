@@ -37,11 +37,8 @@ from backend.services.customer_reply_composer import (
     strip_generated_customer_greetings,
 )
 
-_SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION
-_SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
-
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v22"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v23"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -395,25 +392,10 @@ def _has_positive_clause(reply: str, *patterns: str) -> bool:
     )
 
 
-def _assert_24_hour_commitment(reply: str, *, error_code: str) -> None:
-    if not _has_positive_clause(reply, r"(?:\b24\s*[- ]?\s*hours?\b|\b24h\b)"):
-        raise AutomationPersonaError(error_code)
-
-
-def _assert_handoff_commitment(reply: str, *, error_code: str) -> None:
-    """A natural sentence promising that someone will contact the customer within 24 hours."""
-    if not _has_positive_clause(
-        reply,
-        r"\b(?:will|shall|'ll)\b",
-        r"(?:contact\w*|reach\w*\s+out|follow\w*\s+up|(?:get\w*|be)\s+in\s+touch|get\w*\s+back|touch\w*\s+base|respond\w*|repl\w*)",
-        r"\b(?:(?:within\s+)?24\s*[- ]?\s*hours?|24h)\b",
-    ):
-        raise AutomationPersonaError(error_code)
-
-
-# p2-140: the suspension closing contract accepts natural phrasing where the
-# commitment facts may sit in different sentences, instead of requiring one
-# clause to carry all three patterns like _assert_handoff_commitment does.
+# Suspension commitment facts: prompt-guided since v23 (owner decision), but
+# the deterministic closing reply still appends the standard sentence when
+# the model omitted them, and the affirmative close/reopen claim stays a
+# blocking safety floor.
 _SUSPENSION_HANDOFF_MODAL_RE = (
     r"\b(?:will|shall|'ll|should|can\s+expect\s+to|(?:is|are)\s+expected\s+to|going\s+to)\b"
 )
@@ -436,21 +418,6 @@ def _suspension_close_claim_present(reply: str) -> bool:
     return _has_positive_clause(reply, _SUSPENSION_CLOSE_CLAIM_RE, _SUSPENSION_CLOSE_SUBJECT_RE)
 
 
-def _suspension_negated_promise_present(reply: str) -> bool:
-    """A negated or questioning clause pairing commitment facts is a real refusal."""
-    pairs = (
-        (_SUSPENSION_HANDOFF_MODAL_RE, _SUSPENSION_HANDOFF_CONTACT_RE),
-        (_SUSPENSION_HANDOFF_CONTACT_RE, _SUSPENSION_HANDOFF_WINDOW_RE),
-        (_SUSPENSION_HANDOFF_MODAL_RE, _SUSPENSION_HANDOFF_WINDOW_RE),
-    )
-    return any(
-        not _is_positive_clause(clause) and any(
-            re.search(left, clause) and re.search(right, clause) for left, right in pairs
-        )
-        for clause in _reply_clauses(reply)
-    )
-
-
 def _suspension_handoff_facts_present(reply: str) -> bool:
     clauses = _reply_clauses(reply)
     if _has_positive_clause(
@@ -469,17 +436,16 @@ def _suspension_handoff_facts_present(reply: str) -> bool:
     )
 
 
-def _assert_enablement_submission_contract(reply: str) -> None:
-    _assert_24_hour_commitment(
-        reply,
-        error_code="automation_persona_enablement_submission_contract_failed",
-    )
-    has_change_window = _has_positive_clause(
-        reply,
-        _ENABLEMENT_SUBMISSION_CHANGE_WINDOW_PATTERN,
-    )
-    if not has_change_window:
-        raise AutomationPersonaError("automation_persona_enablement_submission_contract_failed")
+def _assert_no_positive_suspension_close_claim(reply: str) -> None:
+    """Reject affirmative close/archive/reopen status claims in suspension replies.
+
+    The suspension flow never solves the ticket (p2-138), so an affirmative
+    clause claiming closure or inviting a reopen misleads the customer.
+    Negations such as "we will not close this ticket" stay allowed; the
+    subject-bound pattern keeps phrases like "close the loop" passing.
+    """
+    if _suspension_close_claim_present(reply):
+        raise AutomationPersonaError("automation_persona_suspension_close_claim_forbidden")
 
 
 def _deterministic_enablement_submission_reply(reply: str) -> str:
@@ -514,19 +480,8 @@ def _deterministic_enablement_submission_reply(reply: str) -> str:
     return f"{reply}\n\n{contract}"
 
 
-def _assert_fraud_handoff_contract(reply: str) -> None:
-    _assert_handoff_commitment(
-        reply,
-        error_code="automation_persona_fraud_handoff_contract_failed",
-    )
-
-
-def _assert_missing_information_contract(
-    reply: str,
-    missing_information: list[str] | tuple[str, ...] | None = None,
-) -> None:
+def _assert_missing_information_contract(reply: str) -> None:
     """A missing-information ask must not promise any handoff/SLA follow-up."""
-    _assert_missing_information_format_contract(reply, missing_information or [])
     if _has_positive_clause(
         reply,
         r"(?:\b\d+\s*[- ]?\s*hours?\b|\b\d+\s*[- ]?\s*(?:business\s+)?days?\b)",
@@ -595,70 +550,6 @@ def _contains_label(text: str, label: str) -> bool:
     return bool(re.search(rf"(?<!\w){re.escape(normalized_label)}(?!\w)", normalized_text))
 
 
-def _assert_missing_information_format_contract(
-    reply: str,
-    missing_information: list[str] | tuple[str, ...],
-) -> None:
-    """Keep the Persona's missing-information layout deterministic."""
-    labels = _humanize_missing_fields(
-        [str(item).strip() for item in missing_information if str(item).strip()]
-    )
-    if not labels:
-        return
-
-    lines = [line.strip() for line in str(reply or "").splitlines() if line.strip()]
-    list_marker = re.compile(r"^(?:[-*]\s+|\d+[.)]\s+)")
-    numbered_lines = [line for line in lines if re.match(r"^\d+[.)]\s+", line)]
-    if len(labels) <= 2:
-        if any(list_marker.match(line) for line in lines):
-            raise AutomationPersonaError(
-                "automation_persona_missing_information_format_failed",
-                "list_marker_detected_for_inline_fields",
-            )
-        sentences = [
-            sentence
-            for sentence in re.split(r"(?<=[.!?])\s+|\n", str(reply or ""))
-            if sentence.strip()
-        ]
-        if not any(all(_contains_label(sentence, label) for label in labels) for sentence in sentences):
-            raise AutomationPersonaError(
-                "automation_persona_missing_information_format_failed",
-                "inline_labels_not_in_one_sentence",
-            )
-        return
-
-    if numbered_lines:
-        raise AutomationPersonaError(
-            "automation_persona_missing_information_format_failed",
-            "numbered_list_detected",
-        )
-    bullet_lines = [line for line in lines if re.match(r"^[-*]\s+", line)]
-    matching_bullet_indexes = {
-        index
-        for label in labels
-        for index, line in enumerate(bullet_lines)
-        if _contains_label(line, label)
-    }
-    if len(bullet_lines) < len(labels):
-        raise AutomationPersonaError(
-            "automation_persona_missing_information_format_failed",
-            f"insufficient_bullet_lines expected={len(labels)} actual={len(bullet_lines)}",
-        )
-    if len(matching_bullet_indexes) < len(labels):
-        raise AutomationPersonaError(
-            "automation_persona_missing_information_format_failed",
-            "missing_expected_label",
-        )
-    if any(
-        sum(_contains_label(line, label) for line in bullet_lines) != 1
-        for label in labels
-    ):
-        raise AutomationPersonaError(
-            "automation_persona_missing_information_format_failed",
-            "expected_label_occurrence_mismatch",
-        )
-
-
 def _inline_missing_information_labels(labels: list[str]) -> str:
     inline_labels = [label[:1].lower() + label[1:] if label else label for label in labels]
     if len(inline_labels) == 1:
@@ -704,39 +595,15 @@ def _deterministic_missing_information_reply(
     return f"{normalized_preamble}\n\n{request}\n\n{closing}"
 
 
-def _assert_suspension_contact_contract(reply: str) -> None:
-    lowered = str(reply or "").casefold()
-    if "email" not in lowered and "e-mail" not in lowered:
-        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    if not re.search(r"\b(?:which|what|preferred|prefer|best|convenient)\b[^.!?\n]{0,80}\bemail\b", lowered):
-        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    if "ticket" not in lowered or "email" not in lowered:
-        raise AutomationPersonaError("automation_persona_suspension_contact_contract_failed")
-    _assert_handoff_commitment(
-        reply,
-        error_code="automation_persona_suspension_contact_contract_failed",
-    )
-
-
-def _assert_suspension_closing_contract(reply: str) -> None:
-    """p2-140: the commitment facts may span sentences, but a customer-facing
-    closure/reopen claim or a negated/questioning promise still fails."""
-    error_code = "automation_persona_completion_contract_failed"
-    if _suspension_close_claim_present(reply) or _suspension_negated_promise_present(reply):
-        raise AutomationPersonaError(error_code)
-    if not _suspension_handoff_facts_present(reply):
-        raise AutomationPersonaError(error_code)
-
-
 def _deterministic_suspension_closing_reply(reply: str) -> str:
     """Append the standard commitment sentence when the model only missed it.
 
-    Hard violations (closure/reopen claims, negated or questioning promises)
-    are not repairable and keep failing so the retry/human-review path stays.
+    A customer-facing closure/reopen claim is not repairable and keeps
+    failing so the retry/human-review path stays; a merely missing or
+    negated commitment is prompt-level guidance and gets the sentence
+    appended deterministically.
     """
-    error_code = "automation_persona_completion_contract_failed"
-    if _suspension_close_claim_present(reply) or _suspension_negated_promise_present(reply):
-        raise AutomationPersonaError(error_code)
+    _assert_no_positive_suspension_close_claim(reply)
     if _suspension_handoff_facts_present(reply):
         return reply
     return f"{reply}\n\n{_SUSPENSION_HANDOFF_CONTRACT_SENTENCE}"
@@ -769,33 +636,9 @@ def _has_misleading_future_claim(reply: str, pattern: re.Pattern[str]) -> bool:
 
 
 def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) -> None:
-    enabled_clauses = [
-        clause
-        for clause in _reply_clauses(reply)
-        if re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", clause)
-    ]
-    if not enabled_clauses or any(
-        not _is_positive_clause(clause) for clause in enabled_clauses
-    ):
-        raise AutomationPersonaError(
-            "automation_persona_completion_contract_failed_enabled_state"
-        )
     if _has_misleading_future_claim(reply, _FUTURE_ENABLEMENT_CLAIM_RE):
         raise AutomationPersonaError(
             "automation_persona_completion_contract_failed_enabled_state"
-        )
-
-    closing_clauses = [
-        clause
-        for clause in _reply_clauses(reply)
-        if re.search(r"\b(?:case|ticket)\b", clause)
-        and re.search(r"\b(?:archiv(?:e|ed|ing|es)|clos(?:e|ed|ing|es))\b", clause)
-    ]
-    if not closing_clauses or any(
-        not _is_positive_clause(clause) for clause in closing_clauses
-    ):
-        raise AutomationPersonaError(
-            "automation_persona_completion_contract_failed_archive"
         )
     if _has_misleading_future_claim(reply, _FUTURE_ARCHIVE_CLAIM_RE):
         raise AutomationPersonaError(
@@ -805,9 +648,6 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
 
 def _assert_enablement_archer_enabled_contract(reply: str, facts: dict[str, Any]) -> None:
     _assert_enablement_completion_contract(reply, facts)
-    lowered = str(reply or "").casefold()
-    if "media relay" not in lowered:
-        raise AutomationPersonaError("automation_persona_archer_enabled_contract_failed_feature")
 
 
 def _assert_no_enablement_error_overclaim(reply: str) -> None:
@@ -822,27 +662,10 @@ def _assert_no_enablement_error_overclaim(reply: str) -> None:
 
 def _assert_enablement_appid_invalid_contract(reply: str) -> None:
     _assert_no_enablement_error_overclaim(reply)
-    lowered = str(reply or "").casefold()
-    if not re.search(r"\b(?:app\s*id|appid)\b", lowered):
-        raise AutomationPersonaError("automation_persona_archer_appid_invalid_contract_failed")
-    if "32" not in lowered or not re.search(r"\b(?:invalid|incorrect|format|not\s+valid)\b", lowered):
-        raise AutomationPersonaError("automation_persona_archer_appid_invalid_contract_failed")
-    if not re.search(r"\b(?:please|provide|send|share|resend|re-send)\b", lowered):
-        raise AutomationPersonaError("automation_persona_archer_appid_invalid_contract_failed")
 
 
 def _assert_enablement_appid_not_found_contract(reply: str) -> None:
     _assert_no_enablement_error_overclaim(reply)
-    lowered = str(reply or "").casefold()
-    if not re.search(r"\bproject\b", lowered) or not re.search(
-        r"\b(?:not\s+found|could\s+not\s+find|couldn't\s+find|unable\s+to\s+find|no\s+matching)\b",
-        lowered,
-    ):
-        raise AutomationPersonaError("automation_persona_archer_appid_not_found_contract_failed")
-    if not re.search(r"\b(?:app\s*id|appid)\b", lowered) or not re.search(
-        r"\b(?:verify|check|provide|send|share|resend|re-send)\b", lowered
-    ):
-        raise AutomationPersonaError("automation_persona_archer_appid_not_found_contract_failed")
 
 
 def validate_account_reply_contract(
@@ -868,14 +691,11 @@ def validate_account_reply_contract(
     if not normalized_reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     assert_no_trailing_automation_signature(normalized_reply)
-    if intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION and str(facts.get("behavior") or "").strip().lower() == "enablement":
-        _assert_enablement_submission_contract(normalized_reply)
-    elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
-        _assert_fraud_handoff_contract(normalized_reply)
-    elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION:
-        _assert_suspension_contact_contract(normalized_reply)
-    elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
-        _assert_suspension_closing_contract(normalized_reply)
+    if intent in {
+        ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
+        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
+    }:
+        _assert_no_positive_suspension_close_claim(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         _assert_enablement_completion_contract(normalized_reply, facts)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED:
@@ -885,15 +705,7 @@ def validate_account_reply_contract(
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND:
         _assert_enablement_appid_not_found_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION:
-        _assert_missing_information_contract(
-            normalized_reply,
-            facts.get("missing_information"),
-        )
-    if intent in {
-        ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
-        ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
-    }:
-        _assert_ownership_contract(normalized_reply, facts)
+        _assert_missing_information_contract(normalized_reply)
     return facts, derived_close
 
 
@@ -948,59 +760,24 @@ def _validated_automation_reply_content(
     return rendered_content
 
 
-def _assert_ownership_contract(reply: str, reply_facts: dict[str, Any]) -> None:
-    """Reject replies that delegate the customer relationship to an internal team."""
-    intent = str(reply_facts.get("reply_intent") or "").strip().lower()
-    normalized = str(reply or "").replace("’", "'").replace("\u2019", "'")
-    if intent == _SUSPENSION_CONTACT_CONFIRMATION_INTENT:
-        return
-    if intent == _SUSPENSION_HANDOFF_CLOSE_INTENT:
-        return
-    if intent in {
-        ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
-        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
-        ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
-        ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
-    }:
-        return
-    if intent not in {
-        ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
-        ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
-    }:
-        return
-    lowered = normalized.casefold()
-    delegated_support_owner = re.search(
-        r"(?:^|[.!?\n])\s*the\s+(?:assigned\s+)?support\s+engineer\b"
-        r"[^.!?\n]{0,140}\b(?:will|has|is|continues?|started)\b",
-        lowered,
-    )
-    delegated = re.search(
-        r"(?:^|[.!?\n])\s*(?:the|our)\s+(?:internal|billing|enablement|quota|relevant)\s+team\b"
-        r"[^.!?\n]{0,100}\b(?:will|shall|is going to|'ll)\b"
-        r"[^.!?\n]{0,100}\b(?:follow up|contact|reach out|update|notify)\b",
-        lowered,
-    ) or re.search(
-        r"内部团队[^。！？.!?\n]{0,40}(?:会|将)[^。！？.!?\n]{0,40}(?:联系|通知|跟进|更新)",
-        normalized,
-    )
-    if delegated or delegated_support_owner:
-        raise AutomationPersonaError("automation_persona_ownership_contract_failed")
+def resolve_customer_greeting_name(
+    *,
+    latest_customer_author_name: Any = None,
+    case_customer_name: Any = None,
+    requester_name: Any = None,
+) -> str:
+    """Pick the greeting first name from the first valid candidate.
 
-    language = str(reply_facts.get("customer_language") or "en").strip().lower()
-    if language.startswith("zh"):
-        owned = re.search(r"(?:我|我们)[^。！？.!?\n]{0,100}(?:审核|处理|跟进|协调|更新|同步|推进|联系|告知)", normalized)
-        update_commitment = re.search(r"(?:我|我们)[^。！？.!?\n]{0,120}(?:更新|同步|告知|第一时间)", normalized)
-    else:
-        owned = re.search(
-            r"\b(?:i|we)\b[^.!?\n]{0,120}\b(?:review|work|coordinat|handle|check|investigat|follow|monitor|continu|proceed)\w*",
-            lowered,
-        )
-        update_commitment = re.search(
-            r"\b(?:i|we)\b[^.!?\n]{0,160}\b(?:keep you posted|keep you updated|update you|let you know|follow up with you)\b",
-            lowered,
-        )
-    if not owned or (intent == "submission_confirmation" and not update_commitment):
-        raise AutomationPersonaError("automation_persona_ownership_contract_failed")
+    Candidate order: the author of the latest customer comment, the case-level
+    intake name, the ticket requester. Each candidate goes through the same
+    validity filter, so an invalid latest author (email/placeholder/empty)
+    falls through to the case name instead of straight to "Customer".
+    """
+    for candidate in (latest_customer_author_name, case_customer_name, requester_name):
+        first_name = customer_first_name(candidate)
+        if first_name != "Customer":
+            return first_name
+    return "Customer"
 
 
 def render_automation_reply(
@@ -1212,6 +989,8 @@ def render_automation_reply(
                 "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
                 "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
                 "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
+                "Every point named in the reply policy below is required content: make sure each one is actually "
+                "expressed somewhere in your reply, always in your own words and phrasing. "
                 "You are the human owner of this case: speak in first person (I/we) and never present an internal "
                 "team, a job title, or a system as the party responsible for handling or contacting the customer. "
                 "Vary sentence structure and rhythm - combine related points with natural connectors or a dash "

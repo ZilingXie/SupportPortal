@@ -135,13 +135,15 @@ def prepare_action_plan(
             customer_name=customer_name,
         )
         first_name = str(customer_name or "Customer").strip() or "Customer"
+        # p2-138/p2-140: the suspension ticket is never solved by automation;
+        # the first reply only asks for the contact email and states the
+        # 24-hour contact promise, with no handoff-already-done or close
+        # wording (the handoff email is only sent after confirmation).
         reply_body = (
             f"Hi {first_name},\n\n"
             "Which email address would be most convenient for the relevant team to use? "
             "Please confirm whether we should use the email address on this ticket. "
-            "The relevant team will contact you within 24 hours. After you confirm the "
-            "contact email and handoff, we will close this ticket; you can reopen it if "
-            "nobody contacts you within 24 hours."
+            "The relevant team will contact you within 24 hours."
         )
     elif subcategory == "detailed_invoice":
         result = build_billing_automation_result(

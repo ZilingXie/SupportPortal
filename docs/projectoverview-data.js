@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T04:26:22Z",
-  "source_base_commit": "0fea0ee54080752b909126fa9b2028c3251811cf",
-  "registry_digest": "f63ccd24d692e7eda528bd98a1a4e75ec6c28d05687a56b608aca568a2c9aee9",
+  "generated_at": "2026-09-03T04:53:34Z",
+  "source_base_commit": "9bb8e6605cb23ec7afd010cdfa1691cdd81abf77",
+  "registry_digest": "b1d855dcd0cfa1d63b5fa92639164cb1c7750174967231700a3563a9f8a17434",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -925,6 +925,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Focused regression after fusing with p2-140 one-shot handoff (persona v23)",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_route_service_contract.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_investigation_flow.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_verification_automation.py",
+          "details": "690 passed + 123 subtests。含与 p2-140 一段式融合后的三件新验证：suspension closing 追加句（漏 24h 承诺追加修复+close 声明不可修复仍拒）、主语绑定 close-claim（否定句/close-the-loop 不误杀）、reroute/full_reroute/dispatch（main 新增 intake_mode 分流）与本任务改动共存全绿。两个 investigation_flow multi-agent 失败为 clean main 预存在（root main 同样失败）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1030,7 +1036,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 31,
+      "task_count": 32,
       "done_count": 16,
       "blocked_count": 0
     },
@@ -8721,7 +8727,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "AC-13099 实测（客户问 where can i find the correct appid?）暴露称呼缺陷：rag_fallback 的 reply_facts 不读 account case 的 customer_name（13099 的 customer_name 实际有值 Ziling Xie）——API 路径（main.py）用 canonical ticket.requester 当 customer_first_name，而 requester 恒为邮箱（含 @ 被 customer_first_name 拒绝）必然落 'Customer'；分栈评论路径（automation_account_reply_sync.py）构造 reply job 时传了不存在的 draft_content 参数（TypeError 被吞进 account_reply_job_creation_failed，该 answer 分支从未成功过，属隐藏死分支）。本任务把两条 rag_fallback 路径的称呼来源统一为回查链（billing_ticket.customer_name → 评论快照 author_name hint → 兜底），修复分栈死分支为完整 reply_facts 构造，并把自动化 persona 链路问候从 'Hi, X' 改为 'Hi X'（用户指定格式，prompt 版本 v17→v18，仅自动化链路，composer 等其他链路不动）。另附只读对比评估：同一问题用项目自带本地 RAG（/internal/rag/query official_only）vs 当前 RAGFlow 检索旁路对比 citations 质量，切换与否由用户看报告后另行决定（本次不切链路）。",
-      "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后 live 复测称呼与问候格式。",
+      "next_action": "实现与目标测试已完成；称呼取值规则已被 p2-140 的消息级投影取代（case-first → 最新客户作者优先），与 p2-140 一并在 fresh live acceptance 通过后置 done。",
       "acceptance_criteria": [
         "rag_fallback 两条构造路径（API 与分栈评论）的 customer_first_name 优先取 account case 的 customer_name，其次回查评论快照 author_name，均无才落 Customer 兜底。",
         "13099 同款场景（customer_name 空 + 评论 author_name 有值）不再出现 'Hi, Customer'。",
@@ -8753,8 +8759,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/tests/test_worker.py"
       ],
       "created_at": "2026-08-28",
-      "updated_at": "2026-08-28",
+      "updated_at": "2026-09-03",
       "history": [
+        {
+          "at": "2026-09-03",
+          "note": "p2-140 将称呼取值升级为消息级投影（最新客户评论作者名优先于 case 名，rag_fallback 链同步反转），取代本任务的 case-first 回查规则；本任务保持 active，与 p2-140 一并等待 fresh live acceptance。"
+        },
         {
           "at": "2026-08-28",
           "event": "created",
@@ -9436,7 +9446,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "以生产 Case 13200 确认的目标风格为准,将 Automation Persona 的渲染 prompt 从要点清单式改为第一人称范例式,并定向放宽校验:删除感谢句模式与新工单指引大正则,handoff 24h 承诺句由逐字校验放宽为正则族,enabled/archive 将来时禁令收窄为误导性将来搭配。安全底线(forbidden values、overclaim)、missing-information 格式合同与 ownership 合同保留且 prompt 强化第一人称 ownership。prompt version automation-persona-v19 -> v20。",
-      "next_action": "代码、测试、记录与本地官方栈验证均已完成；仅剩用户侧:重建三角色 ECS release 并 rollout Worker（可与 p2-134 直连方案同车部署），用受控新工单观察回复风格与残留校验的 human-review 频率，通过后将本任务置 done。",
+      "next_action": "代码、测试、记录与本地官方栈验证均已完成；校验边界已被 p2-140 的安全地板方案取代（v22），与 p2-140 一并在 fresh live acceptance 通过后置 done。",
       "acceptance_criteria": [
         "render_automation_reply 的 system prompt 增加第一人称 ownership 与句式自然性指令;各主要 intent 的 contract policy 改为必达事实 + 风格参考范例(标注不得照抄)。",
         "删除 enablement 完成合同的感谢句模式匹配与新工单指引大正则校验。",
@@ -9482,13 +9492,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/project/tasks/p2-134.json"
       ],
       "created_at": "2026-09-02",
-      "updated_at": "2026-09-02",
+      "updated_at": "2026-09-03",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "legacy_ids": [],
       "legacy_refs": [],
       "history": [
+        {
+          "at": "2026-09-03",
+          "note": "p2-140 将生产阻断降为安全地板（删句式级正则，业务要点转 prompt），取代本任务保留的旧硬校验边界；本任务保持 active，与 p2-140 一并等待 fresh live acceptance。"
+        },
         {
           "at": "2026-09-02",
           "event": "created",
@@ -9721,6 +9735,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py",
         "backend/tests/test_account_intake.py",
         "backend/tests/test_automation_persona.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-141",
+      "title": "回复质量与称呼正确性：v23 校验降为安全地板 + 消息级称呼 + persona 贯通 + suspension reviewer 邮件通知",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-09-03",
+      "updated_at": "2026-09-03",
+      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④suspension 收尾 assign（assigned/already_assigned）后 Graph 发 reviewer 通知邮件（resolve_account_internal_email_recipients 公开函数），状态持久化 workflow.reviewer_notify_email（sent 幂等/failed 记事件不回滚），新事件 zendesk_reviewer_notify_email；fraud 不加。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
+      "next_action": "定向测试与剧本 S1 一段式适配完成后 finalize 合并；合并后官方栈重启读回 automation-persona-v23 marker；生产验收需用户授权 ECS release 部署 + 全新工单（不重放 13225），对收件人 JSON 做 runtime readback 后走 suspension 一段式全链（intake handoff 邮件→closing 回复→assign→通知邮件实收 suhrid→未 solved）。",
+      "acceptance_criteria": [
+        "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
+        "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
+        "多客户工单称呼取当条客户消息作者名（双实现），无效逐级回退；消息 meta 带 author_name/author_kind。",
+        "ECS 评论路径 payload.persona 逐字段进入四个 reply job 出口且 resolver 零调用；旧栈入口 resolve 一次复用。",
+        "suspension 收尾链：公开回复→assign reviewer（事件 assigned）→通知邮件（事件 zendesk_reviewer_notify_email state=sent，workflow.reviewer_notify_email=sent）；已 sent 重入不重发；失败仅记事件不回滚；工单未 solved。",
+        "S1/E1/E2/F1 剧本断言独立于生产 validator；S1 为一段式链路（无问邮箱环节）且不再断言 solved。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Focused regression after fusing with p2-140 one-shot handoff (persona v23)",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_route_service_contract.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_investigation_flow.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_verification_automation.py",
+          "details": "690 passed + 123 subtests。含与 p2-140 一段式融合后的三件新验证：suspension closing 追加句（漏 24h 承诺追加修复+close 声明不可修复仍拒）、主语绑定 close-claim（否定句/close-the-loop 不误杀）、reroute/full_reroute/dispatch（main 新增 intake_mode 分流）与本任务改动共存全绿。两个 investigation_flow multi-agent 失败为 clean main 预存在（root main 同样失败）。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-126",
+        "p2-135",
+        "p2-138",
+        "p2-140",
+        "p1-53",
+        "p2-129"
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/main.py",
+        "backend/worker.py",
+        "backend/automation_ecs_worker.py",
+        "backend/services/automation_engineer_collab.py",
+        "backend/services/route_preparation.py",
+        "backend/services/automation_test_scenarios.py"
       ]
     },
     {

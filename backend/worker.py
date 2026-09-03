@@ -87,6 +87,7 @@ from backend.services.automation_persona import (
     assert_no_trailing_automation_signature,
     extract_automation_resolution_facts,
     render_automation_reply,
+    resolve_customer_greeting_name,
     sanitize_enablement_completion_note,
     validate_account_reply_contract,
 )
@@ -162,13 +163,18 @@ from backend.services.billing_automation import (
     BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,
     poll_automation_request_replies,
     record_billing_request_reply,
+    send_billing_internal_email,
 )
 from backend.services.internal_email_template import namespaced_internal_email_subject
+from backend.services.account_internal_email_recipients import (
+    resolve_account_internal_email_recipients,
+)
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
     SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
     SUSPENSION_STATE_CLOSED,
 )
+from backend.services.automation_account_intake import _zendesk_ticket_url
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
     send_enablement_internal_email,
@@ -252,6 +258,37 @@ TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
 PRODUCTION_ACCOUNT_ZENDESK_ACTOR_ID = "system:production-account-reply"
+
+
+def _latest_customer_author_name(ticket: dict[str, Any] | None) -> str:
+    """Author name of the latest customer message, from the persisted meta."""
+    for message in reversed(list((ticket or {}).get("messages") or [])):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role") or "").strip().lower() not in {"customer", "user"}:
+            continue
+        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        return str(meta.get("author_name") or "").strip()
+    return ""
+
+
+def _account_greeting_customer_name(
+    account_case: dict[str, Any],
+    client_ticket_id: str,
+    *,
+    canonical_ticket: dict[str, Any] | None = None,
+) -> str:
+    """Greeting first name: latest customer-comment author, then the case name."""
+    ticket = canonical_ticket
+    if ticket is None and str(client_ticket_id or "").strip():
+        try:
+            ticket = ticket_repository.get_ticket(client_ticket_id)
+        except Exception:
+            ticket = None
+    return resolve_customer_greeting_name(
+        latest_customer_author_name=_latest_customer_author_name(ticket),
+        case_customer_name=account_case.get("customer_name"),
+    )
 
 
 def _enablement_completion_acknowledgement(ticket: dict[str, Any]) -> str:
@@ -1485,6 +1522,94 @@ _REVIEW_HANDOFF_FINAL_INTENTS_BY_ACTION = {
     "account_suspension": {ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE},
 }
 
+REVIEWER_NOTIFY_EMAIL_EVENT_TYPE = "zendesk_reviewer_notify_email"
+
+
+def _notify_suspension_reviewer_by_email(
+    account_case: dict[str, Any],
+    *,
+    ticket_id: str,
+    zendesk_ticket_id: str,
+    job_id: str,
+) -> None:
+    """Send the suspension reviewer notification email with a persisted state.
+
+    Idempotent on the workflow's reviewer_notify_email state: a sent
+    notification is never re-sent, and a failure records a failed state plus
+    an owner-visible event without rolling back the reviewer assignment (the
+    assignee can already see the ticket in Zendesk).
+    """
+    automation_context = (
+        dict(account_case.get("automation_context"))
+        if isinstance(account_case.get("automation_context"), dict)
+        else {}
+    )
+    suspension_workflow = automation_context.get(SUSPENSION_CONTACT_WORKFLOW_KEY)
+    suspension_workflow = dict(suspension_workflow) if isinstance(suspension_workflow, dict) else {}
+    if str(suspension_workflow.get("reviewer_notify_email") or "").strip() == "sent":
+        return
+
+    def _record_notify_event(state: str, **fields: Any) -> None:
+        try:
+            ticket_repository.record_event(
+                ticket_id or None,
+                REVIEWER_NOTIFY_EMAIL_EVENT_TYPE,
+                {
+                    "zendesk_ticket_id": zendesk_ticket_id,
+                    "job_id": job_id,
+                    "state": state,
+                    "created_at": now_iso(),
+                    **fields,
+                },
+            )
+        except Exception:
+            LOGGER.exception(
+                "reviewer_notify_email_event_failed job_id=%s ticket_id=%s",
+                job_id,
+                ticket_id,
+            )
+
+    try:
+        recipients = resolve_account_internal_email_recipients("account_suspension")
+        payload = recipients.apply(
+            {
+                "subject": f"[Suspension Review Assigned] Zendesk ticket {zendesk_ticket_id}",
+                "body": (
+                    "Hello,\n\n"
+                    f"Suspension ticket {zendesk_ticket_id} has been assigned to you for "
+                    "review after the customer confirmed the contact email and received "
+                    "the 24-hour handoff reply.\n\n"
+                    f"Zendesk: {_zendesk_ticket_url(zendesk_ticket_id)}\n\n"
+                    "This is an automated notification from the account automation pipeline."
+                ),
+            }
+        )
+        result = send_billing_internal_email(payload)
+        status = str((result or {}).get("status") or "").strip()
+        if status == "sent":
+            suspension_workflow["reviewer_notify_email"] = "sent"
+            suspension_workflow["reviewer_notify_failure_reason"] = None
+            _record_notify_event(
+                "sent",
+                to=",".join(recipients.to),
+                cc=",".join(recipients.cc),
+            )
+        else:
+            suspension_workflow["reviewer_notify_email"] = "failed"
+            suspension_workflow["reviewer_notify_failure_reason"] = status or "unknown"
+            _record_notify_event(
+                "failed",
+                failure_code=status or "unknown",
+                reason=str((result or {}).get("reason") or ""),
+            )
+    except Exception as exc:
+        suspension_workflow["reviewer_notify_email"] = "failed"
+        suspension_workflow["reviewer_notify_failure_reason"] = type(exc).__name__
+        _record_notify_event("failed", failure_code=type(exc).__name__, reason=str(exc))
+    suspension_workflow["reviewer_notify_updated_at"] = now_iso()
+    automation_context[SUSPENSION_CONTACT_WORKFLOW_KEY] = suspension_workflow
+    account_case["automation_context"] = automation_context
+
 
 def _hand_off_review_after_public_reply(
     *,
@@ -1614,6 +1739,15 @@ def _hand_off_review_after_public_reply(
             suspension_workflow["updated_at"] = timestamp
             automation_context[SUSPENSION_CONTACT_WORKFLOW_KEY] = suspension_workflow
             account_case["automation_context"] = automation_context
+        # p2-140: after the assignee is in place (assigned or already
+        # assigned), notify the reviewer by email with a persisted
+        # send state; a send failure is an owner-visible event only.
+        _notify_suspension_reviewer_by_email(
+            account_case,
+            ticket_id=ticket_id,
+            zendesk_ticket_id=zendesk_ticket_id,
+            job_id=effective_job_id,
+        )
     mark_production_ownership_handed_to_reviewer(
         account_case,
         updated_at=timestamp,
@@ -3287,7 +3421,9 @@ def _queue_enablement_completion_reply_job(
         known_information=enriched_information,
         source_facts=[sanitized_note],
         resolution_status="completed",
-        customer_name=str(account_case.get("customer_name") or ""),
+        customer_name=_account_greeting_customer_name(
+            account_case, client_ticket_id, canonical_ticket=canonical_ticket
+        ),
     )
     reply_facts["completion_acknowledgement"] = (
         _enablement_completion_acknowledgement(canonical_ticket)
@@ -3462,7 +3598,7 @@ def _queue_internal_followup_reply_job(
         # (AC-13096 rendered "request has been completed" for "the appid is
         # incorrect"). Leave it unset and let the sanitized note speak.
         resolution_status=None,
-        customer_name=str(account_case.get("customer_name") or ""),
+        customer_name=_account_greeting_customer_name(account_case, client_ticket_id),
     )
     delay_seconds = account_reply_delay_seconds_for_profile(
         str(account_case.get("processing_profile") or "staging")
@@ -3621,7 +3757,7 @@ def _queue_billing_completion_reply_job(
         },
         source_facts=[note],
         resolution_status="completed",
-        customer_name=str(account_case.get("customer_name") or ""),
+        customer_name=_account_greeting_customer_name(account_case, client_ticket_id),
     )
     reply_facts["attachments_included"] = bool(message_attachments)
     delay_seconds = account_reply_delay_seconds_for_profile(

@@ -27,6 +27,7 @@ from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_zendesk_internal_comment import AccountZendeskCommentResult
 from backend.services.zendesk_comments import ZendeskCommentError
 from backend.services.zendesk_ticket_assignment import ZendeskAssignmentResult
+from backend.services.account_internal_email_recipients import AccountInternalEmailRecipients
 from backend.services.enablement_completion_classifier import (
     EnablementCompletionClassification,
 )
@@ -583,7 +584,18 @@ class FraudReviewHandoffTests(unittest.TestCase):
             worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
         ), patch.object(
             worker, "assign_ticket_to_reviewer", return_value=assignment
-        ) as assign_reviewer:
+        ) as assign_reviewer, patch.object(
+            worker,
+            "resolve_account_internal_email_recipients",
+            return_value=AccountInternalEmailRecipients(
+                to=("suhrid.das@agora.io",),
+                cc=("xieziling@agora.io",),
+                config_key="ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+                source="json_env",
+            ),
+        ), patch.object(
+            worker, "send_billing_internal_email", return_value={"status": "sent", "reason": ""}
+        ) as send_notify:
             worker._deliver_production_account_reply_to_zendesk(
                 ticket_id="PRD-13225",
                 message_id="m-susp",
@@ -595,12 +607,171 @@ class FraudReviewHandoffTests(unittest.TestCase):
             ticket_id="13225",
             reviewer_user_id="31116644140308",
         )
+        send_notify.assert_called_once()
+        notify_payload = send_notify.call_args.args[0]
+        self.assertEqual(notify_payload["to_addresses"], ["suhrid.das@agora.io"])
+        self.assertIn("13225", notify_payload["subject"])
         saved_case = repository.save_account_case.call_args.args[0]
         self.assertEqual(saved_case["automation_status"], "human_review_required")
         self.assertEqual(
             saved_case["automation_context"]["account_suspension_contact_workflow"]["state"],
             "closed",
         )
+        self.assertEqual(
+            saved_case["automation_context"]["account_suspension_contact_workflow"]["reviewer_notify_email"],
+            "sent",
+        )
+        notify_events = [
+            call for call in repository.record_event.call_args_list
+            if call.args[1] == "zendesk_reviewer_notify_email"
+        ]
+        self.assertEqual(len(notify_events), 1)
+        self.assertEqual(notify_events[0].args[2]["state"], "sent")
+        self.assertEqual(notify_events[0].args[2]["to"], "suhrid.das@agora.io")
+
+    def _suspension_delivery_repository(self, workflow_state: str = "closing_reply_pending", notify_state: str = "") -> Mock:
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-SUSP",
+            "client_ticket_id": "13225",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "13225",
+            "route_family": "automated",
+            "route_status": "automated",
+            "execution_action": "account_suspension",
+            "automation_handler": "account_suspension",
+            "automation_context": {
+                "zendesk_ownership": {
+                    "state": "assigned",
+                    "assignee_id": "48557297720084",
+                    "group_id": "29388501432596",
+                    "source_group_id": "27216253642772",
+                },
+                "account_suspension_contact_workflow": {
+                    "state": workflow_state,
+                    "version": 1,
+                    **({"reviewer_notify_email": notify_state} if notify_state else {}),
+                },
+            },
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        return repository
+
+    def _run_suspension_handoff(self, repository: Mock, assignment: ZendeskAssignmentResult) -> None:
+        with patch.dict(os.environ, {"ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID": "31116644140308"}, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(
+            worker, "ensure_production_automation_ownership", return_value=_ownership_assigned()
+        ), patch.object(
+            worker, "deliver_account_ai_message_as_internal_comment", return_value=_zendesk_result()
+        ), patch.object(
+            worker, "assign_ticket_to_reviewer", return_value=assignment
+        ), patch.object(
+            worker,
+            "resolve_account_internal_email_recipients",
+            return_value=AccountInternalEmailRecipients(
+                to=("suhrid.das@agora.io",),
+                cc=("xieziling@agora.io",),
+                config_key="ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+                source="json_env",
+            ),
+        ):
+            worker._hand_off_review_after_public_reply(
+                account_case=repository.get_account_case_by_ticket_id.return_value,
+                ticket_id="PRD-13225",
+                job_id="reply-susp",
+                message_id="m-susp",
+                reply_intent="account_suspension_handoff_and_close",
+            )
+
+    def test_suspension_handoff_notify_email_is_idempotent_after_sent(self) -> None:
+        repository = self._suspension_delivery_repository(notify_state="sent")
+        assignment = ZendeskAssignmentResult(
+            ticket_id="13225",
+            assignee_id="31116644140308",
+            assignee_email="suhrid@agora.io",
+            assignee_name="Suhrid Das",
+            group_id="27216254064148",
+            previous_group_id="29388501432596",
+            group_changed=True,
+            status_code=200,
+            already_assigned=True,
+        )
+        with patch.object(worker, "send_billing_internal_email") as send_notify:
+            self._run_suspension_handoff(repository, assignment)
+
+        send_notify.assert_not_called()
+        saved_case = repository.save_account_case.call_args.args[0]
+        self.assertEqual(
+            saved_case["automation_context"]["account_suspension_contact_workflow"]["reviewer_notify_email"],
+            "sent",
+        )
+        notify_events = [
+            call for call in repository.record_event.call_args_list
+            if call.args[1] == "zendesk_reviewer_notify_email"
+        ]
+        self.assertEqual(notify_events, [])
+
+    def test_suspension_handoff_already_assigned_still_sends_pending_notify(self) -> None:
+        repository = self._suspension_delivery_repository(notify_state="failed")
+        assignment = ZendeskAssignmentResult(
+            ticket_id="13225",
+            assignee_id="31116644140308",
+            assignee_email="suhrid@agora.io",
+            assignee_name="Suhrid Das",
+            group_id="27216254064148",
+            previous_group_id="29388501432596",
+            group_changed=False,
+            status_code=200,
+            already_assigned=True,
+        )
+        with patch.object(worker, "send_billing_internal_email", return_value={"status": "sent", "reason": ""}) as send_notify:
+            self._run_suspension_handoff(repository, assignment)
+
+        send_notify.assert_called_once()
+        saved_case = repository.save_account_case.call_args.args[0]
+        self.assertEqual(
+            saved_case["automation_context"]["account_suspension_contact_workflow"]["reviewer_notify_email"],
+            "sent",
+        )
+
+    def test_suspension_handoff_notify_email_failure_does_not_rollback_assign(self) -> None:
+        repository = self._suspension_delivery_repository()
+        assignment = ZendeskAssignmentResult(
+            ticket_id="13225",
+            assignee_id="31116644140308",
+            assignee_email="suhrid@agora.io",
+            assignee_name="Suhrid Das",
+            group_id="27216254064148",
+            previous_group_id="29388501432596",
+            group_changed=True,
+            status_code=200,
+            already_assigned=False,
+        )
+        with patch.object(
+            worker, "send_billing_internal_email", return_value={"status": "failed", "reason": "graph unreachable"}
+        ) as send_notify:
+            self._run_suspension_handoff(repository, assignment)
+
+        send_notify.assert_called_once()
+        saved_case = repository.save_account_case.call_args.args[0]
+        # The assign result stands: the case is still handed to the reviewer.
+        self.assertEqual(saved_case["automation_status"], "human_review_required")
+        workflow = saved_case["automation_context"]["account_suspension_contact_workflow"]
+        self.assertEqual(workflow["state"], "closed")
+        self.assertEqual(workflow["reviewer_notify_email"], "failed")
+        self.assertIn("failed", str(workflow.get("reviewer_notify_failure_reason")))
+        notify_events = [
+            call for call in repository.record_event.call_args_list
+            if call.args[1] == "zendesk_reviewer_notify_email"
+        ]
+        self.assertEqual(len(notify_events), 1)
+        self.assertEqual(notify_events[0].args[2]["state"], "failed")
 
 
 class WorkerResilienceTests(unittest.TestCase):
@@ -6047,7 +6218,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "We are archiving this case now. If you have further questions, you can open a new ticket."
             ),
             model="persona-model",
-            prompt_version="automation-persona-v22",
+            prompt_version="automation-persona-v23",
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6055,12 +6226,12 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._publish_account_reply_job(job)
 
-        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v22")
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v23")
         self.assertEqual(
             render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v22")
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v23")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
@@ -6073,9 +6244,11 @@ class WorkerResilienceTests(unittest.TestCase):
             "payload": {
                 "reply_facts": {
                     "behavior": "enablement",
-                    "reply_intent": "submission_confirmation",
+                    # Publish-time contract violations must still fail closed;
+                    # a misleading future enablement claim is a retained floor.
+                    "reply_intent": "enablement_completed_and_close",
                 },
-                "generated_content": "We are reviewing the request.",
+                "generated_content": "Media Relay will be enabled for you tomorrow.",
                 "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
                 "persona_key": "default-support",
                 "persona_version": 1,

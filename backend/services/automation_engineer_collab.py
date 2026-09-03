@@ -149,6 +149,7 @@ async def process_engineer_investigation_message(
             ENGINEER_INVESTIGATION_REPLY_INTENT,
             AutomationPersonaError,
             render_automation_reply,
+            resolve_customer_greeting_name,
         )
 
         agent_state_snapshot = dict(
@@ -188,9 +189,23 @@ async def process_engineer_investigation_message(
                 "recent_public_conversation": "\n".join(public_messages[-6:]),
                 "subject": str(account_case_snapshot.get("title") or ticket.get("subject") or "").strip(),
                 "customer_language": detect_customer_reply_language(latest_customer, provided_answer),
-                "customer_first_name": str(
-                    account_case_snapshot.get("customer_name") or ticket.get("requester") or ""
-                ).strip(),
+                "customer_first_name": resolve_customer_greeting_name(
+                    latest_customer_author_name=next(
+                        (
+                            str(
+                                (item.get("meta") or {}).get("author_name") or ""
+                                if isinstance(item.get("meta"), dict)
+                                else ""
+                            ).strip()
+                            for item in reversed(list(ticket.get("messages") or []))
+                            if isinstance(item, dict)
+                            and str(item.get("role") or "").strip().lower() in {"customer", "user"}
+                        ),
+                        "",
+                    ),
+                    case_customer_name=account_case_snapshot.get("customer_name"),
+                    requester_name=ticket.get("requester"),
+                ),
             }
             try:
                 persona_assignment = await _sync(
