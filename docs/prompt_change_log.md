@@ -4343,3 +4343,19 @@ For each new entry, record:
   - `engineer_agent` schema: `draft_customer_reply` optional (missing-draft fail-closed removed); agent drafts are ignored by the ECS chain.
 - Verification:
   - Focused regression across persona/collab/agent/investigation/guardrail/slack/intake/api/prompt suites: 314 passed + 48 subtests; new suites cover assembly happy path, failure path, active-skip, intent contracts, and the schema relaxation.
+
+## 2026-09-03 - Prompt Release replication and ECS deployment gate
+
+- Area or subsystem:
+  - Prompt Release source-to-target replication, ECS release build preflight, and Production deployment orchestration.
+- Prompt or model versions:
+  - Prompt content, model names, providers, reasoning effort, and Persona v23 are unchanged.
+- Reason:
+  - Repeating a sync for an existing Release ID previously trusted the ID without proving that source and target build/content were identical. The ECS builder validated only the ID shape, and Production had no single command that tied Prompt activation to a healthy three-role rollout.
+- Tooling and release-contract changes:
+  - Same-ID replication now compares `build_ref` and the complete `prompt_key + content_sha256` fingerprint before any release status transition. Equivalent target-local version numbers are allowed; different content fails closed. Repeated sync returns the target's real status and never downgrades an active release.
+  - `PROMPT_RELEASE_TARGET_DSN` and `PROMPT_RELEASE_TARGET_SCHEMA` provide secret-safe target inputs; the existing `--target-dsn` remains compatible. `--defer-activation` keeps the target candidate until explicit activation.
+  - Prompt `validate` is read-only. The ECS builder runs it before selecting a builder or starting OCI work.
+  - `deployment/deploy_automation_ecs_release.sh` is the sole Production deploy command. It defers Prompt activation until Route, Worker, heartbeat, API, public health, digest, CloudWatch, and EC2 backup checks pass; pre-activation failures restore captured service revisions, while activation uncertainty requires readback reconciliation instead of blind rollback/retry.
+- Verification:
+  - Prompt repository/CLI, builder and deployment tests cover same-ID idempotency/mismatch, version remap, deferred activation, environment-only DSN handling, pre-build rejection, task-definition preservation, Worker safety gates, rollout order and rollback contract.

@@ -816,17 +816,6 @@ class ScenarioEngine:
             row.get("execution_action") == "account_suspension",
             f"execution_action={row.get('execution_action')!r}",
         )
-        self.wait_suspension_state(ctx, "awaiting_contact_confirmation", "asks for contact email")
-        self.wait_reply_intent(
-            ctx, {"account_suspension_contact_confirmation_request"}, "contact confirmation reply"
-        )
-        self.wait_published_reply_content(
-            ctx,
-            expected_intent="account_suspension_contact_confirmation_request",
-            check=_suspension_first_reply_content_check,
-            step="first suspension reply asks email + 24h, no close claim",
-        )
-        self.next_customer_turn(ctx, "Yes, please use xieziling97@163.com for the relevant team.")
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(
             ctx, {"account_suspension_handoff_and_close"}, "closing reply published"
@@ -835,7 +824,7 @@ class ScenarioEngine:
             ctx,
             expected_intent="account_suspension_handoff_and_close",
             check=_suspension_closing_content_check,
-            step="closing reply confirms handoff + 24h, no close claim",
+            step="first suspension reply confirms handoff + 24h, no close claim",
         )
         self.wait_event(
             ctx,

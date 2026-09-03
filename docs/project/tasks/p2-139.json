@@ -5,7 +5,7 @@
  "status": "active",
  "owner": "zac",
  "summary": "r20260903-7d62944 构建被 worker 镜像的 Pilot 安装步骤阻塞：pilot.touchingtalk.com 下载源在两小时内更换了无签名的 Linux 二进制（两次独立下载 checksum 稳定为 43bba510...，与 pinned 的 cbc83b6d... 失配，构建 fail closed）。Pilot 二进制自 p2-134 Archer 直连改造后运行时已不使用（ARCHER_OAUTH_COOKIE 纯 HTTP 链），仅作为遗留保留在镜像内。用户决策：移除安装。改动：backend/Dockerfile.automation 删除 install_pilot 的 RUN 步骤与 prune 行的 /app/bin/pilot 引用；删除 backend/scripts/install_pilot.py；test_automation_ecs_images 的 pinned-pilot 断言改为无 pilot 断言（Archer skill 保留断言不变）；runbook 表述同步。",
- "next_action": "实现与测试已完成,待 finalize 合并后重建 release 并继续 ECS 部署。",
+ "next_action": "保持 active，等待单独生产授权后由正式 deploy 命令发布新 Worker digest；运行前必须通过 Terraform 零漂移、Worker task definition 无 Pilot env/volume/mount 和 Suspension secret readback 门禁。运行后以 ECR/运行 task digest 证明新 Worker 无 Pilot，再置 done。",
  "acceptance_criteria": [
   "三个 ECS 镜像不再包含或安装 Pilot 二进制；Dockerfile 无 install_pilot 引用；install_pilot.py 已删除。",
   "Archer 直连链（ARCHER_OAUTH_COOKIE）与 archer-cross-channel-hosting skill 的镜像保留不变。",
@@ -14,6 +14,12 @@
  ],
  "blockers": [],
  "evidence": [
+  {
+   "type": "test",
+   "label": "Formal deploy Worker Pilot rejection gate",
+   "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_terraform.py",
+   "details": "正式部署渲染在注册task definition前拒绝PILOT_BIN/XDG_CONFIG_HOME/PILOT_HOME、任意Pilot环境值、pilot-creds volume/mount，并保留Graph EFS与当前role/CPU/memory/network/logging；生产发布尚未执行。"
+  },
   {
    "type": "test",
    "label": "Image & build suites",

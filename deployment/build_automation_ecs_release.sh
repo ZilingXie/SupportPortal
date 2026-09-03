@@ -125,8 +125,6 @@ select_builder() {
 main() {
   parse_args "$@"
   require_cmd git
-  select_builder
-  trap cleanup EXIT
   if [[ -z "${PYTHON_BIN}" && -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
     PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
   fi
@@ -151,6 +149,14 @@ main() {
   [[ -n "${PROMPT_RELEASE_ID}" ]] || fail "--prompt-release-id is required"
   validate_identifier "${PROMPT_RELEASE_ID}"
   BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  (
+    cd "${PROJECT_ROOT}"
+    "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
+      --release-id "${PROMPT_RELEASE_ID}" >/dev/null
+  ) || fail "Prompt Release validation failed: ${PROMPT_RELEASE_ID}"
+  log "Verified deployable Prompt Release: ${PROMPT_RELEASE_ID}"
+  select_builder
+  trap cleanup EXIT
 
   local bundle_dir
   bundle_dir="${RELEASE_ROOT}/${RELEASE_ID}"

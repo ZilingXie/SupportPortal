@@ -49,6 +49,7 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         self._git("commit -m initial")
         self._install_fake_docker()
         self._install_fake_podman()
+        self._install_fake_python()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -160,11 +161,36 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         )
         (self.fake_bin / "podman").chmod(0o755)
 
+    def _install_fake_python(self) -> None:
+        self._write(
+            self.fake_bin,
+            "release-python",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state = Path(os.environ["RELEASE_TEST_STATE"])
+                args = sys.argv[1:]
+                with (state / "python_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(args) + "\\n")
+                if args[:3] == ["-m", "backend.scripts.prompt_release", "validate"]:
+                    sys.exit(int(os.environ.get("PROMPT_RELEASE_VALIDATE_EXIT", "0")))
+                os.execv(os.environ["RELEASE_TEST_REAL_PYTHON"], [os.environ["RELEASE_TEST_REAL_PYTHON"], *args])
+                """
+            ),
+        )
+        (self.fake_bin / "release-python").chmod(0o755)
+
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment["PATH"] = f"{self.fake_bin}:{environment['PATH']}"
         environment["RELEASE_TEST_STATE"] = str(self.state_dir)
-        environment["AUTOMATION_RELEASE_PYTHON"] = sys.executable
+        environment["AUTOMATION_RELEASE_PYTHON"] = str(self.fake_bin / "release-python")
+        environment["RELEASE_TEST_REAL_PYTHON"] = sys.executable
         return subprocess.run(
             [str(self.repo / "deployment/build_automation_ecs_release.sh"), *args],
             cwd=self.repo,
@@ -196,6 +222,40 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         self.assertEqual(len(pushes), 0)
         self.assertTrue(all("--platform" in call and "linux/amd64" in call for call in builds))
         self.assertIn("AUTOMATION_IMAGE_ROLE=ecs-worker", builds[-1])
+        python_calls = [
+            json.loads(line)
+            for line in (self.state_dir / "python_calls.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(
+            python_calls[0],
+            ["-m", "backend.scripts.prompt_release", "validate", "--release-id", "prompt-42"],
+        )
+
+    def test_prompt_release_validation_failure_stops_before_building(self) -> None:
+        environment = os.environ.copy()
+        environment["PATH"] = f"{self.fake_bin}:{environment['PATH']}"
+        environment["RELEASE_TEST_STATE"] = str(self.state_dir)
+        environment["AUTOMATION_RELEASE_PYTHON"] = str(self.fake_bin / "release-python")
+        environment["RELEASE_TEST_REAL_PYTHON"] = sys.executable
+        environment["PROMPT_RELEASE_VALIDATE_EXIT"] = "1"
+
+        result = subprocess.run(
+            [
+                str(self.repo / "deployment/build_automation_ecs_release.sh"),
+                "--prompt-release-id",
+                "prompt-42",
+            ],
+            cwd=self.repo,
+            text=True,
+            capture_output=True,
+            env=environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Prompt Release validation failed", result.stdout + result.stderr)
+        docker_log = self.state_dir / "docker_calls.jsonl"
+        calls = [json.loads(line) for line in docker_log.read_text().splitlines()] if docker_log.exists() else []
+        self.assertFalse(any(call[:2] == ["buildx", "build"] for call in calls))
 
     def test_dirty_worktree_fails_before_building(self) -> None:
         self._write(self.repo, "dirty.txt", "uncommitted\n")
@@ -204,7 +264,8 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Working tree is not clean", result.stdout + result.stderr)
-        calls = [json.loads(line) for line in (self.state_dir / "docker_calls.jsonl").read_text().splitlines()]
+        docker_log = self.state_dir / "docker_calls.jsonl"
+        calls = [json.loads(line) for line in docker_log.read_text().splitlines()] if docker_log.exists() else []
         self.assertFalse(any(call[:2] == ["buildx", "build"] for call in calls))
 
     def test_podman_builds_and_saves_three_amd64_oci_archives(self) -> None:
