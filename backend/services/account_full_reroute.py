@@ -18,13 +18,16 @@ from backend.services.account_suspension_field_extractor import (
 )
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
     SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
     SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
     SUSPENSION_STATE_HANDOFF_PENDING,
     SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
     contact_confirmation_reply_facts,
+    direct_handoff_workflow,
     initial_contact_workflow,
+    normalize_contact_email,
     suspension_contact_confirmation,
 )
 from backend.services.account_verification_automation import (
@@ -277,6 +280,105 @@ def _suspension_human_review(
     return review_case, execution
 
 
+def _reprocess_account_suspension_direct(
+    current: dict[str, Any],
+    *,
+    original: dict[str, Any],
+    rerouted: AccountCaseReroute,
+    ticket: dict[str, Any],
+    extraction: AccountSuspensionFieldExtraction,
+    ticket_email: str | None,
+    ticket_id: str,
+    account_case_id: str,
+    workflow_created_at: str | None,
+) -> AccountFullRerouteResult:
+    """p2-140: rebuild a direct-handoff ticket without the confirmation stage.
+
+    Direct-handoff tickets never ask for an email: the ticket email is the
+    contact address and every reroute resumes the handoff/closing intent.
+    A ticket whose address is not usable fails closed to human review.
+    """
+    customer_messages = _customer_messages(ticket)
+    classification = dict(current.get("route_classification") or {})
+    classification.update(
+        handler_binding_status="completed",
+        automation_reprocessed=True,
+        field_extraction=extraction.audit_payload(),
+    )
+    prompt_snapshots = dict(rerouted.route_execution.get("prompt_snapshots") or {})
+    prompt_snapshots["account_suspension_field_extractor"] = dict(extraction.prompt_snapshot)
+    workflow = direct_handoff_workflow(
+        ticket_email=ticket_email,
+        created_at=workflow_created_at,
+    )
+    if normalize_contact_email(ticket_email) is None:
+        workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
+        workflow["failure_reason"] = "suspension_missing_customer_email"
+        updated, execution = _suspension_human_review(
+            current,
+            classification=classification,
+            extraction=extraction,
+            workflow=workflow,
+            reason="account_suspension_missing_customer_email",
+        )
+        execution["prompt_snapshots"] = prompt_snapshots
+        return AccountFullRerouteResult(
+            updated,
+            execution,
+            updated != original,
+            "human_review",
+        )
+    conversation_text = "\n".join(str(message.get("content") or "") for message in customer_messages)
+    handoff_payload = build_billing_internal_email_payload(
+        action="account_suspension",
+        collected_fields={
+            str(key): str(value)
+            for key, value in dict(extraction.collected_fields).items()
+            if value is not None
+        },
+        ticket_id=ticket_id,
+        customer_email=str(ticket_email or ""),
+        customer_message=conversation_text,
+        billing_ticket_id=account_case_id,
+        zendesk_ticket_url=None,
+    )
+    updated = {
+        **current,
+        "automation_status": "automation",
+        "missing_fields": [],
+        "collected_fields": dict(extraction.collected_fields),
+        "customer_reply": None,
+        "internal_email_payload": handoff_payload,
+        "internal_email_send_status": "pending",
+        "internal_email_send_reason": "direct_handoff",
+        "automation_context": {
+            "handler": "account_suspension",
+            "reprocessed_by": "account_full_reroute",
+            SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
+        },
+        "route_classification": classification,
+    }
+    execution = dict(rerouted.route_execution)
+    execution.update(
+        {
+            "classification": classification,
+            "trigger": "account_full_reroute",
+            "prompt_snapshots": prompt_snapshots,
+        }
+    )
+    return AccountFullRerouteResult(
+        updated,
+        execution,
+        updated != original,
+        "completed",
+        internal_email_to_send=handoff_payload,
+        email_handler="billing",
+        customer_reply="reply_pending",
+        reply_kind="suspension_closing_reply",
+        reply_intent=SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+    )
+
+
 def _reprocess_account_suspension(
     current: dict[str, Any],
     *,
@@ -314,6 +416,25 @@ def _reprocess_account_suspension(
             "",
         )
     ).strip() or None
+    existing_suspension_workflow = (
+        current.get("automation_context") or {}
+    ).get(SUSPENSION_CONTACT_WORKFLOW_KEY)
+    if (
+        isinstance(existing_suspension_workflow, dict)
+        and str(existing_suspension_workflow.get("intake_mode") or "").strip().lower()
+        == SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF
+    ):
+        return _reprocess_account_suspension_direct(
+            current,
+            original=original,
+            rerouted=rerouted,
+            ticket=ticket,
+            extraction=extraction,
+            ticket_email=ticket_email,
+            ticket_id=ticket_id,
+            account_case_id=account_case_id,
+            workflow_created_at=workflow_created_at,
+        )
     workflow = initial_contact_workflow(
         ticket_email=ticket_email,
         created_at=workflow_created_at,

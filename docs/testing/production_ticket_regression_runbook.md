@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | fraud_account | account_billing / fraud_account | account_verification（内部四组信息审核） |
 | enablement | backend_operation / enablement | enablement |
-| account_suspension | account_billing / account_suspension | account_suspension（两阶段确认） |
+| account_suspension | account_billing / account_suspension | account_suspension（production 一段式 direct handoff；staging/ECS 入口仍为两阶段确认） |
 | detailed_invoice | account_billing / detailed_invoice | billing（内部邮件回复 + PDF 附件转发 Zendesk） |
 
 > 范围说明：当前仅针对 `/production`（旧双栈，n8n → `POST /production/account`）。`/automation/{staging,preproduction,production}` 三环境上线后，再按本 runbook 派生对应变体。
@@ -86,17 +86,20 @@
 
 ### 4.3 account_suspension
 
-**模板要点**：非欺诈封禁（balance ran out），单一诉求，不带退款等附加意图（附加意图会 human_review）。
+**模板要点**：非欺诈封禁（balance ran out），单一诉求，不带退款等附加意图（附加意图会 human_review）；请求必须带有效客户邮箱（缺失/非法如 `a@b` → `suspension_missing_customer_email` 掉人工）。
+
+**一段式（p2-140，production 新单）**：
 
 | 时刻 | 预期信号 |
 | --- | --- |
-| 即时 | `route: account_suspension`（绿）；workflow state=awaiting_contact_confirmation |
-| 6-10 分钟 | reply: published；第一封回复询问"相关团队用哪个邮箱联系"（awaiting_customer） |
+| 即时 | `route: account_suspension`（绿）；内部 handoff 邮件发出（联系邮箱=工单邮箱）；workflow state=handoff_pending→closing_reply_pending（intake_mode=direct_handoff, confirmed_email_source=ticket_email）；此时尚无 reply job |
+| 邮件成功后 | 唯一 reply job（intent=account_suspension_handoff_and_close，不再问邮箱）；workflow 记录 closing_reply_job_id |
+| 6-10 分钟 | reply: published；首封公开回复"已收到请求 + 24h 内相关团队联系"（问候 "Hi {名},"；不提关单/重开）→ assign 复审人（suhrid）+ automation_status=human_review_required，**不关单** |
+| 客户后续回复 | no-op（由复审人人工处理；不再触发自动回复/邮件） |
 
-**第二阶段（手动，从测试邮箱回复该 Zendesk 工单邮件通知，保持 Re: 主题线程）**：
+**失败分支（可断言）**：内部邮件发送失败或 outcome_unknown、reply job 创建失败、客户邮箱缺失/非法 → workflow 与 case 均 human_review_required，无客户面输出。
 
-- 回复正文含**单一邮箱**（如 "please use zac.tester@example.com"）或明确肯定（"yes, please use this email"）→ 内部 handoff 邮件 + closing 公开回复（24h 句）+ Zendesk solved + 本地关单 + Slack「Account Suspension」；workflow state=closed。
-- 变体：回复含多个邮箱或含糊表述 → `human_review_required`（这也是可断言的失败分支）。
+**存量兼容（旧两阶段工单）**：已处于 awaiting_contact_confirmation 的历史工单，客户回复仍走原确认→内部邮件→closing 链路收尾；rerun/reroute 不再产出"问邮箱"回复（一律恢复 handoff intent）。
 
 ### 4.4 detailed_invoice
 
@@ -119,7 +122,7 @@
 | `E1` | enablement 顺路：带 AppID 建单 → submission 确认 → **手动批准** → completion + solved |
 | `E2` | enablement 缺 AppID：追问 → 客户问什么是 AppID → **RAG 兜底回答** → 给 AppID → 内部邮件 → **手动批准** → completion + solved |
 | `F1` | fraud：无信息建单 → 追问 → 补四组信息 → 内部邮件 + 24h 回复 + assign 复审人 + **不 solved** |
-| `S1` | suspension：建单 → 问联系邮箱 → 确认 → 内部邮件 + closing + solved + workflow closed |
+| `S1` | suspension：建单（有效邮箱）→ 内部邮件 → 首封"已收到+24h" → assign 复审人 + human_review_required + 不关单（p2-140 一段式） |
 | `D1` | detailed invoice：带全三字段建单 → 内部邮件 → submission 确认 → **手动回内部邮件并附 PDF** → completion + Zendesk 公开评论带附件 delivered + solved |
 
 **网页发起（推荐）**：`/automation/test/` 页面第 4 节「Scenario runs」——点剧本卡上的 Run scenario（同一时刻只允许一个进行中 run），页面实时展示逐步 PASS/FAIL、当前等待点与 Zendesk 工单链接，15 秒自动刷新；run 记录持久化在 `automation_test_scenario_runs` 表（含容器重启后 `interrupted` 标记与失败原因）。运行前服务端自动做 DB/SMTP/IMAP 连通检查，不通过则不建 run（502 显示原因）。

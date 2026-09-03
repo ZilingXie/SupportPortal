@@ -24,6 +24,7 @@ from backend.repositories.ticket_repository import (
 )
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
     SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
     SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
@@ -652,6 +653,74 @@ class AccountRerouteDispatchTests(unittest.IsolatedAsyncioTestCase):
             )
         duplicate_sender.assert_not_awaited()
         self.assertEqual(recovery["reply"]["status"], "already_scheduled")
+
+
+    async def test_suspension_direct_handoff_recovery_uses_handoff_intent(self) -> None:
+        self.repository.initialize()
+        ticket_id = "suspension-recovery-direct"
+        case_id = "AC-SUSPENSION-RECOVERY-DIRECT"
+        rerun_job_id = "account-rerun-direct"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "customer@example.com",
+                "status": "open",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "My account is suspended.",
+                        "created_at": "2026-08-10T01:00:00+00:00",
+                    }
+                ],
+            }
+        )
+        self.repository.save_account_case(
+            {
+                "account_case_id": case_id,
+                "billing_ticket_id": case_id,
+                "client_ticket_id": ticket_id,
+                "route": "account_suspension",
+                "execution_action": "account_suspension",
+                "route_family": "automated",
+                "route_status": "automated",
+                "automation_handler": "account_suspension",
+                "automation_status": "automation",
+                "missing_fields": [],
+                "collected_fields": {"suspension_status_or_error": "account suspended"},
+                "internal_email_send_status": "sent",
+                "internal_email_payload": None,
+                "automation_context": {
+                    "rerun_job_id": rerun_job_id,
+                    # p2-140: no stored rerun_reply_intent; the direct-handoff
+                    # marker alone must resume the handoff intent.
+                    SUSPENSION_CONTACT_WORKFLOW_KEY: {
+                        "state": SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+                        "intake_mode": SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
+                        "ticket_email": "customer@example.com",
+                        "confirmed_email": "customer@example.com",
+                        "confirmed_email_source": "ticket_email",
+                    },
+                },
+            }
+        )
+
+        result = await main._resume_account_rerun_side_effect(
+            case_id,
+            retry_mode="reply",
+            rerun_job_id=rerun_job_id,
+        )
+
+        self.assertEqual(result["status"], "scheduled")
+        job = self.repository.get_latest_account_reply_job(ticket_id)
+        assert job is not None
+        payload = job["payload"]
+        self.assertEqual(payload["reply_intent"], SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE)
+        self.assertNotIn("close_after_publish", payload)
+        self.assertEqual(payload["asked_field_keys"], [])
+        self.assertEqual(
+            payload["reply_facts"]["reply_intent"],
+            SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
+        )
 
 
 class AccountRerouteFencingTests(unittest.TestCase):

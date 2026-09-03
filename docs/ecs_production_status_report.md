@@ -76,7 +76,7 @@ Hermes 的“腾讯 DB”不是 AWS 中单独新增的 RDS 实例，而是 `memo
 | Account 基础链路 | Intake、Route、Processing、邮件回复、RAGFlow、Delivery ledger、heartbeat | 是 | 等待新的受控 Account Case readback |
 | Fraud | partial reply、字段提取、sensitive reconciliation、内部邮件、Suhrid handoff | 是，随 `r20260901-69e9836` | **已通过（AC-13212，2026-09-02，含 2.5 节 SSM 修复后的 Suhrid assignment readback）** |
 | Enablement | Archer executor、Pilot、Persona/reply contracts | 代码在 `main`，当前 ECS 尚未部署 #1021 | 必须先 build/deploy Archer release，再做三类 Enablement Case |
-| Account Suspension | 既有两阶段确认、handoff 邮件、客户回复和状态流 | 是，沿用 Account Worker | 等待新的全新 Account Suspension Case |
+| Account Suspension | Main `/production` 已改一段式 direct handoff（p2-140：不问邮箱、内部邮件→首封"已收到+24h"→assign 复审人不关单）；ECS 专用入口仍是两阶段确认，直到后续部署同批镜像 | 是，沿用 Account Worker | 等待新的全新 Account Suspension Case（一段式全链） |
 | Hermes | 独立 ECS service、Tencent AgentMemory memory-core、`/v1` | 是，`supportportal-production-hermes:2` | 运行级验证已通过；下一真实 needs-investigating Case 继续观察质量 |
 | Slack Engineer Case | thread binding、`@bot`、Guardrail、Final Approve | 否 | 明确延期，不属于本次 Account parity 发布 |
 
@@ -91,7 +91,7 @@ Hermes 的“腾讯 DB”不是 AWS 中单独新增的 RDS 实例，而是 `memo
    - 非法 App ID：客户收到纠正提示，Case 保持 open/pending，可继续提交；
    - 查无项目：客户收到核对/重发提示，Case 保持 open/pending，可继续提交。
 4. ~~Fraud 全新 Case 通过 partial reply、内部邮件、客户 24 小时说明、Suhrid assignment 和 Human Review。~~ 已完成（AC-13212，2026-09-02）。
-5. Account Suspension 全新 Case 通过 contact confirmation、内部 handoff 邮件、客户回复、指派和不自动关闭语义。
+5. Account Suspension 全新 Case 通过一段式 direct handoff：无邮箱 gate 掉人工、内部 handoff 邮件（先于 reply job）、首封"已收到+24h"公开回复、指派复审人、不自动关闭；存量 awaiting 工单的客户回复兼容收尾。
 6. 每类 Case 都完成 Execution、Processing Job、Reply Job、Delivery ledger、Zendesk comment/status/assignee 的直接 readback；不能只以 HTTP 200、ECS `RUNNING` 或 ALB healthy 作为验收。
 7. 新 release 连续观察至少两个 Outlook poll 周期，health/readiness、heartbeat provenance、CloudWatch 无持续错误，且没有无关的 Execution/Job/Delivery 增长。
 8. n8n 将新流量固定到 `/automation/production` 后，先保留 EC2 `/production` 作为 backup 和回切路径；确认观察窗口通过后再考虑停止 EC2 worker，不删除历史数据库、volume 或镜像。

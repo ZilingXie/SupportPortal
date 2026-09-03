@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-02T11:48:00Z",
-  "source_base_commit": "4e9b77d4baf7d5db7eaf2a018134e85b875c14b0",
-  "registry_digest": "587d09578012e9fb08be1598181ff708db7132b0a46d8647d9541b0aa6003c6b",
+  "generated_at": "2026-09-03T04:26:22Z",
+  "source_base_commit": "0fea0ee54080752b909126fa9b2028c3251811cf",
+  "registry_digest": "f63ccd24d692e7eda528bd98a1a4e75ec6c28d05687a56b608aca568a2c9aee9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -919,6 +919,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Focused regression for one-shot suspension + persona v22",
+          "command": ".venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_version_fence.py backend/tests/test_route_service_contract.py backend/tests/test_account_verification_automation.py backend/tests/test_account_slack_n8n.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_account_intake.py -q",
+          "details": "全绿：intake 177（新增 direct 一段式端到端含邮件先于 job 时序/邮箱 gate 四边界/邮件失败 fail-closed/no-op 跟单）、persona 61（新增自然变体通过+拒绝+补句 1 次调用 vs 否定 4 次重试拒绝）、full_reroute 15（新增 direct 分流+无邮箱 fail-closed）、reroute_dispatch 34（新增 direct rerun 恢复）、worker 120、composer/version-fence/route/verification 165、slack/scenarios/ECS 入口 49。唯一失败 test_non_ecs_worker_keeps_legacy_rag_service_executor 为 main 基线同顺序组合即复现的既有跨文件环境污染（单跑通过），非本任务引入。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1024,7 +1030,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 30,
+      "task_count": 31,
       "done_count": 16,
       "blocked_count": 0
     },
@@ -9673,6 +9679,52 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-140",
+      "title": "Suspension 一段式 direct handoff + 24h 承诺自然校验 + 问候恢复逗号",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-09-03",
+      "updated_at": "2026-09-03",
+      "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：Main /account (processing_profile=production) 新单不再问联系邮箱，intake 即发内部 handoff 邮件（联系邮箱=工单邮箱，严版 normalize_contact_email 前置 gate，缺失/非法即 suspension_missing_customer_email 掉人工）→ 邮件成功后才建唯一 closing job（intent=account_suspension_handoff_and_close，facts 用 closing_reply_facts 修掉 submission_confirmation 嵌套冲突）→ 首封公开回复'已收到+24h'→ 发布后 assign 复审人不关单，客户后续回复 no-op。workflow 持久化 intake_mode=direct_handoff + confirmed_email(=ticket_email) 驱动 rerun/reroute 分流（不再产出问邮箱回复）。配套 persona v22：suspension closing 校验放宽为回复级三要素（情态/联系/时限可跨句，is expected to/should 等自然表达一次通过）+ 负向守卫（否定/疑问承诺、肯定子句关单/重开语义仍拒）+ 确定性补句兜底（缺承诺追加标准句并记 payload persona_contract_repair；否定语义不修）+ 问候恢复逗号 Hi {name},（回退 p2-126 去逗号决定）。旧两阶段路径（staging/ECS 入口、存量 awaiting 工单、contact 合同）全部保留。",
+      "next_action": "finalize 合并后官方栈重启 + live 验证（health/build-marker），受控 suspension 新单走一段式全链；生产生效需用户部署 /production 面（本次不做 ECS 发布），复测通过后置 done。",
+      "acceptance_criteria": [
+        "production suspension 新单一封到位：邮箱 gate→内部邮件（先于 reply job）→唯一 handoff job→公开回复'已收到+24h'（Hi {name},）→assign 复审人+human_review_required+不关单。",
+        "无邮箱/邮件失败/outcome_unknown/job 创建失败均 fail-closed 掉人工（workflow+case 同步 human_review_required），无客户面输出。",
+        "自然措辞 24h 承诺变体一次校验通过；否定/疑问/缺时限/关单-重开肯定语义仍拒；缺承诺时补句修复且 payload 有 persona_contract_repair 记录，否定语义不触发补句。",
+        "direct rerun/reroute 按 intake_mode 分流不问邮箱；存量 awaiting/已确认两条旧路径测试仍绿；direct 四状态后续客户回复 no-op。",
+        "runbook/ECS status/feature_list 描述与行为一致（限定 Production 新单）；prompt_change_log v21→v22 条目在案。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Focused regression for one-shot suspension + persona v22",
+          "command": ".venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_version_fence.py backend/tests/test_route_service_contract.py backend/tests/test_account_verification_automation.py backend/tests/test_account_slack_n8n.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_account_intake.py -q",
+          "details": "全绿：intake 177（新增 direct 一段式端到端含邮件先于 job 时序/邮箱 gate 四边界/邮件失败 fail-closed/no-op 跟单）、persona 61（新增自然变体通过+拒绝+补句 1 次调用 vs 否定 4 次重试拒绝）、full_reroute 15（新增 direct 分流+无邮箱 fail-closed）、reroute_dispatch 34（新增 direct rerun 恢复）、worker 120、composer/version-fence/route/verification 165、slack/scenarios/ECS 入口 49。唯一失败 test_non_ecs_worker_keeps_legacy_rag_service_executor 为 main 基线同顺序组合即复现的既有跨文件环境污染（单跑通过），非本任务引入。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-126",
+        "p2-136",
+        "p2-138"
+      ],
+      "source_refs": [
+        "backend/main.py",
+        "backend/services/account_suspension_automation.py",
+        "backend/services/account_full_reroute.py",
+        "backend/services/automation_persona.py",
+        "backend/worker.py",
+        "backend/tests/test_account_intake.py",
+        "backend/tests/test_automation_persona.py"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -15026,7 +15078,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
         "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源）；Hermes 自报调查结论就绪后由 **automation-persona 自动组装客户回复**（engineer_investigation_reply intent：调查结论是唯一技术事实权威、单层 Hi {客户名} 问候、禁止引入结论之外的标识符），Draft 经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
-        "Production Fraud Account 和 Account Suspension 最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack。",
+        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ 首封公开回复确认收到并承诺 24 小时内相关团队联系 → 指派复审人（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
