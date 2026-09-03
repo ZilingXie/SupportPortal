@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T05:52:05Z",
-  "source_base_commit": "d53c8fb076d99ce8ad1e1198806e3bda5c2fe691",
-  "registry_digest": "ab8c13c92695f2216ff6f6d8204fbaaff4909707ba027cf6c488235810a9bc10",
+  "generated_at": "2026-09-03T06:43:53Z",
+  "source_base_commit": "3760b4487a369c49b8beff857a7439b9e64badc6",
+  "registry_digest": "1973e967034968960be813db9a5888638aa5625bbae814957824114504263fa3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -919,6 +919,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
+          "label": "Live acceptance on production ticket AC-13254 (EC2 /production, main 3760b44, 2026-09-03)",
+          "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13254",
+          "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email(xieziling97@163.com)；内部 handoff 邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
+        },
+        {
+          "type": "deployment",
           "label": "Official-stack restart and live markers on merged main (d53c8fb, after p2-141 fusion)",
           "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl -fsS http://127.0.0.1:8080/health && podman exec deployment_api_1 python -c \"\u003cpersona/suspension marker checks>\"",
           "details": "/health ok，app_build.ref=d53c8fb076d9 与当前 main 一致；容器内 marker：AUTOMATION_PERSONA_PROMPT_VERSION=automation-persona-v23（p2-141 融合后版本，p2-140 的 v22 语义被其让位演进）、direct_handoff_workflow 存在且 intake_mode=direct_handoff/confirmed_email_source=ticket_email、问候逗号 greeting f-string 含逗号、deterministic 补句机制存活。融合后 main 复跑核心集 410 passed（deselect 既有基线顺序污染用例）。"
@@ -1043,7 +1049,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 32,
-      "done_count": 16,
+      "done_count": 17,
       "blocked_count": 0
     },
     {
@@ -9701,15 +9707,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-140",
       "title": "Suspension 一段式 direct handoff + 24h 承诺自然校验 + 问候恢复逗号",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
-      "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：Main /account (processing_profile=production) 新单不再问联系邮箱，intake 即发内部 handoff 邮件（联系邮箱=工单邮箱，严版 normalize_contact_email 前置 gate，缺失/非法即 suspension_missing_customer_email 掉人工）→ 邮件成功后才建唯一 closing job（intent=account_suspension_handoff_and_close，facts 用 closing_reply_facts 修掉 submission_confirmation 嵌套冲突）→ 首封公开回复'已收到+24h'→ 发布后 assign 复审人不关单，客户后续回复 no-op。workflow 持久化 intake_mode=direct_handoff + confirmed_email(=ticket_email) 驱动 rerun/reroute 分流（不再产出问邮箱回复）。配套 persona v22：suspension closing 校验放宽为回复级三要素（情态/联系/时限可跨句，is expected to/should 等自然表达一次通过）+ 负向守卫（否定/疑问承诺、肯定子句关单/重开语义仍拒）+ 确定性补句兜底（缺承诺追加标准句并记 payload persona_contract_repair；否定语义不修）+ 问候恢复逗号 Hi {name},（回退 p2-126 去逗号决定）。旧两阶段路径（staging/ECS 入口、存量 awaiting 工单、contact 合同）全部保留。",
-      "next_action": "用户部署 /production 面（api/route/worker，本次不做 ECS 发布）后用全新 suspension 工单复测一段式全链（不问邮箱/Hi X,/已收到+24h/assign suhrid 不关单），通过后置 done。",
+      "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：Main /account (processing_profile=production) 新单不再问联系邮箱，intake 即发内部 handoff 邮件（联系邮箱=工单邮箱，严版 normalize_contact_email 前置 gate，缺失/非法即 suspension_missing_customer_email 掉人工）→ 邮件成功后才建唯一 closing job（intent=account_suspension_handoff_and_close，facts 用 closing_reply_facts 修掉 submission_confirmation 嵌套冲突）→ 首封公开回复'已收到+24h'→ 发布后 assign 复审人不关单，客户后续回复 no-op。workflow 持久化 intake_mode=direct_handoff + confirmed_email(=ticket_email) 驱动 rerun/reroute 分流（不再产出问邮箱回复）。配套 persona v22：suspension closing 校验放宽为回复级三要素（情态/联系/时限可跨句，is expected to/should 等自然表达一次通过）+ 负向守卫（否定/疑问承诺、肯定子句关单/重开语义仍拒）+ 确定性补句兜底（缺承诺追加标准句并记 payload persona_contract_repair；否定语义不修）+ 问候恢复逗号 Hi {name},（回退 p2-126 去逗号决定）。旧两阶段路径（staging/ECS 入口、存量 awaiting 工单、contact 合同）全部保留。v22 校验语义后被 p2-141（PR#1040）的 v23 安全地板融合演进。",
+      "next_action": "",
       "acceptance_criteria": [
         "production suspension 新单一封到位：邮箱 gate→内部邮件（先于 reply job）→唯一 handoff job→公开回复'已收到+24h'（Hi {name},）→assign 复审人+human_review_required+不关单。",
         "无邮箱/邮件失败/outcome_unknown/job 创建失败均 fail-closed 掉人工（workflow+case 同步 human_review_required），无客户面输出。",
@@ -9719,6 +9725,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Live acceptance on production ticket AC-13254 (EC2 /production, main 3760b44, 2026-09-03)",
+          "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13254",
+          "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email(xieziling97@163.com)；内部 handoff 邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
+        },
         {
           "type": "deployment",
           "label": "Official-stack restart and live markers on merged main (d53c8fb, after p2-141 fusion)",
