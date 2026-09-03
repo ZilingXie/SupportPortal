@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task_id": "p2-142",
   "title": "Suspension 首封回复简化为三要素短文案（v24）",
-  "status": "active",
+  "status": "done",
   "owner": "zac",
   "phase_id": "phase-1",
   "module_id": "account-automation",
@@ -10,8 +10,7 @@
   "created_at": "2026-09-03",
   "updated_at": "2026-09-03",
   "summary": "按用户 2026-09-03 决策把 p2-140 一段式 suspension 首封回复的 Persona 合同从'received + handed to relevant team + someone will contact'三件套长句改为三要素短文案：感谢提交（thank the customer for submitting the request）→ 内部审核中（being reviewed internally）→ we 24h 回复承诺（we will get back to them within 24 hours），并加'keep the reply brief - two or three short natural sentences'指引与短范例。同步：closing_reply_facts 措辞改 we 视角（performed_actions='Submitted the suspension request for internal review.'、next_step='We will get back to the customer within 24 hours.'）、确定性补句标准句改'We will get back to you within 24 hours.'、prompt v23→v24。**运行时门禁零改动**（v23 安全地板已验证放行目标文案：无 close claim、无 internal 禁令、三要素齐全不触发补句），同时消除了旧 relevant-team 表述与第一人称 ownership 规则的张力。",
-  "next_action": "用户部署 EC2 /production 后受控 suspension 单复测首封短文案（三要素/简短/无 relevant-team/close），通过后置 done。",
-  "next_action": "用户部署 EC2 /production 后受控 suspension 单复测首封短文案（三要素/简短/无 relevant-team/close），通过后置 done。",
+  "next_action": "",
   "acceptance_criteria": [
     "新 suspension 首封回复为简短三要素文案（感谢提交/内部审核/we 24h 回复），无 relevant-team 必需表述、无 close/reopen。",
     "v24 生效；目标文案一次校验通过且不触发补句（deterministic_contract_appended=False）；缺 24h 时补句兜底仍工作（新标准句）。",
@@ -20,6 +19,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "deployment",
+      "label": "Live acceptance on production ticket AC-13258 (EC2 /production, main 29dd57d, 2026-09-03)",
+      "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13258",
+      "details": "受控工单 AC-13258 全链通过：intake 08:25:59 判 route=account_suspension、direct workflow（intake_mode=direct_handoff）；内部邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13258:v1）先于唯一 job（intent=account_suspension_handoff_and_close）；渲染 automation-persona-v24 一次通过（repair=None）；08:36:54 公开回复 'Hi Ziling, Thank you for submitting this account suspension request. I've sent it for internal review, and we will get back to you within 24 hours.'（三要素齐/两短句/无 relevant-team/无 close-reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case human_review_required、workflow=closed、reviewer_notify_email=sent。另：AC-13257 未被 n8n 转发（无 case，可忽略）。"
+    },
     {
       "type": "deployment",
       "label": "Official-stack restart and v24 live markers on merged main (ca33fe2)",
