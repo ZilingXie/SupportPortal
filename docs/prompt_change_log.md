@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-03 - Suspension first reply simplified to brief three-point wording (p2-142)
+
+- Area or subsystem: Suspension handoff Persona contract (first customer reply of the p2-140 one-shot flow), closing reply facts, deterministic repair sentence.
+- Prompt or model version: `automation-persona-v23` → `automation-persona-v24`.
+- Summary: the suspension handoff contract now asks for three brief points in the customer's own words — thank the customer for submitting the request, state that it is being reviewed internally, and commit that we will get back to them within 24 hours — with an explicit "keep the reply brief (two or three short natural sentences)" instruction and a short style reference. The "handed to the relevant team / someone from that team will contact you" requirement and its long style example are gone; the reviewer handoff still happens operationally. `closing_reply_facts` wording moved to the same we-perspective ("Submitted the suspension request for internal review." / "We will get back to the customer within 24 hours."), and the deterministic repair sentence became "We will get back to you within 24 hours." The runtime safety floor is unchanged (no gate was added or tightened): the brief reply passes as-is, the closure-claim ban, forbidden values, signature checks, and the repair mechanism all behave exactly as in v23. This also removes the old tension between the relevant-team phrasing and the first-person ownership rule.
+- Reason: user decision 2026-09-03 — the expected first reply is "Thank you for submitting this request. We are reviewing it internally and will get back to you within 24 hours."; gates must stay loose, the key points just need to be expressed.
+- Affected files or config: `backend/services/automation_persona.py` (contract text, `_SUSPENSION_HANDOFF_CONTRACT_SENTENCE`, version), `backend/services/account_suspension_automation.py` (`closing_reply_facts` wording), tests (`test_automation_persona.py`, `test_worker.py`, `test_account_intake.py` fake render).
+- Expected behavior change: new production suspension tickets receive a brief three-point first reply (thanks / internal review / we-24h) instead of the longer received-and-handed-over wording; natural variants still pass on the first attempt; missing 24-hour wording is still repaired deterministically; the rest of the one-shot chain (email → job → assign reviewer → pending, no close) is untouched.
+- Verification: persona/worker suites 185 passed + 74 subtests (new case asserts the brief reply passes without repair and the new contract points are in the system prompt); intake/full_reroute/reroute_dispatch 226 passed + 15 subtests; official-stack restart and v24 marker check to follow merge.
+
 ## 2026-09-03 - Suspension one-shot direct handoff, natural commitment validator, greeting comma (p2-140)
 
 - Area or subsystem: Account suspension production intake (Main `/account`, `processing_profile=production`), suspension closing Persona contract, greeting rendering.
