@@ -247,6 +247,7 @@ from backend.services.automation_persona import (
     build_automation_reply_facts,
     extract_automation_resolution_facts,
     render_automation_reply,
+    resolve_customer_greeting_name,
 )
 from backend.services.account_route_pipeline import (
     account_route_metadata,
@@ -6905,6 +6906,8 @@ async def _process_zendesk_comment_trigger(
                 "source": "zendesk_comment",
                 "zendesk_comment_id": trigger_comment_id,
                 "occurred_at": str(trigger_comment.created_at or ""),
+                "author_name": str(getattr(trigger_comment, "author_name", None) or ""),
+                "author_kind": str(getattr(trigger_comment, "author_kind", None) or ""),
             },
         )
         customer_event = build_engineer_case_thread_event(
@@ -10151,6 +10154,15 @@ async def _process_account_customer_reply_impl(
     if canonical_ticket is None:
         raise HTTPException(status_code=404, detail="linked support ticket not found")
 
+    # Legacy direct entry has no routed processing payload, so resolve the
+    # pinned persona once up front and reuse it for every reply-job exit. A
+    # failed resolve keeps the job persona-less so the reply worker's
+    # human-review fallback still applies.
+    try:
+        persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, client_ticket_id)
+    except Exception:
+        persona_assignment = None
+
     customer_message = str(message or "").strip()
     if not customer_message:
         raise HTTPException(status_code=400, detail="message is required")
@@ -10165,6 +10177,10 @@ async def _process_account_customer_reply_impl(
         "created_at": timestamp,
         "content_format": "plaintext",
         "source": str(source or "account-ui").strip() or "account-ui",
+        "meta": {
+            "author_name": str(customer_name_hint or ""),
+            "author_kind": "customer" if str(customer_name_hint or "").strip() else "",
+        },
     }
     normalized_source_id = str(message_source_id or "").strip()
     if normalized_source_id:
@@ -10185,7 +10201,6 @@ async def _process_account_customer_reply_impl(
     reply_ready = False
     assistant_reply_facts: dict[str, Any] | None = None
     requested_field_keys: list[str] = []
-    persona_assignment: dict[str, Any] | None = None
     already_requested_fields = _account_asked_field_keys(canonical_ticket)
     all_customer_contents = [
         str(msg.get("content") or "")
@@ -10313,14 +10328,16 @@ async def _process_account_customer_reply_impl(
         billing_ticket["automation_status"] = "automation"
         await async_to_thread(ticket_repository.save_account_case, billing_ticket)
         try:
-            persona_assignment = await async_to_thread(ticket_repository.resolve_account_persona, client_ticket_id)
             closing_job = await async_to_thread(
                 _create_account_reply_job,
                 ticket_id=client_ticket_id,
                 trigger_message_created_at=timestamp,
                 reply_facts=closing_reply_facts(
                     confirmed_email=confirmed_email,
-                    customer_name=billing_ticket.get("customer_name"),
+                    customer_name=resolve_customer_greeting_name(
+                        latest_customer_author_name=customer_name_hint,
+                        case_customer_name=billing_ticket.get("customer_name"),
+                    ),
                 ),
                 asked_field_keys=[],
                 persona_assignment=persona_assignment,
@@ -10735,7 +10752,10 @@ async def _process_account_customer_reply_impl(
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             submitted=bool(automation_attempt.get("internal_email_to_send")),
-            customer_name=str(billing_ticket.get("customer_name") or ""),
+            customer_name=resolve_customer_greeting_name(
+                latest_customer_author_name=customer_name_hint,
+                case_customer_name=billing_ticket.get("customer_name"),
+            ),
             account_scope=True,
         )
         current_classification = (
@@ -10806,7 +10826,10 @@ async def _process_account_customer_reply_impl(
                 missing_fields=[],
                 collected_fields=collected_fields,
                 submitted=True,
-                customer_name=str(billing_ticket.get("customer_name") or ""),
+                customer_name=resolve_customer_greeting_name(
+                    latest_customer_author_name=customer_name_hint,
+                    case_customer_name=billing_ticket.get("customer_name"),
+                ),
                 account_scope=True,
             )
             reply_ready = True
@@ -10889,18 +10912,18 @@ async def _process_account_customer_reply_impl(
                         "reply_intent": ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
                         "provided_answer": fallback.answer,
                         "references": list(fallback.references),
-                        # Greeting name lookup: the account case carries the
-                        # intake name, the Zendesk comment author name covers
-                        # cases whose intake form omitted it, and the ticket
-                        # requester (an email) is rejected downstream so the
-                        # persona falls back to "Customer".
-                        "customer_first_name": str(
-                            billing_ticket.get("customer_name")
-                            or customer_name_hint
-                            or canonical_ticket.get("requester")
-                            or ""
-                        ).strip(),
+                        # Greeting name lookup: the author of the latest
+                        # customer comment comes first (the reply addresses
+                        # whoever just wrote in), then the case-level intake
+                        # name; an invalid value lets the persona fall back
+                        # to "Customer".
+                        "customer_first_name": resolve_customer_greeting_name(
+                            latest_customer_author_name=customer_name_hint,
+                            case_customer_name=billing_ticket.get("customer_name"),
+                            requester_name=canonical_ticket.get("requester"),
+                        ),
                     },
+                    persona_assignment=persona_assignment,
                 )
             except Exception as exc:
                 billing_ticket = await _record_account_reply_job_failure(
@@ -13995,9 +14018,23 @@ async def _process_slack_engineer_guided_reply(
         "recent_public_conversation": public_context,
         "subject": str(account_case.get("title") or ticket.get("subject") or "").strip(),
         "customer_language": detect_customer_reply_language(latest_customer_text, message),
-        "customer_first_name": str(
-            account_case.get("customer_name") or ticket.get("requester") or ""
-        ).strip(),
+        "customer_first_name": resolve_customer_greeting_name(
+            latest_customer_author_name=next(
+                (
+                    str(
+                        (item.get("meta") or {}).get("author_name")
+                        if isinstance(item.get("meta"), dict)
+                        else item.get("author_name")
+                        or ""
+                    ).strip()
+                    for item in reversed(public_context)
+                    if item.get("role") == "customer"
+                ),
+                "",
+            ),
+            case_customer_name=account_case.get("customer_name"),
+            requester_name=ticket.get("requester"),
+        ),
     }
     rendered = render_automation_reply(
         reply_facts=facts,

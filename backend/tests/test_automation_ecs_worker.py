@@ -7,6 +7,7 @@ import pytest
 
 from backend.automation_ecs_worker import (
     AccountBackgroundCycle,
+    AccountBusinessProcessor,
     AutomationWorker,
     _execution_status,
     run_automation_worker,
@@ -14,6 +15,11 @@ from backend.automation_ecs_worker import (
 from backend.services.account_internal_email_recipients import AccountInternalEmailRecipientError
 from backend.services.automation_ecs_contracts import JobKind
 from backend.services.automation_ecs_contracts import ExecutionStatus
+from backend.services.automation_ecs_contracts import (
+    AutomationIntakeEvent,
+    INTAKE_CONTRACT_VERSION,
+    ProcessingJobPayload,
+)
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
 
@@ -33,6 +39,84 @@ def _processing_store():
         provenance=_settings("route").provenance(),
     )
     return settings, store, receipt
+
+
+def _comment_event() -> AutomationIntakeEvent:
+    return AutomationIntakeEvent.model_validate(
+        {
+            "schema_version": INTAKE_CONTRACT_VERSION,
+            "event_id": "zendesk:ticket:123:comment:456",
+            "event_type": "comment.created",
+            "occurred_at": "2026-08-27T10:05:00Z",
+            "ticket": {
+                "id": "123",
+                "status": "open",
+                "subject": "Enable Media Relay",
+                "description": "Please enable Media Relay.",
+                "requester": {"email": "cx@example.com", "name": "Customer"},
+            },
+            "comment_snapshot": {
+                "source_updated_at": "2026-08-27T10:05:00Z",
+                "snapshot_complete": True,
+                "trigger_comment_id": "456",
+                "comments": [
+                    {
+                        "id": "456",
+                        "public": True,
+                        "author": {
+                            "id": "9",
+                            "name": "Ada Customer",
+                            "email": "cx@example.com",
+                            "role": "end-user",
+                        },
+                        "body": "Here is my App ID.",
+                        "via_channel": "web",
+                        "created_at": "2026-08-27T10:05:00Z",
+                    }
+                ],
+            },
+        }
+    )
+
+
+def test_comment_processing_passes_route_pinned_persona_verbatim() -> None:
+    import asyncio
+
+    repository = Mock()
+    repository.get_account_case_by_ticket_id.return_value = {
+        "account_case_id": "AC-1",
+        "client_ticket_id": "TK-1",
+        "processing_profile": "production",
+        "automation_status": "automation",
+    }
+    repository.sync_account_case_comments.return_value = {"status": "synced"}
+    processor = AccountBusinessProcessor(repository, environment="production")
+    route_persona = {
+        "ticket_id": "TK-1",
+        "persona_key": "default-support",
+        "version": 2,
+        "content": {"instruction": "Warm"},
+        "assigned_at": "2026-08-27T10:00:00Z",
+    }
+    payload = ProcessingJobPayload(
+        execution_id="exec-comment-1",
+        event=_comment_event(),
+        route={"route_family": "automated", "execution_action": "enablement"},
+        persona=route_persona,
+        prompt_snapshots={},
+    )
+
+    with patch(
+        "backend.automation_ecs_worker.process_zendesk_comment_trigger",
+        new_callable=AsyncMock,
+    ) as trigger:
+        asyncio.run(processor.process(payload, before_external=lambda: None))
+
+    trigger.assert_awaited_once()
+    # The route worker pinned this persona on the execution; the processing
+    # worker must pass it through verbatim and never re-resolve it.
+    assert trigger.call_args.kwargs["persona_assignment"] == route_persona
+    repository.resolve_account_persona.assert_not_called()
 
 
 def test_worker_completes_and_records_external_boundary() -> None:

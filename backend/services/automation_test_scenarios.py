@@ -25,6 +25,7 @@ import email.policy
 import imaplib
 import json
 import os
+import re
 import smtplib
 import ssl
 import time
@@ -34,11 +35,6 @@ from email.message import EmailMessage
 from typing import Any, Callable
 
 import psycopg
-
-from backend.services.automation_persona import (
-    AutomationPersonaError,
-    validate_account_reply_contract,
-)
 
 # imaplib does not know the non-standard RFC2971 ID command; 163 Coremail
 # refuses SELECT/SEARCH (NO) unless it is sent before login.
@@ -68,6 +64,60 @@ DETAILED_INVOICE_BODY = (
     "Amount: USD 705.97\n\n"
     "Thank you."
 )
+
+_TWENTY_FOUR_HOURS_RE = re.compile(r"(?i)\b24\s*[- ]?\s*hours?\b|\b24h\b")
+_CLOSE_CLAIM_WORD_RE = re.compile(r"(?i)\b(?:clos\w*|archiv\w*|reop\w*)\b")
+_NEGATED_CLAUSE_RE = re.compile(r"(?i)\b(?:not|never|won't|don't|cannot|can't)\b")
+
+
+def _no_affirmative_close_claim(content: str) -> str | None:
+    """Acceptance check: no affirmative close/archive/reopen claim (negations pass)."""
+    for clause in re.split(r"(?<=[.!?])\s+|[;\n]+", str(content or "").casefold()):
+        clause = clause.strip()
+        if not clause or "?" in clause:
+            continue
+        if _NEGATED_CLAUSE_RE.search(clause):
+            continue
+        if _CLOSE_CLAIM_WORD_RE.search(clause):
+            return f"affirmative close claim: {clause[:80]}"
+    return None
+
+
+def _fraud_handoff_content_check(content: str) -> str | None:
+    if not _TWENTY_FOUR_HOURS_RE.search(content):
+        return "24-hour contact promise not stated"
+    return None
+
+
+def _suspension_first_reply_content_check(content: str) -> str | None:
+    lowered = str(content or "").casefold()
+    if "email" not in lowered:
+        return "contact email question not stated"
+    if not _TWENTY_FOUR_HOURS_RE.search(content):
+        return "24-hour contact promise not stated"
+    return _no_affirmative_close_claim(content)
+
+
+def _suspension_closing_content_check(content: str) -> str | None:
+    lowered = str(content or "").casefold()
+    if not re.search(r"\b(?:handed|passed|escalated|forwarded|relevant team)\b", lowered):
+        return "handoff confirmation not stated"
+    if not _TWENTY_FOUR_HOURS_RE.search(content):
+        return "24-hour contact promise not stated"
+    return _no_affirmative_close_claim(content)
+
+
+def _enablement_completion_content_check(content: str) -> str | None:
+    lowered = str(content or "").casefold()
+    if "media relay" not in lowered:
+        return "media relay not mentioned"
+    if not re.search(r"\b(?:enabled|activated|provisioned)\b|turned\s+on", lowered):
+        return "enabled state not stated"
+    if not re.search(r"\b(?:clos\w+|archiv\w+)\b", lowered):
+        return "case closing not stated"
+    if "new ticket" not in lowered:
+        return "new-ticket invitation not stated"
+    return None
 
 
 class AutomationTestScenarioError(RuntimeError):
@@ -431,62 +481,53 @@ class ScenarioEngine:
         if not ok:
             raise AssertionError(f"unexpected reply job: intent={intent} status={job['status']}")
 
-    def wait_completion_reply_contract(
+    def wait_published_reply_content(
         self,
         ctx: ScenarioContext,
         *,
-        acknowledgement: str,
+        expected_intent: str,
+        check: Callable[[str], str | None],
         step: str,
-    ) -> None:
+    ) -> str:
+        """Wait for the latest published reply of an intent and run a
+        scenario-side acceptance check on its content.
+
+        These checks are acceptance-only: they validate live behaviour for the
+        scenario run and are never wired back into the production publish
+        gate.
+        """
         since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
 
         def probe():
             rows = self.db_query(
-                "SELECT jobs.status, jobs.payload->>'reply_intent' AS reply_intent, "
-                "(jobs.payload->>'close_after_publish') AS close_after_publish, messages.content "
+                "SELECT jobs.status, messages.content "
                 "FROM support_account_reply_jobs jobs "
                 "JOIN support_ticket_messages messages ON messages.ticket_id = jobs.ticket_id "
                 "AND messages.meta->>'account_reply_job_id' = jobs.job_id "
                 "WHERE jobs.ticket_id = %s AND jobs.created_at >= %s "
+                "AND jobs.payload->>'reply_intent' = %s "
                 "ORDER BY jobs.created_at DESC, messages.created_at DESC, messages.id DESC LIMIT 1",
-                (ctx.client_ticket_id, since),
+                (ctx.client_ticket_id, since, expected_intent),
             )
             if not rows:
                 return None
             job = rows[0]
-            if job["status"] in {"published", "failed", "manual_attention", "cancelled"}:
+            if job["status"] == "published":
                 return job
             return None
 
         job = self.wait_for(
-            "published enablement completion reply",
+            f"published {expected_intent} reply content",
             probe,
             self.turn_timeout_min * 60,
         )
-        intent = str(job.get("reply_intent") or "")
-        try:
-            if intent != "enablement_completed_and_close" or job["status"] != "published":
-                raise AssertionError(
-                    f"unexpected reply job: intent={intent} status={job['status']}"
-                )
-            validate_account_reply_contract(
-                str(job.get("content") or ""),
-                {
-                    "behavior": "enablement",
-                    "reply_intent": "enablement_completed_and_close",
-                    "completion_acknowledgement": acknowledgement,
-                },
-                close_after_publish=True,
-            )
-        except (AssertionError, AutomationPersonaError) as exc:
-            self.record(ctx, step, False, str(exc))
-            raise AssertionError(f"invalid completion reply: {exc}") from exc
-        self.record(
-            ctx,
-            step,
-            True,
-            f"intent={intent} status={job['status']} acknowledgement={acknowledgement}",
-        )
+        content = str(job.get("content") or "")
+        problem = check(content)
+        if problem:
+            self.record(ctx, step, False, problem)
+            raise AssertionError(f"invalid {expected_intent} reply content: {problem}")
+        self.record(ctx, step, True, f"intent={expected_intent} content check passed")
+        return content
 
     def reply_intent_count(self, ctx: ScenarioContext, reply_intent: str) -> int:
         rows = self.db_query(
@@ -517,17 +558,35 @@ class ScenarioEngine:
             self.record(ctx, step, False, str(exc))
             raise
 
-    def wait_event(self, ctx: ScenarioContext, event_type: str, step: str, timeout_min: int | None = None) -> None:
+    def wait_event(
+        self,
+        ctx: ScenarioContext,
+        event_type: str,
+        step: str,
+        timeout_min: int | None = None,
+        expected_states: set[str] | None = None,
+    ) -> None:
         since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
         timeout = (timeout_min or self.turn_timeout_min) * 60
 
         def probe():
             rows = self.db_query(
-                "SELECT id FROM support_ticket_events "
+                "SELECT id, payload FROM support_ticket_events "
                 "WHERE ticket_id = %s AND event_type = %s AND created_at >= %s LIMIT 1",
                 (ctx.client_ticket_id, event_type, since),
             )
-            return rows[0] if rows else None
+            if not rows:
+                return None
+            if expected_states is None:
+                return rows[0]
+            payload = rows[0].get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            state = str((payload or {}).get("state") or "")
+            return rows[0] if state in expected_states else None
 
         try:
             self.wait_for(f"event {event_type}", probe, timeout)
@@ -655,10 +714,11 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
         self.wait_manual_approval(ctx, "Media Relay")
-        self.wait_completion_reply_contract(
+        self.wait_published_reply_content(
             ctx,
-            acknowledgement="patience",
-            step="completion reply contract published",
+            expected_intent="enablement_completed_and_close",
+            check=_enablement_completion_content_check,
+            step="completion reply content published",
         )
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
@@ -679,10 +739,11 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
         self.wait_manual_approval(ctx, "Media Relay")
-        self.wait_completion_reply_contract(
+        self.wait_published_reply_content(
             ctx,
-            acknowledgement="additional_information",
-            step="completion reply contract published",
+            expected_intent="enablement_completed_and_close",
+            check=_enablement_completion_content_check,
+            step="completion reply content published",
         )
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
@@ -706,7 +767,18 @@ class ScenarioEngine:
         self.next_customer_turn(ctx, FRAUD_PARTIAL_INFO_BODY)
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(ctx, {"fraud_handoff_confirmation"}, "24h handoff reply published")
-        self.wait_event(ctx, "zendesk_fraud_review_handoff", "assigned to fraud reviewer")
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="fraud_handoff_confirmation",
+            check=_fraud_handoff_content_check,
+            step="fraud handoff reply states the 24-hour promise",
+        )
+        self.wait_event(
+            ctx,
+            "zendesk_fraud_review_handoff",
+            "assigned to fraud reviewer",
+            expected_states={"assigned", "already_assigned"},
+        )
         row = self.case_row(ctx)
         self.record(
             ctx, "ticket NOT auto-solved",
@@ -748,12 +820,41 @@ class ScenarioEngine:
         self.wait_reply_intent(
             ctx, {"account_suspension_contact_confirmation_request"}, "contact confirmation reply"
         )
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="account_suspension_contact_confirmation_request",
+            check=_suspension_first_reply_content_check,
+            step="first suspension reply asks email + 24h, no close claim",
+        )
         self.next_customer_turn(ctx, "Yes, please use xieziling97@163.com for the relevant team.")
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(
-            ctx, {"account_suspension_handoff_and_close"}, "closing reply with 24h commitment"
+            ctx, {"account_suspension_handoff_and_close"}, "closing reply published"
         )
-        self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="account_suspension_handoff_and_close",
+            check=_suspension_closing_content_check,
+            step="closing reply confirms handoff + 24h, no close claim",
+        )
+        self.wait_event(
+            ctx,
+            "zendesk_fraud_review_handoff",
+            "assigned to suspension reviewer",
+            expected_states={"assigned", "already_assigned"},
+        )
+        self.wait_event(
+            ctx,
+            "zendesk_reviewer_notify_email",
+            "reviewer notify email sent",
+            expected_states={"sent"},
+        )
+        row = self.case_row(ctx)
+        self.record(
+            ctx, "ticket NOT auto-solved",
+            str(row.get("zendesk_ticket_status") or "") not in {"solved", "closed"},
+            f"zendesk_ticket_status={row.get('zendesk_ticket_status')!r}",
+        )
         self.wait_suspension_state(ctx, "closed", "suspension workflow closed")
 
     def run_d1(self) -> None:
@@ -797,7 +898,7 @@ class ScenarioEngine:
         },
         "S1": {
             "label": "Account suspension",
-            "description": "ask contact email → confirm → handoff + closing reply + solved",
+            "description": "ask contact email → confirm → closing reply + assign reviewer + notify email, NOT solved",
             "run": run_s1,
         },
         "D1": {

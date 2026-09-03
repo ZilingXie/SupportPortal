@@ -55,6 +55,7 @@ from backend.services.automation_account_intake import (
     _run_enablement_archer_workflow,
     _run_internal_email_delivery,
 )
+from backend.services.automation_persona import resolve_customer_greeting_name
 from backend.services.automation_routing import is_registered_automation
 from backend.services.billing_automation import (
     build_billing_internal_email_payload,
@@ -165,6 +166,7 @@ async def process_zendesk_comment_trigger(
     precomputed_route: dict[str, Any] | None = None,
     route_prompt_snapshots: dict[str, Any] | None = None,
     processing_profile: str = "production",
+    persona_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     import asyncio
 
@@ -261,6 +263,8 @@ async def process_zendesk_comment_trigger(
                 "source": "zendesk_comment",
                 "zendesk_comment_id": trigger_comment_id,
                 "occurred_at": str(trigger_comment.created_at or ""),
+                "author_name": str(getattr(trigger_comment, "author_name", None) or ""),
+                "author_kind": str(getattr(trigger_comment, "author_kind", None) or ""),
             },
         )
         customer_event = build_engineer_case_thread_event(
@@ -310,6 +314,7 @@ async def process_zendesk_comment_trigger(
             precomputed_route=precomputed_route,
             route_prompt_snapshots=route_prompt_snapshots,
             processing_profile=expected_profile,
+            persona_assignment=persona_assignment,
             customer_name_hint=str(getattr(trigger_comment, "author_name", None) or "").strip() or None,
         )
     except ReplySyncError as exc:
@@ -352,6 +357,7 @@ async def process_account_customer_reply(
     route_prompt_snapshots: dict[str, Any] | None = None,
     processing_profile: str = "production",
     customer_name_hint: str | None = None,
+    persona_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from backend.services.llm_usage_capture import (
         begin_case_usage_capture,
@@ -372,6 +378,7 @@ async def process_account_customer_reply(
             route_prompt_snapshots=route_prompt_snapshots,
             processing_profile=processing_profile,
             customer_name_hint=customer_name_hint,
+            persona_assignment=persona_assignment,
         )
     finally:
         end_case_usage_capture(usage_token)
@@ -395,6 +402,7 @@ async def _process_account_customer_reply_impl(
     route_prompt_snapshots: dict[str, Any] | None = None,
     processing_profile: str = "production",
     customer_name_hint: str | None = None,
+    persona_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     import asyncio
 
@@ -414,6 +422,17 @@ async def _process_account_customer_reply_impl(
     if canonical_ticket is None:
         raise ReplySyncError(404, "linked support ticket not found")
 
+    # The route worker already pinned the persona and carries it in the
+    # processing payload; only callers without a routed payload (tests, the
+    # legacy direct entry) resolve here. A failed resolve keeps the job
+    # persona-less so the reply worker's human-review fallback still applies.
+    persona_assignment = persona_assignment if isinstance(persona_assignment, dict) and persona_assignment else None
+    if persona_assignment is None:
+        try:
+            persona_assignment = await _sync(repository.resolve_account_persona, client_ticket_id)
+        except Exception:
+            persona_assignment = None
+
     customer_message = str(message or "").strip()
     if not customer_message:
         raise ReplySyncError(400, "message is required")
@@ -426,6 +445,10 @@ async def _process_account_customer_reply_impl(
         "created_at": timestamp,
         "content_format": "plaintext",
         "source": str(source or "account-ui").strip() or "account-ui",
+        "meta": {
+            "author_name": str(customer_name_hint or ""),
+            "author_kind": "customer" if str(customer_name_hint or "").strip() else "",
+        },
     }
     normalized_source_id = str(message_source_id or "").strip()
     if normalized_source_id:
@@ -447,7 +470,6 @@ async def _process_account_customer_reply_impl(
     reply_ready = False
     assistant_reply_facts: dict[str, Any] | None = None
     requested_field_keys: list[str] = []
-    persona_assignment: dict[str, Any] | None = None
     already_requested_fields = _asked_field_keys(canonical_ticket)
     all_customer_contents = [
         str(msg.get("content") or "")
@@ -594,7 +616,10 @@ async def _process_account_customer_reply_impl(
                 trigger_message_created_at=timestamp,
                 reply_facts=closing_reply_facts(
                     confirmed_email=confirmed_email,
-                    customer_name=billing_ticket.get("customer_name"),
+                    customer_name=resolve_customer_greeting_name(
+                        latest_customer_author_name=customer_name_hint,
+                        case_customer_name=billing_ticket.get("customer_name"),
+                    ),
                 ),
                 asked_field_keys=[],
                 persona_assignment=persona_assignment,
@@ -900,7 +925,10 @@ async def _process_account_customer_reply_impl(
             missing_fields=missing_fields,
             collected_fields=collected_fields,
             submitted=bool(automation_attempt.get("internal_email_to_send")),
-            customer_name=str(billing_ticket.get("customer_name") or ""),
+            customer_name=resolve_customer_greeting_name(
+                latest_customer_author_name=customer_name_hint,
+                case_customer_name=billing_ticket.get("customer_name"),
+            ),
         )
         current_classification = (
             dict(billing_ticket.get("route_classification"))
@@ -1011,7 +1039,10 @@ async def _process_account_customer_reply_impl(
                 missing_fields=[],
                 collected_fields=collected_fields,
                 submitted=True,
-                customer_name=str(billing_ticket.get("customer_name") or ""),
+                customer_name=resolve_customer_greeting_name(
+                    latest_customer_author_name=customer_name_hint,
+                    case_customer_name=billing_ticket.get("customer_name"),
+                ),
             )
             reply_ready = True
         billing_ticket["updated_at"] = _now_iso()
@@ -1081,16 +1112,17 @@ async def _process_account_customer_reply_impl(
                         "reply_intent": ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
                         "provided_answer": fallback.answer,
                         "references": list(fallback.references),
-                        # Greeting name lookup: the account case carries the
-                        # intake name, the Zendesk comment author name covers
-                        # cases whose intake form omitted it, and an empty
-                        # value lets the persona fall back to "Customer".
-                        "customer_first_name": str(
-                            billing_ticket.get("customer_name")
-                            or customer_name_hint
-                            or ""
-                        ).strip(),
+                        # Greeting name lookup: the author of the latest
+                        # customer comment comes first (the reply addresses
+                        # whoever just wrote in), then the case-level intake
+                        # name; an invalid value lets the persona fall back
+                        # to "Customer".
+                        "customer_first_name": resolve_customer_greeting_name(
+                            latest_customer_author_name=customer_name_hint,
+                            case_customer_name=billing_ticket.get("customer_name"),
+                        ),
                     },
+                    persona_assignment=persona_assignment,
                     reply_intent=ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
                     processing_profile=processing_profile,
                 )

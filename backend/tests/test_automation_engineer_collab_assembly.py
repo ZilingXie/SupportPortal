@@ -176,7 +176,7 @@ def test_awaiting_investigation_assembles_persona_draft() -> None:
     assert len(rendered_calls) == 1
     facts = rendered_calls[0]["facts"]
     assert facts["reply_intent"] == "engineer_investigation_reply"
-    assert facts["customer_first_name"] == "Ziling Xie"
+    assert facts["customer_first_name"] == "Ziling"
     assert "APK is missing the Agora arm64-v8a native libraries." in facts["provided_answer"]
     assert facts["provided_answer"].index("Conclusion:") < facts["provided_answer"].index("Suggested resolution:")
     assert rendered_calls[0]["account_scope"] is False

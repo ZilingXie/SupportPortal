@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "以生产 Case 13200 确认的目标风格为准,将 Automation Persona 的渲染 prompt 从要点清单式改为第一人称范例式,并定向放宽校验:删除感谢句模式与新工单指引大正则,handoff 24h 承诺句由逐字校验放宽为正则族,enabled/archive 将来时禁令收窄为误导性将来搭配。安全底线(forbidden values、overclaim)、missing-information 格式合同与 ownership 合同保留且 prompt 强化第一人称 ownership。prompt version automation-persona-v19 -> v20。",
-  "next_action": "代码、测试、记录与本地官方栈验证均已完成；仅剩用户侧:重建三角色 ECS release 并 rollout Worker（可与 p2-134 直连方案同车部署），用受控新工单观察回复风格与残留校验的 human-review 频率，通过后将本任务置 done。",
+  "next_action": "代码、测试、记录与本地官方栈验证均已完成；校验边界已被 p2-140 的安全地板方案取代（v22），与 p2-140 一并在 fresh live acceptance 通过后置 done。",
   "acceptance_criteria": [
     "render_automation_reply 的 system prompt 增加第一人称 ownership 与句式自然性指令;各主要 intent 的 contract policy 改为必达事实 + 风格参考范例(标注不得照抄)。",
     "删除 enablement 完成合同的感谢句模式匹配与新工单指引大正则校验。",
@@ -51,13 +51,17 @@
     "docs/project/tasks/p2-134.json"
   ],
   "created_at": "2026-09-02",
-  "updated_at": "2026-09-02",
+  "updated_at": "2026-09-03",
   "phase_id": "phase-1",
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "legacy_ids": [],
   "legacy_refs": [],
   "history": [
+    {
+      "at": "2026-09-03",
+      "note": "p2-140 将生产阻断降为安全地板（删句式级正则，业务要点转 prompt），取代本任务保留的旧硬校验边界；本任务保持 active，与 p2-140 一并等待 fresh live acceptance。"
+    },
     {
       "at": "2026-09-02",
       "event": "created",

@@ -1481,16 +1481,22 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
             return outcome, create_reply_job
 
         # Intake omitted the name: the Zendesk comment author name fills the
-        # greeting so the reply no longer defaults to "Customer".
+        # greeting (message-level author first) so the reply no longer defaults
+        # to "Customer"; the shared projection returns the first name.
         outcome, create_reply_job = _run("Ziling Xie")
         self.assertEqual(outcome["execution_action"], "rag")
         facts = create_reply_job.call_args.kwargs["reply_facts"]
-        self.assertEqual(facts["customer_first_name"], "Ziling Xie")
+        self.assertEqual(facts["customer_first_name"], "Ziling")
         self.assertEqual(facts["provided_answer"], "Find the App ID in the Agora Console.")
         self.assertEqual(facts["reply_intent"], "rag_fallback_answer")
 
-        # The account case name wins over the comment hint when present.
+        # The message-level author wins over the case name (p2-140: the reply
+        # addresses whoever just wrote in); the case name only covers an
+        # invalid or missing author.
         account_case["customer_name"] = "Emma Zhong"
         outcome, create_reply_job = _run("Ziling Xie")
         facts = create_reply_job.call_args.kwargs["reply_facts"]
-        self.assertEqual(facts["customer_first_name"], "Emma Zhong")
+        self.assertEqual(facts["customer_first_name"], "Ziling")
+        outcome, create_reply_job = _run("cx@example.com")
+        facts = create_reply_job.call_args.kwargs["reply_facts"]
+        self.assertEqual(facts["customer_first_name"], "Emma")

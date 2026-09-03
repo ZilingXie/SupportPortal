@@ -168,6 +168,10 @@ class AccountBusinessProcessor:
                 precomputed_route=payload.route,
                 route_prompt_snapshots=payload.prompt_snapshots,
                 processing_profile=self.environment,
+                # The route worker pinned this persona and recorded it on the
+                # execution; pass it through verbatim instead of resolving
+                # again so the reply can never diverge from the audit trail.
+                persona_assignment=payload.persona,
             )
             return {"comment_sync": sync_result, "trigger": trigger}
 

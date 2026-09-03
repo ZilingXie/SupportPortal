@@ -50,7 +50,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertEqual(facts["customer_first_name"], "Ada")
         self.assertIn("abcdefabcdefabcdefabcdefabcdefab", facts["_forbidden_values"])
 
-    def test_archer_success_contract_requires_current_enablement_and_closure(self) -> None:
+    def test_archer_success_contract_keeps_future_tense_floor(self) -> None:
         facts = self._archer_facts("enablement_archer_enabled", "enabled")
         valid = (
             "Thank you for your patience. Media Relay is already enabled on your project. This case will be "
@@ -68,13 +68,18 @@ class AutomationPersonaTests(unittest.TestCase):
                 )
                 self.assertTrue(close)
                 self.assertEqual(normalized["reply_intent"], "enablement_archer_enabled")
-        for invalid in (
-            valid.replace("already enabled", "will be enabled"),
-            valid.replace("Media Relay", "the feature"),
-        ):
-            with self.subTest(invalid=invalid):
-                with self.assertRaises(AutomationPersonaError):
-                    validate_account_reply_contract(invalid, facts, close_after_publish=True)
+        # v22: positive enabled/closing/media-relay wording is prompt-guided
+        # only; the misleading future-tense claim stays a blocking floor.
+        with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed_enabled_state"):
+            validate_account_reply_contract(
+                valid.replace("already enabled", "will be enabled"),
+                facts,
+                close_after_publish=True,
+            )
+        # Media Relay mention itself is no longer a blocking requirement.
+        validate_account_reply_contract(
+            valid.replace("Media Relay", "the feature"), facts, close_after_publish=True
+        )
 
     def test_archer_success_contract_allows_configuration_detail_when_customer_asks(self) -> None:
         # region/load are no longer required, but a reply that mentions them (for
@@ -107,7 +112,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 with self.assertRaisesRegex(AutomationPersonaError, "archer_error_overclaim"):
                     validate_account_reply_contract(text, facts)
 
-    def test_archer_persona_prompt_keeps_v20_and_excludes_appid(self) -> None:
+    def test_archer_persona_prompt_keeps_v22_and_excludes_appid(self) -> None:
         facts = self._archer_facts("enablement_appid_invalid", "appid_invalid")
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
@@ -122,7 +127,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -548,7 +553,9 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertEqual(facts["performed_actions"], [])
         self.assertIsNone(facts["next_step"])
 
-    def test_account_submission_rejects_third_person_support_owner_copy(self) -> None:
+    def test_account_submission_third_person_copy_is_prompt_guided_not_blocked(self) -> None:
+        # v22: the ownership clause family is prompt guidance; third-person
+        # wording alone no longer blocks publication.
         facts = build_automation_reply_facts(
             behavior="enablement",
             reply_intent="submission_confirmation",
@@ -566,12 +573,12 @@ class AutomationPersonaTests(unittest.TestCase):
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ):
-            with self.assertRaisesRegex(AutomationPersonaError, "ownership_contract_failed"):
-                render_automation_reply(
-                    reply_facts=facts,
-                    persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
-                    account_scope=True,
-                )
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                account_scope=True,
+            )
+        self.assertIn("The assigned Support Engineer has started", result.content)
 
     def test_old_submission_facts_are_normalized_before_v9_prompt(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -643,48 +650,32 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
         self.assertNotIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
 
-    def test_missing_information_format_contract_uses_inline_or_bullets(self) -> None:
+    def test_missing_information_layout_is_prompt_guided_and_timeframe_still_blocked(self) -> None:
         inline_facts = build_account_automation_reply_facts(
             handler="fraud_account",
             action="fraud_account",
             missing_fields=["account_type", "name"],
             collected_fields={},
         )
+        # v22: inline, bullets, and numbered lists are all accepted layouts.
         validate_account_reply_contract(
             "We are still missing your account type and name. I will continue coordinating the review once you "
             "share them.",
             inline_facts,
         )
+        validate_account_reply_contract(
+            "We are still missing:\n- Account type\n- Name\nI will continue coordinating the review.",
+            inline_facts,
+        )
+        # The invented-timeframe ban is a retained safety floor.
         with self.assertRaisesRegex(
             AutomationPersonaError,
-            "automation_persona_missing_information_format_failed",
+            "automation_persona_missing_information_contract_failed",
         ):
             validate_account_reply_contract(
-                "We are still missing:\n- Account type\n- Name\nI will continue coordinating the review.",
+                "We are still missing your account type and name. We will get back to you within 48 hours.",
                 inline_facts,
             )
-
-        bullet_facts = build_account_automation_reply_facts(
-            handler="fraud_account",
-            action="fraud_account",
-            missing_fields=["account_type", "name", "office_address"],
-            collected_fields={},
-        )
-        validate_account_reply_contract(
-            "I am still missing the following details:\n\n- Account type\n- Name\n- Office address\n\n"
-            "I will continue coordinating the review once you share them.",
-            bullet_facts,
-        )
-        with self.assertRaisesRegex(
-            AutomationPersonaError,
-            "automation_persona_missing_information_format_failed",
-        ) as raised:
-            validate_account_reply_contract(
-                "I am still missing the following details:\n1. Account type\n2. Name\n3. Office address\n"
-                "I will continue coordinating the review once you share them.",
-                bullet_facts,
-            )
-        self.assertEqual(raised.exception.detail, "numbered_list_detected")
 
     def test_fraud_missing_information_is_assembled_deterministically(self) -> None:
         facts = build_account_automation_reply_facts(
@@ -718,7 +709,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -1018,7 +1009,10 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         assert_no_trailing_automation_signature(body)
 
-    def test_fraud_handoff_requires_natural_24_hour_contact_commitment(self) -> None:
+    def test_fraud_handoff_wording_is_prompt_guided(self) -> None:
+        # v22: the will+contact+24h same-clause shape is gone; natural
+        # phrasing (and even a missing 24-hour mention) passes validation —
+        # point coverage moved to the prompt and the live-scenario checks.
         facts = {
             "behavior": "fraud_account",
             "reply_intent": "fraud_handoff_confirmation",
@@ -1031,30 +1025,26 @@ class AutomationPersonaTests(unittest.TestCase):
             "We've sent this to our fraud team, who will be in touch within 24 hours.",
             "Thanks for sending this over - I've looped in the relevant team, and someone from their side will "
             "reach out to you within 24 hours, so there's nothing you need to chase on your end.",
-        ):
-            with self.subTest(valid_reply=valid_reply):
-                validate_account_reply_contract(valid_reply, facts)
-        with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
-            validate_account_reply_contract("We received your request and will review it.", facts)
-        for invalid_reply in (
+            "We received your request and will review it.",
             "The relevant team will not contact you within 24 hours.",
-            "We cannot guarantee the relevant team will contact you within 24 hours.",
             "Will the relevant team contact you within 24 hours?",
             "Our fraud specialists will contact you next week.",
             "The relevant team has received the request and will follow up.",
         ):
-            with self.subTest(invalid_reply=invalid_reply):
-                with self.assertRaisesRegex(AutomationPersonaError, "fraud_handoff_contract_failed"):
-                    validate_account_reply_contract(invalid_reply, facts)
+            with self.subTest(valid_reply=valid_reply):
+                validate_account_reply_contract(valid_reply, facts)
 
     def test_fraud_handoff_validation_retries_then_returns_fourth_valid_body(self) -> None:
+        # The regeneration loop is exercised with a still-blocking floor
+        # (misleading future enablement on the completed intent): three
+        # violations then one valid body.
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         responses = [
-            SimpleNamespace(text="We received your request and will review it.", model_name="persona-model"),
-            SimpleNamespace(text="They will follow up next week.", model_name="persona-model"),
-            SimpleNamespace(text="Will the relevant team contact you within 24 hours?", model_name="persona-model"),
+            SimpleNamespace(text="Media Relay will be enabled tomorrow.", model_name="persona-model"),
+            SimpleNamespace(text="This case will be archived next week.", model_name="persona-model"),
+            SimpleNamespace(text="The feature will be enabled for you soon.", model_name="persona-model"),
             SimpleNamespace(
-                text="Our fraud specialists will reach out to you within 24 hours.",
+                text="Media Relay is already enabled on your project. I'm closing this case now.",
                 model_name="persona-model",
             ),
         ]
@@ -1062,21 +1052,21 @@ class AutomationPersonaTests(unittest.TestCase):
             "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
         ) as invoke:
             result = render_automation_reply(
-                reply_facts={"behavior": "fraud_account", "reply_intent": "fraud_handoff_confirmation"},
+                reply_facts={
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                },
                 persona_assignment={"content": {"instruction": "Warm"}},
                 account_scope=True,
             )
 
-        self.assertEqual(
-            result.content,
-            "Hi Customer\n\nOur fraud specialists will reach out to you within 24 hours.",
-        )
+        self.assertIn("Media Relay is already enabled", result.content)
         self.assertEqual(invoke.call_count, 4)
 
     def test_fraud_handoff_validation_exhaustion_preserves_contract_code(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="We received your request and will review it.",
+            text="Media Relay will be enabled tomorrow.",
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -1084,32 +1074,36 @@ class AutomationPersonaTests(unittest.TestCase):
         ) as invoke:
             with self.assertRaises(AutomationPersonaError) as raised:
                 render_automation_reply(
-                    reply_facts={"behavior": "fraud_account", "reply_intent": "fraud_handoff_confirmation"},
+                    reply_facts={
+                        "behavior": "enablement",
+                        "reply_intent": "enablement_completed_and_close",
+                    },
                     persona_assignment={"content": {"instruction": "Warm"}},
                     account_scope=True,
                 )
 
-        self.assertEqual(raised.exception.code, "automation_persona_fraud_handoff_contract_failed")
+        self.assertEqual(raised.exception.code, "automation_persona_completion_contract_failed_enabled_state")
         self.assertEqual(raised.exception.attempt_count, 4)
         self.assertEqual(invoke.call_count, 4)
 
-    def test_enablement_submission_requires_sla_and_change_window(self) -> None:
+    def test_enablement_submission_wording_is_prompt_guided(self) -> None:
+        # v22: the 24h/change-window clauses are prompt guidance; neither a
+        # missing mention nor a negative phrasing blocks validation any more
+        # (the deterministic append below still completes real renders).
         facts = {
             "behavior": "enablement",
             "reply_intent": "submission_confirmation",
         }
-        with self.assertRaisesRegex(AutomationPersonaError, "enablement_submission_contract_failed"):
-            validate_account_reply_contract("We are reviewing the request.", facts)
+        validate_account_reply_contract("We are reviewing the request.", facts)
         validate_account_reply_contract(
             "I am coordinating activation and will keep you updated. It may take up to 24 hours, and the change "
             "window is Monday-Friday.",
             facts,
         )
-        with self.assertRaisesRegex(AutomationPersonaError, "enablement_submission_contract_failed"):
-            validate_account_reply_contract(
-                "Activation will not happen within 24 hours; changes occur Monday-Friday.",
-                facts,
-            )
+        validate_account_reply_contract(
+            "Activation will not happen within 24 hours; changes occur Monday-Friday.",
+            facts,
+        )
 
     def test_enablement_submission_deterministically_completes_omitted_contract(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -1141,7 +1135,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "Activation may take up to 24 hours, and the change window is Monday-Friday.",
             result.content,
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         self.assertEqual(invoke.call_count, 1)
 
     def test_enablement_submission_deterministic_completion_preserves_existing_clauses(self) -> None:
@@ -1229,35 +1223,42 @@ class AutomationPersonaTests(unittest.TestCase):
                 self.assertEqual(raised.exception.attempt_count, 4)
                 self.assertEqual(invoke.call_count, 4)
 
-    def test_suspension_contact_contract_requires_email_close_and_reopen_terms(self) -> None:
+    def test_suspension_replies_reject_affirmative_close_claims_only(self) -> None:
         facts = {
             "behavior": "account_suspension",
             "reply_intent": "account_suspension_contact_confirmation_request",
         }
+        # v22: the email/interrogative/24h sentence shapes are prompt-guided;
+        # even legacy close/reopen wording passes when phrased negatively.
         validate_account_reply_contract(
             "Which email is most convenient for you? Should we use the email on this ticket? "
-            "The relevant team will contact you within 24 hours. The ticket will close after handoff, "
-            "and you can reopen it if nobody contacts you.",
+            "The relevant team will contact you within 24 hours. We will not close this ticket, and you do not "
+            "need to reopen it.",
             facts,
         )
-        with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
-            validate_account_reply_contract("Please share an email address.", facts)
+        validate_account_reply_contract("Please share an email address.", facts)
         for invalid_reply in (
-            "Which email is best for you, including the email on this ticket? The relevant team will not contact "
-            "you within 24 hours; this ticket will close, and you can reopen it.",
-            "Which email is best for you, including the email on this ticket? Can the relevant team contact you "
-            "within 24 hours? This ticket will close, and you can reopen it.",
+            "Which email is best for you? The relevant team will contact you within 24 hours. "
+            "This ticket will close after the handoff.",
+            "Which email is best for you? We have closed this ticket; you can reopen it any time.",
+            "Which email is best for you? The case is being archived.",
         ):
             with self.subTest(invalid_reply=invalid_reply):
-                with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
+                with self.assertRaisesRegex(
+                    AutomationPersonaError, "automation_persona_suspension_close_claim_forbidden"
+                ):
                     validate_account_reply_contract(invalid_reply, facts)
 
-    def test_completion_contract_requires_positive_enabled_and_closing_state(self) -> None:
+    def test_completion_contract_keeps_future_tense_floor(self) -> None:
         facts = {
             "behavior": "enablement",
             "reply_intent": "enablement_completed_and_close",
             "completion_acknowledgement": "additional_information",
         }
+        # v22: positive enabled/closing requirements are prompt guidance, so
+        # even a reply that omits them validates; only misleading future
+        # claims (will be enabled / will be archived without an immediacy
+        # marker in the same clause) still block.
         for valid_reply in (
             "Thanks for providing the additional information. We have now enabled Media Relay. "
             "We will mark this case as archived now. If you have any further questions or concerns, "
@@ -1268,6 +1269,10 @@ class AutomationPersonaTests(unittest.TestCase):
             "project, so you should be all set. I'm closing this case now, but if any questions come up "
             "later, feel free to open a new ticket and we'll take it from there.",
             "Media Relay is enabled. This case is archived.",
+            "Thanks for providing the additional information. This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay is enabled. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Media Relay is not enabled. This case is archived. If you have questions, please open a new ticket.",
+            "Thanks for providing the additional information. Will Media Relay be enabled? This case is archived. If you have questions, please open a new ticket.",
         ):
             with self.subTest(valid_reply=valid_reply):
                 normalized, close = validate_account_reply_contract(
@@ -1277,37 +1282,12 @@ class AutomationPersonaTests(unittest.TestCase):
                 self.assertEqual(normalized["reply_intent"], "enablement_completed_and_close")
         for invalid_reply, failure_code in (
             (
-                "Thanks for providing the additional information. This case is archived. If you have questions, please open a new ticket.",
-                "completion_contract_failed_enabled_state",
-            ),
-            (
-                "Thanks for providing the additional information. Media Relay is enabled. If you have questions, please open a new ticket.",
-                "completion_contract_failed_archive",
-            ),
-            (
-                "Thanks for providing the additional information. Media Relay is not enabled. This case is archived. If you have questions, please open a new ticket.",
-                "completion_contract_failed_enabled_state",
-            ),
-            (
-                "Thanks for providing the additional information. Will Media Relay be enabled? This case is archived. If you have questions, please open a new ticket.",
-                "completion_contract_failed_enabled_state",
-            ),
-            (
                 "Thanks for providing the additional information. Media Relay will be enabled tomorrow. This case will be archived tomorrow. If you have questions, please open a new ticket.",
                 "completion_contract_failed_enabled_state",
             ),
             (
-                "Thanks for providing the additional information. Media Relay is not enabled. Media Relay is enabled. This case is archived. If you have questions, please open a new ticket.",
-                "completion_contract_failed_enabled_state",
-            ),
-            (
-                "Thanks for providing the additional information. Media Relay is enabled. This case will be archived tomorrow. This case is archived now. If you have questions, please open a new ticket.",
+                "Thanks for providing the additional information. Media Relay is enabled. This case will be archived tomorrow. If you have questions, please open a new ticket.",
                 "completion_contract_failed_archive",
-            ),
-            (
-                "We appreciate your patience. Media Relay isn't enabled. We are archiving this case now. "
-                "If you need anything else, please open a new ticket.",
-                "completion_contract_failed_enabled_state",
             ),
         ):
             with self.subTest(invalid_reply=invalid_reply, failure_code=failure_code):
@@ -1345,13 +1325,14 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
         self.assertIn("open a new ticket", system_prompt)
         self.assertIn("match the tone", system_prompt)
         self.assertIn("speak in first person", system_prompt)
+        self.assertIn("required content", system_prompt)
 
     def test_conflicting_intents_and_legacy_fraud_close_are_rejected(self) -> None:
         with self.assertRaisesRegex(AutomationPersonaError, "account_reply_intent_conflict"):
@@ -1366,7 +1347,9 @@ class AutomationPersonaTests(unittest.TestCase):
                 {"behavior": "fraud_account", "reply_intent": "fraud_handoff_and_close"},
             )
 
-    def test_submission_reply_rejects_internal_team_ownership(self) -> None:
+    def test_submission_reply_ownership_wording_is_prompt_guided(self) -> None:
+        # v22: the internal-team delegation ban is prompt guidance; the
+        # wording alone no longer blocks publication.
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
@@ -1383,12 +1366,12 @@ class AutomationPersonaTests(unittest.TestCase):
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ):
-            with self.assertRaisesRegex(AutomationPersonaError, "ownership_contract_failed"):
-                render_automation_reply(
-                    reply_facts=facts,
-                    persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
-                    account_scope=True,
-                )
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
+                account_scope=True,
+            )
+        self.assertIn("The internal team will follow up", result.content)
 
     def test_legacy_scope_does_not_apply_account_ownership_validator(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -1430,6 +1413,31 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
         self.assertIn("我正在与内部团队协调", result.content)
+
+    def test_resolve_customer_greeting_name_falls_through_invalid_candidates(self) -> None:
+        from backend.services.automation_persona import resolve_customer_greeting_name
+
+        cases = (
+            # (author, case, requester, expected)
+            ("Ada Lovelace", "Grace Hopper", "cx@example.com", "Ada"),
+            ("Ada Lovelace", None, None, "Ada"),
+            ("cx@example.com", "Grace Hopper", None, "Grace"),  # invalid author -> case name
+            ("", "Grace Hopper", None, "Grace"),
+            ("customer", "Grace Hopper", None, "Grace"),  # placeholder author -> case name
+            ("https://x.example", None, "Ziling Xie", "Ziling"),  # invalid author -> requester
+            ("cx@example.com", "unknown", "TK-123", "Customer"),  # all invalid -> fallback
+            (None, None, None, "Customer"),
+        )
+        for author, case_name, requester, expected in cases:
+            with self.subTest(author=author, case=case_name, requester=requester):
+                self.assertEqual(
+                    resolve_customer_greeting_name(
+                        latest_customer_author_name=author,
+                        case_customer_name=case_name,
+                        requester_name=requester,
+                    ),
+                    expected,
+                )
 
     def test_persona_failure_is_explicit(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: False, model="persona-model")
