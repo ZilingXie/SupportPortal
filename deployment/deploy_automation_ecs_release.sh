@@ -229,12 +229,20 @@ main() {
     || fail "Target Prompt Release is not deployable"
 
   local new_arn tags_path
+  local -a register_args
   for role in api route worker; do
     tags_path="${TEMP_DIR}/${role}.tags.json"
     jq '.tags // []' "${TEMP_DIR}/${role}.current.json" >"${tags_path}"
-    new_arn="$(aws ecs register-task-definition --region "${REGION}" \
-      --cli-input-json "file://${TEMP_DIR}/${role}.register.json" \
-      --tags "file://${tags_path}" --query 'taskDefinition.taskDefinitionArn' --output text)"
+    register_args=(
+      --region "${REGION}"
+      --cli-input-json "file://${TEMP_DIR}/${role}.register.json"
+      --query 'taskDefinition.taskDefinitionArn'
+      --output text
+    )
+    if [[ "$(jq 'length' "${tags_path}")" -gt 0 ]]; then
+      register_args+=(--tags "file://${tags_path}")
+    fi
+    new_arn="$(aws ecs register-task-definition "${register_args[@]}")"
     [[ -n "${new_arn}" && "${new_arn}" != "None" ]] || fail "${role} task definition registration failed"
     printf '%s\n' "${new_arn}" >"${TEMP_DIR}/${role}.new-arn"
   done
