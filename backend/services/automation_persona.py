@@ -38,7 +38,7 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v24"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v25"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -893,10 +893,11 @@ def render_automation_reply(
             "For an Account Suspension handoff, cover three points in your own natural words: thank the "
             "customer for submitting the request, state that it is being reviewed internally, and commit "
             "that we will get back to them within 24 hours. Keep the reply brief - two or three short "
-            "natural sentences. Do not state that the ticket is closing, archiving, or that the customer "
-            "should reopen it. Style reference (match the tone and rhythm, do not copy the wording): "
-            "'Thank you for submitting this request. We are reviewing it internally and will get back to "
-            "you within 24 hours.' "
+            "natural sentences, and refer to the request simply as 'this request' - do not name the "
+            "account suspension category in the reply. Do not state that the ticket is closing, "
+            "archiving, or that the customer should reopen it. Style reference (match the tone and "
+            "rhythm, do not copy the wording): 'Thank you for submitting this request. We are reviewing "
+            "it internally and will get back to you within 24 hours.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         reply_contract_policy = (

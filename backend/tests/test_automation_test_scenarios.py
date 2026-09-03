@@ -317,7 +317,6 @@ class ScenarioEngineTests(unittest.TestCase):
                 ),
             }]),
             ("FROM support_ticket_events", [{"id": 1, "payload": {"state": "assigned"}}]),
-            ("FROM support_ticket_events", [{"id": 2, "payload": {"state": "sent"}}]),
             ("WHERE account_case_id", [{"zendesk_ticket_status": "open"}]),
             ("WHERE account_case_id", [{
                 "automation_context": {
@@ -332,7 +331,6 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertEqual(len(engine.sent_emails), 1)
         step_names = [step.step for step in engine.steps]
         self.assertIn("assigned to suspension reviewer", step_names)
-        self.assertIn("reviewer notify email sent", step_names)
         self.assertIn("ticket NOT auto-solved", step_names)
 
     def test_s1_affirmative_close_claim_fails_content_check(self) -> None:

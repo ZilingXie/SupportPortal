@@ -163,12 +163,8 @@ from backend.services.billing_automation import (
     BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX,
     poll_automation_request_replies,
     record_billing_request_reply,
-    send_billing_internal_email,
 )
 from backend.services.internal_email_template import namespaced_internal_email_subject
-from backend.services.account_internal_email_recipients import (
-    resolve_account_internal_email_recipients,
-)
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
     SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
@@ -1522,95 +1518,6 @@ _REVIEW_HANDOFF_FINAL_INTENTS_BY_ACTION = {
     "account_suspension": {ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE},
 }
 
-REVIEWER_NOTIFY_EMAIL_EVENT_TYPE = "zendesk_reviewer_notify_email"
-
-
-def _notify_suspension_reviewer_by_email(
-    account_case: dict[str, Any],
-    *,
-    ticket_id: str,
-    zendesk_ticket_id: str,
-    job_id: str,
-) -> None:
-    """Send the suspension reviewer notification email with a persisted state.
-
-    Idempotent on the workflow's reviewer_notify_email state: a sent
-    notification is never re-sent, and a failure records a failed state plus
-    an owner-visible event without rolling back the reviewer assignment (the
-    assignee can already see the ticket in Zendesk).
-    """
-    automation_context = (
-        dict(account_case.get("automation_context"))
-        if isinstance(account_case.get("automation_context"), dict)
-        else {}
-    )
-    suspension_workflow = automation_context.get(SUSPENSION_CONTACT_WORKFLOW_KEY)
-    suspension_workflow = dict(suspension_workflow) if isinstance(suspension_workflow, dict) else {}
-    if str(suspension_workflow.get("reviewer_notify_email") or "").strip() == "sent":
-        return
-
-    def _record_notify_event(state: str, **fields: Any) -> None:
-        try:
-            ticket_repository.record_event(
-                ticket_id or None,
-                REVIEWER_NOTIFY_EMAIL_EVENT_TYPE,
-                {
-                    "zendesk_ticket_id": zendesk_ticket_id,
-                    "job_id": job_id,
-                    "state": state,
-                    "created_at": now_iso(),
-                    **fields,
-                },
-            )
-        except Exception:
-            LOGGER.exception(
-                "reviewer_notify_email_event_failed job_id=%s ticket_id=%s",
-                job_id,
-                ticket_id,
-            )
-
-    try:
-        recipients = resolve_account_internal_email_recipients("account_suspension")
-        payload = recipients.apply(
-            {
-                "subject": f"[Suspension Review Assigned] Zendesk ticket {zendesk_ticket_id}",
-                "body": (
-                    "Hello,\n\n"
-                    f"Suspension ticket {zendesk_ticket_id} has been assigned to you for "
-                    "review after the customer confirmed the contact email and received "
-                    "the 24-hour handoff reply.\n\n"
-                    f"Zendesk: {_zendesk_ticket_url(zendesk_ticket_id)}\n\n"
-                    "This is an automated notification from the account automation pipeline."
-                ),
-            }
-        )
-        result = send_billing_internal_email(payload)
-        status = str((result or {}).get("status") or "").strip()
-        if status == "sent":
-            suspension_workflow["reviewer_notify_email"] = "sent"
-            suspension_workflow["reviewer_notify_failure_reason"] = None
-            _record_notify_event(
-                "sent",
-                to=",".join(recipients.to),
-                cc=",".join(recipients.cc),
-            )
-        else:
-            suspension_workflow["reviewer_notify_email"] = "failed"
-            suspension_workflow["reviewer_notify_failure_reason"] = status or "unknown"
-            _record_notify_event(
-                "failed",
-                failure_code=status or "unknown",
-                reason=str((result or {}).get("reason") or ""),
-            )
-    except Exception as exc:
-        suspension_workflow["reviewer_notify_email"] = "failed"
-        suspension_workflow["reviewer_notify_failure_reason"] = type(exc).__name__
-        _record_notify_event("failed", failure_code=type(exc).__name__, reason=str(exc))
-    suspension_workflow["reviewer_notify_updated_at"] = now_iso()
-    automation_context[SUSPENSION_CONTACT_WORKFLOW_KEY] = suspension_workflow
-    account_case["automation_context"] = automation_context
-
-
 def _hand_off_review_after_public_reply(
     *,
     account_case: dict[str, Any],
@@ -1739,15 +1646,6 @@ def _hand_off_review_after_public_reply(
             suspension_workflow["updated_at"] = timestamp
             automation_context[SUSPENSION_CONTACT_WORKFLOW_KEY] = suspension_workflow
             account_case["automation_context"] = automation_context
-        # p2-140: after the assignee is in place (assigned or already
-        # assigned), notify the reviewer by email with a persisted
-        # send state; a send failure is an owner-visible event only.
-        _notify_suspension_reviewer_by_email(
-            account_case,
-            ticket_id=ticket_id,
-            zendesk_ticket_id=zendesk_ticket_id,
-            job_id=effective_job_id,
-        )
     mark_production_ownership_handed_to_reviewer(
         account_case,
         updated_at=timestamp,

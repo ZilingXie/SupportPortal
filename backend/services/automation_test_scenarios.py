@@ -832,12 +832,6 @@ class ScenarioEngine:
             "assigned to suspension reviewer",
             expected_states={"assigned", "already_assigned"},
         )
-        self.wait_event(
-            ctx,
-            "zendesk_reviewer_notify_email",
-            "reviewer notify email sent",
-            expected_states={"sent"},
-        )
         row = self.case_row(ctx)
         self.record(
             ctx, "ticket NOT auto-solved",
