@@ -256,6 +256,9 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     check_only = script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = script.index("backend.scripts.prompt_release sync")
     register = script.index("aws ecs register-task-definition")
+    optional_tags = script.index("register_args+=(--tags")
+    assert 'jq \'length\' "${tags_path}"' in script
+    assert optional_tags < register
     update_service = script.index("aws ecs update-service", script.index("main()"))
     assert check_only < prompt_sync
     assert check_only < register
