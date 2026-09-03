@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T07:18:45Z",
-  "source_base_commit": "f13bcd26f96719b0d9669661f33d537f7069bc4f",
-  "registry_digest": "ef21699e70b4bcf96c30d235538a81aefaadea064f2fcf447fa19847e9e69e9b",
+  "generated_at": "2026-09-03T07:56:04Z",
+  "source_base_commit": "ca33fe28cda5a25639d07d9f78fbea0a3d95e738",
+  "registry_digest": "24697e3bcafecde3066c6c5a87a1b4fbf491ace825904ee58478880cdb7a355f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -952,6 +952,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression after fusing with p2-140 one-shot handoff (persona v23)",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_account_ai_execution.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_route_service_contract.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_investigation_flow.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_account_verification_automation.py",
           "details": "690 passed + 123 subtests。含与 p2-140 一段式融合后的三件新验证：suspension closing 追加句（漏 24h 承诺追加修复+close 声明不可修复仍拒）、主语绑定 close-claim（否定句/close-the-loop 不误杀）、reroute/full_reroute/dispatch（main 新增 intake_mode 分流）与本任务改动共存全绿。两个 investigation_flow multi-agent 失败为 clean main 预存在（root main 同样失败）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official-stack restart and v24 live markers on merged main (ca33fe2)",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl -fsS http://127.0.0.1:8080/health && podman exec deployment_api_1 python -c \"\u003cv24 marker checks>\"",
+          "details": "/health ok，app_build.ref=ca33fe28cda5 与当前 main 一致（首轮并行重启构建为旧 f13bcd2，按规则对 ca33fe2 重跑后收敛）；容器内 marker：AUTOMATION_PERSONA_PROMPT_VERSION=automation-persona-v24、补句标准句='We will get back to you within 24 hours.'、旧 'handed to the relevant team' 表述已从模块源移除；同 commit 本地复跑三要素/补句/关单禁用三个关键单测通过（运行时 system_prompt 含三要素短语由该用例断言）。"
         },
         {
           "type": "test",
@@ -9879,7 +9885,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
       "summary": "按用户 2026-09-03 决策把 p2-140 一段式 suspension 首封回复的 Persona 合同从'received + handed to relevant team + someone will contact'三件套长句改为三要素短文案：感谢提交（thank the customer for submitting the request）→ 内部审核中（being reviewed internally）→ we 24h 回复承诺（we will get back to them within 24 hours），并加'keep the reply brief - two or three short natural sentences'指引与短范例。同步：closing_reply_facts 措辞改 we 视角（performed_actions='Submitted the suspension request for internal review.'、next_step='We will get back to the customer within 24 hours.'）、确定性补句标准句改'We will get back to you within 24 hours.'、prompt v23→v24。**运行时门禁零改动**（v23 安全地板已验证放行目标文案：无 close claim、无 internal 禁令、三要素齐全不触发补句），同时消除了旧 relevant-team 表述与第一人称 ownership 规则的张力。",
-      "next_action": "finalize 合并后官方栈重启+v24 marker 验证；用户部署 EC2 /production 后受控 suspension 单复测首封短文案，通过后置 done。",
+      "next_action": "用户部署 EC2 /production 后受控 suspension 单复测首封短文案（三要素/简短/无 relevant-team/close），通过后置 done。",
       "acceptance_criteria": [
         "新 suspension 首封回复为简短三要素文案（感谢提交/内部审核/we 24h 回复），无 relevant-team 必需表述、无 close/reopen。",
         "v24 生效；目标文案一次校验通过且不触发补句（deterministic_contract_appended=False）；缺 24h 时补句兜底仍工作（新标准句）。",
@@ -9888,6 +9894,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Official-stack restart and v24 live markers on merged main (ca33fe2)",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl -fsS http://127.0.0.1:8080/health && podman exec deployment_api_1 python -c \"\u003cv24 marker checks>\"",
+          "details": "/health ok，app_build.ref=ca33fe28cda5 与当前 main 一致（首轮并行重启构建为旧 f13bcd2，按规则对 ca33fe2 重跑后收敛）；容器内 marker：AUTOMATION_PERSONA_PROMPT_VERSION=automation-persona-v24、补句标准句='We will get back to you within 24 hours.'、旧 'handed to the relevant team' 表述已从模块源移除；同 commit 本地复跑三要素/补句/关单禁用三个关键单测通过（运行时 system_prompt 含三要素短语由该用例断言）。"
+        },
         {
           "type": "test",
           "label": "Focused regression for v24 brief suspension reply",
