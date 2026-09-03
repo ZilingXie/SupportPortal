@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T07:07:53Z",
-  "source_base_commit": "be9ad11c9d79ae93e32502f1e411b91a402c8c41",
-  "registry_digest": "2554a0a43e52dc4896c3811d42746a56f8d2152d048dafe2b653807d944568c9",
+  "generated_at": "2026-09-03T07:18:45Z",
+  "source_base_commit": "f13bcd26f96719b0d9669661f33d537f7069bc4f",
+  "registry_digest": "ef21699e70b4bcf96c30d235538a81aefaadea064f2fcf447fa19847e9e69e9b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -955,6 +955,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Focused regression for v24 brief suspension reply",
+          "command": ".venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py -q",
+          "details": "185+226 passed（deselect 1 个既有基线顺序污染用例）。新增用例：三要素短文案原样通过且无补句，且 system_prompt 含新三要素（thank...submitting/reviewed internally/we will get back within 24 hours）并不再含 'handed to the relevant team'；补句修复用例断言更新为新标准句；版本断言 v24；intake fake render handoff 分支同步新文案。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1060,7 +1066,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 32,
+      "task_count": 33,
       "done_count": 17,
       "blocked_count": 0
     },
@@ -9859,6 +9865,46 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/automation_engineer_collab.py",
         "backend/services/route_preparation.py",
         "backend/services/automation_test_scenarios.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-142",
+      "title": "Suspension 首封回复简化为三要素短文案（v24）",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-09-03",
+      "updated_at": "2026-09-03",
+      "summary": "按用户 2026-09-03 决策把 p2-140 一段式 suspension 首封回复的 Persona 合同从'received + handed to relevant team + someone will contact'三件套长句改为三要素短文案：感谢提交（thank the customer for submitting the request）→ 内部审核中（being reviewed internally）→ we 24h 回复承诺（we will get back to them within 24 hours），并加'keep the reply brief - two or three short natural sentences'指引与短范例。同步：closing_reply_facts 措辞改 we 视角（performed_actions='Submitted the suspension request for internal review.'、next_step='We will get back to the customer within 24 hours.'）、确定性补句标准句改'We will get back to you within 24 hours.'、prompt v23→v24。**运行时门禁零改动**（v23 安全地板已验证放行目标文案：无 close claim、无 internal 禁令、三要素齐全不触发补句），同时消除了旧 relevant-team 表述与第一人称 ownership 规则的张力。",
+      "next_action": "finalize 合并后官方栈重启+v24 marker 验证；用户部署 EC2 /production 后受控 suspension 单复测首封短文案，通过后置 done。",
+      "acceptance_criteria": [
+        "新 suspension 首封回复为简短三要素文案（感谢提交/内部审核/we 24h 回复），无 relevant-team 必需表述、无 close/reopen。",
+        "v24 生效；目标文案一次校验通过且不触发补句（deterministic_contract_appended=False）；缺 24h 时补句兜底仍工作（新标准句）。",
+        "门禁未收紧：自然变体照旧一次通过；fraud/enablement 等其他合同与 v23 安全地板校验零改动。",
+        "prompt_change_log v23→v24 条目在案。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Focused regression for v24 brief suspension reply",
+          "command": ".venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py -q",
+          "details": "185+226 passed（deselect 1 个既有基线顺序污染用例）。新增用例：三要素短文案原样通过且无补句，且 system_prompt 含新三要素（thank...submitting/reviewed internally/we will get back within 24 hours）并不再含 'handed to the relevant team'；补句修复用例断言更新为新标准句；版本断言 v24；intake fake render handoff 分支同步新文案。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-140",
+        "p2-141"
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/services/account_suspension_automation.py",
+        "backend/tests/test_automation_persona.py"
       ]
     },
     {

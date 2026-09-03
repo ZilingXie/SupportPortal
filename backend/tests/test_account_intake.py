@@ -389,8 +389,8 @@ def _fake_render_automation_reply(**kwargs: object) -> AutomationPersonaResult:
         )
     elif intent == "account_suspension_handoff_and_close":
         body = (
-            "Thanks for confirming. I've handed the case over to the relevant team, and someone from "
-            "their side will reach out to you within 24 hours with an update."
+            "Thank you for submitting this request. We are reviewing it internally and will get back "
+            "to you within 24 hours."
         )
     elif intent == "enablement_completed_and_close":
         body = "The feature is enabled, and this ticket is closing."

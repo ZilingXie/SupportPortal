@@ -38,7 +38,7 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v23"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v24"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -410,7 +410,7 @@ _SUSPENSION_HANDOFF_FACT_PATTERNS = (
 )
 _SUSPENSION_CLOSE_CLAIM_RE = r"\b(?:close[ds]?|closing|reopen(?:ed|ing)?|re-open(?:ed|ing)?|archiv\w*)\b"
 _SUSPENSION_CLOSE_SUBJECT_RE = r"\b(?:ticket|case|this)\b"
-_SUSPENSION_HANDOFF_CONTRACT_SENTENCE = "The relevant team will contact you within 24 hours."
+_SUSPENSION_HANDOFF_CONTRACT_SENTENCE = "We will get back to you within 24 hours."
 
 
 def _suspension_close_claim_present(reply: str) -> bool:
@@ -890,13 +890,13 @@ def render_automation_reply(
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
         reply_contract_policy = (
-            "For an Account Suspension handoff, acknowledge that the customer's suspension request has been "
-            "received, confirm that the case has been handed to the relevant team, and commit that someone "
-            "from that team will contact the customer within 24 hours, phrased in your own natural words. Do "
-            "not state that the ticket is closing, archiving, or that the customer should reopen it. Style "
-            "reference (match the tone and rhythm, do not copy the wording): 'Thanks for reaching out - I've "
-            "received your request and handed the case over to the relevant team, and someone from their side "
-            "will reach out to you within 24 hours with an update.' "
+            "For an Account Suspension handoff, cover three points in your own natural words: thank the "
+            "customer for submitting the request, state that it is being reviewed internally, and commit "
+            "that we will get back to them within 24 hours. Keep the reply brief - two or three short "
+            "natural sentences. Do not state that the ticket is closing, archiving, or that the customer "
+            "should reopen it. Style reference (match the tone and rhythm, do not copy the wording): "
+            "'Thank you for submitting this request. We are reviewing it internally and will get back to "
+            "you within 24 hours.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         reply_contract_policy = (

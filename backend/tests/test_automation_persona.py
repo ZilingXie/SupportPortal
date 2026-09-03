@@ -128,7 +128,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v23")
+        self.assertEqual(result.prompt_version, "automation-persona-v24")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -710,7 +710,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v23")
+        self.assertEqual(result.prompt_version, "automation-persona-v24")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -1136,7 +1136,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "Activation may take up to 24 hours, and the change window is Monday-Friday.",
             result.content,
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v23")
+        self.assertEqual(result.prompt_version, "automation-persona-v24")
         self.assertEqual(invoke.call_count, 1)
 
     def test_enablement_submission_deterministic_completion_preserves_existing_clauses(self) -> None:
@@ -1301,11 +1301,49 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "The relevant team will contact you within 24 hours.",
+            "We will get back to you within 24 hours.",
             result.content,
         )
         self.assertTrue(result.deterministic_contract_appended)
         self.assertEqual(invoke.call_count, 1)
+
+    def test_suspension_closing_brief_three_point_reply_passes_without_repair(self) -> None:
+        # p2-142: the brief customer-facing three-point reply (thanks /
+        # internal review / we will get back within 24 hours) passes as-is.
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "Thank you for submitting this request. We are reviewing it internally and will get "
+                "back to you within 24 hours."
+            ),
+            model_name="persona-model",
+        )
+        facts = closing_reply_facts(
+            confirmed_email="customer@example.com",
+            customer_name="Maya",
+        )
+
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                account_scope=True,
+            )
+
+        self.assertEqual(
+            result.content,
+            "Hi Maya,\n\nThank you for submitting this request. We are reviewing it internally "
+            "and will get back to you within 24 hours.",
+        )
+        self.assertFalse(result.deterministic_contract_appended)
+        self.assertEqual(invoke.call_count, 1)
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("thank the customer for submitting the request", system_prompt)
+        self.assertIn("reviewed internally", system_prompt)
+        self.assertIn("we will get back to them within 24 hours", system_prompt)
+        self.assertNotIn("handed to the relevant team", system_prompt)
 
     def test_suspension_closing_deterministic_append_never_repairs_close_claim(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -1408,7 +1446,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v23")
+        self.assertEqual(result.prompt_version, "automation-persona-v24")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
