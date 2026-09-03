@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。2026-09-03 代码基线已补齐 ECS Production Suspension 一段式合同、Prompt Release 同 ID 内容门禁、唯一正式 ECS deploy 命令和 Terraform 稳定资源所有权；本轮未执行生产发布。线上 ECS 仍是旧镜像 0fea0ee，API/Route/Worker task definition revision 23/18/21、均为 1/1/0，因此不能把合并代码视为已上线。新 production Terraform root 仅 import/manage ECR、Automation target group、priority 10 listener rule 和三 service 稳定配置，并忽略 task_definition 指针；cluster、共享 ALB/listener/ACM/security group/log group/SSM/roles、Graph EFS、Redis 与 Hermes 均为外部 data/输入。Worker 发布合同明确拒绝 Pilot 环境或 pilot-creds 挂载；Archer 保留纯 HTTP cookie 链。EC2 support.stellarix.space/production 继续作为未修改 backup，n8n 尚未切流，真实新工单 readback 尚未执行。",
-  "next_action": "配置 production remote backend 并逐项 import，取得真实 terraform plan exit 0（0 add/0 change/0 destroy）；随后从最新干净 main 构建三角色 linux/amd64 OCI，以 owner 已批准的 local-oci bootstrap 模式直发 Production，先运行 deploy_automation_ecs_release.sh --check-only，再完成目标 Prompt 同步、Route/Worker→heartbeat→API→公网/CloudWatch/EC2 backup 门禁及最后激活。确认新 Worker 无 Pilot并完成收件人、Archer、Graph、Zendesk只读readback后，等待用户提供全新 Enablement、Fraud、Account Suspension工单号；不处理n8n，不重放历史任务或outcome_unknown。",
+  "next_action": "production remote backend、六项import与真实Terraform零漂移已完成。finalize后从最新干净main构建三角色linux/amd64 OCI，以owner已批准的local-oci bootstrap模式直发Production，先运行deploy_automation_ecs_release.sh --check-only，再完成目标Prompt同步、Route/Worker→heartbeat→API→公网/CloudWatch/EC2 backup门禁及最后激活。确认新Worker无Pilot并完成收件人、Archer、Graph、Zendesk只读readback后，等待用户提供全新Enablement、Fraud、Account Suspension工单号；不处理n8n，不重放历史任务或outcome_unknown。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -232,6 +232,12 @@
       "type": "decision",
       "label": "Persona-assembled engineer replies under p2-138",
       "details": "2026-09-02 用户决策:Hermes 纯调查,persona 组装客户回复(新 intent),guardrail+人工 approve 不变;同时根除双重问候并恢复客户名称呼(account case 名链)。"
+    },
+    {
+      "type": "test",
+      "label": "Production Terraform remote state import and zero-drift gate",
+      "command": "Terraform 1.9.8 bootstrap plan/apply; production init -reconfigure; six terraform imports; terraform plan -detailed-exitcode -input=false -lock-timeout=60s -no-color",
+      "details": "bootstrap计划严格为6 add/0 change/0 destroy，仅创建AES256加密、版本控制开启且四项公共访问阻断的S3 state bucket与ACTIVE/PAY_PER_REQUEST/LockID DynamoDB锁表。Production root导入supportportal/production ECR、Automation target group、priority 10 listener rule和API/Route/Worker三个service；仅按线上属性补齐AZ rebalancing、listener forward/stickiness和Terraform本地wait语义后，真实远程state plan连续返回exit 0 No changes。Production root从未apply，task_definition仍仅归正式发布脚本所有。"
     }
   ],
   "source_refs": [
