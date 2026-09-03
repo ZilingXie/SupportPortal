@@ -1,47 +1,30 @@
-aws_region   = "us-east-1"
-project_name = "supportportal"
-environment  = "production"
+aws_region = "us-east-1"
+vpc_id     = "vpc-REPLACE"
 
-vpc_id                 = "vpc-0125f57b2ec2f0423"
-public_subnet_ids      = []
-efs_availability_zone_name = "us-east-1b"
-# Required before enable_services=true. These refer to the existing Pilot
-# credential EFS and access point; they are independent from graph-token-cache.
-pilot_efs_file_system_id = ""
-pilot_efs_access_point_id = ""
-rds_security_group_id  = "sg-0e9c3bd50e371fbf4"
-domain_name            = "supportcenter.stellarix.space"
+ecs_cluster_name          = "supportportal-production"
+shared_alb_arn            = "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT:loadbalancer/app/REPLACE"
+shared_https_listener_arn = "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT:listener/app/REPLACE"
+shared_acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT:certificate/REPLACE"
+ecs_security_group_id      = "sg-REPLACE"
+shared_log_group_name      = "/supportportal/production"
 
-# Keep false for Foundation-only apply. Enable only after the release thread
-# publishes all three immutable image digests and the secrets are populated.
-enable_services      = false
-enable_https_listener = false
+shared_task_execution_role_name = "REPLACE"
+shared_task_role_name           = "REPLACE"
+shared_graph_efs_file_system_id = "fs-REPLACE"
+shared_redis_replication_group_id = "REPLACE"
+shared_ssm_parameter_names = [
+  "/supportportal/production/account-suspension-internal-email-recipients",
+  "/supportportal/production/hermes-base-url",
+  "/supportportal/production/hermes-api-server-key",
+]
 
-# After ACM DNS validation, set enable_https_listener=true. An existing issued
-# certificate ARN may be supplied instead of using the Terraform-managed one.
-acm_certificate_arn = ""
+api_task_definition_arn    = "arn:aws:ecs:us-east-1:ACCOUNT:task-definition/supportportal-production-api:REVISION"
+route_task_definition_arn  = "arn:aws:ecs:us-east-1:ACCOUNT:task-definition/supportportal-production-route:REVISION"
+worker_task_definition_arn = "arn:aws:ecs:us-east-1:ACCOUNT:task-definition/supportportal-production-worker:REVISION"
 
-# Foundation uses one cost-first Redis node. Set false if the approved runtime
-# design does not require Redis; do not remove the ECS SG boundary.
-enable_redis       = true
-redis_node_type    = "cache.t3.micro"
-redis_engine_version = "7.1"
+api_subnet_ids    = ["subnet-REPLACE-A", "subnet-REPLACE-B"]
+route_subnet_ids  = ["subnet-REPLACE-A", "subnet-REPLACE-B"]
+worker_subnet_ids = ["subnet-REPLACE-GRAPH-EFS-AZ"]
 
-desired_count = 1
+desired_count    = 1
 assign_public_ip = true
-
-# These remain empty until the release manifest exists.
-api_image    = ""
-route_image  = ""
-worker_image = ""
-release_id   = "unreleased"
-git_commit   = ""
-build_time   = ""
-prompt_release_id = ""
-
-# Keep false until the controlled Production Case test is ready to write back
-# to Zendesk. This does not affect the EC2 /production backup.
-zendesk_side_effects_enabled = false
-
-github_repository = "ZilingXie/SupportPortal"
-github_branch     = "main"

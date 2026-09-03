@@ -106,10 +106,12 @@ from backend.services.account_suspension_automation import (
     SUSPENSION_STATE_HANDOFF_PENDING,
     closing_reply_facts,
     contact_confirmation_reply_facts,
+    direct_handoff_attempt,
     direct_handoff_workflow,
     initial_contact_workflow,
     normalize_contact_email,
     suspension_contact_confirmation,
+    update_direct_handoff_workflow,
 )
 from backend.services.account_full_reroute import (
     AccountFullRerouteResult,
@@ -776,7 +778,6 @@ def _build_account_suspension_direct_handoff_attempt(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
     )
-    workflow = direct_handoff_workflow(ticket_email=ticket_email, created_at=created_at)
     collected_fields = {
         str(key): str(value)
         for key, value in dict(extraction.collected_fields).items()
@@ -791,23 +792,13 @@ def _build_account_suspension_direct_handoff_attempt(
         billing_ticket_id=billing_ticket_id,
         zendesk_ticket_url=zendesk_ticket_url,
     )
-    return {
-        "customer_reply": "",
-        "missing_fields": [],
-        "collected_fields": dict(extraction.collected_fields),
-        "internal_email_payload": handoff_payload,
-        "internal_email_to_send": handoff_payload,
-        "internal_email_send_status": "pending",
-        "internal_email_send_reason": "direct_handoff",
-        "requires_human_review": False,
-        "field_extraction": extraction,
-        "prompt_snapshots": {"account_suspension_field_extractor": dict(extraction.prompt_snapshot)},
-        "automation_context": {SUSPENSION_CONTACT_WORKFLOW_KEY: workflow},
-        "reply_facts": closing_reply_facts(
-            confirmed_email=str(ticket_email or ""),
-            customer_name=customer_name,
-        ),
-    }
+    return direct_handoff_attempt(
+        extraction=extraction,
+        internal_email_payload=handoff_payload,
+        ticket_email=ticket_email,
+        customer_name=customer_name,
+        created_at=created_at,
+    )
 
 
 def _update_suspension_direct_workflow(
@@ -818,23 +809,14 @@ def _update_suspension_direct_workflow(
     handoff_delivery_key: str | None = None,
     closing_reply_job_id: str | None = None,
 ) -> dict[str, Any]:
-    workflow = dict(
-        (account_case.get("automation_context") or {}).get(SUSPENSION_CONTACT_WORKFLOW_KEY) or {}
+    return update_direct_handoff_workflow(
+        account_case,
+        state=state,
+        updated_at=now_iso(),
+        failure_reason=failure_reason,
+        handoff_delivery_key=handoff_delivery_key,
+        closing_reply_job_id=closing_reply_job_id,
     )
-    workflow["state"] = state
-    workflow["updated_at"] = now_iso()
-    if failure_reason is not None:
-        workflow["failure_reason"] = failure_reason
-    if handoff_delivery_key is not None:
-        workflow["handoff_delivery_key"] = handoff_delivery_key
-    if closing_reply_job_id is not None:
-        workflow["closing_reply_job_id"] = closing_reply_job_id
-    updated = dict(account_case)
-    updated["automation_context"] = {
-        **dict(account_case.get("automation_context") or {}),
-        SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
-    }
-    return updated
 
 
 def _rerun_account_persona_unavailable_human_review(

@@ -130,6 +130,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
             "escalate_account_case_to_human_review": lambda **kw: NS(status="escalated"),
             "notify_account_failure": lambda **kw: {"status": "alerted"},
             "deliver_account_internal_email_async": None,
+            "account_reply_delay_seconds_for_profile": lambda profile: 0,
             "create_account_reply_job": lambda repository, **kw: {"job_id": "job-1", **kw},
             "send_billing_internal_email": lambda payload: {"status": "sent", "reason": ""},
             "send_enablement_internal_email": lambda payload: {"status": "sent", "reason": ""},
@@ -211,17 +212,142 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(outcome["reply_job"]["automation_delivery_key"], "dk-1")
         self.assertFalse(outcome["reply_job"]["close_after_publish"])
 
-    def test_suspension_creates_contact_confirmation_job_without_email(self):
+    def test_production_suspension_sends_email_before_single_handoff_job(self):
         repository = _FakeRepository()
-        with self._base_patches():
+        order = []
+
+        def send(payload):
+            order.append("email")
+            return {"status": "sent", "reason": ""}
+
+        def create_job(repository, **kwargs):
+            order.append("job")
+            return {"job_id": "job-suspension", **kwargs}
+
+        with self._base_patches(
+            send_billing_internal_email=send,
+            create_account_reply_job=create_job,
+        ):
             outcome = self._run(
                 repository,
                 route_decision={**DECISION, "execution_action": "account_suspension"},
                 route_classification={"automation_handler": "account_suspension"},
             )
         self.assertEqual(outcome["response_status"], "automation")
-        self.assertEqual(outcome["reply_job"]["reply_intent"], "account_suspension_contact_confirmation_request")
+        self.assertEqual(order, ["email", "job"])
+        self.assertEqual(
+            outcome["reply_job"]["reply_intent"],
+            "account_suspension_handoff_and_close",
+        )
+        self.assertEqual(
+            outcome["reply_job"]["reply_facts"]["reply_intent"],
+            "account_suspension_handoff_and_close",
+        )
+        self.assertFalse(outcome["reply_job"]["close_after_publish"])
+        self.assertEqual(outcome["internal_email_send_status"], "sent")
+        workflow = outcome["account_case"]["automation_context"][
+            "account_suspension_contact_workflow"
+        ]
+        self.assertEqual(workflow["state"], "closing_reply_pending")
+        self.assertEqual(workflow["intake_mode"], "direct_handoff")
+        self.assertEqual(workflow["confirmed_email"], "c@example.com")
+        self.assertEqual(workflow["confirmed_email_source"], "ticket_email")
+        self.assertEqual(workflow["closing_reply_job_id"], "job-suspension")
+        self.assertTrue(workflow["handoff_delivery_key"])
+
+    def test_preproduction_suspension_keeps_contact_confirmation_stage(self):
+        repository = _FakeRepository()
+        with self._base_patches():
+            outcome = self._run(
+                repository,
+                processing_profile="preproduction",
+                route_decision={**DECISION, "execution_action": "account_suspension"},
+                route_classification={"automation_handler": "account_suspension"},
+            )
+        self.assertEqual(outcome["response_status"], "automation")
+        self.assertEqual(
+            outcome["reply_job"]["reply_intent"],
+            "account_suspension_contact_confirmation_request",
+        )
         self.assertEqual(outcome["internal_email_send_status"], "not_applicable")
+        workflow = outcome["account_case"]["automation_context"][
+            "account_suspension_contact_workflow"
+        ]
+        self.assertEqual(workflow["state"], "awaiting_contact_confirmation")
+        self.assertNotIn("intake_mode", workflow)
+
+    def test_production_suspension_invalid_email_fails_closed_without_side_effects(self):
+        repository = _FakeRepository()
+        sent = []
+        jobs = []
+        with self._base_patches(
+            send_billing_internal_email=lambda payload: sent.append(payload),
+            create_account_reply_job=lambda repository, **kwargs: jobs.append(kwargs),
+        ):
+            outcome = self._run(
+                repository,
+                customer_email="not-an-email",
+                route_decision={**DECISION, "execution_action": "account_suspension"},
+                route_classification={"automation_handler": "account_suspension"},
+            )
+        self.assertEqual(outcome["response_status"], "human_review_required")
+        self.assertEqual(outcome["execution_reason_code"], "suspension_missing_customer_email")
+        self.assertIsNone(outcome["reply_job"])
+        self.assertEqual(sent, [])
+        self.assertEqual(jobs, [])
+        workflow = outcome["account_case"]["automation_context"][
+            "account_suspension_contact_workflow"
+        ]
+        self.assertEqual(workflow["state"], "human_review_required")
+
+    def test_production_suspension_email_failure_or_unknown_creates_no_reply_job(self):
+        for status in ("failed", "outcome_unknown"):
+            with self.subTest(status=status):
+                repository = _FakeRepository()
+                jobs = []
+                with self._base_patches(
+                    send_billing_internal_email=lambda payload, status=status: {
+                        "status": status,
+                        "reason": "provider unavailable",
+                    },
+                    create_account_reply_job=lambda repository, **kwargs: jobs.append(kwargs),
+                ):
+                    outcome = self._run(
+                        repository,
+                        route_decision={**DECISION, "execution_action": "account_suspension"},
+                        route_classification={"automation_handler": "account_suspension"},
+                    )
+                self.assertEqual(outcome["response_status"], "human_review_required")
+                self.assertIsNone(outcome["reply_job"])
+                self.assertEqual(jobs, [])
+                workflow = outcome["account_case"]["automation_context"][
+                    "account_suspension_contact_workflow"
+                ]
+                self.assertEqual(workflow["state"], "human_review_required")
+                self.assertEqual(workflow["failure_reason"], "provider unavailable")
+
+    def test_production_suspension_reply_job_failure_marks_workflow_for_review(self):
+        repository = _FakeRepository()
+
+        def fail_job(repository, **kwargs):
+            raise RuntimeError("queue unavailable")
+
+        with self._base_patches(create_account_reply_job=fail_job):
+            outcome = self._run(
+                repository,
+                route_decision={**DECISION, "execution_action": "account_suspension"},
+                route_classification={"automation_handler": "account_suspension"},
+            )
+        self.assertEqual(outcome["response_status"], "human_review_required")
+        self.assertIsNone(outcome["reply_job"])
+        workflow = outcome["account_case"]["automation_context"][
+            "account_suspension_contact_workflow"
+        ]
+        self.assertEqual(workflow["state"], "human_review_required")
+        self.assertEqual(
+            workflow["failure_reason"],
+            "account_suspension_closing_reply_job_failed",
+        )
 
     def _run_complete_enablement(self, repository, *, archer_result, **patches):
         app_id = "0123456789abcdef0123456789abcdef"

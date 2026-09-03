@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T06:43:53Z",
-  "source_base_commit": "3760b4487a369c49b8beff857a7439b9e64badc6",
-  "registry_digest": "1973e967034968960be813db9a5888638aa5625bbae814957824114504263fa3",
+  "generated_at": "2026-09-03T07:07:53Z",
+  "source_base_commit": "be9ad11c9d79ae93e32502f1e411b91a402c8c41",
+  "registry_digest": "2554a0a43e52dc4896c3811d42746a56f8d2152d048dafe2b653807d944568c9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -924,6 +924,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email(xieziling97@163.com)；内部 handoff 邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
         },
         {
+          "type": "test",
+          "label": "ECS Production suspension direct-handoff contract",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_comment_sync.py",
+          "details": "ECS Production新单覆盖邮件先于唯一closing job、严格邮箱gate、邮件失败/outcome_unknown、reply-job失败、workflow持久化；Preproduction与存量awaiting continuation保持两段式；S1改为一段式并断言内部邮件、closing reply、assign、reviewer通知和未solved。生产ECS尚未部署，真实工单验收待用户。"
+        },
+        {
           "type": "deployment",
           "label": "Official-stack restart and live markers on merged main (d53c8fb, after p2-141 fusion)",
           "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl -fsS http://127.0.0.1:8080/health && podman exec deployment_api_1 python -c \"\u003cpersona/suspension marker checks>\"",
@@ -934,6 +940,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression for one-shot suspension + persona v22",
           "command": ".venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_version_fence.py backend/tests/test_route_service_contract.py backend/tests/test_account_verification_automation.py backend/tests/test_account_slack_n8n.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_account_intake.py -q",
           "details": "全绿：intake 177（新增 direct 一段式端到端含邮件先于 job 时序/邮箱 gate 四边界/邮件失败 fail-closed/no-op 跟单）、persona 61（新增自然变体通过+拒绝+补句 1 次调用 vs 否定 4 次重试拒绝）、full_reroute 15（新增 direct 分流+无邮箱 fail-closed）、reroute_dispatch 34（新增 direct rerun 恢复）、worker 120、composer/version-fence/route/verification 165、slack/scenarios/ECS 入口 49。唯一失败 test_non_ecs_worker_keeps_legacy_rag_service_executor 为 main 基线同顺序组合即复现的既有跨文件环境污染（单跑通过），非本任务引入。"
+        },
+        {
+          "type": "test",
+          "label": "ECS direct-handoff and recipient release gate integration",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_account_internal_email_recipients.py",
+          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。ECS线上仍是旧镜像，通知邮件真实readback待授权发布与用户新工单。"
         },
         {
           "type": "test",
@@ -1986,6 +1998,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "ECS migration closeout implementation gates",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_prompt_versioning.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_terraform.py",
+          "details": "覆盖ECS Suspension一段式、Prompt同ID内容等价/defer activation、builder前置校验、正式deploy顺序/回滚/Worker安全合同和Terraform所有权静态合同；Terraform 1.9.8 fmt-check与validate通过。本轮未配置远程state/import，真实零漂移plan与ECS发布仍是后续生产门禁。"
+        },
+        {
+          "type": "test",
           "label": "ECS comment route decision audit contract regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_admin_features.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py; git diff --check",
           "details": "Route Worker持久化intent_router_attempted、intent_router_confidence_threshold、intent_router_fallback_reason、intent_router_failure_type与intent_router_failure_source；reply-chain回归使用真实_route_payload并取消route_execution_from_decision mock，确认阈值与fallback/failure审计字段成功进入Account route execution。260 passed、20 subtests passed，diff check通过；测试未触发真实邮件、RAG、Zendesk或Slack外呼。"
@@ -2297,6 +2315,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Approved fixed administrator Session boundary",
           "command": "Owner confirmation: admin/admin",
           "details": "按 Owner 明确确认保留固定 admin/admin 和现有 Session secret，不新增凭据或 Session 数据库。Session token 为 12 小时 stateless 签名 cookie：正常浏览器 logout 会删除 scoped cookie 并使后续浏览器 Session 请求为 401；单独复制的旧 cookie 在 TTL 到期前仍可重放，该限制作为已知边界记录。"
+        },
+        {
+          "type": "test",
+          "label": "Formal deploy Worker Pilot rejection gate",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_terraform.py",
+          "details": "正式部署渲染在注册task definition前拒绝PILOT_BIN/XDG_CONFIG_HOME/PILOT_HOME、任意Pilot环境值、pilot-creds volume/mount，并保留Graph EFS与当前role/CPU/memory/network/logging；生产发布尚未执行。"
         },
         {
           "type": "test",
@@ -6493,12 +6517,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。当前 supportcenter.stellarix.space/automation/production 已完成 Account parity 零流量上线：ECS API、Route Worker、Automation Worker 使用 release r20260901-69e9836（Task Definition 14、15、16），均为 1/1/0，公网 health/live、health/release、health/ready 为 200，当前 heartbeat 新鲜且 provenance_mismatches 为空。独立 Hermes + 腾讯 AgentMemory memory-core 已在同一 ECS cluster 运行 supportportal-production-hermes:2，并通过公网 /v1 完成记忆闭环验证。PR #1021 已将 Media Relay Enablement 改为 Archer 自动流程并合入 main，但当前 ECS release 基于 69e9836，早于 #1021 的 ccb7ebc，因此 Archer 尚未部署到生产 Worker；p2-134 仍等待 Pilot deposit、只读 Archer GET probe 和三类全新 Enablement Case 验收。近期已完成 Enablement 合同/回复投递修复、Fraud partial-reply/RAG 边界与敏感预检修复，均已进入代码主线，Fraud 修复已随当前 release 部署。support.stellarix.space/production 继续作为未修改的 EC2 backup；Preproduction 与 EC2 Staging 尚未建立。Slack Engineer Case thread binding、@bot、Guardrail 与 Final Approve 仍延期，因此当前不宣称完整旧 /production parity。",
-      "next_action": "先从当前 main@ccb7ebc（包含 PR #1021）构建新的三角色 immutable linux/amd64 release，并完成 Production Worker 的 Pilot deposit 与只读 Archer GET probe；probe 通过后以同一 release 更新 API、Route、Worker，确认 1/1/0、health/readiness、heartbeat/provenance 和 CloudWatch 稳定。随后由用户分别创建全新的 Enablement、Fraud、Account Suspension Case，完成 Execution、Job、Delivery、内部邮件、Zendesk 状态/指派和客户回复 readback。三类 Case 全部通过并观察稳定后，才把 n8n 新流量固定到 /automation/production；EC2 /production 先保留为可回切 backup，不立即删除或重放历史失败任务。",
+      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。2026-09-03 代码基线已补齐 ECS Production Suspension 一段式合同、Prompt Release 同 ID 内容门禁、唯一正式 ECS deploy 命令和 Terraform 稳定资源所有权；本轮未执行生产发布。线上 ECS 仍是旧镜像 0fea0ee，API/Route/Worker task definition revision 23/18/21、均为 1/1/0，因此不能把合并代码视为已上线。新 production Terraform root 仅 import/manage ECR、Automation target group、priority 10 listener rule 和三 service 稳定配置，并忽略 task_definition 指针；cluster、共享 ALB/listener/ACM/security group/log group/SSM/roles、Graph EFS、Redis 与 Hermes 均为外部 data/输入。Worker 发布合同明确拒绝 Pilot 环境或 pilot-creds 挂载；Archer 保留纯 HTTP cookie 链。EC2 support.stellarix.space/production 继续作为未修改 backup，n8n 尚未切流，真实新工单 readback 尚未执行。",
+      "next_action": "先配置 production remote backend 并逐项 import，取得真实 terraform plan exit 0（0 add/0 change/0 destroy）。获得单独生产授权后，从当时最新干净 main 构建/晋升同一组三角色 linux/amd64 digest，先运行 deploy_automation_ecs_release.sh --check-only，再用正式命令完成目标 Prompt candidate 同步、Route/Worker→heartbeat→API→公网/CloudWatch/EC2 backup 门禁及最后激活；确认新 Worker digest 无 Pilot 并 readback Suspension 收件人 secret。随后由用户创建全新 Enablement、Fraud、Account Suspension Case 完成业务与外部 readback；全部通过并观察稳定后才切 n8n，新流量切换前不重放历史任务或 outcome_unknown。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
-        "ECS Foundation只建立当前 release实际需要的 ECR/IAM/Fargate/ALB/ACM/Secrets Manager/CloudWatch与必要 token存储；supportcenter.stellarix.space进入 ECS ALB，support.stellarix.space与 /production继续由现有 EC2承载。schema bootstrap使用不进入长期 task的独立 DDL凭据。",
+        "Production Terraform使用远程加密版本化 state 和 DynamoDB lock，仅 import/manage ECR、Automation target group/listener rule及三 ECS service稳定配置；task_definition指针归发布脚本，线上共享 cluster/ALB/ACM/security group/log/SSM/IAM/EFS/Redis/Hermes不由该 root创建或删除。",
         "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker完成分类且仅对已有父Ticket的后续事件读取Persona，Automation Worker在ticket.created Processing先持久化父Ticket再固定Persona并执行AI、远端RAG与外部动作；角色之间通过隔离RDS schema内的durable Jobs交接，不依赖Redis/SQS或EC2 runtime。",
         "Release先以 role tag上传 supportportal/preproduction并按 digest部署 Preproduction，通过 schema/Prompt、API readiness、Route/Worker heartbeat、远端 RAG、Zendesk/邮件/Slack与外部 readback门禁后，才复制相同 OCI manifest到 supportportal/production；晋升过程禁止 rebuild。",
         "ECS Production切换后，support.stellarix.space/production及其独立 schema/Redis/worker长期保持为 EC2 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回该 endpoint，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
@@ -6506,10 +6530,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
         "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
         "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
-        "GitHub Actions使用 AWS OIDC而非长期 access key，Terraform identity与更窄的 release identity分离，发布与晋升命令可审计；CloudWatch对 ALB 5xx、task退出、worker heartbeat和部署失败提供告警。"
+        "正式Production发布只能使用要求Manifest、Promotion Record、零漂移plan和显式授权的deploy_automation_ecs_release.sh；Prompt先同步candidate，Route/Worker与heartbeat通过后再部署API，所有健康门禁通过后才activate；激活前失败回滚旧revision，激活结果不确定时要求readback reconciliation。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "ECS migration closeout implementation gates",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_prompt_versioning.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_terraform.py",
+          "details": "覆盖ECS Suspension一段式、Prompt同ID内容等价/defer activation、builder前置校验、正式deploy顺序/回滚/Worker安全合同和Terraform所有权静态合同；Terraform 1.9.8 fmt-check与validate通过。本轮未配置远程state/import，真实零漂移plan与ECS发布仍是后续生产门禁。"
+        },
         {
           "type": "test",
           "label": "ECS comment route decision audit contract regression",
@@ -9667,7 +9697,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "r20260903-7d62944 构建被 worker 镜像的 Pilot 安装步骤阻塞：pilot.touchingtalk.com 下载源在两小时内更换了无签名的 Linux 二进制（两次独立下载 checksum 稳定为 43bba510...，与 pinned 的 cbc83b6d... 失配，构建 fail closed）。Pilot 二进制自 p2-134 Archer 直连改造后运行时已不使用（ARCHER_OAUTH_COOKIE 纯 HTTP 链），仅作为遗留保留在镜像内。用户决策：移除安装。改动：backend/Dockerfile.automation 删除 install_pilot 的 RUN 步骤与 prune 行的 /app/bin/pilot 引用；删除 backend/scripts/install_pilot.py；test_automation_ecs_images 的 pinned-pilot 断言改为无 pilot 断言（Archer skill 保留断言不变）；runbook 表述同步。",
-      "next_action": "实现与测试已完成,待 finalize 合并后重建 release 并继续 ECS 部署。",
+      "next_action": "保持 active，等待单独生产授权后由正式 deploy 命令发布新 Worker digest；运行前必须通过 Terraform 零漂移、Worker task definition 无 Pilot env/volume/mount 和 Suspension secret readback 门禁。运行后以 ECR/运行 task digest 证明新 Worker 无 Pilot，再置 done。",
       "acceptance_criteria": [
         "三个 ECS 镜像不再包含或安装 Pilot 二进制；Dockerfile 无 install_pilot 引用；install_pilot.py 已删除。",
         "Archer 直连链（ARCHER_OAUTH_COOKIE）与 archer-cross-channel-hosting skill 的镜像保留不变。",
@@ -9676,6 +9706,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Formal deploy Worker Pilot rejection gate",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_terraform.py",
+          "details": "正式部署渲染在注册task definition前拒绝PILOT_BIN/XDG_CONFIG_HOME/PILOT_HOME、任意Pilot环境值、pilot-creds volume/mount，并保留Graph EFS与当前role/CPU/memory/network/logging；生产发布尚未执行。"
+        },
         {
           "type": "test",
           "label": "Image & build suites",
@@ -9714,7 +9750,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
-      "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：Main /account (processing_profile=production) 新单不再问联系邮箱，intake 即发内部 handoff 邮件（联系邮箱=工单邮箱，严版 normalize_contact_email 前置 gate，缺失/非法即 suspension_missing_customer_email 掉人工）→ 邮件成功后才建唯一 closing job（intent=account_suspension_handoff_and_close，facts 用 closing_reply_facts 修掉 submission_confirmation 嵌套冲突）→ 首封公开回复'已收到+24h'→ 发布后 assign 复审人不关单，客户后续回复 no-op。workflow 持久化 intake_mode=direct_handoff + confirmed_email(=ticket_email) 驱动 rerun/reroute 分流（不再产出问邮箱回复）。配套 persona v22：suspension closing 校验放宽为回复级三要素（情态/联系/时限可跨句，is expected to/should 等自然表达一次通过）+ 负向守卫（否定/疑问承诺、肯定子句关单/重开语义仍拒）+ 确定性补句兜底（缺承诺追加标准句并记 payload persona_contract_repair；否定语义不修）+ 问候恢复逗号 Hi {name},（回退 p2-126 去逗号决定）。旧两阶段路径（staging/ECS 入口、存量 awaiting 工单、contact 合同）全部保留。v22 校验语义后被 p2-141（PR#1040）的 v23 安全地板融合演进。",
+      "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：legacy /production 与 ECS /automation/production 的新单均严格校验工单邮箱，intake 发内部 handoff 邮件，确认 sent 后才建唯一 account_suspension_handoff_and_close job，首封公开回复确认收到并承诺24h，发布后assign复审人且不关单。共享 helper 持久化 intake_mode=direct_handoff、confirmed_email_source=ticket_email、delivery key和job id；缺失/非法邮箱、邮件failed/outcome_unknown或job创建失败均在客户回复前进入Human Review。Preproduction与存量 awaiting_contact_confirmation 继续旧两段式续跑。persona语义已由p2-141的v23安全地板融合取代v22，问候逗号、确定性24h补句、reviewer通知与不solved合同保持。EC2 /production 已通过全新工单 AC-13254 完成业务和外部readback并关闭本task；ECS尚未部署的运行面继续由p1-53/p2-141跟踪。",
       "next_action": "",
       "acceptance_criteria": [
         "production suspension 新单一封到位：邮箱 gate→内部邮件（先于 reply job）→唯一 handoff job→公开回复'已收到+24h'（Hi {name},）→assign 复审人+human_review_required+不关单。",
@@ -9730,6 +9766,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Live acceptance on production ticket AC-13254 (EC2 /production, main 3760b44, 2026-09-03)",
           "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13254",
           "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email(xieziling97@163.com)；内部 handoff 邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Production suspension direct-handoff contract",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_comment_sync.py",
+          "details": "ECS Production新单覆盖邮件先于唯一closing job、严格邮箱gate、邮件失败/outcome_unknown、reply-job失败、workflow持久化；Preproduction与存量awaiting continuation保持两段式；S1改为一段式并断言内部邮件、closing reply、assign、reviewer通知和未solved。生产ECS尚未部署，真实工单验收待用户。"
         },
         {
           "type": "deployment",
@@ -9754,6 +9796,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "source_refs": [
         "backend/main.py",
         "backend/services/account_suspension_automation.py",
+        "backend/services/automation_account_intake.py",
         "backend/services/account_full_reroute.py",
         "backend/services/automation_persona.py",
         "backend/worker.py",
@@ -9773,7 +9816,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
       "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④suspension 收尾 assign（assigned/already_assigned）后 Graph 发 reviewer 通知邮件（resolve_account_internal_email_recipients 公开函数），状态持久化 workflow.reviewer_notify_email（sent 幂等/failed 记事件不回滚），新事件 zendesk_reviewer_notify_email；fraud 不加。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "定向测试与剧本 S1 一段式适配完成后 finalize 合并；合并后官方栈重启读回 automation-persona-v23 marker；生产验收需用户授权 ECS release 部署 + 全新工单（不重放 13225），对收件人 JSON 做 runtime readback 后走 suspension 一段式全链（intake handoff 邮件→closing 回复→assign→通知邮件实收 suhrid→未 solved）。",
+      "next_action": "保持 active。代码合并后先完成官方lightweight栈build ref、direct-handoff和automation-persona-v23 marker验证；获得单独生产授权后由正式ECS deploy命令readback并校验Suspension收件人secret、发布新三角色digest。最后由用户创建全新工单（不重放13225）验收intake handoff邮件→closing回复→assign→通知邮件实收suhrid→未solved。",
       "acceptance_criteria": [
         "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
         "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
@@ -9784,6 +9827,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "ECS direct-handoff and recipient release gate integration",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_account_internal_email_recipients.py",
+          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。ECS线上仍是旧镜像，通知邮件真实readback待授权发布与用户新工单。"
+        },
         {
           "type": "test",
           "label": "Focused regression after fusing with p2-140 one-shot handoff (persona v23)",

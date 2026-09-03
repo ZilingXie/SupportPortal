@@ -1,194 +1,120 @@
 variable "aws_region" {
-  description = "AWS region for the ECS Production foundation."
+  description = "AWS region containing the imported Automation Production resources."
   type        = string
   default     = "us-east-1"
 }
 
-variable "project_name" {
-  description = "Lowercase project name used in resource names."
-  type        = string
-  default     = "supportportal"
-}
-
-variable "environment" {
-  description = "Environment managed by this stack. Stage 3 only supports production."
-  type        = string
-  default     = "production"
-
-  validation {
-    condition     = var.environment == "production"
-    error_message = "This Terraform root is only for the ECS Production foundation."
-  }
-}
-
 variable "vpc_id" {
-  description = "Existing SupportPortal VPC."
+  description = "Existing VPC used by the imported Automation target group."
   type        = string
-  default     = "vpc-0125f57b2ec2f0423"
 }
 
-variable "public_subnet_ids" {
-  description = "At least two public subnet IDs. Empty discovers public subnets in the VPC."
+variable "ecs_cluster_name" {
+  description = "Shared ECS cluster name; Terraform reads but does not own the cluster."
+  type        = string
+  default     = "supportportal-production"
+}
+
+variable "shared_alb_arn" {
+  description = "Shared ALB ARN; Terraform does not own the ALB."
+  type        = string
+}
+
+variable "shared_https_listener_arn" {
+  description = "Shared HTTPS listener ARN that receives the imported Automation rule."
+  type        = string
+}
+
+variable "shared_acm_certificate_arn" {
+  description = "Shared ACM certificate ARN recorded as an external dependency."
+  type        = string
+}
+
+variable "ecs_security_group_id" {
+  description = "Shared ECS security group used by all three services."
+  type        = string
+}
+
+variable "shared_log_group_name" {
+  description = "Single shared CloudWatch log group referenced by live task definitions."
+  type        = string
+}
+
+variable "shared_task_execution_role_name" {
+  description = "Shared ECS execution role name referenced by live task definitions."
+  type        = string
+}
+
+variable "shared_task_role_name" {
+  description = "Shared ECS task role name referenced by live task definitions."
+  type        = string
+}
+
+variable "shared_graph_efs_file_system_id" {
+  description = "Shared Graph token-cache EFS id; Terraform does not own EFS resources."
+  type        = string
+}
+
+variable "shared_redis_replication_group_id" {
+  description = "Shared Redis replication group id; Terraform does not own Redis."
+  type        = string
+}
+
+variable "shared_ssm_parameter_names" {
+  description = "Shared runtime and Hermes SSM parameter names verified as external inputs."
   type        = list(string)
-  default     = []
-
-  validation {
-    condition     = length(var.public_subnet_ids) == 0 || length(var.public_subnet_ids) >= 2
-    error_message = "Provide no subnet IDs for discovery, or at least two public subnet IDs."
-  }
 }
 
-variable "efs_availability_zone_name" {
-  description = "Availability Zone for the cost-first One Zone EFS token cache and its Worker tasks."
+variable "api_service_name" {
+  type    = string
+  default = "supportportal-production-api"
+}
+
+variable "route_service_name" {
+  type    = string
+  default = "supportportal-production-route"
+}
+
+variable "worker_service_name" {
+  type    = string
+  default = "supportportal-production-worker"
+}
+
+variable "api_task_definition_arn" {
+  description = "Bootstrap task definition for API; release revisions are ignored after import."
   type        = string
-  default     = "us-east-1b"
-
-  validation {
-    condition     = trimspace(var.efs_availability_zone_name) != ""
-    error_message = "efs_availability_zone_name must not be empty."
-  }
 }
 
-variable "pilot_efs_file_system_id" {
-  description = "Existing EFS file system that stores Pilot credentials for the Worker only."
+variable "route_task_definition_arn" {
+  description = "Bootstrap task definition for Route; release revisions are ignored after import."
   type        = string
-  default     = ""
-
-  validation {
-    condition     = !var.enable_services || can(regex("^fs-[0-9a-f]+$", var.pilot_efs_file_system_id))
-    error_message = "pilot_efs_file_system_id must be a valid fs-* ID when services are enabled."
-  }
 }
 
-variable "pilot_efs_access_point_id" {
-  description = "Existing EFS access point for the Worker Pilot credential directory."
+variable "worker_task_definition_arn" {
+  description = "Bootstrap task definition for Worker; release revisions are ignored after import."
   type        = string
-  default     = ""
-
-  validation {
-    condition     = !var.enable_services || can(regex("^fsap-[0-9a-f]+$", var.pilot_efs_access_point_id))
-    error_message = "pilot_efs_access_point_id must be a valid fsap-* ID when services are enabled."
-  }
 }
 
-variable "rds_security_group_id" {
-  description = "Existing RDS security group to which ECS access is added."
-  type        = string
-  default     = "sg-0e9c3bd50e371fbf4"
+variable "api_subnet_ids" {
+  type = list(string)
 }
 
-variable "domain_name" {
-  description = "Dedicated ECS Production hostname."
-  type        = string
-  default     = "supportcenter.stellarix.space"
+variable "route_subnet_ids" {
+  type = list(string)
 }
 
-variable "acm_certificate_arn" {
-  description = "Existing issued ACM certificate ARN. Empty creates a DNS-validated certificate and outputs its records."
-  type        = string
-  default     = ""
+variable "worker_subnet_ids" {
+  type = list(string)
 }
 
-variable "enable_https_listener" {
-  description = "Create the HTTPS listener after the ACM certificate is issued."
-  type        = bool
-  default     = false
-}
-
-variable "enable_services" {
-  description = "Create ECS API, Route and Worker services. Keep false until the approved release digests are available."
-  type        = bool
-  default     = false
-}
-
-variable "api_image" {
-  description = "Immutable API image reference in supportportal/production, pinned by ECR digest."
-  type        = string
-  default     = ""
-}
-
-variable "route_image" {
-  description = "Immutable Route image reference in supportportal/production, pinned by ECR digest."
-  type        = string
-  default     = ""
-}
-
-variable "worker_image" {
-  description = "Immutable Worker image reference in supportportal/production, pinned by ECR digest."
-  type        = string
-  default     = ""
-}
-
-variable "release_id" {
-  description = "Release manifest ID injected into task environment."
-  type        = string
-  default     = "unreleased"
-}
-
-variable "git_commit" {
-  description = "Full Git commit captured by the Release Manifest."
-  type        = string
-  default     = ""
-}
-
-variable "build_time" {
-  description = "UTC OCI build time captured by the Release Manifest."
-  type        = string
-  default     = ""
-}
-
-variable "prompt_release_id" {
-  description = "Active Prompt Release ID captured by the Release Manifest."
-  type        = string
-  default     = ""
-}
-
-variable "zendesk_side_effects_enabled" {
-  description = "Enable real Zendesk writes for controlled Production Case testing and cutover."
-  type        = bool
-  default     = false
-}
-
-variable "api_cpu" {
-  description = "API Fargate CPU units."
-  type        = string
-  default     = "512"
-}
-
-variable "api_memory" {
-  description = "API Fargate memory in MiB."
-  type        = string
-  default     = "1024"
-}
-
-variable "route_cpu" {
-  description = "Route Worker Fargate CPU units."
-  type        = string
-  default     = "256"
-}
-
-variable "route_memory" {
-  description = "Route Worker Fargate memory in MiB."
-  type        = string
-  default     = "512"
-}
-
-variable "worker_cpu" {
-  description = "Worker Fargate CPU units."
-  type        = string
-  default     = "512"
-}
-
-variable "worker_memory" {
-  description = "Worker Fargate memory in MiB."
-  type        = string
-  default     = "1024"
+variable "assign_public_ip" {
+  type    = bool
+  default = true
 }
 
 variable "desired_count" {
-  description = "Initial desired count for API, Route and Worker services."
-  type        = number
-  default     = 1
+  type    = number
+  default = 1
 
   validation {
     condition     = var.desired_count >= 1 && floor(var.desired_count) == var.desired_count
@@ -196,62 +122,17 @@ variable "desired_count" {
   }
 }
 
-variable "assign_public_ip" {
-  description = "Assign public IPs to Fargate tasks for egress in the current no-NAT VPC."
-  type        = bool
-  default     = true
+variable "automation_target_group_name" {
+  type    = string
+  default = "supportportal-production-api"
 }
 
-variable "enable_redis" {
-  description = "Create the single-node ElastiCache Redis foundation."
-  type        = bool
-  default     = true
-}
+variable "automation_listener_rule_priority" {
+  type    = number
+  default = 10
 
-variable "redis_node_type" {
-  description = "Cost-first ElastiCache node type."
-  type        = string
-  default     = "cache.t3.micro"
-}
-
-variable "redis_engine_version" {
-  description = "Redis OSS engine version."
-  type        = string
-  default     = "7.1"
-}
-
-variable "log_retention_days" {
-  description = "CloudWatch log retention for ECS runtime logs."
-  type        = number
-  default     = 30
-}
-
-variable "enable_container_insights" {
-  description = "Enable ECS Container Insights. Disabled by default for cost control."
-  type        = bool
-  default     = false
-}
-
-variable "github_repository" {
-  description = "GitHub repository allowed to assume the release role."
-  type        = string
-  default     = "ZilingXie/SupportPortal"
-}
-
-variable "github_branch" {
-  description = "Git branch allowed to assume the release role."
-  type        = string
-  default     = "main"
-}
-
-variable "github_oidc_thumbprint" {
-  description = "Thumbprint for token.actions.githubusercontent.com."
-  type        = string
-  default     = "6938fd4d98bab03faadb97b34396831e3780aea1"
-}
-
-variable "manifest_bucket_name" {
-  description = "Optional globally unique S3 bucket name for release manifests. Empty derives one from the AWS account ID."
-  type        = string
-  default     = ""
+  validation {
+    condition     = var.automation_listener_rule_priority == 10
+    error_message = "The imported Automation HTTPS listener rule must retain priority 10."
+  }
 }

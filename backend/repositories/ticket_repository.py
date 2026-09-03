@@ -506,6 +506,45 @@ _ACCOUNT_REROUTE_TERMINAL_STATUSES = {
     "needs_recovery",
 }
 _ACCOUNT_REROUTE_STATUSES = _ACCOUNT_REROUTE_ACTIVE_STATUSES | _ACCOUNT_REROUTE_TERMINAL_STATUSES
+
+
+def _validate_prompt_release_sync_payload(
+    release: dict[str, Any],
+    versions: list[dict[str, Any]],
+) -> tuple[str, str, dict[str, int], dict[str, str]]:
+    release_id = str(release.get("release_id") or "").strip()
+    if not release_id:
+        raise ValueError("release_id is required")
+    status = str(release.get("status") or "").strip()
+    if status not in {"candidate", "active"}:
+        raise ValueError(f"cannot sync a prompt release with status {status or 'unknown'}")
+    items = {
+        str(key): int(version)
+        for key, version in dict(release.get("items") or {}).items()
+    }
+    hashes: dict[str, str] = {}
+    for row in versions:
+        key = str(row.get("prompt_key") or "").strip()
+        version = int(row.get("version") or 0)
+        if not key or version < 1 or items.get(key) != version:
+            raise ValueError(
+                f"synced version does not match the release items: {key} v{version}"
+            )
+        content_sha256 = str(row.get("content_sha256") or "").strip()
+        if not content_sha256:
+            raise ValueError(
+                f"content_sha256 is required for synced version: {key} v{version}"
+            )
+        content = str(row.get("content") or "")
+        if hashlib.sha256(content.encode("utf-8")).hexdigest() != content_sha256:
+            raise ValueError(f"content hash mismatch for synced payload: {key} v{version}")
+        if key in hashes:
+            raise ValueError(f"duplicate synced prompt version: {key}")
+        hashes[key] = content_sha256
+    if set(hashes) != set(items):
+        missing = sorted(set(items) - set(hashes))
+        raise ValueError(f"synced release is missing prompt versions: {missing}")
+    return release_id, status, items, hashes
 _ACCOUNT_REROUTE_DISPATCH_STATUSES = {"queued", "leased", "completed", "needs_recovery"}
 
 
@@ -5114,13 +5153,54 @@ class InMemoryTicketRepository:
 
     def sync_prompt_release(self, release: dict[str, Any], versions: list[dict[str, Any]]) -> dict[str, Any]:
         with self._assignment_lock:
-            normalized_release_id = str(release.get("release_id") or "").strip()
-            if not normalized_release_id:
-                raise ValueError("release_id is required")
-            status = str(release.get("status") or "").strip()
-            if status not in {"candidate", "active"}:
-                raise ValueError(f"cannot sync a prompt release with status {status or 'unknown'}")
-            items = {str(key): int(version) for key, version in dict(release.get("items") or {}).items()}
+            normalized_release_id, status, items, source_hashes = (
+                _validate_prompt_release_sync_payload(release, versions)
+            )
+
+            existing_release = self._prompt_releases.get(normalized_release_id)
+            if existing_release is not None:
+                existing_status = str(existing_release.get("status") or "").strip()
+                if existing_status not in {"candidate", "active"}:
+                    raise ValueError(
+                        f"existing prompt release is not deployable: {normalized_release_id}"
+                    )
+                if str(existing_release.get("build_ref") or "") != str(
+                    release.get("build_ref") or ""
+                ):
+                    raise ValueError(
+                        f"prompt release build_ref mismatch: {normalized_release_id}"
+                    )
+                target_items = {
+                    str(key): int(version)
+                    for key, version in dict(existing_release.get("items") or {}).items()
+                }
+                if set(target_items) != set(items):
+                    raise ValueError(
+                        f"prompt release content fingerprint mismatch: {normalized_release_id}"
+                    )
+                for key, target_version in target_items.items():
+                    target_row = next(
+                        (
+                            row
+                            for row in self._prompt_versions.get(key, [])
+                            if int(row.get("version") or 0) == target_version
+                        ),
+                        None,
+                    )
+                    if target_row is None or str(target_row.get("content_sha256") or "") != source_hashes[key]:
+                        raise ValueError(
+                            f"prompt release content fingerprint mismatch: {normalized_release_id}"
+                        )
+                return {
+                    "release_id": normalized_release_id,
+                    "status": existing_status,
+                    "created": False,
+                    "versions_created": 0,
+                    "versions_matched": len(items),
+                    "versions_remapped": sum(
+                        int(target_items[key] != items[key]) for key in items
+                    ),
+                }
 
             versions_created = 0
             versions_matched = 0
@@ -5194,26 +5274,23 @@ class InMemoryTicketRepository:
                 if not any(int(item["version"]) == version for item in self._prompt_versions.get(key, [])):
                     raise ValueError(f"synced release is missing {key} v{version}")
 
-            existing_release = self._prompt_releases.get(normalized_release_id)
-            created = existing_release is None
-            if created:
-                if status == "active":
-                    for item in self._prompt_releases.values():
-                        if item.get("status") == "active":
-                            item.update({"status": "superseded"})
-                previous_release_id = str(release.get("previous_release_id") or "").strip() or None
-                if previous_release_id and previous_release_id not in self._prompt_releases:
-                    previous_release_id = None
-                self._prompt_releases[normalized_release_id] = {
-                    "release_id": normalized_release_id,
-                    "build_ref": str(release.get("build_ref") or "unknown"),
-                    "status": status,
-                    "previous_release_id": previous_release_id,
-                    "created_at": release.get("created_at"),
-                    "activated_at": release.get("activated_at"),
-                    "failure_reason": None,
-                    "items": dict(target_items),
-                }
+            if status == "active":
+                for item in self._prompt_releases.values():
+                    if item.get("status") == "active":
+                        item.update({"status": "superseded"})
+            previous_release_id = str(release.get("previous_release_id") or "").strip() or None
+            if previous_release_id and previous_release_id not in self._prompt_releases:
+                previous_release_id = None
+            self._prompt_releases[normalized_release_id] = {
+                "release_id": normalized_release_id,
+                "build_ref": str(release.get("build_ref") or "unknown"),
+                "status": status,
+                "previous_release_id": previous_release_id,
+                "created_at": release.get("created_at"),
+                "activated_at": release.get("activated_at"),
+                "failure_reason": None,
+                "items": dict(target_items),
+            }
             if status == "active":
                 for prompt_versions in self._prompt_versions.values():
                     for item in prompt_versions:
@@ -5227,7 +5304,7 @@ class InMemoryTicketRepository:
             return {
                 "release_id": normalized_release_id,
                 "status": status,
-                "created": created,
+                "created": True,
                 "versions_created": versions_created,
                 "versions_matched": versions_matched,
                 "versions_remapped": versions_remapped,
@@ -18551,17 +18628,62 @@ class PostgresTicketRepository:
         return self._run_with_connection_retry("list_prompt_releases", _operation)
 
     def sync_prompt_release(self, release: dict[str, Any], versions: list[dict[str, Any]]) -> dict[str, Any]:
-        normalized_release_id = str(release.get("release_id") or "").strip()
-        if not normalized_release_id:
-            raise ValueError("release_id is required")
-        status = str(release.get("status") or "").strip()
-        if status not in {"candidate", "active"}:
-            raise ValueError(f"cannot sync a prompt release with status {status or 'unknown'}")
-        items = {str(key): int(version) for key, version in dict(release.get("items") or {}).items()}
+        normalized_release_id, status, items, source_hashes = (
+            _validate_prompt_release_sync_payload(release, versions)
+        )
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(sql.SQL("SELECT pg_advisory_xact_lock(%s, %s)"), _PROMPT_RELEASE_SYNC_ADVISORY_LOCK)
+                cur.execute(
+                    sql.SQL(
+                        "SELECT build_ref,status FROM {} WHERE release_id=%s FOR UPDATE"
+                    ).format(self._table("support_prompt_releases")),
+                    (normalized_release_id,),
+                )
+                existing_release = cur.fetchone()
+                if existing_release is not None:
+                    existing_build_ref = str(existing_release[0] or "")
+                    existing_status = str(existing_release[1] or "")
+                    if existing_status not in {"candidate", "active"}:
+                        raise ValueError(
+                            f"existing prompt release is not deployable: {normalized_release_id}"
+                        )
+                    if existing_build_ref != str(release.get("build_ref") or ""):
+                        raise ValueError(
+                            f"prompt release build_ref mismatch: {normalized_release_id}"
+                        )
+                    cur.execute(
+                        sql.SQL(
+                            "SELECT i.prompt_key,i.prompt_version,v.content_sha256 "
+                            "FROM {} i JOIN {} v ON v.prompt_key=i.prompt_key "
+                            "AND v.version=i.prompt_version WHERE i.release_id=%s"
+                        ).format(
+                            self._table("support_prompt_release_items"),
+                            self._table("support_prompt_versions"),
+                        ),
+                        (normalized_release_id,),
+                    )
+                    target_rows = {
+                        str(key): (int(version), str(content_hash))
+                        for key, version, content_hash in cur.fetchall()
+                    }
+                    if set(target_rows) != set(items) or any(
+                        target_rows[key][1] != source_hashes[key] for key in items
+                    ):
+                        raise ValueError(
+                            f"prompt release content fingerprint mismatch: {normalized_release_id}"
+                        )
+                    return {
+                        "release_id": normalized_release_id,
+                        "status": existing_status,
+                        "created": False,
+                        "versions_created": 0,
+                        "versions_matched": len(items),
+                        "versions_remapped": sum(
+                            int(target_rows[key][0] != items[key]) for key in items
+                        ),
+                    }
                 versions_created = 0
                 versions_matched = 0
                 versions_remapped = 0
@@ -18641,36 +18763,29 @@ class PostgresTicketRepository:
                     missing = sorted(set(items) - set(target_items))
                     raise ValueError(f"synced release is missing prompt versions: {missing}")
 
-                cur.execute(
-                    sql.SQL("SELECT status FROM {} WHERE release_id=%s FOR UPDATE").format(self._table("support_prompt_releases")),
-                    (normalized_release_id,),
-                )
-                release_row = cur.fetchone()
-                created = release_row is None
-                if created:
-                    if status == "active":
-                        cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_releases")))
-                    previous_release_id = str(release.get("previous_release_id") or "").strip() or None
-                    if previous_release_id:
-                        cur.execute(
-                            sql.SQL("SELECT 1 FROM {} WHERE release_id=%s").format(self._table("support_prompt_releases")),
-                            (previous_release_id,),
-                        )
-                        if cur.fetchone() is None:
-                            previous_release_id = None
+                if status == "active":
+                    cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_releases")))
+                previous_release_id = str(release.get("previous_release_id") or "").strip() or None
+                if previous_release_id:
                     cur.execute(
-                        sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason) VALUES (%s,%s,%s,%s,%s,%s,NULL)").format(self._table("support_prompt_releases")),
-                        (normalized_release_id, str(release.get("build_ref") or "unknown"), status, previous_release_id, release.get("created_at"), release.get("activated_at")),
+                        sql.SQL("SELECT 1 FROM {} WHERE release_id=%s").format(self._table("support_prompt_releases")),
+                        (previous_release_id,),
                     )
-                    cur.executemany(
-                        sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) VALUES (%s,%s,%s)").format(
-                            self._table("support_prompt_release_items")
-                        ),
-                        [
-                            (normalized_release_id, key, version)
-                            for key, version in sorted(target_items.items())
-                        ],
-                    )
+                    if cur.fetchone() is None:
+                        previous_release_id = None
+                cur.execute(
+                    sql.SQL("INSERT INTO {} (release_id,build_ref,status,previous_release_id,created_at,activated_at,failure_reason) VALUES (%s,%s,%s,%s,%s,%s,NULL)").format(self._table("support_prompt_releases")),
+                    (normalized_release_id, str(release.get("build_ref") or "unknown"), status, previous_release_id, release.get("created_at"), release.get("activated_at")),
+                )
+                cur.executemany(
+                    sql.SQL("INSERT INTO {} (release_id,prompt_key,prompt_version) VALUES (%s,%s,%s)").format(
+                        self._table("support_prompt_release_items")
+                    ),
+                    [
+                        (normalized_release_id, key, version)
+                        for key, version in sorted(target_items.items())
+                    ],
+                )
                 if status == "active":
                     cur.execute(sql.SQL("UPDATE {} SET status='superseded' WHERE status='active'").format(self._table("support_prompt_versions")))
                     for key, version in target_items.items():
@@ -18683,7 +18798,7 @@ class PostgresTicketRepository:
                 return {
                     "release_id": normalized_release_id,
                     "status": status,
-                    "created": created,
+                    "created": True,
                     "versions_created": versions_created,
                     "versions_matched": versions_matched,
                     "versions_remapped": versions_remapped,

@@ -1,4 +1,4 @@
-"""Deterministic two-stage workflow helpers for Account Suspension."""
+"""Deterministic workflow helpers for Account Suspension."""
 
 from __future__ import annotations
 
@@ -68,6 +68,73 @@ def direct_handoff_workflow(*, ticket_email: Any = None, created_at: str | None 
         "updated_at": created_at,
         "failure_reason": None,
     }
+
+
+def direct_handoff_attempt(
+    *,
+    extraction: Any,
+    internal_email_payload: dict[str, Any],
+    ticket_email: Any,
+    customer_name: Any,
+    created_at: str,
+) -> dict[str, Any]:
+    """Build the shared one-shot intake attempt for legacy and ECS runtimes."""
+    payload = dict(internal_email_payload)
+    return {
+        "customer_reply": "",
+        "missing_fields": [],
+        "collected_fields": dict(extraction.collected_fields),
+        "internal_email_payload": payload,
+        "internal_email_to_send": payload,
+        "internal_email_send_status": "pending",
+        "internal_email_send_reason": "direct_handoff",
+        "requires_human_review": False,
+        "field_extraction": extraction,
+        "prompt_snapshots": {
+            "account_suspension_field_extractor": dict(extraction.prompt_snapshot)
+        },
+        "automation_context": {
+            SUSPENSION_CONTACT_WORKFLOW_KEY: direct_handoff_workflow(
+                ticket_email=ticket_email,
+                created_at=created_at,
+            )
+        },
+        "reply_facts": closing_reply_facts(
+            confirmed_email=str(ticket_email or ""),
+            customer_name=customer_name,
+        ),
+    }
+
+
+def update_direct_handoff_workflow(
+    account_case: dict[str, Any],
+    *,
+    state: str,
+    updated_at: str,
+    failure_reason: str | None = None,
+    handoff_delivery_key: str | None = None,
+    closing_reply_job_id: str | None = None,
+) -> dict[str, Any]:
+    workflow = dict(
+        (account_case.get("automation_context") or {}).get(
+            SUSPENSION_CONTACT_WORKFLOW_KEY
+        )
+        or {}
+    )
+    workflow["state"] = state
+    workflow["updated_at"] = updated_at
+    if failure_reason is not None:
+        workflow["failure_reason"] = failure_reason
+    if handoff_delivery_key is not None:
+        workflow["handoff_delivery_key"] = handoff_delivery_key
+    if closing_reply_job_id is not None:
+        workflow["closing_reply_job_id"] = closing_reply_job_id
+    updated = dict(account_case)
+    updated["automation_context"] = {
+        **dict(account_case.get("automation_context") or {}),
+        SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
+    }
+    return updated
 
 
 def suspension_contact_confirmation(

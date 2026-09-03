@@ -1,6 +1,6 @@
-# Automation ECS Release 手工 Runbook
+# Automation ECS Release Runbook
 
-本文只描述手工 build、publish、promotion和部署输入。本任务没有执行其中任何 AWS、ECR、ECS、EC2、Cloudflare或 n8n命令。
+本文描述 build、publish、promotion 和唯一正式 Production 部署入口。本次代码变更没有执行其中任何 AWS、ECR、ECS、EC2、Cloudflare 或 n8n 修改命令。
 
 ## Release Bundle
 
@@ -27,7 +27,8 @@
 路径先构建本地临时镜像再导出 `oci-archive`并清理临时 tag。每个角色只执行
 一次 build；脚本不登录 registry、不 push、不 deploy。重复路径会 fail closed，
 防止覆盖既有 release artifact。Manifest validator会拒绝非单一
-`linux/amd64`的 artifact。
+`linux/amd64`的 artifact。构建器选择和 OCI build 开始前，脚本还会只读校验
+指定 Prompt Release 确实存在、状态可部署且内容与当前代码 catalog 一致。
 
 重新验证 bundle：
 
@@ -110,11 +111,11 @@ SSO 会话失效的特征：authorize 不再返回 302（返回登录页 200）�
 ECS command override、task definition 明文、环境变量清单、日志、shell history、
 仓库或发布记录。
 
-发布前先只读回读当前 Production Worker task definition（register 前必须确认基于
-当前最新 revision 生成新 revision，完整保留既有 environment、secret、Graph EFS
-volume/mount、role、CPU/memory/network/logging 配置），并保存现有 revision 作为
-rollback 目标。Terraform `locals.tf` 的 `worker_secrets` 已含
-`ARCHER_OAUTH_COOKIE` 引用，与手工注册的 task definition 保持一致。
+正式发布命令会只读回读当前 Production Worker task definition，基于当前最新
+revision 生成新 revision，完整保留既有 environment、secret、Graph EFS
+volume/mount、role、CPU/memory/network/logging 配置，并保存现有 revision 作为
+rollback 目标。Worker 中如出现 Pilot 环境、pilot-creds volume/mount，或缺少
+Suspension 收件人 secret，发布会在 register 前 fail closed。
 
 首个新工单验收顺序（同时充当 ECS 侧网络/认证探针，全部使用全新工单）：
 
@@ -207,6 +208,60 @@ Production task definition使用：
 ```text
 <account>.dkr.ecr.<region>.amazonaws.com/supportportal/production@sha256:<digest>
 ```
+
+## Deploy To Production
+
+Production 只能使用以下命令；不得另写临时 task-definition/ECS 更新命令：
+
+```bash
+./deployment/deploy_automation_ecs_release.sh \
+  --manifest .deployments/releases/<release_id>/release-manifest.json \
+  --promotion-record .deployments/releases/<release_id>/promotion-record.json \
+  --check-only
+```
+
+`--check-only` 完全只读：它校验 Manifest、Promotion Record、当前 Git commit、
+三角色 ECR digest、Terraform 零漂移、源 Prompt Release、现有 task definition
+合同、Suspension 收件人 secret 内容与 EC2 backup health；不会同步或激活 Prompt
+Release，不会 register task definition，也不会 update ECS service。它仍要求通过环境
+提供只读源端 `TICKET_DB_DSN`，避免在无真实源 repository 时产生伪校验。
+
+正式部署还要求显式设置 `DEPLOY_PRODUCTION_APPROVED=1`，并通过环境提供目标端
+`PROMPT_RELEASE_TARGET_DSN` 及可选的
+`PROMPT_RELEASE_TARGET_SCHEMA`。DSN 值不得作为 argv 参数，不得写入日志、
+Manifest 或 Promotion Record。获得单独生产授权后执行同一命令但移除
+`--check-only`。
+
+固定执行顺序：
+
+1. 要求真实 production Terraform refresh plan 为 exit `0`；exit `1/2` 都阻断发布。
+2. 校验源 Prompt Release，将目标同步为 candidate，并在状态切换前比较 build ref
+   与完整 `prompt_key + content_sha256` 指纹；目标本地 version remap 允许存在。
+3. 从三个 service 当前 revision 克隆 task definition，只替换 image 和五个 provenance
+   字段；逐角色注册新 revision。
+4. 先更新 Route、Worker，等待 stable、核对运行 digest 和最新 heartbeat provenance；
+   再更新 API。
+5. 核对公网 live/release/ready、三个运行 digest、CloudWatch 和 EC2 backup。
+6. 全部健康后才激活目标 Prompt Release，并立即 validate/readback active 状态。
+
+Prompt 激活前任一步失败，命令按 API/Worker/Route 反序恢复已更新 service 的旧
+revision。激活命令一旦开始但结果不确定，不盲目回滚健康新栈或重复激活；命令返回
+失败并明确要求 reconciliation，通过目标 Prompt Release readback 决定下一步。
+
+## Terraform Ownership And Zero Drift
+
+`infra/terraform/bootstrap` 只负责一次性创建加密、版本化 S3 state bucket 与
+DynamoDB lock table。`infra/terraform/production` 导入并管理稳定资源：
+`supportportal/production` ECR、Automation target group、HTTPS priority 10 rule，
+以及 API/Route/Worker service 的稳定配置。Task-definition revision 和 service 的
+`task_definition` 指针只归正式发布命令所有，Terraform 仅对该字段使用
+`ignore_changes`。
+
+Cluster、共享 ALB/listener/ACM/security group/log group/SSM/roles、Graph EFS、Redis
+与 Hermes 只作为 data/输入引用；production root 不创建或删除这些共享资源，也不
+声明 Pilot、Secrets Manager、task definition、OIDC、S3 release bucket 或 alarms。
+完成 remote backend 和逐项 import 后，首次及每次 ECS 发布后的
+`terraform plan -detailed-exitcode` 都必须为 `0 add / 0 change / 0 destroy`、exit `0`。
 
 ## n8n Cutover Input
 

@@ -293,7 +293,7 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertEqual(final_step.step, "missing information requested exactly once")
         self.assertEqual(final_step.detail, "request_missing_information_count=1")
 
-    def test_s1_scripted_confirm_handoff_notify_and_open_ticket(self) -> None:
+    def test_s1_scripted_direct_handoff_notify_and_open_ticket(self) -> None:
         engine = ScriptedEngine()
         engine.db_queue = [
             ("FROM support_account_cases", [{
@@ -303,25 +303,6 @@ class ScenarioEngineTests(unittest.TestCase):
                 "title": engine.tagged("Account suspended after balance ran out"),
             }]),
             ("WHERE account_case_id", [{"execution_action": "account_suspension"}]),
-            ("WHERE account_case_id", [{
-                "automation_context": {
-                    "account_suspension_contact_workflow": {
-                        "state": "awaiting_contact_confirmation"
-                    }
-                }
-            }]),
-            ("FROM support_account_reply_jobs", [{
-                "status": "published",
-                "reply_intent": "account_suspension_contact_confirmation_request",
-                "close_after_publish": None,
-            }]),
-            ("FROM support_account_reply_jobs", [{
-                "status": "published",
-                "content": (
-                    "Before I hand this over, could you tell me which email works best for you - would the one "
-                    "on this ticket be fine? The relevant team will contact you within 24 hours."
-                ),
-            }]),
             ("WHERE account_case_id", [{"internal_email_send_status": "sent"}]),
             ("FROM support_account_reply_jobs", [{
                 "status": "published",
@@ -348,7 +329,7 @@ class ScenarioEngineTests(unittest.TestCase):
         engine.run_scenario("S1")
 
         self.assertTrue(engine.all_passed())
-        self.assertEqual(len(engine.sent_emails), 2)
+        self.assertEqual(len(engine.sent_emails), 1)
         step_names = [step.step for step in engine.steps]
         self.assertIn("assigned to suspension reviewer", step_names)
         self.assertIn("reviewer notify email sent", step_names)
@@ -364,24 +345,15 @@ class ScenarioEngineTests(unittest.TestCase):
                 "title": engine.tagged("Account suspended after balance ran out"),
             }]),
             ("WHERE account_case_id", [{"execution_action": "account_suspension"}]),
-            ("WHERE account_case_id", [{
-                "automation_context": {
-                    "account_suspension_contact_workflow": {
-                        "state": "awaiting_contact_confirmation"
-                    }
-                }
-            }]),
+            ("WHERE account_case_id", [{"internal_email_send_status": "sent"}]),
             ("FROM support_account_reply_jobs", [{
                 "status": "published",
-                "reply_intent": "account_suspension_contact_confirmation_request",
+                "reply_intent": "account_suspension_handoff_and_close",
                 "close_after_publish": None,
             }]),
             ("FROM support_account_reply_jobs", [{
                 "status": "published",
-                "content": (
-                    "Which email works best for you? We will close this ticket after the handoff, and you can "
-                    "reopen it if nobody contacts you within 24 hours."
-                ),
+                "content": "We handed this over and will close the ticket. The team will contact you within 24 hours.",
             }]),
         ]
         with self.assertRaises(AssertionError):

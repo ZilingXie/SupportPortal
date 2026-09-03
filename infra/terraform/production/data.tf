@@ -1,82 +1,40 @@
-data "aws_subnets" "public" {
-  filter {
-    name   = "vpc-id"
-    values = [var.vpc_id]
-  }
-
-  filter {
-    name   = "map-public-ip-on-launch"
-    values = ["true"]
-  }
+data "aws_ecs_cluster" "production" {
+  cluster_name = var.ecs_cluster_name
 }
 
-data "aws_subnet" "selected" {
-  for_each = toset(local.candidate_public_subnet_ids)
-  id       = each.value
+data "aws_lb" "shared" {
+  arn = var.shared_alb_arn
 }
 
-resource "terraform_data" "network_validation" {
-  input = local.public_subnet_ids
-
-  lifecycle {
-    precondition {
-      condition     = length(local.public_subnet_ids) >= 2
-      error_message = "The ECS ALB requires at least two public subnets."
-    }
-
-    precondition {
-      condition     = length(distinct([for subnet in data.aws_subnet.selected : subnet.availability_zone])) >= 2
-      error_message = "The ECS ALB subnets must span at least two availability zones."
-    }
-  }
+data "aws_lb_listener" "shared_https" {
+  arn = var.shared_https_listener_arn
 }
 
-resource "terraform_data" "listener_validation" {
-  input = var.enable_https_listener
-
-  lifecycle {
-    precondition {
-      condition     = !var.enable_https_listener || local.certificate_arn != ""
-      error_message = "An ACM certificate ARN or a Terraform-managed certificate is required for HTTPS."
-    }
-  }
+data "aws_security_group" "ecs" {
+  id = var.ecs_security_group_id
 }
 
-resource "terraform_data" "service_validation" {
-  input = var.enable_services
+data "aws_cloudwatch_log_group" "shared" {
+  name = var.shared_log_group_name
+}
 
-  lifecycle {
-    precondition {
-      condition = !var.enable_services || (
-        trimspace(var.api_image) != "" &&
-        trimspace(var.route_image) != "" &&
-        trimspace(var.worker_image) != ""
-      )
-      error_message = "API, Route and Worker immutable image references are required when enable_services=true."
-    }
+data "aws_iam_role" "task_execution" {
+  name = var.shared_task_execution_role_name
+}
 
-    precondition {
-      condition = !var.enable_services || alltrue([
-        for image in [var.api_image, var.route_image, var.worker_image] :
-        startswith(image, "${aws_ecr_repository.runtime.repository_url}@sha256:") &&
-        can(regex("@sha256:[0-9a-f]{64}$", image))
-      ])
-      error_message = "All services must use supportportal/production ECR references pinned by sha256 digest."
-    }
+data "aws_iam_role" "task" {
+  name = var.shared_task_role_name
+}
 
-    precondition {
-      condition = !var.enable_services || alltrue([
-        trimspace(var.release_id) != "" && trimspace(var.release_id) != "unreleased",
-        can(regex("^[0-9a-f]{40}$", var.git_commit)),
-        trimspace(var.build_time) != "",
-        trimspace(var.prompt_release_id) != "",
-      ])
-      error_message = "Release ID, full Git commit, build time and Prompt Release ID are required."
-    }
+data "aws_efs_file_system" "graph" {
+  file_system_id = var.shared_graph_efs_file_system_id
+}
 
-    precondition {
-      condition     = local.efs_subnet_id != ""
-      error_message = "The One Zone EFS availability zone must contain a selected public subnet."
-    }
-  }
+data "aws_elasticache_replication_group" "redis" {
+  replication_group_id = var.shared_redis_replication_group_id
+}
+
+data "aws_ssm_parameter" "runtime" {
+  for_each = toset(var.shared_ssm_parameter_names)
+  name     = each.value
 }
