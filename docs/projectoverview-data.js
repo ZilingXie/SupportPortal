@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T09:21:11Z",
-  "source_base_commit": "8e7ee5b680ce903d8f49231752a85eadfd62f571",
-  "registry_digest": "33e2f12a605960f8731c1a55970ab71ccb0714acc2490bb12ea69b1ce555df41",
+  "generated_at": "2026-09-03T09:45:42Z",
+  "source_base_commit": "a8899785faf9e64427063fbf17696cf684412e07",
+  "registry_digest": "2ba99cfd0211dc15b8ce8a6ddeddfdd15f99ad56a2d8e7e43c4e7c676a89a6f4",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -970,6 +970,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression for v24 brief suspension reply",
           "command": ".venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py -q",
           "details": "185+226 passed（deselect 1 个既有基线顺序污染用例）。新增用例：三要素短文案原样通过且无补句，且 system_prompt 含新三要素（thank...submitting/reviewed internally/we will get back within 24 hours）并不再含 'handed to the relevant team'；补句修复用例断言更新为新标准句；版本断言 v24；intake fake render handoff 分支同步新文案。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official-stack restart and v25 live markers on merged main (6a52dbb)",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl -fsS http://127.0.0.1:8080/health && podman exec deployment_api_1 python -c \"\u003cv25/notify-removal marker checks>\"",
+          "details": "/health ok，app_build.ref=6a52dbbd1a15 与当前 main 一致；容器内 marker：AUTOMATION_PERSONA_PROMPT_VERSION=automation-persona-v25、worker 模块已无 _notify_suspension_reviewer_by_email/REVIEWER_NOTIFY_EMAIL_EVENT_TYPE、closing_reply_facts.performed_actions=['Submitted the request for internal review.']（类别词已去）。"
         },
         {
           "type": "test",
@@ -9961,7 +9967,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
       "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
-      "next_action": "保持 active。由正式 ECS deploy 命令发布 automation-persona-v25 与 direct-handoff 三角色 digest，完成收件人及依赖只读 readback；随后等待用户提供全新 ECS Suspension 工单号，复测首封仅称 'this request' 且无类别词、assign 后无冗余 reviewer 通知、工单未 solved，通过后置 done。",
+      "next_action": "用户部署 EC2 /production 后受控 suspension 单复测（首封 'Thank you for submitting this request.' 无类别词、owner 仅收 2 封邮件），通过后置 done。",
       "acceptance_criteria": [
         "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
         "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
@@ -9970,6 +9976,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Official-stack restart and v25 live markers on merged main (6a52dbb)",
+          "command": "bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && curl -fsS http://127.0.0.1:8080/health && podman exec deployment_api_1 python -c \"\u003cv25/notify-removal marker checks>\"",
+          "details": "/health ok，app_build.ref=6a52dbbd1a15 与当前 main 一致；容器内 marker：AUTOMATION_PERSONA_PROMPT_VERSION=automation-persona-v25、worker 模块已无 _notify_suspension_reviewer_by_email/REVIEWER_NOTIFY_EMAIL_EVENT_TYPE、closing_reply_facts.performed_actions=['Submitted the request for internal review.']（类别词已去）。"
+        },
         {
           "type": "test",
           "label": "Focused regression for v25 category-word drop and notify removal",
