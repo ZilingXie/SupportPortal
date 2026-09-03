@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-03 - Prompt Release sync keeps the source repository read-only (p1-53)
+
+- Area or subsystem: Prompt Release source-to-target replication and ECS Production deploy gate.
+- Prompt or model versions: Prompt content, release identity, models, and Persona v25 are unchanged.
+- Reason: the first authorized ECS deploy reached `prompt_release sync` with the intended read-only source database account, but the CLI called `initialize()` on every non-validate source command. PostgreSQL therefore attempted `CREATE TABLE IF NOT EXISTS` in the source `supportportal` schema and failed before target synchronization or ECS rollout.
+- Tooling change: `sync` now follows the same source initialization boundary as `validate`: it reads and validates the existing source Release without schema writes. The target repository still initializes explicitly before catalog and Release replication, so target bootstrap behavior is unchanged.
+- Failure contract: source read or validation failures and target initialization/sync failures remain fail-closed before ECS service updates. No elevated source credential or deployment bypass is introduced.
+- Verification: focused CLI regression asserts source `initialize()` is never called while target `initialize()` is called exactly once, alongside the existing idempotency, same-ID content/build identity, target-local version remap, and deferred activation cases.
+
 ## 2026-09-03 - Suspension first reply drops the category word; reviewer notify email removed (p2-143)
 
 - Area or subsystem: Suspension handoff Persona contract and reply facts; suspension reviewer assignment notification.
