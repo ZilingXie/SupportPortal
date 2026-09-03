@@ -97,6 +97,7 @@ from backend.services.account_suspension_field_extractor import (
 )
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
     SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
     SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
@@ -105,7 +106,9 @@ from backend.services.account_suspension_automation import (
     SUSPENSION_STATE_HANDOFF_PENDING,
     closing_reply_facts,
     contact_confirmation_reply_facts,
+    direct_handoff_workflow,
     initial_contact_workflow,
+    normalize_contact_email,
     suspension_contact_confirmation,
 )
 from backend.services.account_full_reroute import (
@@ -749,6 +752,89 @@ def _build_account_suspension_contact_attempt(
             ticket_email=ticket_email, customer_name=customer_name,
         ),
     }
+
+
+def _build_account_suspension_direct_handoff_attempt(
+    *,
+    ticket_subject: str,
+    customer_messages: list[dict[str, Any]],
+    message: str,
+    ticket_id: str,
+    billing_ticket_id: str,
+    ticket_email: str | None,
+    customer_name: str | None,
+    created_at: str,
+    zendesk_ticket_url: str | None = None,
+) -> dict[str, Any]:
+    """p2-140: skip the contact-confirmation stage and hand off directly.
+
+    The ticket email is the contact address, the internal email is the first
+    automated step, and the closing reply job is only created after that email
+    succeeds (so the attempt intentionally carries no pre-email reply job).
+    """
+    extraction = extract_account_suspension_fields(
+        ticket_subject=ticket_subject,
+        customer_messages=customer_messages,
+    )
+    workflow = direct_handoff_workflow(ticket_email=ticket_email, created_at=created_at)
+    collected_fields = {
+        str(key): str(value)
+        for key, value in dict(extraction.collected_fields).items()
+        if value is not None
+    }
+    handoff_payload = build_billing_internal_email_payload(
+        action="account_suspension",
+        collected_fields=collected_fields,
+        ticket_id=ticket_id,
+        customer_email=str(ticket_email or ""),
+        customer_message=str(message or ""),
+        billing_ticket_id=billing_ticket_id,
+        zendesk_ticket_url=zendesk_ticket_url,
+    )
+    return {
+        "customer_reply": "",
+        "missing_fields": [],
+        "collected_fields": dict(extraction.collected_fields),
+        "internal_email_payload": handoff_payload,
+        "internal_email_to_send": handoff_payload,
+        "internal_email_send_status": "pending",
+        "internal_email_send_reason": "direct_handoff",
+        "requires_human_review": False,
+        "field_extraction": extraction,
+        "prompt_snapshots": {"account_suspension_field_extractor": dict(extraction.prompt_snapshot)},
+        "automation_context": {SUSPENSION_CONTACT_WORKFLOW_KEY: workflow},
+        "reply_facts": closing_reply_facts(
+            confirmed_email=str(ticket_email or ""),
+            customer_name=customer_name,
+        ),
+    }
+
+
+def _update_suspension_direct_workflow(
+    account_case: dict[str, Any],
+    *,
+    state: str,
+    failure_reason: str | None = None,
+    handoff_delivery_key: str | None = None,
+    closing_reply_job_id: str | None = None,
+) -> dict[str, Any]:
+    workflow = dict(
+        (account_case.get("automation_context") or {}).get(SUSPENSION_CONTACT_WORKFLOW_KEY) or {}
+    )
+    workflow["state"] = state
+    workflow["updated_at"] = now_iso()
+    if failure_reason is not None:
+        workflow["failure_reason"] = failure_reason
+    if handoff_delivery_key is not None:
+        workflow["handoff_delivery_key"] = handoff_delivery_key
+    if closing_reply_job_id is not None:
+        workflow["closing_reply_job_id"] = closing_reply_job_id
+    updated = dict(account_case)
+    updated["automation_context"] = {
+        **dict(account_case.get("automation_context") or {}),
+        SUSPENSION_CONTACT_WORKFLOW_KEY: workflow,
+    }
+    return updated
 
 
 def _rerun_account_persona_unavailable_human_review(
@@ -5478,6 +5564,22 @@ async def _create_account_intake_impl(
     persona_assignment: dict[str, Any] | None = None
     execution_reason_code: str | None = None
     ticket_saved = False
+    suspension_direct_handoff = (
+        is_automation_route
+        and route == "account_suspension"
+        and processing_profile == "production"
+    )
+    suspension_gate_workflow: dict[str, Any] | None = None
+    if suspension_direct_handoff and normalize_contact_email(intake_identity.customer_email) is None:
+        # p2-140: the direct suspension handoff needs a usable contact address
+        # for the internal email and the persisted workflow; fail closed.
+        execution_reason_code = "suspension_missing_customer_email"
+        suspension_gate_workflow = direct_handoff_workflow(
+            ticket_email=intake_identity.customer_email,
+            created_at=timestamp,
+        )
+        suspension_gate_workflow["state"] = SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED
+        suspension_gate_workflow["failure_reason"] = execution_reason_code
     if is_automation_route:
         await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=ticket.get("messages", []))
         ticket_saved = True
@@ -5504,6 +5606,8 @@ async def _create_account_intake_impl(
     internal_email_send_status = "not_applicable"
     internal_email_send_reason = ""
     account_billing_registration = account_billing_handler(account_billing_subcategory)
+    if suspension_gate_workflow is not None:
+        automation_context[SUSPENSION_CONTACT_WORKFLOW_KEY] = suspension_gate_workflow
 
     if is_automation_route and not execution_reason_code:
         response_status = "automation"
@@ -5537,13 +5641,29 @@ async def _create_account_intake_impl(
             )
             automation_attempt = billing_email_attempt
         elif handler_registration.implementation == "account_suspension":
-            automation_attempt = _build_account_suspension_contact_attempt(
-                ticket_subject=title,
-                customer_messages=list(ticket.get("messages") or []),
-                ticket_email=str(request.customer_email or "").strip() or None,
-                customer_name=customer_name,
-                created_at=timestamp,
-            )
+            if suspension_direct_handoff:
+                automation_attempt = _build_account_suspension_direct_handoff_attempt(
+                    ticket_subject=title,
+                    customer_messages=list(ticket.get("messages") or []),
+                    message=route_input,
+                    ticket_id=ticket_id,
+                    billing_ticket_id=billing_ticket_id,
+                    ticket_email=str(request.customer_email or "").strip() or None,
+                    customer_name=customer_name,
+                    created_at=timestamp,
+                    zendesk_ticket_url=_account_zendesk_ticket_url(
+                        ticket.get("source"), external_zendesk_ticket_id
+                    ),
+                )
+                billing_email_attempt = automation_attempt
+            else:
+                automation_attempt = _build_account_suspension_contact_attempt(
+                    ticket_subject=title,
+                    customer_messages=list(ticket.get("messages") or []),
+                    ticket_email=str(request.customer_email or "").strip() or None,
+                    customer_name=customer_name,
+                    created_at=timestamp,
+                )
         elif handler_registration.implementation == "enablement":
             enablement_email_attempt = _build_enablement_internal_email_attempt(
                 message=route_input,
@@ -5635,12 +5755,21 @@ async def _create_account_intake_impl(
         elif route == "account_suspension":
             missing_fields = []
             collected_fields = dict(automation_attempt.get("collected_fields") or {})
-            assistant_reply_facts = dict(automation_attempt.get("reply_facts") or {})
-            internal_email_payload = None
-            internal_email_send_status = "not_applicable"
-            internal_email_send_reason = "awaiting_contact_confirmation"
             automation_context = dict(automation_attempt.get("automation_context") or {})
-            route_classification["handler_binding_status"] = "active"
+            if suspension_direct_handoff:
+                # p2-140: no contact-confirmation stage and no pre-email reply
+                # job; the closing reply job is only created after the internal
+                # email succeeds (assistant_reply_facts stays None).
+                internal_email_payload = dict(automation_attempt.get("internal_email_payload") or {})
+                internal_email_send_status = "pending"
+                internal_email_send_reason = "direct_handoff"
+                route_classification["handler_binding_status"] = "completed"
+            else:
+                assistant_reply_facts = dict(automation_attempt.get("reply_facts") or {})
+                internal_email_payload = None
+                internal_email_send_status = "not_applicable"
+                internal_email_send_reason = "awaiting_contact_confirmation"
+                route_classification["handler_binding_status"] = "active"
         else:
             missing_fields = list(automation_attempt["missing_fields"])
             collected_fields = dict(automation_attempt["collected_fields"])
@@ -5857,6 +5986,13 @@ async def _create_account_intake_impl(
         internal_email_send_status = delivery_result.status
         internal_email_send_reason = delivery_result.reason
         if not delivery_result.succeeded:
+            if suspension_direct_handoff:
+                billing_ticket = _update_suspension_direct_workflow(
+                    billing_ticket,
+                    state=SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
+                    failure_reason=delivery_result.reason or delivery_result.status or "failed",
+                )
+                await async_to_thread(ticket_repository.save_account_case, billing_ticket)
             response_status = str(
                 billing_ticket.get("automation_status") or "human_review_required"
             )
@@ -5869,14 +6005,33 @@ async def _create_account_intake_impl(
                 )
             )
         if delivery_result.succeeded:
-            confirmation_facts = _automation_reply_facts(
-                handler=automation_handler or "billing",
-                action=route,
-                missing_fields=[],
-                collected_fields=collected_fields,
-                submitted=True,
-                customer_name=customer_name,
-                account_scope=True,
+            if suspension_direct_handoff:
+                billing_ticket = _update_suspension_direct_workflow(
+                    billing_ticket,
+                    state=SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+                    handoff_delivery_key=str(
+                        (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
+                    ),
+                )
+                await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+            confirmation_facts = (
+                # p2-140: the suspension handoff intent needs facts carrying the
+                # same intent; _automation_reply_facts would produce
+                # submission_confirmation and fail intent normalization.
+                closing_reply_facts(
+                    confirmed_email=str(intake_identity.customer_email or ""),
+                    customer_name=customer_name,
+                )
+                if route == "account_suspension"
+                else _automation_reply_facts(
+                    handler=automation_handler or "billing",
+                    action=route,
+                    missing_fields=[],
+                    collected_fields=collected_fields,
+                    submitted=True,
+                    customer_name=customer_name,
+                    account_scope=True,
+                )
             )
             try:
                 reply_job = await async_to_thread(
@@ -5909,6 +6064,13 @@ async def _create_account_intake_impl(
                     handler=automation_handler or "billing",
                     detail=exc,
                 )
+                if suspension_direct_handoff:
+                    billing_ticket = _update_suspension_direct_workflow(
+                        billing_ticket,
+                        state=SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
+                        failure_reason="account_suspension_closing_reply_job_failed",
+                    )
+                    await async_to_thread(ticket_repository.save_account_case, billing_ticket)
                 response_status = str(
                     billing_ticket.get("automation_status") or "human_review_required"
                 )
@@ -5916,6 +6078,14 @@ async def _create_account_intake_impl(
                     billing_ticket.get("execution_reason_code")
                     or "account_reply_job_creation_failed"
                 )
+            else:
+                if suspension_direct_handoff and reply_job:
+                    billing_ticket = _update_suspension_direct_workflow(
+                        billing_ticket,
+                        state=SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+                        closing_reply_job_id=str(reply_job.get("job_id") or "") or None,
+                    )
+                    await async_to_thread(ticket_repository.save_account_case, billing_ticket)
     if enablement_email_attempt and enablement_email_attempt.get("internal_email_to_send"):
         delivery_result, billing_ticket = await _run_account_internal_email_delivery(
             account_case=billing_ticket,
@@ -7302,7 +7472,14 @@ async def _resume_account_rerun_side_effect(
         suspension_workflow = suspension_workflow if isinstance(suspension_workflow, dict) else {}
         if handler == "account_suspension" and not stored_reply_intent:
             workflow_state = str(suspension_workflow.get("state") or "").strip().lower()
-            if workflow_state == SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION:
+            if (
+                str(suspension_workflow.get("intake_mode") or "").strip().lower()
+                == SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF
+            ):
+                # p2-140: direct-handoff tickets never ask for an email; every
+                # rerun resumes the handoff/closing intent.
+                stored_reply_intent = SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE
+            elif workflow_state == SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION:
                 stored_reply_intent = SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION
             elif workflow_state in {
                 SUSPENSION_STATE_HANDOFF_PENDING,
@@ -7317,6 +7494,10 @@ async def _resume_account_rerun_side_effect(
             asked_field_keys = ["preferred_contact_email"]
         elif stored_reply_intent == SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE:
             confirmed_email = str(suspension_workflow.get("confirmed_email") or "").strip()
+            if not confirmed_email:
+                confirmed_email = normalize_contact_email(
+                    suspension_workflow.get("ticket_email")
+                ) or ""
             if not confirmed_email:
                 raise ValueError("Suspension closing reply checkpoint has no confirmed email")
             facts = closing_reply_facts(

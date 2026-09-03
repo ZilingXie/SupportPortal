@@ -926,6 +926,12 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
                     "persona_render_status": "generated",
                     "persona_model": rendered.model,
                     "persona_prompt_version": rendered.prompt_version,
+                    # p2-140: deterministic suspension commitment append signal.
+                    "persona_contract_repair": (
+                        "suspension_handoff_commitment_appended"
+                        if getattr(rendered, "deterministic_contract_appended", False)
+                        else None
+                    ),
                 }
             )
         job["payload"] = payload
@@ -1151,6 +1157,11 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload["persona_render_status"] = "generated"
         payload["persona_model"] = rendered.model
         payload["persona_prompt_version"] = rendered.prompt_version
+        payload["persona_contract_repair"] = (
+            "suspension_handoff_commitment_appended"
+            if getattr(rendered, "deterministic_contract_appended", False)
+            else None
+        )
         current_job["payload"] = payload
         if not _update_claimed_account_reply_job(
             current_job,
