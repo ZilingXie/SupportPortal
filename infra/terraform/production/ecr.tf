@@ -9,4 +9,12 @@ resource "aws_ecr_repository" "runtime" {
   encryption_configuration {
     encryption_type = "AES256"
   }
+
+  tags = {
+    Project     = "supportportal"
+    Environment = "production"
+    Owner       = "zac"
+    System      = "automation"
+    Name        = "supportportal/production"
+  }
 }

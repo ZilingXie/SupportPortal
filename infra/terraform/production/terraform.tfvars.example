@@ -6,7 +6,7 @@ shared_alb_arn            = "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT:load
 shared_https_listener_arn = "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT:listener/app/REPLACE"
 shared_acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT:certificate/REPLACE"
 ecs_security_group_id      = "sg-REPLACE"
-shared_log_group_name      = "/supportportal/production"
+shared_log_group_name      = "/ecs/supportportal/production"
 
 shared_task_execution_role_name = "REPLACE"
 shared_task_role_name           = "REPLACE"

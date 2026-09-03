@@ -29,6 +29,8 @@ def test_production_root_manages_only_the_imported_stable_boundary() -> None:
         "aws_ecs_service",
     }
     assert 'name                 = "supportportal/production"' in _read("ecr.tf")
+    assert 'default = "supportportal-production-tg"' in _read("variables.tf")
+    assert 'matcher             = "200"' in _read("alb.tf")
     assert 'priority     = var.automation_listener_rule_priority' in _read("alb.tf")
     assert 'default = 10' in _read("variables.tf")
 
@@ -61,12 +63,37 @@ def test_services_ignore_only_release_owned_task_definition_pointer() -> None:
     assert "deployment_minimum_healthy_percent = 100" in ecs
     assert "deployment_maximum_percent         = 200" in ecs
     assert "deployment_circuit_breaker" in ecs
+    assert 'availability_zone_rebalancing = "ENABLED"' in ecs
+    assert re.search(r"wait_for_steady_state\s*=\s*false", ecs)
+    assert "enable_ecs_managed_tags = true" in ecs
+    assert 'propagate_tags          = "SERVICE"' in ecs
+    assert "platform_version = each.value.platform_version" in ecs
     assert "network_configuration" in ecs
     assert 'container_name   = "api"' in ecs
     lifecycle = ecs.split("lifecycle {", 1)[1].split("}", 1)[0]
     assert "desired_count" not in lifecycle
     assert "network_configuration" not in lifecycle
     assert "load_balancer" not in lifecycle
+
+
+def test_imported_resources_declare_live_tags_and_platform_versions() -> None:
+    ecr = _read("ecr.tf")
+    alb = _read("alb.tf")
+    ecs = _read("ecs.tf")
+    locals_source = _read("locals.tf")
+    assert 'Name        = "supportportal/production"' in ecr
+    assert 'Project = "supportportal"' in alb
+    assert 'Owner   = "zac"' in alb
+    assert "forward {" in alb
+    assert "weight = 1" in alb
+    assert "enabled  = false" in alb
+    assert "duration = 3600" in alb
+    assert "Component   = each.key" in ecs
+    assert 'platform_version               = "LATEST"' in locals_source
+    assert locals_source.count('platform_version               = "1.4.0"') == 2
+    assert 'shared_log_group_name      = "/ecs/supportportal/production"' in _read(
+        "terraform.tfvars.example"
+    )
 
 
 def test_task_definitions_and_pilot_are_not_owned_by_terraform() -> None:

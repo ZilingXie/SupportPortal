@@ -6,7 +6,13 @@ resource "aws_ecs_service" "automation" {
   task_definition  = each.value.task_definition
   desired_count    = var.desired_count
   launch_type      = "FARGATE"
-  platform_version = "LATEST"
+  platform_version = each.value.platform_version
+
+  availability_zone_rebalancing = "ENABLED"
+  wait_for_steady_state         = false
+
+  enable_ecs_managed_tags = true
+  propagate_tags          = "SERVICE"
 
   health_check_grace_period_seconds  = each.value.health_check_grace_period
   deployment_minimum_healthy_percent = 100
@@ -36,5 +42,13 @@ resource "aws_ecs_service" "automation" {
     # Immutable release revisions are exclusively owned by
     # deployment/deploy_automation_ecs_release.sh.
     ignore_changes = [task_definition]
+  }
+
+  tags = {
+    Project     = "supportportal"
+    Environment = "production"
+    Owner       = "zac"
+    Component   = each.key
+    System      = "automation"
   }
 }

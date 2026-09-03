@@ -59,6 +59,11 @@ def validate_promotion(manifest_path: str | Path, record_path: str | Path) -> di
         raise ValueError("Promotion Record release_id does not match manifest")
     if record.get("target_repository") != "supportportal/production":
         raise ValueError("Promotion Record target repository must be supportportal/production")
+    if record.get("source_repository") not in {
+        "local-oci",
+        "supportportal/preproduction",
+    }:
+        raise ValueError("Promotion Record source repository is not approved")
     if set(record.get("components") or {}) != {"api", "route", "worker"}:
         raise ValueError("Promotion Record must contain api, route, and worker")
     for role, component in manifest.components.items():

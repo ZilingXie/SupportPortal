@@ -9,11 +9,16 @@ resource "aws_lb_target_group" "automation" {
     enabled             = true
     path                = "/automation/production/health/live"
     protocol            = "HTTP"
-    matcher             = "200-399"
+    matcher             = "200"
     interval            = 30
     timeout             = 5
     healthy_threshold   = 2
     unhealthy_threshold = 3
+  }
+
+  tags = {
+    Project = "supportportal"
+    Owner   = "zac"
   }
 }
 
@@ -22,8 +27,19 @@ resource "aws_lb_listener_rule" "automation_https" {
   priority     = var.automation_listener_rule_priority
 
   action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.automation.arn
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.automation.arn
+        weight = 1
+      }
+
+      stickiness {
+        enabled  = false
+        duration = 3600
+      }
+    }
   }
 
   condition {

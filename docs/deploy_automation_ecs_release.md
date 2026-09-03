@@ -1,6 +1,6 @@
 # Automation ECS Release Runbook
 
-本文描述 build、publish、promotion 和唯一正式 Production 部署入口。本次代码变更没有执行其中任何 AWS、ECR、ECS、EC2、Cloudflare 或 n8n 修改命令。
+本文描述 build、publish、promotion 和唯一正式 Production 部署入口。发布记录必须明确镜像来自 Preproduction 或获批的本地 OCI bootstrap，不得混淆来源。
 
 ## Release Bundle
 
@@ -134,8 +134,8 @@ Suspension 收件人 secret，发布会在 register 前 fail closed。
 3. 查无项目：公开回复要求核对/重发 App ID，Case 保持 open；客户提交更正值后使用
    新值重新执行。
 
-失败路径仅在自然发生时观察，不得人为破坏 Pilot 凭证。生产验收完成前不得重放或
-修改历史 Case，不得把 `p2-134` 标记 done，也不得把功能移入主功能清单“已完成”。
+失败路径仅在自然发生时观察，不得人为破坏 Archer 凭证。生产验收不得重放或
+修改历史 Case。
 
 ## Schema Bootstrap
 
@@ -209,6 +209,26 @@ Production task definition使用：
 <account>.dkr.ecr.<region>.amazonaws.com/supportportal/production@sha256:<digest>
 ```
 
+### 首次 Production bootstrap 例外
+
+在 Preproduction repository 尚未建立、且 owner 已单独批准直接发布时，可从同一
+Release Manifest 的本地 OCI archive 直接写入 Production：
+
+```bash
+./deployment/promote_automation_release.sh \
+  --manifest .deployments/releases/<release_id>/release-manifest.json \
+  --region us-east-1 \
+  --registry-id <aws-account-id> \
+  --direct-production
+```
+
+该模式在上传前重新验证三个 archive，使用
+`skopeo copy --preserve-digests`，并生成
+`source_repository=local-oci` 的 Promotion Record。目标 immutable tag 已存在且
+digest 相同时按幂等成功处理；digest 不同时立即失败。不得修改 Manifest 来适配
+registry digest。Preproduction 建成后的常规 Production release 仍必须走上一节的
+同 digest promotion。
+
 ## Deploy To Production
 
 Production 只能使用以下命令；不得另写临时 task-definition/ECS 更新命令：
@@ -231,6 +251,10 @@ Release，不会 register task definition，也不会 update ECS service。它�
 `PROMPT_RELEASE_TARGET_SCHEMA`。DSN 值不得作为 argv 参数，不得写入日志、
 Manifest 或 Promotion Record。获得单独生产授权后执行同一命令但移除
 `--check-only`。
+
+Terraform 必须为已校验的 `1.9.8`；本机不在 PATH 时通过
+`AUTOMATION_TERRAFORM_BIN=/absolute/path/to/terraform` 指定。零漂移 plan 使用
+DynamoDB backend lock，并在 60 秒内无法取得锁时阻断发布。
 
 固定执行顺序：
 

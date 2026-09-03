@@ -12,8 +12,9 @@ API_SERVICE="${AUTOMATION_ECS_API_SERVICE:-supportportal-production-api}"
 ROUTE_SERVICE="${AUTOMATION_ECS_ROUTE_SERVICE:-supportportal-production-route}"
 WORKER_SERVICE="${AUTOMATION_ECS_WORKER_SERVICE:-supportportal-production-worker}"
 BASE_URL="${AUTOMATION_ECS_BASE_URL:-https://supportcenter.stellarix.space/automation/production}"
-EC2_BACKUP_URL="${AUTOMATION_EC2_BACKUP_URL:-https://support.stellarix.space/production/health}"
+EC2_BACKUP_URL="${AUTOMATION_EC2_BACKUP_URL:-https://support.stellarix.space/health}"
 TERRAFORM_DIR="${AUTOMATION_TERRAFORM_DIR:-${PROJECT_ROOT}/infra/terraform/production}"
+TERRAFORM_BIN="${AUTOMATION_TERRAFORM_BIN:-terraform}"
 CHECK_ONLY=0
 TEMP_DIR=""
 DEPLOY_STARTED=0
@@ -100,8 +101,8 @@ cleanup() {
 
 run_terraform_zero_plan() {
   set +e
-  terraform -chdir="${TERRAFORM_DIR}" plan \
-    -detailed-exitcode -input=false -lock=false -no-color >/dev/null
+  "${TERRAFORM_BIN}" -chdir="${TERRAFORM_DIR}" plan \
+    -detailed-exitcode -input=false -lock-timeout=60s -no-color >/dev/null
   local status=$?
   set -e
   [[ ${status} -eq 0 ]] || fail "Terraform production plan must be zero drift (exit 0, got ${status})"
@@ -152,7 +153,8 @@ main() {
   [[ -n "${MANIFEST_PATH}" && -f "${MANIFEST_PATH}" ]] || fail "Release Manifest is required"
   [[ -n "${PROMOTION_RECORD}" && -f "${PROMOTION_RECORD}" ]] || fail "Promotion Record is required"
   [[ -n "${REGION}" ]] || fail "AWS region is required"
-  for command in aws curl git jq terraform; do command -v "${command}" >/dev/null 2>&1 || fail "Missing command: ${command}"; done
+  for command in aws curl git jq; do command -v "${command}" >/dev/null 2>&1 || fail "Missing command: ${command}"; done
+  command -v "${TERRAFORM_BIN}" >/dev/null 2>&1 || [[ -x "${TERRAFORM_BIN}" ]] || fail "Terraform runtime is required"
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
   [[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"
   if [[ "${CHECK_ONLY}" = "0" ]]; then
