@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-143",
+  "title": "Suspension 首封去类别词（v25）+ 移除冗余 reviewer 通知邮件",
+  "status": "active",
+  "owner": "zac",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "created_at": "2026-09-03",
+  "updated_at": "2026-09-03",
+  "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
+  "next_action": "保持 active。由正式 ECS deploy 命令发布 automation-persona-v25 与 direct-handoff 三角色 digest，完成收件人及依赖只读 readback；随后等待用户提供全新 ECS Suspension 工单号，复测首封仅称 'this request' 且无类别词、assign 后无冗余 reviewer 通知、工单未 solved，通过后置 done。",
+  "acceptance_criteria": [
+    "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
+    "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
+    "owner 邮件数=2（分类通知+handoff 邮件）。",
+    "v25 生效；prompt_change_log 条目在案。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Focused regression for v25 category-word drop and notify removal",
+      "command": ".venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_test_scenarios.py -q",
+      "details": "worker 120/persona 63/scenarios 20/intake+reroute 226 全绿（deselect 1 个既有基线顺序污染用例）。新增：brief 用例负向断言渲染输出不含 suspension；notify 三用例替换为一个'assign 后不发/不写状态/无事件'用例（含 workflow 不写 reviewer_notify_email 断言）；主 handoff 用例改断言零 notify 事件；S1 剧本 db_queue/断言同步；版本断言 v25（7 处）。"
+    }
+  ],
+  "history": [],
+  "legacy_ids": [],
+  "legacy_refs": ["p2-140", "p2-141", "p2-142"],
+  "source_refs": [
+    "backend/services/automation_persona.py",
+    "backend/services/account_suspension_automation.py",
+    "backend/worker.py",
+    "backend/services/automation_test_scenarios.py"
+  ]
+}

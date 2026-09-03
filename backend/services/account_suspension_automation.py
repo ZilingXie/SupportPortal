@@ -196,7 +196,7 @@ def closing_reply_facts(*, confirmed_email: str, customer_name: Any = None) -> d
         "reply_intent": SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
         "known_information": {},
         "missing_information": [],
-        "performed_actions": ["Submitted the suspension request for internal review."],
+        "performed_actions": ["Submitted the request for internal review."],
         "next_step": "We will get back to the customer within 24 hours.",
         "resolution_status": "internal_handoff_sent",
         "customer_language": "en",

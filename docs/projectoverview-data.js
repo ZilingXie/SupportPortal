@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T08:52:53Z",
-  "source_base_commit": "9bab06584cf858457eb2f52757e6171737a030cb",
-  "registry_digest": "e435374ee24b104420ca18adb24b1ee07397e8343f5fcc57f9cb1a05593b8264",
+  "generated_at": "2026-09-03T09:18:46Z",
+  "source_base_commit": "f6f13e11de96783c5fc390265d115bba02aaa9c3",
+  "registry_digest": "b6836aeb68e266a1be2dae509bcce606d9defeab07f1e58aac4fff7ed1f2a09a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -945,7 +945,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS direct-handoff and recipient release gate integration",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_account_internal_email_recipients.py",
-          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。ECS线上仍是旧镜像，通知邮件真实readback待授权发布与用户新工单。"
+          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。p2-143 已按用户决定移除 assign 后冗余 reviewer 通知；ECS线上验证待本次正式发布与用户新工单。"
         },
         {
           "type": "test",
@@ -970,6 +970,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression for v24 brief suspension reply",
           "command": ".venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py -q",
           "details": "185+226 passed（deselect 1 个既有基线顺序污染用例）。新增用例：三要素短文案原样通过且无补句，且 system_prompt 含新三要素（thank...submitting/reviewed internally/we will get back within 24 hours）并不再含 'handed to the relevant team'；补句修复用例断言更新为新标准句；版本断言 v24；intake fake render handoff 分支同步新文案。"
+        },
+        {
+          "type": "test",
+          "label": "Focused regression for v25 category-word drop and notify removal",
+          "command": ".venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_test_scenarios.py -q",
+          "details": "worker 120/persona 63/scenarios 20/intake+reroute 226 全绿（deselect 1 个既有基线顺序污染用例）。新增：brief 用例负向断言渲染输出不含 suspension；notify 三用例替换为一个'assign 后不发/不写状态/无事件'用例（含 workflow 不写 reviewer_notify_email 断言）；主 handoff 用例改断言零 notify 事件；S1 剧本 db_queue/断言同步；版本断言 v25（7 处）。"
         },
         {
           "type": "test",
@@ -1078,7 +1084,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 33,
+      "task_count": 34,
       "done_count": 18,
       "blocked_count": 0
     },
@@ -9833,14 +9839,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
       "updated_at": "2026-09-03",
-      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④suspension 收尾 assign（assigned/already_assigned）后 Graph 发 reviewer 通知邮件（resolve_account_internal_email_recipients 公开函数），状态持久化 workflow.reviewer_notify_email（sent 幂等/failed 记事件不回滚），新事件 zendesk_reviewer_notify_email；fraud 不加。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "保持 active。由正式ECS deploy命令发布包含automation-persona-v24与direct-handoff的新三角色digest，完成Suspension收件人及依赖readback；随后等待用户提供全新ECS工单号，验收intake handoff邮件→v24 closing回复→assign→通知邮件实收suhrid→未solved，不重放历史工单。",
+      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
+      "next_action": "保持 active。由正式ECS deploy命令发布包含automation-persona-v25与direct-handoff的新三角色digest，完成Suspension收件人及依赖readback；随后等待用户提供全新ECS工单号，验收intake handoff邮件→v25 closing回复仅称this request且无类别词→assign→无冗余reviewer通知→未solved，不重放历史工单。",
       "acceptance_criteria": [
         "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
         "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
         "多客户工单称呼取当条客户消息作者名（双实现），无效逐级回退；消息 meta 带 author_name/author_kind。",
         "ECS 评论路径 payload.persona 逐字段进入四个 reply job 出口且 resolver 零调用；旧栈入口 resolve 一次复用。",
-        "suspension 收尾链：公开回复→assign reviewer（事件 assigned）→通知邮件（事件 zendesk_reviewer_notify_email state=sent，workflow.reviewer_notify_email=sent）；已 sent 重入不重发；失败仅记事件不回滚；工单未 solved。",
+        "suspension 收尾链：内部 handoff 邮件 sent→唯一公开回复→assign reviewer（事件 assigned）且无 zendesk_reviewer_notify_email 事件、不写 workflow.reviewer_notify_email；工单未 solved。",
         "S1/E1/E2/F1 剧本断言独立于生产 validator；S1 为一段式链路（无问邮箱环节）且不再断言 solved。"
       ],
       "blockers": [],
@@ -9849,7 +9855,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS direct-handoff and recipient release gate integration",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_account_internal_email_recipients.py",
-          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。ECS线上仍是旧镜像，通知邮件真实readback待授权发布与用户新工单。"
+          "details": "ECS入口与S1使用一段式suspension；正式部署在check-only和deploy两种模式均从当前Worker task definition读取并校验Suspension收件人JSON但不输出地址，且缺secret/Pilot挂载均在register前拒绝。p2-143 已按用户决定移除 assign 后冗余 reviewer 通知；ECS线上验证待本次正式发布与用户新工单。"
         },
         {
           "type": "test",
@@ -9929,6 +9935,48 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/automation_persona.py",
         "backend/services/account_suspension_automation.py",
         "backend/tests/test_automation_persona.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-143",
+      "title": "Suspension 首封去类别词（v25）+ 移除冗余 reviewer 通知邮件",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-09-03",
+      "updated_at": "2026-09-03",
+      "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
+      "next_action": "保持 active。由正式 ECS deploy 命令发布 automation-persona-v25 与 direct-handoff 三角色 digest，完成收件人及依赖只读 readback；随后等待用户提供全新 ECS Suspension 工单号，复测首封仅称 'this request' 且无类别词、assign 后无冗余 reviewer 通知、工单未 solved，通过后置 done。",
+      "acceptance_criteria": [
+        "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
+        "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
+        "owner 邮件数=2（分类通知+handoff 邮件）。",
+        "v25 生效；prompt_change_log 条目在案。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Focused regression for v25 category-word drop and notify removal",
+          "command": ".venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_test_scenarios.py -q",
+          "details": "worker 120/persona 63/scenarios 20/intake+reroute 226 全绿（deselect 1 个既有基线顺序污染用例）。新增：brief 用例负向断言渲染输出不含 suspension；notify 三用例替换为一个'assign 后不发/不写状态/无事件'用例（含 workflow 不写 reviewer_notify_email 断言）；主 handoff 用例改断言零 notify 事件；S1 剧本 db_queue/断言同步；版本断言 v25（7 处）。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-140",
+        "p2-141",
+        "p2-142"
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/services/account_suspension_automation.py",
+        "backend/worker.py",
+        "backend/services/automation_test_scenarios.py"
       ]
     },
     {
@@ -15286,7 +15334,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
         "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源）；Hermes 自报调查结论就绪后由 **automation-persona 自动组装客户回复**（engineer_investigation_reply intent：调查结论是唯一技术事实权威、单层 Hi {客户名} 问候、禁止引入结论之外的标识符），Draft 经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
-        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v24 首封公开回复感谢提交、说明内部审核中并承诺我们 24 小时内回复 → 指派复审人并发送 reviewer 通知（不关单），客户后续回复由人工处理。",
+        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v25 首封公开回复仅称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
