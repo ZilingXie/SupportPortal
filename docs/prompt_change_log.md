@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-03 - Prompt Release sync does not run target schema DDL (p1-53)
+
+- Area or subsystem: Prompt Release source-to-target replication and ECS Production deploy gate.
+- Prompt or model versions: Prompt content, release identity, models, and Persona v25 are unchanged.
+- Reason: after the source-read-only fix, the authorized ECS deploy reached target initialization with the existing Worker runtime DSN. That identity has the required table-level read/write permissions but intentionally lacks database-level `CREATE SCHEMA`; `target_repository.initialize()` therefore failed before Release replication or ECS rollout.
+- Tooling change: `sync` no longer initializes either repository. It requires both schemas to be provisioned by the normal migration/bootstrap owner, reads and validates the source Release, then performs catalog and Release DML on the target. A missing or incompatible target schema still fails closed through the first actual target operation.
+- Security boundary: the deploy continues to reuse the current Worker `AUTOMATION_DB_DSN` secret without introducing a migration credential or broader database permission into the release process.
+- Verification: focused CLI regression asserts neither source nor target `initialize()` runs, while the existing sync suite proves target catalog synchronization, same-ID identity checks, idempotency, version remap, deferred activation, and target activation.
+
 ## 2026-09-03 - Prompt Release sync keeps the source repository read-only (p1-53)
 
 - Area or subsystem: Prompt Release source-to-target replication and ECS Production deploy gate.
