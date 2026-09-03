@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-03 - Suspension first reply drops the category word; reviewer notify email removed (p2-143)
+
+- Area or subsystem: Suspension handoff Persona contract and reply facts; suspension reviewer assignment notification.
+- Prompt or model version: `automation-persona-v24` → `automation-persona-v25`.
+- Summary: the suspension first reply must now refer to the request simply as "this request" — the contract adds an explicit rule ("do not name the account suspension category in the reply") and `closing_reply_facts.performed_actions` was neutralized to "Submitted the request for internal review." so the model no longer echoes the category from facts (AC-13258 rendered "this account suspension request"). Companion behavior change in the same task: the p2-141 suspension reviewer notification email (sent after reviewer assignment via `_notify_suspension_reviewer_by_email`, with `reviewer_notify_email` workflow state and `zendesk_reviewer_notify_email` events) was removed entirely — the internal handoff email already reaches the same recipients (to=suhrid, cc=xieziling) minutes earlier and assignment structurally never happens without a sent handoff email, so the extra copy was always redundant (AC-13258 sent three emails to xieziling: classification notice + handoff + reviewer copy). Existing `reviewer_notify_email` fields on historical cases are left in place (no longer written); the S1 live scenario no longer waits for the notify event.
+- Reason: user decisions 2026-09-03 after AC-13258 — the reply should say "Thank you for submitting this request." without naming the category, and the third email (reviewer copy) was redundant noise.
+- Affected files or config: `backend/services/automation_persona.py` (contract wording, v25), `backend/services/account_suspension_automation.py` (`closing_reply_facts`), `backend/worker.py` (notify function/call/import removed), `backend/services/automation_test_scenarios.py` (S1), tests (`test_automation_persona.py`, `test_worker.py`, `test_automation_test_scenarios.py`).
+- Expected behavior change: new production suspension first replies contain no "suspension"/category wording while keeping the three points (thanks / internal review / we-24h); after assignment no extra email is sent and no `zendesk_reviewer_notify_email` events are recorded — owners receive exactly two emails (classification notice + handoff). Assignment, pending (no solve), and the rest of the one-shot chain are unchanged.
+- Verification: persona/worker/intake/full_reroute/reroute_dispatch/scenarios suites green (worker 120, persona 63, scenarios 20, plus 226 across intake/reroute); new negative assertion (rendered content contains no "suspension"), notify cases rewritten to assert no send/no state/no events; official-stack restart and v25 marker to follow merge.
+
 ## 2026-09-03 - Suspension first reply simplified to brief three-point wording (p2-142)
 
 - Area or subsystem: Suspension handoff Persona contract (first customer reply of the p2-140 one-shot flow), closing reply facts, deterministic repair sentence.

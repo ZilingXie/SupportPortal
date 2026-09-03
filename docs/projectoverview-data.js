@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-03T08:41:37Z",
-  "source_base_commit": "29dd57d359bb3b9aeb7e0fa7e864eaef20e1457f",
-  "registry_digest": "0dce10d8babdd3d630221ebed2aecd5fb3ab15bd56b0857c8e079353526be951",
+  "generated_at": "2026-09-03T09:07:28Z",
+  "source_base_commit": "9bab06584cf858457eb2f52757e6171737a030cb",
+  "registry_digest": "71c1fd7e9a864e0098b9a8edaf843c1abdfa9e58cd4796d07c205e0b6e59585b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -973,6 +973,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Focused regression for v25 category-word drop and notify removal",
+          "command": ".venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_test_scenarios.py -q",
+          "details": "worker 120/persona 63/scenarios 20/intake+reroute 226 全绿（deselect 1 个既有基线顺序污染用例）。新增：brief 用例负向断言渲染输出不含 suspension；notify 三用例替换为一个'assign 后不发/不写状态/无事件'用例（含 workflow 不写 reviewer_notify_email 断言）；主 handoff 用例改断言零 notify 事件；S1 剧本 db_queue/断言同步；版本断言 v25（7 处）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1078,7 +1084,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 33,
+      "task_count": 34,
       "done_count": 18,
       "blocked_count": 0
     },
@@ -9929,6 +9935,48 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/automation_persona.py",
         "backend/services/account_suspension_automation.py",
         "backend/tests/test_automation_persona.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-143",
+      "title": "Suspension 首封去类别词（v25）+ 移除冗余 reviewer 通知邮件",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-09-03",
+      "updated_at": "2026-09-03",
+      "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
+      "next_action": "finalize 合并后官方栈重启+v25 marker；用户部署 EC2 /production 后受控 suspension 单复测（首封 'Thank you for submitting this request.' 无类别词、xieziling 仅收 2 封邮件），通过后置 done。",
+      "acceptance_criteria": [
+        "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
+        "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
+        "owner 邮件数=2（分类通知+handoff 邮件）。",
+        "v25 生效；prompt_change_log 条目在案。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Focused regression for v25 category-word drop and notify removal",
+          "command": ".venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_intake.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_automation_test_scenarios.py -q",
+          "details": "worker 120/persona 63/scenarios 20/intake+reroute 226 全绿（deselect 1 个既有基线顺序污染用例）。新增：brief 用例负向断言渲染输出不含 suspension；notify 三用例替换为一个'assign 后不发/不写状态/无事件'用例（含 workflow 不写 reviewer_notify_email 断言）；主 handoff 用例改断言零 notify 事件；S1 剧本 db_queue/断言同步；版本断言 v25（7 处）。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-140",
+        "p2-141",
+        "p2-142"
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/services/account_suspension_automation.py",
+        "backend/worker.py",
+        "backend/services/automation_test_scenarios.py"
       ]
     },
     {
