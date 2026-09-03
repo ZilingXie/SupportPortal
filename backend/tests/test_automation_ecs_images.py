@@ -98,7 +98,13 @@ def test_pruned_sources_are_copied_from_a_sibling_stage_into_final_image() -> No
 
 def test_ecs_images_drop_host_python_cache_artifacts() -> None:
     dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
-    for pattern in ("**/__pycache__", "**/*.pyc", "**/*.pyo", "**/*.pyd"):
+    for pattern in (
+        "**/__pycache__",
+        "**/*.pyc",
+        "**/*.pyo",
+        "**/*.pyd",
+        ".deployments",
+    ):
         assert pattern in dockerignore
 
     dockerfile = (ROOT / "backend/Dockerfile.automation").read_text(encoding="utf-8")
