@@ -6042,6 +6042,179 @@ class AccountIntakeApiTests(unittest.TestCase):
             self.assertNotIn("reopen", closing_reply.lower())
             self.assertNotIn("Support Engineer", closing_reply)
 
+    def test_production_suspension_direct_handoff_one_shot_flow(self) -> None:
+        extraction = AccountSuspensionFieldExtraction(
+            status="partial",
+            collected_fields={"suspension_status_or_error": "account suspended"},
+            grounding_status="passed",
+        )
+        reply_jobs_at_email_time: list[object] = []
+
+        def _send_and_snapshot(payload: dict[str, object]) -> dict[str, object]:
+            subject = str(payload.get("subject") or "")
+            ticket_id = subject.rsplit("Ticket ", 1)[-1].strip() if "Ticket " in subject else ""
+            reply_jobs_at_email_time.append(
+                self.repository.get_latest_account_reply_job(ticket_id) if ticket_id else "unknown-ticket"
+            )
+            return {"status": "sent", "reason": ""}
+
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_active_account_suspension_route_result()
+        ), patch.object(
+            main, "extract_account_suspension_fields", return_value=extraction
+        ), patch(
+            "backend.main.send_billing_internal_email", side_effect=_send_and_snapshot
+        ) as send_email, patch.dict(
+            os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}
+        ):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended and I cannot log in.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+
+            self.assertEqual(created["status"], "automation")
+            self.assertEqual(created["internal_email_send_status"], "sent")
+            send_email.assert_called_once()
+            # p2-140 ordering: the internal email is sent before any reply job
+            # exists, and exactly one handoff job exists afterwards.
+            self.assertEqual(reply_jobs_at_email_time, [None])
+
+        job = self.repository.get_latest_account_reply_job(created["ticket_id"])
+        self.assertIsNotNone(job)
+        assert job is not None
+        self.assertEqual(job["payload"]["reply_intent"], "account_suspension_handoff_and_close")
+        self.assertEqual(
+            job["payload"]["reply_facts"]["reply_intent"],
+            "account_suspension_handoff_and_close",
+        )
+        self.assertIsNot(job["payload"].get("close_after_publish"), True)
+
+        workflow = self.repository.get_account_case(created["account_case_id"])[
+            "automation_context"
+        ]["account_suspension_contact_workflow"]
+        self.assertEqual(workflow["state"], "closing_reply_pending")
+        self.assertEqual(workflow["intake_mode"], "direct_handoff")
+        self.assertEqual(workflow["confirmed_email"], "customer@example.com")
+        self.assertEqual(workflow["confirmed_email_source"], "ticket_email")
+        self.assertEqual(workflow["closing_reply_job_id"], job["job_id"])
+        self.assertTrue(str(workflow.get("handoff_delivery_key") or ""))
+
+        self._publish_latest_account_reply(created["ticket_id"])
+        ticket = self.repository.get_ticket(created["ticket_id"])
+        self.assertNotEqual(ticket["status"], "resolved")
+        reply = ticket["messages"][-1]["content"]
+        self.assertIn("24 hours", reply.lower())
+        self.assertNotIn("clos", reply.lower())
+        self.assertNotIn("reopen", reply.lower())
+        self.assertNotIn("which email", reply.lower())
+
+        # Later customer messages are a no-op: no new jobs, no second email.
+        follow_up = self.client.post(
+            f"/api/account/cases/{created['account_case_id']}/reply",
+            json={"message": "Any update on my account?"},
+        )
+        self.assertEqual(follow_up.status_code, 200, follow_up.text)
+        self.assertEqual(send_email.call_count, 1)
+        self.assertEqual(
+            self.repository.get_latest_account_reply_job(created["ticket_id"])["job_id"],
+            job["job_id"],
+        )
+
+    def test_production_suspension_direct_handoff_requires_valid_customer_email(self) -> None:
+        extraction = AccountSuspensionFieldExtraction(
+            status="partial",
+            collected_fields={"suspension_status_or_error": "account suspended"},
+            grounding_status="passed",
+        )
+        for email, expect_automation in (
+            ("customer@example.com", True),
+            ("  Customer@Example.COM  ", True),
+            ("a@b", False),
+            ("customerexample.com", False),
+        ):
+            with self.subTest(email=email):
+                with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+                    main, "decide_account_route", return_value=_active_account_suspension_route_result()
+                ), patch.object(
+                    main, "extract_account_suspension_fields", return_value=extraction
+                ), patch(
+                    "backend.main.send_billing_internal_email",
+                    return_value={"status": "sent", "reason": ""},
+                ) as send_email, patch.dict(
+                    os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}
+                ):
+                    created = self.client.post(
+                        "/account",
+                        json={
+                            "title": "Account suspended",
+                            "question": "My account has been suspended and I cannot log in.",
+                            "customer_email": email,
+                        },
+                    ).json()
+
+                case = self.repository.get_account_case(created["account_case_id"])
+                assert case is not None
+                if expect_automation:
+                    self.assertEqual(created["status"], "automation")
+                    send_email.assert_called_once()
+                else:
+                    self.assertEqual(case["automation_status"], "human_review_required")
+                    self.assertEqual(
+                        case["execution_reason_code"], "suspension_missing_customer_email"
+                    )
+                    send_email.assert_not_called()
+                    self.assertIsNone(
+                        self.repository.get_latest_account_reply_job(created["ticket_id"])
+                    )
+                    workflow = (case.get("automation_context") or {}).get(
+                        "account_suspension_contact_workflow"
+                    )
+                    self.assertEqual(workflow["state"], "human_review_required")
+
+    def test_production_suspension_direct_handoff_email_failure_fails_closed(self) -> None:
+        extraction = AccountSuspensionFieldExtraction(
+            status="partial",
+            collected_fields={"suspension_status_or_error": "account suspended"},
+            grounding_status="passed",
+        )
+        with patch.object(main, "dispatch_event", AsyncMock()), patch.object(
+            main, "decide_account_route", return_value=_active_account_suspension_route_result()
+        ), patch.object(
+            main, "extract_account_suspension_fields", return_value=extraction
+        ), patch(
+            "backend.main.send_billing_internal_email",
+            return_value={"status": "failed", "reason": "smtp_unavailable"},
+        ) as send_email, patch.dict(
+            os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}
+        ):
+            created = self.client.post(
+                "/account",
+                json={
+                    "title": "Account suspended",
+                    "question": "My account has been suspended and I cannot log in.",
+                    "customer_email": "customer@example.com",
+                },
+            ).json()
+
+        send_email.assert_called_once()
+        case = self.repository.get_account_case(created["account_case_id"])
+        assert case is not None
+        self.assertEqual(case["automation_status"], "human_review_required")
+        self.assertIsNone(self.repository.get_latest_account_reply_job(created["ticket_id"]))
+        workflow = (case.get("automation_context") or {}).get(
+            "account_suspension_contact_workflow"
+        )
+        self.assertEqual(workflow["state"], "human_review_required")
+        self.assertEqual(workflow["failure_reason"], "smtp_unavailable")
+        ticket = self.repository.get_ticket(created["ticket_id"])
+        self.assertFalse(
+            [message for message in ticket["messages"] if message.get("role") == "assistant"]
+        )
+
     def test_billing_tickets_detail_by_canonical_ticket_id(self) -> None:
         with patch.object(main, "dispatch_event", AsyncMock()):
             create_response = self.client.post(

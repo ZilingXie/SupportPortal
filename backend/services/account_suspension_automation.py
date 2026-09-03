@@ -11,6 +11,7 @@ SUSPENSION_STATE_HANDOFF_PENDING = "handoff_pending"
 SUSPENSION_STATE_CLOSING_REPLY_PENDING = "closing_reply_pending"
 SUSPENSION_STATE_CLOSED = "closed"
 SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED = "human_review_required"
+SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF = "direct_handoff"
 SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION = "account_suspension_contact_confirmation_request"
 SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE = "account_suspension_handoff_and_close"
 
@@ -31,6 +32,34 @@ def initial_contact_workflow(*, ticket_email: Any = None, created_at: str | None
         "state": SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
         "ticket_email": normalize_contact_email(ticket_email),
         "confirmed_email": None,
+        "confirmation_message_id": None,
+        "handoff_delivery_key": None,
+        "confirmation_request_job_id": None,
+        "closing_reply_job_id": None,
+        "created_at": created_at,
+        "updated_at": created_at,
+        "failure_reason": None,
+    }
+
+
+def direct_handoff_workflow(*, ticket_email: Any = None, created_at: str | None = None) -> dict[str, Any]:
+    """Return the persisted direct-handoff state (p2-140).
+
+    Production intake skips the contact-confirmation stage entirely: the
+    ticket email is the contact address, the internal email and the closing
+    reply are the first customer-facing step, and the reviewer assignment
+    follows the public reply. The gate must reject invalid ticket emails
+    before this workflow is persisted (normalize_contact_email returns None
+    for them).
+    """
+    normalized_ticket_email = normalize_contact_email(ticket_email)
+    return {
+        "version": 1,
+        "state": SUSPENSION_STATE_HANDOFF_PENDING,
+        "intake_mode": SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
+        "ticket_email": normalized_ticket_email,
+        "confirmed_email": normalized_ticket_email,
+        "confirmed_email_source": "ticket_email",
         "confirmation_message_id": None,
         "handoff_delivery_key": None,
         "confirmation_request_job_id": None,

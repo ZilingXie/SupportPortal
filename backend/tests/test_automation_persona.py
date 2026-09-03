@@ -16,6 +16,7 @@ from backend.services.automation_persona import (
     sanitize_enablement_completion_note,
     validate_account_reply_contract,
 )
+from backend.services.account_suspension_automation import closing_reply_facts
 from backend.services.detailed_invoice_field_extractor import extract_detailed_invoice_fields
 from backend.services.billing_automation import build_billing_automation_result
 
@@ -122,7 +123,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -380,7 +381,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertIn("Do not invent links", system_prompt)
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("An App ID identifies an Agora project created in Console.", user_prompt)
-        self.assertTrue(result.content.startswith("Hi Maya\n\n"))
+        self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
         self.assertIn("an App ID identifies an Agora project", result.content)
 
     def test_render_rag_fallback_requires_provided_answer(self) -> None:
@@ -428,7 +429,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertIn("provided_answer is the only authority", system_prompt)
         self.assertIn("Do not derive or add any diagnosis", system_prompt)
         self.assertEqual(result.prompt_version, "engineer-guided-persona-v3")
-        self.assertTrue(result.content.startswith("Hi Maya\n\n"))
+        self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
         self.assertIn("SDK 4.2.2", result.content)
 
     def test_render_engineer_guided_reply_preserves_source_identifier_and_url(self) -> None:
@@ -634,7 +635,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(result.content, f"Hi Jack\n\n{response.text}")
+        self.assertEqual(result.content, f"Hi Jack,\n\n{response.text}")
         self.assertEqual(result.model, "persona-model")
         self.assertIn('"missing_information"', invoke.call_args.kwargs["user_prompt"])
         self.assertIn("Warm", invoke.call_args.kwargs["system_prompt"])
@@ -710,7 +711,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Taylor\n\n"
+            "Hi Taylor,\n\n"
             "Thank you for sharing the information you have so far.\n\n"
             "Could you please provide the following information?\n\n"
             "- Office address\n"
@@ -718,7 +719,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "- Last known console configuration\n\n"
             "After you provide this information, I will continue coordinating the review.",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("application will append the exact missing-information request", system_prompt)
@@ -838,7 +839,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Jack\n\nI am coordinating the request with our internal team and will keep you updated. Activation may "
+            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated. Activation may "
             "take up to 24 hours, and the change window is Monday-Friday.",
         )
 
@@ -866,7 +867,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Ziling\n\nThank you for waiting.\n\n"
+            "Hi Ziling,\n\nThank you for waiting.\n\n"
             "I understand you are seeing a black screen. Please share the SDK logs.",
         )
         self.assertEqual(result.content.lower().count("hi"), 1)
@@ -895,7 +896,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 },
                 persona_assignment={"content": {"instruction": "Warm"}},
             )
-        self.assertTrue(result.content.startswith("Hi Ziling"))
+        self.assertTrue(result.content.startswith("Hi Ziling,"))
         self.assertEqual(result.prompt_version, "engineer-investigation-persona-v1")
 
     def test_engineer_investigation_reply_requires_provided_answer(self) -> None:
@@ -975,7 +976,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm", "signoff_name": "Maya"}},
             )
 
-        self.assertEqual(result.content, "Hi Customer\n\nThe request is complete.")
+        self.assertEqual(result.content, "Hi Customer,\n\nThe request is complete.")
 
     def test_trailing_signature_is_rejected_without_rewriting_body(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -1069,7 +1070,7 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Customer\n\nOur fraud specialists will reach out to you within 24 hours.",
+            "Hi Customer,\n\nOur fraud specialists will reach out to you within 24 hours.",
         )
         self.assertEqual(invoke.call_count, 4)
 
@@ -1141,7 +1142,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "Activation may take up to 24 hours, and the change window is Monday-Friday.",
             result.content,
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         self.assertEqual(invoke.call_count, 1)
 
     def test_enablement_submission_deterministic_completion_preserves_existing_clauses(self) -> None:
@@ -1252,6 +1253,82 @@ class AutomationPersonaTests(unittest.TestCase):
                 with self.assertRaisesRegex(AutomationPersonaError, "suspension_contact_contract_failed"):
                     validate_account_reply_contract(invalid_reply, facts)
 
+    def test_suspension_closing_contract_accepts_natural_handoff_phrasing(self) -> None:
+        facts = {
+            "behavior": "account_suspension",
+            "reply_intent": "account_suspension_handoff_and_close",
+        }
+        for valid_reply in (
+            "Thanks for reaching out. Someone will be in touch. This should happen within 24 hours.",
+            "Someone from the team is expected to reach out within the next 24 hours.",
+            "The team will contact you in 24 hours.",
+            "Someone should reach out to you in 24 hours with an update.",
+            "The relevant team will get back to you within 24h.",
+            "You do not need to reopen the ticket; we will contact you within 24 hours.",
+        ):
+            with self.subTest(valid_reply=valid_reply):
+                validate_account_reply_contract(valid_reply, facts)
+        for invalid_reply in (
+            "We will not contact you within 24 hours.",
+            "Will someone contact you within 24 hours?",
+            "Thanks for your patience. Someone will follow up with you soon.",
+            "This ticket will close after the handoff. We will contact you within 24 hours.",
+            "You can reopen the ticket at any time. We will contact you within 24 hours.",
+        ):
+            with self.subTest(invalid_reply=invalid_reply):
+                with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
+                    validate_account_reply_contract(invalid_reply, facts)
+
+    def test_suspension_closing_deterministic_append_repairs_missing_commitment(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Thank you for reaching out about the suspension. I have logged your request.",
+            model_name="persona-model",
+        )
+        facts = closing_reply_facts(
+            confirmed_email="customer@example.com",
+            customer_name="Maya",
+        )
+
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                account_scope=True,
+            )
+
+        self.assertIn(
+            "The relevant team will contact you within 24 hours.",
+            result.content,
+        )
+        self.assertTrue(result.deterministic_contract_appended)
+        self.assertEqual(invoke.call_count, 1)
+
+    def test_suspension_closing_deterministic_append_never_repairs_negated_promise(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="We will not contact you about the suspension.",
+            model_name="persona-model",
+        )
+        facts = closing_reply_facts(
+            confirmed_email="customer@example.com",
+            customer_name="Maya",
+        )
+
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            with self.assertRaisesRegex(AutomationPersonaError, "completion_contract_failed"):
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm and precise."}},
+                    account_scope=True,
+                )
+
+        self.assertEqual(invoke.call_count, 4)
+
     def test_completion_contract_requires_positive_enabled_and_closing_state(self) -> None:
         facts = {
             "behavior": "enablement",
@@ -1344,8 +1421,8 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertTrue(result.content.startswith("Hi Ziling\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v21")
+        self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
+        self.assertEqual(result.prompt_version, "automation-persona-v22")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)

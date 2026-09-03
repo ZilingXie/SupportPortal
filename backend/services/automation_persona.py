@@ -41,7 +41,7 @@ _SUSPENSION_CONTACT_CONFIRMATION_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_CONTAC
 _SUSPENSION_HANDOFF_CLOSE_INTENT = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v21"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v22"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -169,6 +169,7 @@ class AutomationPersonaResult:
     content: str
     model: str
     prompt_version: str = AUTOMATION_PERSONA_PROMPT_VERSION
+    deterministic_contract_appended: bool = False
 
 
 def assert_no_trailing_automation_signature(reply: str) -> None:
@@ -408,6 +409,64 @@ def _assert_handoff_commitment(reply: str, *, error_code: str) -> None:
         r"\b(?:(?:within\s+)?24\s*[- ]?\s*hours?|24h)\b",
     ):
         raise AutomationPersonaError(error_code)
+
+
+# p2-140: the suspension closing contract accepts natural phrasing where the
+# commitment facts may sit in different sentences, instead of requiring one
+# clause to carry all three patterns like _assert_handoff_commitment does.
+_SUSPENSION_HANDOFF_MODAL_RE = (
+    r"\b(?:will|shall|'ll|should|can\s+expect\s+to|(?:is|are)\s+expected\s+to|going\s+to)\b"
+)
+_SUSPENSION_HANDOFF_CONTACT_RE = (
+    r"(?:contact\w*|reach\w*\s+out|follow\w*\s+up|(?:get\w*|be)\s+in\s+touch|get\w*\s+back|touch\w*\s+base|respond\w*|repl\w*)"
+)
+_SUSPENSION_HANDOFF_WINDOW_RE = r"\b(?:24\s*[- ]?\s*hours?|24h)\b"
+_SUSPENSION_HANDOFF_FACT_PATTERNS = (
+    _SUSPENSION_HANDOFF_MODAL_RE,
+    _SUSPENSION_HANDOFF_CONTACT_RE,
+    _SUSPENSION_HANDOFF_WINDOW_RE,
+)
+_SUSPENSION_CLOSE_CLAIM_RE = r"\b(?:close[ds]?|closing|reopen(?:ed|ing)?|re-open(?:ed|ing)?|archiv\w*)\b"
+_SUSPENSION_CLOSE_SUBJECT_RE = r"\b(?:ticket|case|this)\b"
+_SUSPENSION_HANDOFF_CONTRACT_SENTENCE = "The relevant team will contact you within 24 hours."
+
+
+def _suspension_close_claim_present(reply: str) -> bool:
+    """A positive clause promising the customer that the ticket closes/reopens."""
+    return _has_positive_clause(reply, _SUSPENSION_CLOSE_CLAIM_RE, _SUSPENSION_CLOSE_SUBJECT_RE)
+
+
+def _suspension_negated_promise_present(reply: str) -> bool:
+    """A negated or questioning clause pairing commitment facts is a real refusal."""
+    pairs = (
+        (_SUSPENSION_HANDOFF_MODAL_RE, _SUSPENSION_HANDOFF_CONTACT_RE),
+        (_SUSPENSION_HANDOFF_CONTACT_RE, _SUSPENSION_HANDOFF_WINDOW_RE),
+        (_SUSPENSION_HANDOFF_MODAL_RE, _SUSPENSION_HANDOFF_WINDOW_RE),
+    )
+    return any(
+        not _is_positive_clause(clause) and any(
+            re.search(left, clause) and re.search(right, clause) for left, right in pairs
+        )
+        for clause in _reply_clauses(reply)
+    )
+
+
+def _suspension_handoff_facts_present(reply: str) -> bool:
+    clauses = _reply_clauses(reply)
+    if _has_positive_clause(
+        reply,
+        _SUSPENSION_HANDOFF_MODAL_RE,
+        _SUSPENSION_HANDOFF_CONTACT_RE,
+        _SUSPENSION_HANDOFF_WINDOW_RE,
+    ):
+        return True
+    return all(
+        any(
+            _is_positive_clause(clause) and re.search(pattern, clause)
+            for clause in clauses
+        )
+        for pattern in _SUSPENSION_HANDOFF_FACT_PATTERNS
+    )
 
 
 def _assert_enablement_submission_contract(reply: str) -> None:
@@ -660,10 +719,27 @@ def _assert_suspension_contact_contract(reply: str) -> None:
 
 
 def _assert_suspension_closing_contract(reply: str) -> None:
-    _assert_handoff_commitment(
-        reply,
-        error_code="automation_persona_completion_contract_failed",
-    )
+    """p2-140: the commitment facts may span sentences, but a customer-facing
+    closure/reopen claim or a negated/questioning promise still fails."""
+    error_code = "automation_persona_completion_contract_failed"
+    if _suspension_close_claim_present(reply) or _suspension_negated_promise_present(reply):
+        raise AutomationPersonaError(error_code)
+    if not _suspension_handoff_facts_present(reply):
+        raise AutomationPersonaError(error_code)
+
+
+def _deterministic_suspension_closing_reply(reply: str) -> str:
+    """Append the standard commitment sentence when the model only missed it.
+
+    Hard violations (closure/reopen claims, negated or questioning promises)
+    are not repairable and keep failing so the retry/human-review path stays.
+    """
+    error_code = "automation_persona_completion_contract_failed"
+    if _suspension_close_claim_present(reply) or _suspension_negated_promise_present(reply):
+        raise AutomationPersonaError(error_code)
+    if _suspension_handoff_facts_present(reply):
+        return reply
+    return f"{reply}\n\n{_SUSPENSION_HANDOFF_CONTRACT_SENTENCE}"
 
 
 _FUTURE_ENABLEMENT_CLAIM_RE = re.compile(
@@ -828,6 +904,7 @@ def _validated_automation_reply_content(
     facts: dict[str, Any],
     forbidden_values: list[str],
     account_scope: bool,
+    repair_tracker: dict[str, Any] | None = None,
 ) -> str:
     reply = str(getattr(response, "text", "") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not reply:
@@ -848,6 +925,15 @@ def _validated_automation_reply_content(
         == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION
     ):
         reply = _deterministic_enablement_submission_reply(reply)
+    if (
+        account_scope
+        and str(facts.get("reply_intent") or "").strip().lower()
+        == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
+    ):
+        repaired = _deterministic_suspension_closing_reply(reply)
+        if repaired != reply and repair_tracker is not None:
+            repair_tracker["suspension_handoff_commitment_appended"] = True
+        reply = repaired
     if account_scope:
         validate_account_reply_contract(reply, facts)
     rendered_content = f"{greeting}\n\n{reply}"
@@ -957,7 +1043,7 @@ def render_automation_reply(
     intent = str(facts.get("reply_intent") or "").strip().lower()
     if intent in _ENGINEER_SOURCED_REPLY_INTENTS and first_name == "Customer":
         raise AutomationPersonaError("automation_persona_guided_customer_name_missing")
-    greeting = f"Hi {first_name}"
+    greeting = f"Hi {first_name},"
     deterministic_missing_information = _uses_deterministic_missing_information(facts)
     missing_information_policy = (
         "For request_missing_information, write only one brief, warm acknowledgement paragraph. Do not name, "
@@ -1027,12 +1113,13 @@ def render_automation_reply(
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
         reply_contract_policy = (
-            "For an Account Suspension handoff, confirm that the case has been handed to the relevant team and "
-            "commit that someone from that team will contact the customer within 24 hours, phrased in your own "
-            "natural words. Do not state that the ticket is closing, archiving, or that the customer should "
-            "reopen it. Style reference (match the tone and rhythm, do not copy the wording): 'Thanks for "
-            "confirming. I've handed the case over to the relevant team, and someone from their side will reach "
-            "out to you within 24 hours with an update.' "
+            "For an Account Suspension handoff, acknowledge that the customer's suspension request has been "
+            "received, confirm that the case has been handed to the relevant team, and commit that someone "
+            "from that team will contact the customer within 24 hours, phrased in your own natural words. Do "
+            "not state that the ticket is closing, archiving, or that the customer should reopen it. Style "
+            "reference (match the tone and rhythm, do not copy the wording): 'Thanks for reaching out - I've "
+            "received your request and handed the case over to the relevant team, and someone from their side "
+            "will reach out to you within 24 hours with an update.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
         reply_contract_policy = (
@@ -1100,6 +1187,7 @@ def render_automation_reply(
             "AI investigation, or any internal tooling. "
         )
     validated: dict[str, Any] = {}
+    repair_tracker: dict[str, Any] = {}
 
     def validate_response(response: Any) -> None:
         validated["response"] = response
@@ -1109,6 +1197,7 @@ def render_automation_reply(
             facts=facts,
             forbidden_values=forbidden_values,
             account_scope=account_scope,
+            repair_tracker=repair_tracker,
         )
 
     try:
@@ -1164,4 +1253,7 @@ def render_automation_reply(
         content=str(validated["content"]),
         model=str(response.model_name or profile.model).strip() or profile.model,
         prompt_version=prompt_version,
+        deterministic_contract_appended=bool(
+            repair_tracker.get("suspension_handoff_commitment_appended")
+        ),
     )

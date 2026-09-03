@@ -9,9 +9,11 @@ from backend.services.account_full_reroute import reprocess_account_case
 from backend.services.account_suspension_field_extractor import AccountSuspensionFieldExtraction
 from backend.services.account_suspension_automation import (
     SUSPENSION_CONTACT_WORKFLOW_KEY,
+    SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
     SUSPENSION_REPLY_INTENT_CONTACT_CONFIRMATION,
     SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
     SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION,
+    SUSPENSION_STATE_CLOSING_REPLY_PENDING,
     SUSPENSION_STATE_HANDOFF_PENDING,
     SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED,
 )
@@ -369,6 +371,79 @@ class AccountFullRerouteTests(unittest.TestCase):
             extractor.return_value.prompt_snapshot,
         )
         self.assertNotIn("customer@example.com", str(workflow.get("confirmed_email")))
+
+    def test_account_suspension_direct_handoff_rerun_skips_confirmation_stage(self) -> None:
+        original = {
+            **_case(action="account_suspension"),
+            "automation_context": {
+                SUSPENSION_CONTACT_WORKFLOW_KEY: {
+                    "version": 1,
+                    "state": "closing_reply_pending",
+                    "intake_mode": SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
+                    "ticket_email": "customer@example.com",
+                    "confirmed_email": "customer@example.com",
+                    "confirmed_email_source": "ticket_email",
+                }
+            },
+        }
+        extractor = Mock(
+            return_value=AccountSuspensionFieldExtraction(
+                status="partial",
+                collected_fields={"known_reason": "balance"},
+                grounding_status="passed",
+            )
+        )
+        result = reprocess_account_case(
+            original,
+            ticket=_ticket(),
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_suspension=extractor,
+        )
+
+        self.assertEqual(result.account_case["automation_status"], "automation")
+        workflow = result.account_case["automation_context"][SUSPENSION_CONTACT_WORKFLOW_KEY]
+        self.assertEqual(workflow["state"], SUSPENSION_STATE_HANDOFF_PENDING)
+        self.assertEqual(workflow["intake_mode"], SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF)
+        self.assertEqual(workflow["confirmed_email"], "customer@example.com")
+        self.assertEqual(workflow["confirmed_email_source"], "ticket_email")
+        self.assertEqual(result.reply_kind, "suspension_closing_reply")
+        self.assertEqual(result.reply_intent, SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE)
+        self.assertIsNotNone(result.internal_email_to_send)
+
+    def test_account_suspension_direct_handoff_rerun_without_usable_email_fails_closed(self) -> None:
+        original = {
+            **_case(action="account_suspension"),
+            "automation_context": {
+                SUSPENSION_CONTACT_WORKFLOW_KEY: {
+                    "version": 1,
+                    "state": SUSPENSION_STATE_HANDOFF_PENDING,
+                    "intake_mode": SUSPENSION_INTAKE_MODE_DIRECT_HANDOFF,
+                    "ticket_email": None,
+                    "confirmed_email": None,
+                }
+            },
+        }
+        extractor = Mock(
+            return_value=AccountSuspensionFieldExtraction(
+                status="partial",
+                collected_fields={"known_reason": "balance"},
+                grounding_status="passed",
+            )
+        )
+        ticket = _ticket()
+        ticket["customer_id"] = "a@b"
+        result = reprocess_account_case(
+            original,
+            ticket=ticket,
+            reroute=Mock(return_value=_reroute_result(original)),
+            extract_suspension=extractor,
+        )
+
+        self.assertEqual(result.handler_status, "human_review")
+        workflow = result.account_case["automation_context"][SUSPENSION_CONTACT_WORKFLOW_KEY]
+        self.assertEqual(workflow["state"], SUSPENSION_STATE_HUMAN_REVIEW_REQUIRED)
+        self.assertEqual(workflow["failure_reason"], "account_suspension_missing_customer_email")
+        self.assertIsNone(result.internal_email_to_send)
 
     def test_legacy_account_suspension_review_is_migrated_by_full_rerun(self) -> None:
         original = {
