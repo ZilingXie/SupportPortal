@@ -21,6 +21,8 @@ DEPLOY_STARTED=0
 ACTIVATION_STARTED=0
 DEPLOY_COMPLETE=0
 UPDATED_ROLES=()
+HEARTBEAT_WAIT_TIMEOUT_SECONDS=90
+HEARTBEAT_RETRY_INTERVAL_SECONDS=5
 
 log() { printf '[ecs-deploy] %s\n' "$*"; }
 fail() { printf '[ecs-deploy] ERROR: %s\n' "$*" >&2; return 1; }
@@ -147,6 +149,23 @@ verify_cloudwatch() {
   done
 }
 
+wait_for_heartbeats() {
+  local deadline
+  deadline=$((SECONDS + HEARTBEAT_WAIT_TIMEOUT_SECONDS))
+  while true; do
+    if "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy verify-heartbeats \
+      --manifest "${MANIFEST_PATH}" --task-definition "${TEMP_DIR}/worker.register.json" \
+      --max-age-seconds 90 >/dev/null 2>&1; then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      fail "Route/Worker heartbeat provenance did not converge within ${HEARTBEAT_WAIT_TIMEOUT_SECONDS}s"
+      return 1
+    fi
+    sleep "${HEARTBEAT_RETRY_INTERVAL_SECONDS}"
+  done
+}
+
 main() {
   parse_args "$@"
   trap cleanup EXIT
@@ -264,10 +283,7 @@ main() {
   local dsn_reference heartbeat_dsn
   dsn_reference="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .secrets[] | select(.name == "AUTOMATION_DB_DSN") | .valueFrom' "${TEMP_DIR}/worker.current.json")"
   heartbeat_dsn="$(read_secret_value "${dsn_reference}")"
-  AUTOMATION_HEARTBEAT_DSN="${heartbeat_dsn}" \
-    "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy verify-heartbeats \
-      --manifest "${MANIFEST_PATH}" --task-definition "${TEMP_DIR}/worker.register.json" \
-      --max-age-seconds 90 >/dev/null
+  AUTOMATION_HEARTBEAT_DSN="${heartbeat_dsn}" wait_for_heartbeats
   unset heartbeat_dsn
 
   role="api"

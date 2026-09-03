@@ -243,10 +243,16 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
         'if [[ "${CHECK_ONLY}" = "1" ]]'
     )
     route_worker = script.index("for role in route worker")
-    heartbeat = script.index("verify-heartbeats")
+    heartbeat = script.index('AUTOMATION_HEARTBEAT_DSN="${heartbeat_dsn}" wait_for_heartbeats')
     api_update = script.index('role="api"')
     activation = script.index("ACTIVATION_STARTED=1")
     assert route_worker < heartbeat < api_update < activation
+    assert "HEARTBEAT_WAIT_TIMEOUT_SECONDS=90" in script
+    assert "HEARTBEAT_RETRY_INTERVAL_SECONDS=5" in script
+    assert "while true" in script
+    assert "heartbeat provenance did not converge" in script
+    assert "--max-age-seconds 90" in script
+    assert "last_error" not in script
     assert "rollback_services" in script
     assert "requires reconciliation" in script
     assert "https://support.stellarix.space/health" in script
