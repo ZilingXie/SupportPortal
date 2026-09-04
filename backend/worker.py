@@ -893,6 +893,12 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
             payload.pop("persona_render_status", None)
             payload.pop("persona_model", None)
             payload.pop("persona_prompt_version", None)
+            payload.pop("persona_contract_repair", None)
+            payload.pop("persona_review_status", None)
+            payload.pop("persona_review_rounds", None)
+            payload.pop("persona_reviewer_model", None)
+            payload.pop("persona_review_prompt_version", None)
+            payload.pop("persona_review_issue_codes", None)
             persona_assignment = {
                 "persona_key": payload.get("persona_key"),
                 "version": payload.get("persona_version"),
@@ -922,12 +928,11 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
                     "persona_render_status": "generated",
                     "persona_model": rendered.model,
                     "persona_prompt_version": rendered.prompt_version,
-                    # p2-140: deterministic suspension commitment append signal.
-                    "persona_contract_repair": (
-                        "suspension_handoff_commitment_appended"
-                        if getattr(rendered, "deterministic_contract_appended", False)
-                        else None
-                    ),
+                    "persona_review_status": rendered.review_status,
+                    "persona_review_rounds": rendered.review_rounds,
+                    "persona_reviewer_model": rendered.reviewer_model,
+                    "persona_review_prompt_version": rendered.reviewer_prompt_version,
+                    "persona_review_issue_codes": list(rendered.review_issue_codes),
                 }
             )
         job["payload"] = payload
@@ -1126,6 +1131,12 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload.pop("persona_render_status", None)
         payload.pop("persona_model", None)
         payload.pop("persona_prompt_version", None)
+        payload.pop("persona_contract_repair", None)
+        payload.pop("persona_review_status", None)
+        payload.pop("persona_review_rounds", None)
+        payload.pop("persona_reviewer_model", None)
+        payload.pop("persona_review_prompt_version", None)
+        payload.pop("persona_review_issue_codes", None)
         persona_assignment = {
             "persona_key": payload.get("persona_key"),
             "version": payload.get("persona_version"),
@@ -1153,11 +1164,11 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload["persona_render_status"] = "generated"
         payload["persona_model"] = rendered.model
         payload["persona_prompt_version"] = rendered.prompt_version
-        payload["persona_contract_repair"] = (
-            "suspension_handoff_commitment_appended"
-            if getattr(rendered, "deterministic_contract_appended", False)
-            else None
-        )
+        payload["persona_review_status"] = rendered.review_status
+        payload["persona_review_rounds"] = rendered.review_rounds
+        payload["persona_reviewer_model"] = rendered.reviewer_model
+        payload["persona_review_prompt_version"] = rendered.reviewer_prompt_version
+        payload["persona_review_issue_codes"] = list(rendered.review_issue_codes)
         current_job["payload"] = payload
         if not _update_claimed_account_reply_job(
             current_job,

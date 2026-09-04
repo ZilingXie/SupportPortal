@@ -9,13 +9,13 @@
   "function_id": "automation-execution-loop",
   "created_at": "2026-09-03",
   "updated_at": "2026-09-04",
-  "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用 resolve_account_internal_email_recipients（同 to=suhrid+cc=xieziling）且 assign 结构上必然晚于 handoff 邮件 sent（邮件成功是 closing job 前提，失败即掉人工），故永远冗余（13258 用户收到三封：分类通知+handoff+reviewer 副本）。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
-  "next_action": "保持 active，等待用户提供全新 ECS Account Suspension 工单号；核对首封 'Thank you for submitting this request.' 无类别词、owner 仅收分类通知与handoff两封邮件、assign后无reviewer通知、工单未solved，通过后置done。",
+  "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；该语义由p2-144的v26 Persona+review-v1继续保留。②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用收件人且 assign 结构上必然晚于 handoff 邮件 sent，故永远冗余。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
+  "next_action": "保持 active，等待 p2-144 v26/review-v1 发布及用户提供全新 ECS Account Suspension 工单号；核对首封只称 'this request' 且无重复24h、owner 仅收分类通知与handoff两封邮件、assign后无reviewer通知、工单未solved，通过后置done。",
   "acceptance_criteria": [
     "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
     "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
     "owner 邮件数=2（分类通知+handoff 邮件）。",
-    "v25 生效；prompt_change_log 条目在案。"
+    "p2-144 发布后 v26/review-v1 生效并保留本任务的去类别词合同；prompt_change_log 条目在案。"
   ],
   "blockers": [],
   "evidence": [
@@ -49,7 +49,8 @@
   "legacy_refs": [
     "p2-140",
     "p2-141",
-    "p2-142"
+    "p2-142",
+    "p2-144"
   ],
   "source_refs": [
     "backend/services/automation_persona.py",

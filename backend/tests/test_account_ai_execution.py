@@ -48,6 +48,23 @@ def test_account_text_retries_three_times_then_returns_fourth_success(monkeypatc
     assert calls[0]["profile"].fallback_models == ()
 
 
+def test_account_text_single_attempt_budget_does_not_retry(monkeypatch):
+    calls = Mock(side_effect=LlmInvocationError("temporary outage"))
+    monkeypatch.setattr("backend.services.account_ai_execution.invoke_responses_text", calls)
+
+    with pytest.raises(AccountProcessingFailure) as raised:
+        invoke_account_responses_text(
+            profile=_profile(),
+            system_prompt="system",
+            user_prompt="user",
+            stage="bounded-test",
+            max_attempts=1,
+        )
+
+    assert raised.value.attempt_count == 1
+    assert calls.call_count == 1
+
+
 def test_account_text_validation_retries_share_the_four_call_budget(monkeypatch):
     calls = Mock(
         side_effect=[
@@ -104,6 +121,23 @@ def test_account_json_exhaustion_is_system_failure(monkeypatch):
             profile=_profile(), system_prompt="system", user_prompt="user", stage="json-test"
         )
     assert calls.call_count == 4
+
+
+def test_account_json_single_attempt_budget_does_not_retry(monkeypatch):
+    calls = Mock(return_value=LlmTextResult(text="not-json", model_name="gpt-test"))
+    monkeypatch.setattr("backend.services.account_ai_execution.invoke_responses_text", calls)
+
+    with pytest.raises(AccountProcessingFailure) as raised:
+        invoke_account_json_payload(
+            profile=_profile(),
+            system_prompt="system",
+            user_prompt="user",
+            stage="bounded-json-test",
+            max_attempts=1,
+        )
+
+    assert raised.value.attempt_count == 1
+    assert calls.call_count == 1
 
 
 def test_account_unexpected_invocation_error_is_retried_then_alertable_failure(monkeypatch):
