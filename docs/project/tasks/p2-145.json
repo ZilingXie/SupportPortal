@@ -10,7 +10,7 @@
   "created_at": "2026-09-05",
   "updated_at": "2026-09-05",
   "summary": "在 `/automation/production/admin/` 复用 `/workspace/admin/` 的同一套 UI 与现有 ECS dashboard Cookie Session，严格只读展示 `supportportal_production` schema 及 `supportportal-production` namespace 数据；保留全部栏目与写控件位置但禁用所有业务写动作，旧 Workspace Admin 和 Production 根看板保持不变。",
-  "next_action": "finalize 实现 PR；合并后重启并验证官方 lightweight 栈，构建三角色 immutable release，执行 Production check-only 与正式部署，再完成公网视觉、数据库对账、只读和 provenance 验收。",
+  "next_action": "PR #1066 与 r20260905-8216f76 ECS Production release 已完成；保持 active，后续单独完成公网 Admin 视觉、Production 数据库对账与无写入验收。Dashboard 认证仍不在本任务范围。",
   "acceptance_criteria": [
     "`/automation/production/admin/` 与 `/workspace/admin/` 共用同一套 HTML、CSS 和 JavaScript，10 个栏目、布局与响应式行为一致，根 Ticket 看板不变。",
     "所有 Admin 数据只读 `AUTOMATION_DB_DSN` 的 `supportportal_production` schema；Automation 数据额外固定 `namespace=supportportal-production`，错误 schema/namespace 数据不得出现。",
@@ -35,6 +35,11 @@
       "type": "test",
       "label": "Targeted contract verification",
       "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed、1 skipped；image/bootstrap/deploy/build 23 passed；node --check 通过。跳过项为专用 AUTOMATION_ECS_ADMIN_TEST_POSTGRES_DSN 未配置，陷阱 fixture 已新增但尚待实际 PostgreSQL 执行。"
+    },
+    {
+      "type": "deployment",
+      "label": "ECS Production release provenance",
+      "details": "PR #1066 squash commit 8216f763427f 随 r20260905-8216f76 发布；API revision 31 运行相同 commit/digest 并通过公网 release/ready、CloudWatch、heartbeat、EC2 backup 与 Terraform zero-drift 门禁。此证据只证明代码已部署，不替代本任务仍待完成的 Admin 公网视觉、Production 数据库对账和无写入验收。"
     }
   ],
   "history": [
@@ -47,6 +52,11 @@
       "at": "2026-09-05",
       "event": "implementation_verified",
       "summary": "共享 UI、只读 Reader/API、schema preflight 与镜像隔离实现完成并通过定向契约测试；任务保持 active，等待合并后本地栈、Production PostgreSQL、ECS 与公网验收。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "ecs_release_deployed",
+      "summary": "PR #1066 已包含在 r20260905-8216f76 并部署到 API revision 31；任务保持 active，等待其独立只读验收。"
     }
   ],
   "legacy_ids": [],

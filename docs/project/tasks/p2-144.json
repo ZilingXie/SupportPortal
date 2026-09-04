@@ -10,7 +10,7 @@
   "created_at": "2026-09-05",
   "updated_at": "2026-09-05",
   "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句。按用户决策升级 automation-persona-v26 并新增 automation-persona-review-v1：Persona 生成 greeting 后的全部语义正文，独立 LLM Reviewer 检查事实完整性、冲突、重复和 intent 合同；首轮失败只提供结构化 feedback 给同一 pinned Persona 整段重写，第二轮仍失败即 Human Review。Worker 禁止补写、裁剪或改写正文，只持久化通过稿和安全审计元数据；应用仅保留 greeting、RAG 引用、附件和 transport formatting 外壳。代码安全地板只拒绝危险输出，并在 validation copy 中统一常见 apostrophe，不改变客户正文。",
-  "next_action": "完成 PR 合并、official lightweight 栈验证和正式 ECS Production release；发布后等待用户提供全新工单，验收正文只含一次 24h 承诺、review metadata、assign 与未 solved。不得创建或重放工单。",
+  "next_action": "PR #1065 与 ECS Production v26/review-v1 release 已完成；保持 active，等待用户提供下一张全新 Account Suspension 工单，验收正文只含一次 24h 承诺、persona_review metadata、assign 与未 solved。不得创建、重放或回复历史工单。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
     "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
@@ -26,9 +26,26 @@
       "label": "Persona immutable-body and Worker review metadata regression",
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py",
       "details": "464 passed + 120 subtests。覆盖单次调用预算、正常 2 次与重写 4 次 LLM 调用上限、Reviewer schema/failure、两轮整段重写、重复与缺失 24h、Unicode apostrophe、安全地板、greeting 重写、Missing-information/Enablement Persona 全文生成、Worker 原样持久化与 review metadata、RAG 外壳及 ECS Persona 透传。"
+    },
+    {
+      "type": "deployment",
+      "label": "ECS Production v26/review-v1 immutable release",
+      "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
+      "details": "PR #1065 squash commit ec887c9 已合并；按用户确认从随后包含 PR #1066 的最新 main 8216f763427f 构建 r20260905-8216f76。API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，运行 digest 与 Manifest/ECR/Promotion Record 一致。公网 live/release/ready、最新 heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 错误 0、EC2 backup、Terraform 1.9.8 发布后 No changes 均通过。Worker OCI 与 task definition 证明 v26/review-v1 生效、三类 deterministic prose repair 与 greeting strip 不存在、无 Pilot；一次性同 revision 只读探针通过 Archer GET、Graph /me 与 Zendesk identity，未创建或修改工单。"
     }
   ],
-  "history": [],
+  "history": [
+    {
+      "at": "2026-09-05",
+      "event": "implementation_finalized",
+      "summary": "PR #1065 squash 合并；定向回归、本地 official lightweight 栈与 v26/review-v1 marker 通过。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "ecs_release_verified",
+      "summary": "r20260905-8216f76 已通过正式门禁部署到 ECS Production；任务保持 active，等待用户全新真实工单业务验收。"
+    }
+  ],
   "legacy_ids": [],
   "legacy_refs": ["p2-140", "p2-141", "p2-142", "p2-143"],
   "source_refs": [
