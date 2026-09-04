@@ -1,6 +1,6 @@
 # ECS Production 当前状态与验收边界
 
-日期：2026-09-04
+日期：2026-09-05
 
 范围：SupportPortal `/automation/production` 的 Automation API、Route、Worker、发布门禁与基础设施状态。
 
@@ -10,19 +10,19 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| Release | `r20260904-1f13334` |
-| Git commit | `1f13334ea2dcc5cddd63747562ffb1dd02c2f199` |
+| Release | `r20260905-8216f76` |
+| Git commit | `8216f763427fc67ce161617603b718d14e7b36bd` |
 | Prompt Release | `pr-c9b3a291ecf1`，`active`，28 items |
 | Promotion | `local-oci -> supportportal/production`，首次获批 bootstrap 例外 |
-| API | revision `28`，`1/1/0`，deployment `COMPLETED` |
-| Route | revision `23`，`1/1/0`，deployment `COMPLETED` |
-| Worker | revision `26`，`1/1/0`，deployment `COMPLETED` |
+| API | revision `31`，`1/1/0`，deployment `COMPLETED` |
+| Route | revision `26`，`1/1/0`，deployment `COMPLETED` |
+| Worker | revision `29`，`1/1/0`，deployment `COMPLETED` |
 
 运行中的三个 task digest 与 Release Manifest、Promotion Record 和 ECR readback 一致：
 
-- API：`sha256:b954862ad4cc4742e94ed1fd94fdda8574ac4010539e26405caf00c006b089c7`
-- Route：`sha256:78d10c594239f35a782ee2a6a730ad24fb2561321d6724d1ccf8b498a5900436`
-- Worker：`sha256:e40fc2872c274a3e74e981e20f70ce3a919bba1437b216d90ea2fcfb745bff7a`
+- API：`sha256:ddacf5ee287f4fdd40f1fb47fa6a6dc6a48612903ddcd699de926230e0b60410`
+- Route：`sha256:d06251e8c027b15e288ca15d4a846884e430a3b2a359907a936395ecd9ef0295`
+- Worker：`sha256:fe0ec645f5d12e1f549f00d5455a84fee50b2ff835c80495b47f1915392c5ca1`
 
 这次 `local-oci` 发布是 Preproduction 尚未建立时经 owner 批准的一次性 Production bootstrap。后续 release 在 Preproduction 建成后必须恢复同一 OCI digest 晋升，不得在 Production 重建。
 
@@ -72,7 +72,7 @@
 
 - 新单走一段式 direct handoff，不询问邮箱；严格使用有效 ticket email。
 - 内部 handoff 邮件 sent 后才创建唯一 closing reply job。
-- v25 首封只称 `this request`，包含感谢提交、内部审核和我们 24 小时内回复三要素，不出现类别词。
+- v26/review-v1 通过稿只称 `this request`，包含感谢提交、内部审核和我们 24 小时内回复三要素，不出现类别词；正文只允许由同一 pinned Persona 整段生成或重写，Worker 不补写，Reviewer 只给结构化反馈。
 - 发布后 assign Suhrid但不 solved；assign 后不再发送冗余 reviewer 通知。owner 总邮件数应为分类通知加 handoff 两封。
 - 核对 `intake_mode=direct_handoff`、`confirmed_email_source=ticket_email`、Execution/Job/Delivery、邮件与 Zendesk comment/status/assignee。
 

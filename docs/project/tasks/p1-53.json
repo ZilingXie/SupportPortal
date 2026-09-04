@@ -4,7 +4,7 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-9bbb898（runtime commit 9bbb898e2f7d）：API/Route/Worker revision 30/25/28均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Prompt activation runtime-DSN schema DDL误调用由PR #1062修复并完成幂等reconciliation。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260905-8216f76（runtime commit 8216f763427f）：API/Route/Worker revision 31/26/29均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。该release包含p2-144 Persona v26/review-v1正文不可变链路和p2-145 Admin同源视图代码；Admin 已完成独立公网视觉、严格只读、Production SQL对账及schema/namespace隔离验收并由p2-145关闭。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
   "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
@@ -259,6 +259,12 @@
     },
     {
       "type": "deployment",
+      "label": "Persona v26/review-v1 ECS Production release r20260905-8216f76",
+      "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
+      "details": "从干净main@8216f763427fc67ce161617603b718d14e7b36bd构建并以owner确认的local-oci bootstrap例外发布。API/Route/Worker revision 31/26/29均1/1/0且COMPLETED；运行digest分别为sha256:ddacf5ee287f4fdd40f1fb47fa6a6dc6a48612903ddcd699de926230e0b60410、sha256:d06251e8c027b15e288ca15d4a846884e430a3b2a359907a936395ecd9ef0295、sha256:fe0ec645f5d12e1f549f00d5455a84fee50b2ff835c80495b47f1915392c5ca1，与Manifest/ECR/Promotion Record一致。Route→Worker→heartbeat→API→Prompt activation顺序完成；目标pr-c9b3a291ecf1为active且28 prompts。公网live/release/ready、最新heartbeat provenance、CloudWatch部署窗口错误0、EC2 backup和发布后Terraform 1.9.8 No changes均通过。Worker镜像确认automation-persona-v26、automation-persona-review-v1、无三类deterministic prose repair/greeting strip/Pilot；同revision一次性只读探针通过Archer GET、Graph /me和Zendesk identity。三组内部邮件配置与前一revision一致且均为To=1/Cc=1；全过程未发送邮件、未创建/修改/重放工单。"
+    },
+    {
+      "type": "deployment",
       "label": "Unused Production Valkey retirement and zero-drift readback",
       "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
       "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
@@ -284,7 +290,7 @@
     "docs/integrations/n8n/automation_environments_cutover.md"
   ],
   "created_at": "2026-08-25",
-  "updated_at": "2026-09-04",
+  "updated_at": "2026-09-05",
   "history": [
     {
       "at": "2026-08-25",
@@ -420,6 +426,16 @@
       "at": "2026-09-04",
       "event": "unused_production_valkey_retired",
       "summary": "在30天零业务命令/零键与无ECS消费者证据下，先完成获批的Terraform refresh-only state output清理，再删除supportportal-production-redis和无消费者redis-url参数；删除后业务ECS、公网health与远程锁定零漂移plan均正常。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "persona_immutable_body_release_deployed",
+      "summary": "从main@8216f76构建并部署r20260905-8216f76；API/Route/Worker revision 31/26/29稳定且全部技术门禁通过，Persona v26/review-v1正文不可变链路与p2-145 Admin代码均已上线。p2-144和p2-145保持active，分别等待全新Suspension工单与Admin独立只读验收。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "ecs_production_admin_accepted",
+      "summary": "p2-145完成共享Session、10栏视觉/响应式、严格只读API与控件、Production SQL对账、无写入及schema/namespace trap验收并关闭；总体迁移任务继续等待三类全新业务工单、Preproduction与EC2 Staging。"
     }
   ],
   "legacy_refs": [

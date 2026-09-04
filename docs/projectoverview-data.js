@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T20:27:22Z",
-  "source_base_commit": "8216f763427fc67ce161617603b718d14e7b36bd",
-  "registry_digest": "4ac2bae635bd0c466b88aede8d25d2bd6ee204781b2a81df28441013f6cc9c42",
+  "generated_at": "2026-09-04T20:29:20Z",
+  "source_base_commit": "1b6ed8839795d62fe56d94b417a1d4749564bb0e",
+  "registry_digest": "7efff94737b254a5c9014f333393244a1d93214da142f4a03a9cb281b363038a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1012,6 +1012,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona immutable-body and Worker review metadata regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py",
           "details": "464 passed + 120 subtests。覆盖单次调用预算、正常 2 次与重写 4 次 LLM 调用上限、Reviewer schema/failure、两轮整段重写、重复与缺失 24h、Unicode apostrophe、安全地板、greeting 重写、Missing-information/Enablement Persona 全文生成、Worker 原样持久化与 review metadata、RAG 外壳及 ECS Persona 透传。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production v26/review-v1 immutable release",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
+          "details": "PR #1065 squash commit ec887c9 已合并；按用户确认从随后包含 PR #1066 的最新 main 8216f763427f 构建 r20260905-8216f76。API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，运行 digest 与 Manifest/ECR/Promotion Record 一致。公网 live/release/ready、最新 heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 错误 0、EC2 backup、Terraform 1.9.8 发布后 No changes 均通过。Worker OCI 与 task definition 证明 v26/review-v1 生效、三类 deterministic prose repair 与 greeting strip 不存在、无 Pilot；一次性同 revision 只读探针通过 Archer GET、Graph /me 与 Zendesk identity，未创建或修改工单。"
         },
         {
           "type": "test",
@@ -2300,6 +2306,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
+          "label": "Persona v26/review-v1 ECS Production release r20260905-8216f76",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
+          "details": "从干净main@8216f763427fc67ce161617603b718d14e7b36bd构建并以owner确认的local-oci bootstrap例外发布。API/Route/Worker revision 31/26/29均1/1/0且COMPLETED；运行digest分别为sha256:ddacf5ee287f4fdd40f1fb47fa6a6dc6a48612903ddcd699de926230e0b60410、sha256:d06251e8c027b15e288ca15d4a846884e430a3b2a359907a936395ecd9ef0295、sha256:fe0ec645f5d12e1f549f00d5455a84fee50b2ff835c80495b47f1915392c5ca1，与Manifest/ECR/Promotion Record一致。Route→Worker→heartbeat→API→Prompt activation顺序完成；目标pr-c9b3a291ecf1为active且28 prompts。公网live/release/ready、最新heartbeat provenance、CloudWatch部署窗口错误0、EC2 backup和发布后Terraform 1.9.8 No changes均通过。Worker镜像确认automation-persona-v26、automation-persona-review-v1、无三类deterministic prose repair/greeting strip/Pilot；同revision一次性只读探针通过Archer GET、Graph /me和Zendesk identity。三组内部邮件配置与前一revision一致且均为To=1/Cc=1；全过程未发送邮件、未创建/修改/重放工单。"
+        },
+        {
+          "type": "deployment",
           "label": "Unused Production Valkey retirement and zero-drift readback",
           "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
           "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
@@ -2443,7 +2455,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Targeted contract verification",
-          "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed、1 skipped；image/bootstrap/deploy/build 23 passed；node --check 通过。跳过项为专用 AUTOMATION_ECS_ADMIN_TEST_POSTGRES_DSN 未配置，陷阱 fixture 已新增但尚待实际 PostgreSQL 执行。"
+          "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed；image/bootstrap/deploy/build 23 passed；node --check 通过。另以一次性 Podman PostgreSQL 16 空库执行真实 trap fixture，1 passed，覆盖 Production 与错误 schema、正确与错误 namespace、REPEATABLE READ READ ONLY 及查询前后计数不变；临时容器已删除。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production release provenance",
+          "details": "PR #1066 squash commit 8216f763427fc67ce161617603b718d14e7b36bd 随 r20260905-8216f76 发布；API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，runtime digest 与 Manifest/ECR/Promotion Record 一致。API sha256:ddacf5ee287f4fdd40f1fb47fa6a6dc6a48612903ddcd699de926230e0b60410，Route sha256:d06251e8c027b15e288ca15d4a846884e430a3b2a359907a936395ecd9ef0295，Worker sha256:fe0ec645f5d12e1f549f00d5455a84fee50b2ff835c80495b47f1915392c5ca1；Terraform zero drift、ECR、heartbeat、public health、CloudWatch、EC2 backup、Prompt sync/activation 均通过。部署证据位于 .deployments/ecs-deploy-r20260905-8216f76/evidence.json。"
+        },
+        {
+          "type": "test",
+          "label": "Public Admin browser and compatibility acceptance",
+          "details": "Production 根看板已有 Cookie Session 时直接进入 /automation/production/admin/，无需再次登录；10 个栏目逐项加载。1440x900、1024x768、390x844 与旧 /workspace/admin/ 的 DOM、字体、颜色、间距、栏目、表格和响应式几何一致，document overflow=0、无遮挡；两端与仓库 index.html/styles.css/app.js hash 完全一致。邀请、排班、派单、Prompt、Persona 写控件均保留且 disabled；旧 Admin 使用 admin/admin 登录后仍可写。Console 仅有 Chrome 扩展自身 listener 错误，站点来源错误为 0。"
+        },
+        {
+          "type": "test",
+          "label": "Public API read-only boundary",
+          "details": "8 个 Admin GET 在有效 dashboard Cookie Session 下全部 200，未认证均 401；POST/PUT/PATCH/DELETE 对 Admin API 均 405。认证探针只执行 login、8 个 GET、logout；账号 payload 无 password 字段，environment payload 只有合法大写变量名和 description、无 value；Automation token available，RAG 明确 unavailable。"
+        },
+        {
+          "type": "test",
+          "label": "Production SQL reconciliation and no-write proof",
+          "details": "以 PRODUCTION_TICKET_DB_DSN 固定查询 supportportal_production，并在 GET-only API 序列前后分别开启 REPEATABLE READ READ ONLY transaction；14 张 Admin source table 的前后计数一致。API 与 SQL 精确对齐 27 tickets、3 engineer cases、59 returned audit events、0 accounts/schedules、27 个 Production namespace 联结 Automation cases（16 automated）、44 个 token usage rows、3 Personas、28 managed Prompts 及 active release pr-c9b3a291ecf1；代表 ID 顺序一致。live automation_cases 当前 28 条均为 supportportal-production，错误 namespace 隔离另由真实 PostgreSQL trap fixture 证明。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official local stack compatibility",
+          "details": "PR #1066 合并后官方 local_lightweight/remote DB 栈运行 build 8216f763427f，旧 /workspace/admin/ 继续正常提供共享 UI、Bearer 登录和可写功能；Production 根看板与既有只读 API 回归正常。"
         }
       ],
       "source_refs": [
@@ -2457,7 +2494,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 5,
-      "done_count": 3,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -6679,7 +6716,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-9bbb898（runtime commit 9bbb898e2f7d）：API/Route/Worker revision 30/25/28均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Prompt activation runtime-DSN schema DDL误调用由PR #1062修复并完成幂等reconciliation。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260905-8216f76（runtime commit 8216f763427f）：API/Route/Worker revision 31/26/29均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。该release包含p2-144 Persona v26/review-v1正文不可变链路和p2-145 Admin同源视图代码；Admin 已完成独立公网视觉、严格只读、Production SQL对账及schema/namespace隔离验收并由p2-145关闭。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
       "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
@@ -6934,6 +6971,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
+          "label": "Persona v26/review-v1 ECS Production release r20260905-8216f76",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
+          "details": "从干净main@8216f763427fc67ce161617603b718d14e7b36bd构建并以owner确认的local-oci bootstrap例外发布。API/Route/Worker revision 31/26/29均1/1/0且COMPLETED；运行digest分别为sha256:ddacf5ee287f4fdd40f1fb47fa6a6dc6a48612903ddcd699de926230e0b60410、sha256:d06251e8c027b15e288ca15d4a846884e430a3b2a359907a936395ecd9ef0295、sha256:fe0ec645f5d12e1f549f00d5455a84fee50b2ff835c80495b47f1915392c5ca1，与Manifest/ECR/Promotion Record一致。Route→Worker→heartbeat→API→Prompt activation顺序完成；目标pr-c9b3a291ecf1为active且28 prompts。公网live/release/ready、最新heartbeat provenance、CloudWatch部署窗口错误0、EC2 backup和发布后Terraform 1.9.8 No changes均通过。Worker镜像确认automation-persona-v26、automation-persona-review-v1、无三类deterministic prose repair/greeting strip/Pilot；同revision一次性只读探针通过Archer GET、Graph /me和Zendesk identity。三组内部邮件配置与前一revision一致且均为To=1/Cc=1；全过程未发送邮件、未创建/修改/重放工单。"
+        },
+        {
+          "type": "deployment",
           "label": "Unused Production Valkey retirement and zero-drift readback",
           "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
           "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
@@ -6959,7 +7002,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-09-04",
+      "updated_at": "2026-09-05",
       "history": [
         {
           "at": "2026-08-25",
@@ -7095,6 +7138,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-04",
           "event": "unused_production_valkey_retired",
           "summary": "在30天零业务命令/零键与无ECS消费者证据下，先完成获批的Terraform refresh-only state output清理，再删除supportportal-production-redis和无消费者redis-url参数；删除后业务ECS、公网health与远程锁定零漂移plan均正常。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "persona_immutable_body_release_deployed",
+          "summary": "从main@8216f76构建并部署r20260905-8216f76；API/Route/Worker revision 31/26/29稳定且全部技术门禁通过，Persona v26/review-v1正文不可变链路与p2-145 Admin代码均已上线。p2-144和p2-145保持active，分别等待全新Suspension工单与Admin独立只读验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "ecs_production_admin_accepted",
+          "summary": "p2-145完成共享Session、10栏视觉/响应式、严格只读API与控件、Production SQL对账、无写入及schema/namespace trap验收并关闭；总体迁移任务继续等待三类全新业务工单、Preproduction与EC2 Staging。"
         }
       ],
       "legacy_refs": [
@@ -10056,9 +10109,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
-      "updated_at": "2026-09-04",
+      "updated_at": "2026-09-05",
       "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除句式级 blocking 正则，保留合同归一化/空响应/签名/禁值/engineer 源值/将来时误导/appid overclaim与suspension肯定close/archive/reopen禁令；当时保留的missing-info、enablement与suspension三类确定性拼装已由p2-144的v26正文不可变+LLM Reviewer整体取代。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "保持 active。delivery-key preclaim 已上线；等待 p2-144 v26/review-v1 发布后由用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 Persona/Reviewer 通过稿→assign→未 solved。13289/13291/13292 保留审计，不重放、不补发、不修改。",
+      "next_action": "保持 active。delivery-key preclaim 与 p2-144 v26/review-v1 已上线；等待用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 Persona/Reviewer 通过稿→assign→未 solved。13289/13291/13292 保留审计，不重放、不补发、不修改。",
       "acceptance_criteria": [
         "自然语言样本由语义 Reviewer 审稿；缺失或重复要点只触发同一 pinned Persona 一次整段重写，Worker 不再确定性补句。",
         "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）；missing-info 的字段完整性与时长语义由 p2-144 Reviewer 判断。",
@@ -10203,9 +10256,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
-      "updated_at": "2026-09-04",
+      "updated_at": "2026-09-05",
       "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；该语义由p2-144的v26 Persona+review-v1继续保留。②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用收件人且 assign 结构上必然晚于 handoff 邮件 sent，故永远冗余。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
-      "next_action": "保持 active，等待 p2-144 v26/review-v1 发布及用户提供全新 ECS Account Suspension 工单号；核对首封只称 'this request' 且无重复24h、owner 仅收分类通知与handoff两封邮件、assign后无reviewer通知、工单未solved，通过后置done。",
+      "next_action": "保持 active；p2-144 v26/review-v1 已发布，等待用户提供全新 ECS Account Suspension 工单号；核对首封只称 'this request' 且无重复24h、owner 仅收分类通知与handoff两封邮件、assign后无reviewer通知、工单未solved，通过后置done。",
       "acceptance_criteria": [
         "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
         "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
@@ -10266,7 +10319,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
       "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句。按用户决策升级 automation-persona-v26 并新增 automation-persona-review-v1：Persona 生成 greeting 后的全部语义正文，独立 LLM Reviewer 检查事实完整性、冲突、重复和 intent 合同；首轮失败只提供结构化 feedback 给同一 pinned Persona 整段重写，第二轮仍失败即 Human Review。Worker 禁止补写、裁剪或改写正文，只持久化通过稿和安全审计元数据；应用仅保留 greeting、RAG 引用、附件和 transport formatting 外壳。代码安全地板只拒绝危险输出，并在 validation copy 中统一常见 apostrophe，不改变客户正文。",
-      "next_action": "完成 PR 合并、official lightweight 栈验证和正式 ECS Production release；发布后等待用户提供全新工单，验收正文只含一次 24h 承诺、review metadata、assign 与未 solved。不得创建或重放工单。",
+      "next_action": "PR #1065 与 ECS Production v26/review-v1 release 已完成；保持 active，等待用户提供下一张全新 Account Suspension 工单，验收正文只含一次 24h 承诺、persona_review metadata、assign 与未 solved。不得创建、重放或回复历史工单。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
@@ -10282,9 +10335,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona immutable-body and Worker review metadata regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py",
           "details": "464 passed + 120 subtests。覆盖单次调用预算、正常 2 次与重写 4 次 LLM 调用上限、Reviewer schema/failure、两轮整段重写、重复与缺失 24h、Unicode apostrophe、安全地板、greeting 重写、Missing-information/Enablement Persona 全文生成、Worker 原样持久化与 review metadata、RAG 外壳及 ECS Persona 透传。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production v26/review-v1 immutable release",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
+          "details": "PR #1065 squash commit ec887c9 已合并；按用户确认从随后包含 PR #1066 的最新 main 8216f763427f 构建 r20260905-8216f76。API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，运行 digest 与 Manifest/ECR/Promotion Record 一致。公网 live/release/ready、最新 heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 错误 0、EC2 backup、Terraform 1.9.8 发布后 No changes 均通过。Worker OCI 与 task definition 证明 v26/review-v1 生效、三类 deterministic prose repair 与 greeting strip 不存在、无 Pilot；一次性同 revision 只读探针通过 Archer GET、Graph /me 与 Zendesk identity，未创建或修改工单。"
         }
       ],
-      "history": [],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "event": "implementation_finalized",
+          "summary": "PR #1065 squash 合并；定向回归、本地 official lightweight 栈与 v26/review-v1 marker 通过。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "ecs_release_verified",
+          "summary": "r20260905-8216f76 已通过正式门禁部署到 ECS Production；任务保持 active，等待用户全新真实工单业务验收。"
+        }
+      ],
       "legacy_ids": [],
       "legacy_refs": [
         "p2-140",
@@ -10305,7 +10375,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-145",
       "title": "ECS Production Admin 只读复刻",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
@@ -10313,7 +10383,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
       "summary": "在 `/automation/production/admin/` 复用 `/workspace/admin/` 的同一套 UI 与现有 ECS dashboard Cookie Session，严格只读展示 `supportportal_production` schema 及 `supportportal-production` namespace 数据；保留全部栏目与写控件位置但禁用所有业务写动作，旧 Workspace Admin 和 Production 根看板保持不变。",
-      "next_action": "finalize 实现 PR；合并后重启并验证官方 lightweight 栈，构建三角色 immutable release，执行 Production check-only 与正式部署，再完成公网视觉、数据库对账、只读和 provenance 验收。",
+      "next_action": "",
       "acceptance_criteria": [
         "`/automation/production/admin/` 与 `/workspace/admin/` 共用同一套 HTML、CSS 和 JavaScript，10 个栏目、布局与响应式行为一致，根 Ticket 看板不变。",
         "所有 Admin 数据只读 `AUTOMATION_DB_DSN` 的 `supportportal_production` schema；Automation 数据额外固定 `namespace=supportportal-production`，错误 schema/namespace 数据不得出现。",
@@ -10337,7 +10407,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Targeted contract verification",
-          "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed、1 skipped；image/bootstrap/deploy/build 23 passed；node --check 通过。跳过项为专用 AUTOMATION_ECS_ADMIN_TEST_POSTGRES_DSN 未配置，陷阱 fixture 已新增但尚待实际 PostgreSQL 执行。"
+          "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed；image/bootstrap/deploy/build 23 passed；node --check 通过。另以一次性 Podman PostgreSQL 16 空库执行真实 trap fixture，1 passed，覆盖 Production 与错误 schema、正确与错误 namespace、REPEATABLE READ READ ONLY 及查询前后计数不变；临时容器已删除。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production release provenance",
+          "details": "PR #1066 squash commit 8216f763427fc67ce161617603b718d14e7b36bd 随 r20260905-8216f76 发布；API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，runtime digest 与 Manifest/ECR/Promotion Record 一致。API sha256:ddacf5ee287f4fdd40f1fb47fa6a6dc6a48612903ddcd699de926230e0b60410，Route sha256:d06251e8c027b15e288ca15d4a846884e430a3b2a359907a936395ecd9ef0295，Worker sha256:fe0ec645f5d12e1f549f00d5455a84fee50b2ff835c80495b47f1915392c5ca1；Terraform zero drift、ECR、heartbeat、public health、CloudWatch、EC2 backup、Prompt sync/activation 均通过。部署证据位于 .deployments/ecs-deploy-r20260905-8216f76/evidence.json。"
+        },
+        {
+          "type": "test",
+          "label": "Public Admin browser and compatibility acceptance",
+          "details": "Production 根看板已有 Cookie Session 时直接进入 /automation/production/admin/，无需再次登录；10 个栏目逐项加载。1440x900、1024x768、390x844 与旧 /workspace/admin/ 的 DOM、字体、颜色、间距、栏目、表格和响应式几何一致，document overflow=0、无遮挡；两端与仓库 index.html/styles.css/app.js hash 完全一致。邀请、排班、派单、Prompt、Persona 写控件均保留且 disabled；旧 Admin 使用 admin/admin 登录后仍可写。Console 仅有 Chrome 扩展自身 listener 错误，站点来源错误为 0。"
+        },
+        {
+          "type": "test",
+          "label": "Public API read-only boundary",
+          "details": "8 个 Admin GET 在有效 dashboard Cookie Session 下全部 200，未认证均 401；POST/PUT/PATCH/DELETE 对 Admin API 均 405。认证探针只执行 login、8 个 GET、logout；账号 payload 无 password 字段，environment payload 只有合法大写变量名和 description、无 value；Automation token available，RAG 明确 unavailable。"
+        },
+        {
+          "type": "test",
+          "label": "Production SQL reconciliation and no-write proof",
+          "details": "以 PRODUCTION_TICKET_DB_DSN 固定查询 supportportal_production，并在 GET-only API 序列前后分别开启 REPEATABLE READ READ ONLY transaction；14 张 Admin source table 的前后计数一致。API 与 SQL 精确对齐 27 tickets、3 engineer cases、59 returned audit events、0 accounts/schedules、27 个 Production namespace 联结 Automation cases（16 automated）、44 个 token usage rows、3 Personas、28 managed Prompts 及 active release pr-c9b3a291ecf1；代表 ID 顺序一致。live automation_cases 当前 28 条均为 supportportal-production，错误 namespace 隔离另由真实 PostgreSQL trap fixture 证明。"
+        },
+        {
+          "type": "deployment",
+          "label": "Official local stack compatibility",
+          "details": "PR #1066 合并后官方 local_lightweight/remote DB 栈运行 build 8216f763427f，旧 /workspace/admin/ 继续正常提供共享 UI、Bearer 登录和可写功能；Production 根看板与既有只读 API 回归正常。"
         }
       ],
       "history": [
@@ -10350,6 +10445,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "implementation_verified",
           "summary": "共享 UI、只读 Reader/API、schema preflight 与镜像隔离实现完成并通过定向契约测试；任务保持 active，等待合并后本地栈、Production PostgreSQL、ECS 与公网验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "ecs_release_deployed",
+          "summary": "PR #1066 已包含在 r20260905-8216f76 并部署到 API revision 31；任务保持 active，等待其独立只读验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "acceptance_completed",
+          "summary": "公网共享 Session、10 栏视觉/响应式、严格只读控件与 API、旧 Admin 兼容、Production SQL 对账、无写入和 PostgreSQL schema/namespace trap fixture 全部通过，任务置 done。"
         }
       ],
       "legacy_ids": [],
@@ -15827,10 +15932,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；Reviewer 只返回 pass 或结构化 feedback，Worker 不修改正文，失败时转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
-        "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。"
+        "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",
+        "ECS Production Admin 提供与 Workspace Admin 一致的 10 栏只读运营视图，并固定读取 Production schema 与 namespace。"
       ],
       "planned": [
-        "ECS Production Admin 提供与 Workspace Admin 一致的 10 栏只读运营视图，并固定读取 Production schema 与 namespace。"
+        "待补充。"
       ]
     },
     {
