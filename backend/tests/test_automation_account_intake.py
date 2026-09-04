@@ -212,9 +212,24 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(outcome["reply_job"]["automation_delivery_key"], "dk-1")
         self.assertFalse(outcome["reply_job"]["close_after_publish"])
 
-    def test_production_suspension_sends_email_before_single_handoff_job(self):
+    def test_production_suspension_persists_key_before_email_claim_and_single_handoff_job(self):
         repository = _FakeRepository()
         order = []
+
+        async def deliver(repository, *, account_case_id, payload, sender, **_kwargs):
+            persisted = repository.saved_cases[-1]
+            self.assertEqual(
+                persisted["internal_email_payload"]["delivery_key"],
+                payload["delivery_key"],
+            )
+            order.append("claim")
+            status, reason = await sender(payload)
+            return NS(
+                succeeded=status == "sent",
+                status=status,
+                reason=reason,
+                payload=payload,
+            )
 
         def send(payload):
             order.append("email")
@@ -225,6 +240,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
             return {"job_id": "job-suspension", **kwargs}
 
         with self._base_patches(
+            deliver_account_internal_email_async=deliver,
             send_billing_internal_email=send,
             create_account_reply_job=create_job,
         ):
@@ -234,7 +250,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
                 route_classification={"automation_handler": "account_suspension"},
             )
         self.assertEqual(outcome["response_status"], "automation")
-        self.assertEqual(order, ["email", "job"])
+        self.assertEqual(order, ["claim", "email", "job"])
         self.assertEqual(
             outcome["reply_job"]["reply_intent"],
             "account_suspension_handoff_and_close",

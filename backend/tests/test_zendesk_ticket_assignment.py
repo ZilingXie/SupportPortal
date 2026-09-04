@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import unittest
@@ -29,6 +30,16 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
+
+
+def _conflict_error() -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "https://agoraio.zendesk.com/api/v2/tickets/12899.json",
+        409,
+        "Conflict",
+        None,
+        io.BytesIO(b'{"error":"Conflict"}'),
+    )
 
 
 class ZendeskTicketAssignmentServiceTests(unittest.TestCase):
@@ -467,6 +478,117 @@ class ZendeskReviewerAssignmentTests(unittest.TestCase):
                 "updated_stamp": "2026-08-21T07:00:00Z",
                 "custom_fields": [{"id": 31503099534100, "value": "video_calling"}],
             },
+        )
+
+    def test_route_back_conflict_accepts_concurrent_human_assignment(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _conflict_error(),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 31116634341396, "group_id": 27216253642772, "status": "open", "updated_at": "2026-08-21T07:00:01Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(
+                ticket_id="12899", source_group_id="27216253642772"
+            )
+
+        self.assertEqual(result.status, "already_human_owned")
+        self.assertFalse(result.updated)
+        self.assertEqual(
+            sum(call.args[0].method == "PUT" for call in urlopen.call_args_list), 1
+        )
+
+    def test_route_back_conflict_accepts_concurrent_queue_release(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _conflict_error(),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": None, "group_id": 27216253642772, "status": "open", "updated_at": "2026-08-21T07:00:01Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(
+                ticket_id="12899", source_group_id="27216253642772"
+            )
+
+        self.assertEqual(result.status, "queued")
+        self.assertFalse(result.updated)
+        self.assertEqual(
+            sum(call.args[0].method == "PUT" for call in urlopen.call_args_list), 1
+        )
+
+    def test_route_back_conflict_retries_once_with_fresh_stamp(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _conflict_error(),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:01Z", "custom_fields": [{"id": 31503099534100, "value": "voice_calling"}]}}),
+            _FakeResponse({"ticket": {"id": 12899}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": None, "group_id": 27216253642772, "status": "open"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = route_ticket_back_to_queue(
+                ticket_id="12899", source_group_id="27216253642772"
+            )
+
+        self.assertEqual(result.status, "queued")
+        put_requests = [
+            call.args[0] for call in urlopen.call_args_list if call.args[0].method == "PUT"
+        ]
+        self.assertEqual(len(put_requests), 2)
+        retry_payload = json.loads(put_requests[1].data.decode("utf-8"))["ticket"]
+        self.assertEqual(retry_payload["updated_stamp"], "2026-08-21T07:00:01Z")
+        self.assertNotIn("custom_fields", retry_payload)
+
+    def test_route_back_conflict_fails_closed_when_ticket_was_closed(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _conflict_error(),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "solved", "updated_at": "2026-08-21T07:00:01Z"}}),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            with self.assertRaises(ZendeskCommentError) as raised:
+                route_ticket_back_to_queue(
+                    ticket_id="12899", source_group_id="27216253642772"
+                )
+
+        self.assertEqual(raised.exception.error_code, "zendesk_ticket_closed")
+        self.assertEqual(
+            sum(call.args[0].method == "PUT" for call in urlopen.call_args_list), 1
+        )
+
+    def test_route_back_second_conflict_fails_without_third_put(self) -> None:
+        responses = [
+            _FakeResponse({"user": {"id": 48557297720084, "email": "ai-support-agent@agora.io", "role": "agent", "active": True, "suspended": False, "default_group_id": 29388501432596}}),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:00Z"}}),
+            _conflict_error(),
+            _FakeResponse({"ticket": {"id": 12899, "assignee_id": 48557297720084, "group_id": 29388501432596, "status": "pending", "updated_at": "2026-08-21T07:00:01Z"}}),
+            _conflict_error(),
+        ]
+        with patch.dict(os.environ, self.config, clear=False), patch(
+            "backend.services.zendesk_ticket_assignment.urllib.request.urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            with self.assertRaises(ZendeskCommentError) as raised:
+                route_ticket_back_to_queue(
+                    ticket_id="12899", source_group_id="27216253642772"
+                )
+
+        self.assertEqual(raised.exception.error_code, "zendesk_update_conflict")
+        self.assertEqual(
+            sum(call.args[0].method == "PUT" for call in urlopen.call_args_list), 2
         )
 
     def test_route_back_never_clears_existing_human_assignment(self) -> None:

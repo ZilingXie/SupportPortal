@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T07:46:44Z",
-  "source_base_commit": "c350b9591d6cf6dc547ea209da8a020f340b35d8",
-  "registry_digest": "6793b79b172672ffbc4b7e08500eca347e0ba817797fc8f03318c9eb779b5491",
+  "generated_at": "2026-09-04T12:34:52Z",
+  "source_base_commit": "d0c5f9c2b6248aec11f04c72535902415a625815",
+  "registry_digest": "1145dd856e348b9f84d911a2ef19f36fe74d09121d163f34de91eacfc6f46237",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -957,7 +957,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Persona v25 and direct-handoff release deployed to ECS Production",
           "command": "formal check-only and deploy for r20260904-1f13334; public health, ECS runtime, heartbeat, Prompt Release and recipient readback",
-          "details": "main@1f13334ea2dc已部署：API/Route/Worker revision 28/23/26均1/1/0且COMPLETED，三个运行digest与Manifest一致；公网live/release/ready、Route/Worker最新heartbeat provenance、CloudWatch与EC2 backup通过。目标Prompt Release pr-c9b3a291ecf1为active（28 items）；运行镜像包含automation-persona-v25与direct-handoff代码。Suspension收件人secret有效；真实工单业务readback仍待用户提供新工单。"
+          "details": "main@1f13334ea2dc已部署：API/Route/Worker revision 28/23/26均1/1/0且COMPLETED，三个运行digest与Manifest一致；公网live/release/ready、Route/Worker最新heartbeat provenance、CloudWatch与EC2 backup通过。目标Prompt Release pr-c9b3a291ecf1为active（28 items）；运行镜像包含automation-persona-v25与direct-handoff代码。Suspension收件人secret有效。13289业务验收随后证明该release的ECS intake在补delivery key后未先持久化，故技术门禁不构成Suspension业务通过。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Suspension preclaim persistence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_test_scenarios.py; RUN_POSTGRES_INTEGRATION=1 pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "13289根因回归已覆盖：ECS在claim前持久化稳定delivery key，严格单测断言persist→claim→sender→reply job顺序；真实PostgreSQL临时schema确认claim成功、sender仅一次且最终sent。相关回归98 passed + 34 subtests，PostgreSQL完整文件3 passed（含既有重启/rerun round-trip）。13289未重放、未补发、未修改。"
         },
         {
           "type": "deployment",
@@ -1392,6 +1398,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Human Review queue mismatch reconciliation",
           "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
           "details": "297 passed；覆盖旧 worker manual_attention 漏接、Production bounded reconciliation、staging/no-side-effect、AI ownership guard 和 handoff 终态幂等。"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk route-back bounded 409 reconciliation",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_test_scenarios.py",
+          "details": "98 passed + 34 subtests。覆盖首次409后并发人工接管、并发回队列、仍由AI持有时使用fresh updated_stamp单次重试、并发关闭fail closed、第二次409不做第三次PUT；网络outcome_unknown原有GET reconciliation保持。"
         },
         {
           "type": "pr",
@@ -4385,7 +4397,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "在 Account 处理失败后触发告警并进入 Human Review",
       "status": "done",
       "owner": "zac",
-      "summary": "增加 AI 故障告警和人工接管机制。",
+      "summary": "增加 AI 故障告警和人工接管机制；Production route-back 对首次 Zendesk safe-update 409 读取最新工单，已人工接管/已回队列则幂等成功，仍由 AI 持有则只使用新 updated_stamp 重试一次，已关闭或再次冲突继续 fail closed。",
       "next_action": "",
       "acceptance_criteria": [
         "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。",
@@ -4410,10 +4422,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "number": 744,
           "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
           "label": "PR #744"
+        },
+        {
+          "type": "test",
+          "label": "Zendesk route-back bounded 409 reconciliation",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_test_scenarios.py",
+          "details": "98 passed + 34 subtests。覆盖首次409后并发人工接管、并发回队列、仍由AI持有时使用fresh updated_stamp单次重试、并发关闭fail closed、第二次409不做第三次PUT；网络outcome_unknown原有GET reconciliation保持。"
         }
       ],
       "source_refs": [
-        "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+        "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+        "backend/services/zendesk_ticket_assignment.py",
+        "backend/tests/test_zendesk_ticket_assignment.py"
       ],
       "created_at": "2026-08-10",
       "updated_at": "2026-08-24",
@@ -4442,6 +4462,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-24",
           "event": "account_human_review_queue_mismatch_reconciliation",
           "summary": "修复 reply worker 直接写 manual_attention 的 prepare/publish 分支，并在 Account poller 增加 bounded Production reconciliation，处理 automation_status=human_review_required 且 route_status=automated、仍由 AI 持有的历史 case；queued/already_human_owned/outcome_unknown 不重复写 Zendesk。"
+        },
+        {
+          "at": "2026-09-04",
+          "event": "zendesk_route_back_conflict_reconciliation",
+          "summary": "13289的Human Review fallback暴露route-back首次safe-update 409直接失败；增加一次fresh-state协调，已人工接管/已回队列幂等成功，仍由AI持有仅重试一次，关闭或再次冲突fail closed。"
         }
       ],
       "legacy_refs": [
@@ -9973,7 +9998,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-03",
       "updated_at": "2026-09-04",
       "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "保持 active，等待用户提供全新 ECS Enablement、Fraud、Account Suspension 工单号。逐单核对消息级称呼、固定 persona 与安全地板；Suspension 额外验收 intake handoff 邮件→v25 closing 回复仅称 this request 且无类别词→assign→无冗余 reviewer 通知→未 solved。不重放历史工单。",
+      "next_action": "保持 active。先把 ECS Suspension delivery-key preclaim 修复构建为新的 immutable Production release 并完成正式发布门禁；随后由用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 v25 closing 回复→assign→未 solved。13289 保留审计，不重放、不补发、不修改。",
       "acceptance_criteria": [
         "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
         "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
@@ -9982,7 +10007,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "suspension 收尾链：内部 handoff 邮件 sent→唯一公开回复→assign reviewer（事件 assigned）且无 zendesk_reviewer_notify_email 事件、不写 workflow.reviewer_notify_email；工单未 solved。",
         "S1/E1/E2/F1 剧本断言独立于生产 validator；S1 为一段式链路（无问邮箱环节）且不再断言 solved。"
       ],
-      "blockers": [],
+      "blockers": [
+        "ECS Production 当前 release r20260904-1f13334 尚未包含 Suspension delivery-key preclaim 修复，发布前不得继续正式 Suspension 工单验收。"
+      ],
       "evidence": [
         {
           "type": "test",
@@ -10000,7 +10027,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Persona v25 and direct-handoff release deployed to ECS Production",
           "command": "formal check-only and deploy for r20260904-1f13334; public health, ECS runtime, heartbeat, Prompt Release and recipient readback",
-          "details": "main@1f13334ea2dc已部署：API/Route/Worker revision 28/23/26均1/1/0且COMPLETED，三个运行digest与Manifest一致；公网live/release/ready、Route/Worker最新heartbeat provenance、CloudWatch与EC2 backup通过。目标Prompt Release pr-c9b3a291ecf1为active（28 items）；运行镜像包含automation-persona-v25与direct-handoff代码。Suspension收件人secret有效；真实工单业务readback仍待用户提供新工单。"
+          "details": "main@1f13334ea2dc已部署：API/Route/Worker revision 28/23/26均1/1/0且COMPLETED，三个运行digest与Manifest一致；公网live/release/ready、Route/Worker最新heartbeat provenance、CloudWatch与EC2 backup通过。目标Prompt Release pr-c9b3a291ecf1为active（28 items）；运行镜像包含automation-persona-v25与direct-handoff代码。Suspension收件人secret有效。13289业务验收随后证明该release的ECS intake在补delivery key后未先持久化，故技术门禁不构成Suspension业务通过。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Suspension preclaim persistence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_test_scenarios.py; RUN_POSTGRES_INTEGRATION=1 pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "13289根因回归已覆盖：ECS在claim前持久化稳定delivery key，严格单测断言persist→claim→sender→reply job顺序；真实PostgreSQL临时schema确认claim成功、sender仅一次且最终sent。相关回归98 passed + 34 subtests，PostgreSQL完整文件3 passed（含既有重启/rerun round-trip）。13289未重放、未补发、未修改。"
         }
       ],
       "history": [
@@ -10008,6 +10041,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-04",
           "event": "ecs_production_release_deployed",
           "summary": "包含persona v25、消息级称呼、persona透传和Suspension一段式合同的r20260904-1f13334已部署并通过技术门禁；任务保持active，等待三类全新工单业务与外部readback。"
+        },
+        {
+          "at": "2026-09-04",
+          "event": "ecs_suspension_preclaim_regression_fixed",
+          "summary": "13289暴露ECS direct-handoff只在内存补delivery key、未在PostgreSQL claim前持久化，导致sender未调用即delivery_unknown；修复对齐legacy顺序并补严格单测与真实PostgreSQL合同测试，等待新Production release和全新工单验收。"
         }
       ],
       "legacy_ids": [],
@@ -10021,13 +10059,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "source_refs": [
         "backend/services/automation_persona.py",
+        "backend/services/automation_account_intake.py",
         "backend/services/automation_account_reply_sync.py",
         "backend/main.py",
         "backend/worker.py",
         "backend/automation_ecs_worker.py",
         "backend/services/automation_engineer_collab.py",
         "backend/services/route_preparation.py",
-        "backend/services/automation_test_scenarios.py"
+        "backend/services/automation_test_scenarios.py",
+        "backend/tests/test_automation_account_intake.py",
+        "backend/tests/test_account_case_postgres_roundtrip.py"
       ]
     },
     {

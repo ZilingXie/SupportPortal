@@ -435,7 +435,17 @@ async def _run_internal_email_delivery(
         or account_case.get("billing_ticket_id")
         or ""
     ).strip()
-    payload = ensure_account_delivery_key(payload, handler=handler, account_case_id=account_case_id)
+    original_payload = payload
+    payload = ensure_account_delivery_key(
+        payload,
+        handler=handler,
+        account_case_id=account_case_id,
+    )
+    if payload != original_payload:
+        account_case = dict(account_case)
+        account_case["internal_email_payload"] = dict(payload)
+        account_case["updated_at"] = _now_iso()
+        repository.save_account_case(account_case)
 
     async def _wrapped(attempt_payload: dict[str, Any]) -> Any:
         status, reason = await _send_internal_email(attempt_payload, sender)
