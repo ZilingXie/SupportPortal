@@ -53,7 +53,9 @@ RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
         /app/backend/services/account_rerun_recovery.py \
         /app/backend/services/rag_reset.py; \
       rm -rf /app/backend/tests /app/backend/scripts /app/docs /app/dictionary; \
-      find /app/ui -mindepth 1 -maxdepth 1 ! -name automation-ecs-production -exec rm -rf {} +; \
+      find /app/ui -mindepth 1 -maxdepth 1 \
+        ! -name automation-ecs-production ! -name workspace-ui -exec rm -rf {} +; \
+      find /app/ui/workspace-ui -mindepth 1 -maxdepth 1 ! -name admin -exec rm -rf {} +; \
       mkdir -p /app/backend/scripts; \
       cp /tmp/backend-src/backend/scripts/__init__.py /app/backend/scripts/__init__.py; \
       cp /tmp/backend-src/backend/scripts/automation_ecs_bootstrap.py /app/backend/scripts/automation_ecs_bootstrap.py; \

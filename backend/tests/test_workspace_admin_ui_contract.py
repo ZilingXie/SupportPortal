@@ -7,7 +7,12 @@ from pathlib import Path
 
 
 class WorkspaceAdminUiContractTests(unittest.TestCase):
-    def run_admin_app_script(self, script: str) -> None:
+    def run_admin_app_script(
+        self,
+        script: str,
+        *,
+        pathname: str = "/workspace/admin/",
+    ) -> None:
         node_script = textwrap.dedent(
             f"""
             (async () => {{
@@ -22,7 +27,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
               const storage = new Map();
               const sandbox = {{
                 console, Headers, URL, URLSearchParams,
-                window: {{ location: {{ pathname: "/workspace/admin/" }} }},
+                window: {{ location: {{ pathname: {pathname!r} }} }},
                 document: {{ getElementById() {{ return root; }} }},
                 localStorage: {{
                   getItem(key) {{ return storage.has(key) ? storage.get(key) : null; }},
@@ -75,6 +80,50 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("supportportal_assignment_admin_schedule", source)
         self.assertNotIn('/api/engineer/tickets?status=all', source)
         self.assertNotIn("/availability", source)
+
+    def test_ecs_admin_adapter_uses_cookie_get_apis_and_blocks_business_writes(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        for marker in (
+            "/automation/production/dashboard/auth/login",
+            "/automation/production/dashboard/auth/session",
+            "/automation/production/dashboard/auth/logout",
+            "/automation/production/admin/api",
+            "Production Admin is read-only",
+            "applyReadOnlyControls",
+            "ECS_READ_ONLY_ACTIONS",
+            'rag.available === false',
+            '>Unavailable</span>',
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn('sectionLink.dataset.section === "new-account"', source)
+        self.assertNotIn("a.is-read-only", Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8"))
+
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            const calls = [];
+            globalThis.fetch = async (url, options = {}) => {
+              calls.push({ url: String(url), method: String(options.method || 'GET').toUpperCase(), authorization: new Headers(options.headers || {}).get('Authorization') });
+              return { ok: true, status: 200, json: async () => ({ authenticated: true, account: { account_id: 'admin', display_name: 'Production Admin', role: 'admin' } }) };
+            };
+            currentAccount = { account_id: 'admin', display_name: 'Production Admin', role: 'admin' };
+            accessToken = 'must-not-be-used';
+            if (!isEcsProductionAdmin || !isAdminAuthenticated()) throw new Error('ECS session mode missing');
+            if (adminEndpoints.accounts !== '/automation/production/admin/api/accounts') throw new Error('ECS accounts endpoint mismatch');
+            let rejected = false;
+            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); } catch (error) { rejected = error.message === 'Production Admin is read-only'; }
+            if (!rejected || calls.length !== 0) throw new Error('business write reached the network');
+            await fetchJson(adminEndpoints.accounts);
+            if (calls.length !== 1 || calls[0].method !== 'GET' || calls[0].authorization) throw new Error('ECS read did not use Cookie-only GET');
+            await fetchJson(adminEndpoints.authLogout, { method: 'POST' });
+            if (calls.length !== 2 || calls[1].url !== adminEndpoints.authLogout) throw new Error('logout exception missing');
+            const control = { disabled: false, title: '', attrs: {}, setAttribute(name, value) { this.attrs[name] = value; } };
+            root.querySelectorAll = (selector) => selector.includes('dispatch') ? [control] : [];
+            applyReadOnlyControls();
+            if (!control.disabled || control.attrs['aria-disabled'] !== 'true') throw new Error('write control was not disabled');
+            """,
+            pathname="/automation/production/admin/",
+        )
 
     def test_account_automation_hierarchical_agent_config_and_environment_tabs_are_operational(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -255,7 +304,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn("Route execution", source)
         self.assertNotIn("inspect-route", source)
         index = Path("ui/workspace-ui/admin/index.html").read_text(encoding="utf-8")
-        self.assertIn("20260825-cached-display-1", index)
+        self.assertIn("20260905-ecs-readonly-admin-1", index)
         for marker in (
             "/api/workspace/admin/prompts/",
             "data-prompt-draft-form",
@@ -617,7 +666,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("Account ID", source)
-        self.assertIn("20260825-cached-display-1", html)
+        self.assertIn("20260905-ecs-readonly-admin-1", html)
         self.assertIn(".admin-login-header", css)
         self.assertIn(".admin-login-footer", css)
         self.assertIn("@media (max-width: 640px)", css)
