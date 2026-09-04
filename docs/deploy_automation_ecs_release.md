@@ -229,6 +229,12 @@ digest 相同时按幂等成功处理；digest 不同时立即失败。不得修
 registry digest。Preproduction 建成后的常规 Production release 仍必须走上一节的
 同 digest promotion。
 
+首次例外已于 2026-09-04 用于 `r20260904-1f13334`：Promotion Record 记录
+`source_repository=local-oci`，三个 Production ECR digest 与 Release Manifest
+逐项一致。该记录只证明这一次获批 bootstrap；后续 release 在 Preproduction
+建成后必须恢复从 `supportportal/preproduction` 按同一 digest 晋升，除非 owner
+再次明确批准新的例外。
+
 ## Deploy To Production
 
 Production 只能使用以下命令；不得另写临时 task-definition/ECS 更新命令：

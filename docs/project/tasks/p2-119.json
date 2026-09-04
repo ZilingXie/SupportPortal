@@ -4,7 +4,7 @@
   "title": "Production Automation 分类邮件通知",
   "status": "done",
   "owner": "codex",
-  "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；suhrid/emmazhong+cc 属于各流程内部 review 邮件的既有契约）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
+  "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；各流程内部 review 邮件使用独立收件人配置）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
   "next_action": "",
   "acceptance_criteria": [
     "Production active Automation Case 只创建一条分类邮件通知，收件人固定为 xieziling@agora.io，不按分类路由、不 cc；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
@@ -49,7 +49,7 @@
     "backend/tests/test_production_automation_classification_email.py"
   ],
   "created_at": "2026-08-25",
-  "updated_at": "2026-08-26",
+  "updated_at": "2026-09-04",
   "history": [
     {
       "at": "2026-08-25",
@@ -75,6 +75,11 @@
       "at": "2026-08-26",
       "event": "completed",
       "summary": "PR#965（24122e6）回退收件人路由并部署 EC2；受控验收 Zendesk 13026（suspension 新案）：分类邮件 outbox recipient=xieziling@agora.io、无 cc、delivered、零失败；已关闭存量 case（13011）未因重保存迟发（automation_status 门槛实证）。elibility 修复（account_billing+active 门槛）保留并经 13026 复验。"
+    },
+    {
+      "at": "2026-09-04",
+      "event": "enablement_internal_recipient_confirmed",
+      "summary": "用户明确确认Enablement内部review邮件继续发送zhonghuang@agora.io；ECS Worker revision 26的SSM只读回读已匹配To=1和owner Cc=1，无需修改参数或重启。该决定不改变本任务分类通知始终仅发owner、无cc的合同。"
     }
   ],
   "legacy_refs": [],
