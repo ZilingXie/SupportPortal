@@ -4,8 +4,8 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。2026-09-03 代码基线已补齐 ECS Production Suspension 一段式合同、Prompt Release 同 ID 内容门禁、唯一正式 ECS deploy 命令和 Terraform 稳定资源所有权；本轮未执行生产发布。线上 ECS 仍是旧镜像 0fea0ee，API/Route/Worker task definition revision 23/18/21、均为 1/1/0，因此不能把合并代码视为已上线。新 production Terraform root 仅 import/manage ECR、Automation target group、priority 10 listener rule 和三 service 稳定配置，并忽略 task_definition 指针；cluster、共享 ALB/listener/ACM/security group/log group/SSM/roles、Graph EFS、Redis 与 Hermes 均为外部 data/输入。Worker 发布合同明确拒绝 Pilot 环境或 pilot-creds 挂载；Archer 保留纯 HTTP cookie 链。EC2 support.stellarix.space/production 继续作为未修改 backup，n8n 尚未切流，真实新工单 readback 尚未执行。",
-  "next_action": "production remote backend、六项import与真实Terraform零漂移已完成。finalize后从最新干净main构建三角色linux/amd64 OCI，以owner已批准的local-oci bootstrap模式直发Production，先运行deploy_automation_ecs_release.sh --check-only，再完成目标Prompt同步、Route/Worker→heartbeat→API→公网/CloudWatch/EC2 backup门禁及最后激活。确认新Worker无Pilot并完成收件人、Archer、Graph、Zendesk只读readback后，等待用户提供全新Enablement、Fraud、Account Suspension工单号；不处理n8n，不重放历史任务或outcome_unknown。",
+  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-1f13334（main@1f13334ea2dc）：API/Route/Worker revision 28/23/26均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1已激活。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+  "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -238,6 +238,18 @@
       "label": "Production Terraform remote state import and zero-drift gate",
       "command": "Terraform 1.9.8 bootstrap plan/apply; production init -reconfigure; six terraform imports; terraform plan -detailed-exitcode -input=false -lock-timeout=60s -no-color",
       "details": "bootstrap计划严格为6 add/0 change/0 destroy，仅创建AES256加密、版本控制开启且四项公共访问阻断的S3 state bucket与ACTIVE/PAY_PER_REQUEST/LockID DynamoDB锁表。Production root导入supportportal/production ECR、Automation target group、priority 10 listener rule和API/Route/Worker三个service；仅按线上属性补齐AZ rebalancing、listener forward/stickiness和Terraform本地wait语义后，真实远程state plan连续返回exit 0 No changes。Production root从未apply，task_definition仍仅归正式发布脚本所有。"
+    },
+    {
+      "type": "deployment",
+      "label": "Controlled ECS Production release r20260904-1f13334",
+      "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh",
+      "details": "从干净main@1f13334ea2dcc5cddd63747562ffb1dd02c2f199构建并以获批local-oci bootstrap发布。API/Route/Worker revision 28/23/26均1/1/0且COMPLETED；运行digest分别为sha256:b954862ad4cc4742e94ed1fd94fdda8574ac4010539e26405caf00c006b089c7、sha256:78d10c594239f35a782ee2a6a730ad24fb2561321d6724d1ccf8b498a5900436、sha256:e40fc2872c274a3e74e981e20f70ce3a919bba1437b216d90ea2fcfb745bff7a，与Manifest/ECR完全一致。Route→Worker→heartbeat→API→Prompt activation顺序完成，目标pr-c9b3a291ecf1为active、28 items。"
+    },
+    {
+      "type": "deployment",
+      "label": "Post-release runtime, dependency and zero-drift gates",
+      "command": "public live/release/ready; ECS task/digest and heartbeat readback; CloudWatch 15-minute scan; EC2 backup health; Terraform 1.9.8 plan; one-off Worker revision 26 read-only probes",
+      "details": "公网三项health通过；Route/Worker heartbeat为当前release且age<1秒、provenance_mismatches为空；CloudWatch API/Route/Worker最近15分钟错误数0/0/0；https://support.stellarix.space/health正常；发布后远程锁定Terraform plan为No changes、exit 0。Worker无Pilot二进制/env/volume/mount，Graph EFS与Suspension secret保留；Archer GET、Graph /me、Zendesk identity探针通过。三组内部邮件JSON均有效To=1/Cc=1；用户确认Enablement保持zhonghuang。全过程未发送邮件、未创建/修改/重放工单。"
     }
   ],
   "source_refs": [
@@ -260,7 +272,7 @@
     "docs/integrations/n8n/automation_environments_cutover.md"
   ],
   "created_at": "2026-08-25",
-  "updated_at": "2026-08-31",
+  "updated_at": "2026-09-04",
   "history": [
     {
       "at": "2026-08-25",
@@ -386,6 +398,11 @@
       "at": "2026-09-01",
       "event": "ecs_production_status_inventory",
       "summary": "只读盘点确认当前 AWS：ECS cluster supportportal-production 下 API、Route、Worker、Hermes 四个 Service 均为 1/1/0 且 deployment COMPLETED；当前 Account release 为 r20260901-69e9836，Hermes 为独立 supportportal-production-hermes:2。supportportal/production 与 supportportal/hermes 两个 ECR repository 均 immutable、scan-on-push、AES256；RDS n8n-postgres-db 为 PostgreSQL 17.9 db.t4g.micro；Valkey supportportal-production-redis-001 可用；加密 EFS 通过 graph-token-cache、hermes-home、tdai-data、pilot-creds 四个 Access Point 持久化；CloudWatch /ecs/supportportal/production 保留 7 天。PR #1021 已合入 main@ccb7ebc，但尚未进入当前 ECS release；p2-134 保持 active，等待 Archer Pilot gate 与 Enablement/Fraud/Account Suspension 三类全新 Case 验收。"
+    },
+    {
+      "at": "2026-09-04",
+      "event": "ecs_production_release_ready_for_live_cases",
+      "summary": "r20260904-1f13334经local-oci获批bootstrap和唯一正式deploy命令上线；三角色、Prompt Release、heartbeat、公网health、CloudWatch、EC2 backup、无Pilot Worker、依赖探针、收件人配置与发布后Terraform零漂移全部通过。技术阻塞已清理，等待用户提供三类全新工单做业务与外部readback；n8n不在本任务范围。"
     }
   ],
   "legacy_refs": [

@@ -2,10 +2,10 @@
  "schema_version": 2,
  "task_id": "p2-139",
  "title": "ECS worker 镜像移除 Pilot 二进制安装（下载源无签名轮换二进制，运行时不使用）",
- "status": "active",
+ "status": "done",
  "owner": "zac",
- "summary": "r20260903-7d62944 构建被 worker 镜像的 Pilot 安装步骤阻塞：pilot.touchingtalk.com 下载源在两小时内更换了无签名的 Linux 二进制（两次独立下载 checksum 稳定为 43bba510...，与 pinned 的 cbc83b6d... 失配，构建 fail closed）。Pilot 二进制自 p2-134 Archer 直连改造后运行时已不使用（ARCHER_OAUTH_COOKIE 纯 HTTP 链），仅作为遗留保留在镜像内。用户决策：移除安装。改动：backend/Dockerfile.automation 删除 install_pilot 的 RUN 步骤与 prune 行的 /app/bin/pilot 引用；删除 backend/scripts/install_pilot.py；test_automation_ecs_images 的 pinned-pilot 断言改为无 pilot 断言（Archer skill 保留断言不变）；runbook 表述同步。",
- "next_action": "保持 active，等待单独生产授权后由正式 deploy 命令发布新 Worker digest；运行前必须通过 Terraform 零漂移、Worker task definition 无 Pilot env/volume/mount 和 Suspension secret readback 门禁。运行后以 ECR/运行 task digest 证明新 Worker 无 Pilot，再置 done。",
+ "summary": "r20260903-7d62944 构建曾被 worker 镜像的 Pilot 安装步骤阻塞：无签名下载源轮换二进制导致 checksum fail closed，而 p2-134 后 Archer 已使用 ARCHER_OAUTH_COOKIE 纯 HTTP 链、不再依赖 Pilot。按用户决定移除 installer、Dockerfile 安装步骤与 /app/bin/pilot 引用，并由正式 Production release r20260904-1f13334 上线。当前 Worker revision 26 运行 digest 与 Manifest 一致；镜像内无 /app/bin/pilot，task definition 无 Pilot env/volume/mount，Archer 只读 GET、Graph /me 与 Zendesk identity 探针均通过。",
+ "next_action": "",
  "acceptance_criteria": [
   "三个 ECS 镜像不再包含或安装 Pilot 二进制；Dockerfile 无 install_pilot 引用；install_pilot.py 已删除。",
   "Archer 直连链（ARCHER_OAUTH_COOKIE）与 archer-cross-channel-hosting skill 的镜像保留不变。",
@@ -25,6 +25,12 @@
    "label": "Image & build suites",
    "command": "TICKET_DB_DSN=... pytest backend/tests/test_automation_ecs_images.py backend/tests/test_build_automation_ecs_release.py backend/tests/test_agent_config.py -q",
    "details": "15 passed。断言重写：installer 文件不存在、Dockerfile 无 install_pilot 与 /app/bin/pilot 字面量、archer skill 的 api/route 排除与 worker 保留不变。"
+  },
+  {
+   "type": "deployment",
+   "label": "Pilot-free Worker deployed and read back in ECS Production",
+   "command": "deployment/deploy_automation_ecs_release.sh for r20260904-1f13334; AWS ECS/ECR task-definition and running-task readback; one-off Worker revision 26 read-only dependency probe",
+   "details": "Production Worker revision 26稳定为1/1/0、deployment COMPLETED，运行digest sha256:e40fc2872c274a3e74e981e20f70ce3a919bba1437b216d90ea2fcfb745bff7a与Release Manifest一致。task definition中Pilot env/volume/mount均为0且Graph EFS保留；一次性同revision只读探针返回pilot_binary_absent=true、archer_read_get_ok=true、graph_me_ok=true、zendesk_identity_ok=true并exit 0。未发送邮件、未修改工单。"
   }
  ],
  "source_refs": [
@@ -33,12 +39,17 @@
   "docs/deploy_automation_ecs_release.md"
  ],
  "created_at": "2026-09-02",
- "updated_at": "2026-09-02",
+ "updated_at": "2026-09-04",
  "history": [
   {
    "at": "2026-09-02",
    "event": "created",
    "summary": "r20260903-7d62944 构建实证 pilot 源轮换二进制（checksum 失配稳定复现，b4ddd8b 一小时前构建仍正常）；用户在移除安装/更新 checksum/问同事三选项中选择移除。"
+  },
+  {
+   "at": "2026-09-04",
+   "event": "completed",
+   "summary": "Pilot-free Worker随r20260904-1f13334部署到Production revision 26；运行digest、task definition和一次性只读探针共同证明镜像与运行配置均无Pilot，Archer纯HTTP读取链仍可用。"
   }
  ],
  "legacy_refs": [],
