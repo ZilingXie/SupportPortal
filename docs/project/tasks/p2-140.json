@@ -9,12 +9,12 @@
   "function_id": "automation-execution-loop",
   "created_at": "2026-09-03",
   "updated_at": "2026-09-03",
-  "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：legacy /production 与 ECS /automation/production 的新单均严格校验工单邮箱，intake 发内部 handoff 邮件，确认 sent 后才建唯一 account_suspension_handoff_and_close job，首封公开回复确认收到并承诺24h，发布后assign复审人且不关单。共享 helper 持久化 intake_mode=direct_handoff、confirmed_email_source=ticket_email、delivery key和job id；缺失/非法邮箱、邮件failed/outcome_unknown或job创建失败均在客户回复前进入Human Review。Preproduction与存量 awaiting_contact_confirmation 继续旧两段式续跑。persona语义已由p2-141的v23安全地板融合取代v22，问候逗号、确定性24h补句、reviewer通知与不solved合同保持。EC2 /production 已通过全新工单 AC-13254 完成业务和外部readback并关闭本task；ECS尚未部署的运行面继续由p1-53/p2-141跟踪。",
+  "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：legacy /production 与 ECS /automation/production 的新单均严格校验工单邮箱，intake 发内部 handoff 邮件，确认 sent 后才建唯一 account_suspension_handoff_and_close job，首封公开回复确认收到并承诺24h，发布后assign复审人且不关单。共享 helper 持久化 intake_mode=direct_handoff、confirmed_email_source=ticket_email、delivery key和job id；缺失/非法邮箱、邮件failed/outcome_unknown或job创建失败均在客户回复前进入Human Review。Preproduction与存量 awaiting_contact_confirmation 继续旧两段式续跑。persona语义已由p2-141的v23安全地板融合取代v22，问候逗号与不solved合同保持；原确定性24h补句和assign后reviewer通知后来分别由p2-144和p2-143取代。EC2 /production 已通过全新工单 AC-13254 完成业务和外部readback并关闭本task；ECS运行面继续由p2-141/p2-143/p2-144跟踪。",
   "next_action": "",
   "acceptance_criteria": [
     "production suspension 新单一封到位：邮箱 gate→内部邮件（先于 reply job）→唯一 handoff job→公开回复'已收到+24h'（Hi {name},）→assign 复审人+human_review_required+不关单。",
     "无邮箱/邮件失败/outcome_unknown/job 创建失败均 fail-closed 掉人工（workflow+case 同步 human_review_required），无客户面输出。",
-    "自然措辞 24h 承诺变体一次校验通过；否定/疑问/缺时限/关单-重开肯定语义仍拒；缺承诺时补句修复且 payload 有 persona_contract_repair 记录，否定语义不触发补句。",
+    "p2-140 当时以确定性补句恢复缺失承诺；该机制已由 p2-144 的独立语义 Reviewer + 同一 Persona 整段重写取代，Worker 不再写 persona_contract_repair。",
     "direct rerun/reroute 按 intake_mode 分流不问邮箱；存量 awaiting/已确认两条旧路径测试仍绿；direct 四状态后续客户回复 no-op。",
     "runbook/ECS status/feature_list 描述与行为一致（限定 Production 新单）；prompt_change_log v21→v22 条目在案。"
   ],
@@ -50,7 +50,8 @@
   "legacy_refs": [
     "p2-126",
     "p2-136",
-    "p2-138"
+    "p2-138",
+    "p2-144"
   ],
   "source_refs": [
     "backend/main.py",
