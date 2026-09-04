@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T15:25:58Z",
-  "source_base_commit": "8c515e22b550c96b0a645b194b38cec1bf46c366",
-  "registry_digest": "8020a445274419a953236e900c955e75d4776c9eeb548a737d115e3bc226d516",
+  "generated_at": "2026-09-04T18:15:26Z",
+  "source_base_commit": "28ca77b30acf15b08812f92c67e8ab4ca28270c2",
+  "registry_digest": "fc931ab915696f7450c5584d9ac424e78d79c678c98fe592a11ec16d601c39a0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2423,6 +2423,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Pilot-free Worker deployed and read back in ECS Production",
           "command": "deployment/deploy_automation_ecs_release.sh for r20260904-1f13334; AWS ECS/ECR task-definition and running-task readback; one-off Worker revision 26 read-only dependency probe",
           "details": "Production Worker revision 26稳定为1/1/0、deployment COMPLETED，运行digest sha256:e40fc2872c274a3e74e981e20f70ce3a919bba1437b216d90ea2fcfb745bff7a与Release Manifest一致。task definition中Pilot env/volume/mount均为0且Graph EFS保留；一次性同revision只读探针返回pilot_binary_absent=true、archer_read_get_ok=true、graph_me_ok=true、zendesk_identity_ok=true并exit 0。未发送邮件、未修改工单。"
+        },
+        {
+          "type": "decision",
+          "label": "Approved implementation boundary",
+          "details": "2026-09-05 用户批准共享 UI、ECS Cookie Session、Production-only 数据、严格只读、镜像角色隔离和正式 Production 发布验收范围；禁止创建测试工单、重放历史执行或修改外部业务状态。"
+        },
+        {
+          "type": "document",
+          "label": "Read-only ECS Production Admin implementation",
+          "details": "新增独立 AutomationEcsAdminReader、8 个 Session 保护 GET API、共享 Admin UI ECS Cookie/只读适配、Production schema/namespace 硬边界、Admin schema preflight 与 API-only UI 镜像裁剪；完成评审后保留 New Account 导航并禁用表单，RAG token 在详情中明确显示 unavailable。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted contract verification",
+          "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed、1 skipped；image/bootstrap/deploy/build 23 passed；node --check 通过。跳过项为专用 AUTOMATION_ECS_ADMIN_TEST_POSTGRES_DSN 未配置，陷阱 fixture 已新增但尚待实际 PostgreSQL 执行。"
         }
       ],
       "source_refs": [
@@ -2435,7 +2450,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 4,
+      "task_count": 5,
       "done_count": 3,
       "blocked_count": 0
     },
@@ -10212,6 +10227,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-145",
+      "title": "ECS Production Admin 只读复刻",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-05",
+      "updated_at": "2026-09-05",
+      "summary": "在 `/automation/production/admin/` 复用 `/workspace/admin/` 的同一套 UI 与现有 ECS dashboard Cookie Session，严格只读展示 `supportportal_production` schema 及 `supportportal-production` namespace 数据；保留全部栏目与写控件位置但禁用所有业务写动作，旧 Workspace Admin 和 Production 根看板保持不变。",
+      "next_action": "finalize 实现 PR；合并后重启并验证官方 lightweight 栈，构建三角色 immutable release，执行 Production check-only 与正式部署，再完成公网视觉、数据库对账、只读和 provenance 验收。",
+      "acceptance_criteria": [
+        "`/automation/production/admin/` 与 `/workspace/admin/` 共用同一套 HTML、CSS 和 JavaScript，10 个栏目、布局与响应式行为一致，根 Ticket 看板不变。",
+        "所有 Admin 数据只读 `AUTOMATION_DB_DSN` 的 `supportportal_production` schema；Automation 数据额外固定 `namespace=supportportal-production`，错误 schema/namespace 数据不得出现。",
+        "ECS Admin 没有业务写路由；浏览器除登录/退出外只发送 GET，邀请、排班、派单、Prompt 与 Persona 写控件保持原位置但 disabled。",
+        "Agent Config 不触发 Prompt catalog 同步、DDL 或 DML；Token 只读 `support_account_case_llm_usage`，Automation 正常展示且 RAG 明确 unavailable。",
+        "旧 Workspace Admin 的 Bearer 登录和可写行为保持兼容；API 镜像保留两套只读 UI，Route/Worker 镜像不含 UI、`backend.main`、rerun 或 reset。",
+        "PR、正式 release、ECS 部署、公网浏览器验证、Production 数据库对账与无写入证据完整记录后才可置 done。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Approved implementation boundary",
+          "details": "2026-09-05 用户批准共享 UI、ECS Cookie Session、Production-only 数据、严格只读、镜像角色隔离和正式 Production 发布验收范围；禁止创建测试工单、重放历史执行或修改外部业务状态。"
+        },
+        {
+          "type": "document",
+          "label": "Read-only ECS Production Admin implementation",
+          "details": "新增独立 AutomationEcsAdminReader、8 个 Session 保护 GET API、共享 Admin UI ECS Cookie/只读适配、Production schema/namespace 硬边界、Admin schema preflight 与 API-only UI 镜像裁剪；完成评审后保留 New Account 导航并禁用表单，RAG token 在详情中明确显示 unavailable。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted contract verification",
+          "details": "2026-09-05：Workspace Admin/UI 59 passed（含 4 subtests）；ECS Admin Reader/API 33 passed、1 skipped；image/bootstrap/deploy/build 23 passed；node --check 通过。跳过项为专用 AUTOMATION_ECS_ADMIN_TEST_POSTGRES_DSN 未配置，陷阱 fixture 已新增但尚待实际 PostgreSQL 执行。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "event": "implementation_started",
+          "summary": "使用 p2-145 避免与既有 p2-144-persona-review 并行工作树冲突，开始 ECS Production Admin 只读复刻。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "implementation_verified",
+          "summary": "共享 UI、只读 Reader/API、schema preflight 与镜像隔离实现完成并通过定向契约测试；任务保持 active，等待合并后本地栈、Production PostgreSQL、ECS 与公网验收。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-132"
+      ],
+      "source_refs": [
+        "backend/automation_ecs_api.py",
+        "backend/services/automation_ecs_admin_reader.py",
+        "backend/services/automation_ecs_schema.py",
+        "backend/Dockerfile.automation",
+        "ui/workspace-ui/admin/app.js",
+        "ui/workspace-ui/admin/index.html",
+        "ui/workspace-ui/admin/styles.css"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -15603,7 +15683,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。"
       ],
       "planned": [
-        "待补充。"
+        "ECS Production Admin 提供与 Workspace Admin 一致的 10 栏只读运营视图，并固定读取 Production schema 与 namespace。"
       ]
     },
     {

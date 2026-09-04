@@ -99,8 +99,42 @@ class _CaseReader:
         }
 
 
+class _AdminReader:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _reply(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append((name, kwargs))
+        return {"source": name, **kwargs}
+
+    def accounts(self) -> dict[str, Any]:
+        return self._reply("accounts")
+
+    def cases(self) -> dict[str, Any]:
+        return self._reply("cases")
+
+    def metrics(self) -> dict[str, Any]:
+        return self._reply("metrics")
+
+    def audit(self, *, limit: int) -> dict[str, Any]:
+        return self._reply("audit", limit=limit)
+
+    def engineer_schedules(self) -> dict[str, Any]:
+        return self._reply("engineer-schedules")
+
+    def account_automation(self, **kwargs: Any) -> dict[str, Any]:
+        return self._reply("account-automation", **kwargs)
+
+    def agent_config(self) -> dict[str, Any]:
+        return self._reply("agent-config")
+
+    def environment_config(self) -> dict[str, Any]:
+        return self._reply("environment-config")
+
 def _client(
-    *, dashboard_reader: DashboardCaseReader | None = None
+    *,
+    dashboard_reader: DashboardCaseReader | None = None,
+    admin_reader: Any | None = None,
 ) -> tuple[TestClient, InMemoryAutomationEcsStore]:
     settings = _settings("api")
     store = InMemoryAutomationEcsStore(settings)
@@ -115,6 +149,7 @@ def _client(
             store=store,
             dashboard_auth=auth,
             dashboard_reader=dashboard_reader,
+            admin_reader=admin_reader,
         ),
         base_url="https://supportcenter.stellarix.space",
     ), store
@@ -268,7 +303,15 @@ def test_dashboard_login_uses_http_only_session_and_logout_invalidates_it() -> N
             json={"username": "admin", "password": "wrong"},
         )
         assert invalid.status_code == 401
-        _dashboard_login(client)
+        login = client.post(
+            "/automation/production/dashboard/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert login.json()["account"] == {
+            "account_id": "admin",
+            "display_name": "Production Admin",
+            "role": "admin",
+        }
         cookie = client.cookies.get("supportportal_automation_dashboard")
         assert cookie
         login_header = client.post(
@@ -279,7 +322,9 @@ def test_dashboard_login_uses_http_only_session_and_logout_invalidates_it() -> N
         assert "Secure" in login_header
         assert "SameSite=strict" in login_header
         assert "secret" not in login_header.lower().replace("test-session-secret", "")
-        assert client.get("/automation/production/dashboard/auth/session").status_code == 200
+        session = client.get("/automation/production/dashboard/auth/session")
+        assert session.status_code == 200
+        assert session.json()["account"] == login.json()["account"]
         assert client.post("/automation/production/dashboard/auth/logout").status_code == 200
         assert client.get("/automation/production/dashboard/auth/session").status_code == 401
 
@@ -457,6 +502,81 @@ def test_dashboard_runtime_and_static_assets_are_available_without_route_shadowi
         assert {item["role"] for item in runtime.json()["workers"]} == {"route", "worker"}
         assert {item["role"] for item in runtime.json()["active_workers"]} == {"route", "worker"}
         assert all(not item["provenance_mismatches"] for item in runtime.json()["workers"])
+
+
+def test_admin_static_mount_precedes_dashboard_catch_all() -> None:
+    client, _ = _client(admin_reader=_AdminReader())
+    with client:
+        page = client.get("/automation/production/admin/")
+        asset = client.get("/automation/production/admin/app.js")
+    assert page.status_code == 200
+    assert "System Admin" in page.text
+    assert asset.status_code == 200
+    assert "isEcsProductionAdmin" in asset.text
+    assert "Production Automation" not in page.text
+
+
+def test_admin_get_apis_share_dashboard_session_and_forward_filters() -> None:
+    reader = _AdminReader()
+    client, _ = _client(admin_reader=reader)
+    base = "/automation/production/admin/api"
+    endpoints = (
+        "accounts",
+        "cases",
+        "metrics",
+        "audit?limit=27",
+        "engineer-schedules",
+        "account-automation?page=2&page_size=25&route_status=automated&category=automation&created_from=2026-09-01&created_to=2026-09-05",
+        "agent-config",
+        "environment-config",
+    )
+    with client:
+        for endpoint in endpoints:
+            assert client.get(f"{base}/{endpoint}").status_code == 401
+        _dashboard_login(client)
+        responses = [client.get(f"{base}/{endpoint}") for endpoint in endpoints]
+
+    assert all(response.status_code == 200 for response in responses)
+    assert reader.calls == [
+        ("accounts", {}),
+        ("cases", {}),
+        ("metrics", {}),
+        ("audit", {"limit": 27}),
+        ("engineer-schedules", {}),
+        (
+            "account-automation",
+            {
+                "page": 2,
+                "page_size": 25,
+                "route_status": "automated",
+                "category": "automation",
+                "created_from": "2026-09-01",
+                "created_to": "2026-09-05",
+            },
+        ),
+        ("agent-config", {}),
+        ("environment-config", {}),
+    ]
+
+
+def test_admin_business_write_methods_are_not_registered() -> None:
+    client, _ = _client(admin_reader=_AdminReader())
+    base = "/automation/production/admin/api"
+    with client:
+        _dashboard_login(client)
+        for endpoint in (
+            "accounts",
+            "cases",
+            "metrics",
+            "audit",
+            "engineer-schedules",
+            "account-automation",
+            "agent-config",
+            "environment-config",
+        ):
+            for method in ("POST", "PUT", "PATCH", "DELETE"):
+                response = client.request(method, f"{base}/{endpoint}", json={})
+                assert response.status_code in {404, 405}, (method, endpoint, response.status_code)
 
 
 def test_dashboard_css_keeps_interactive_targets_at_least_44px() -> None:

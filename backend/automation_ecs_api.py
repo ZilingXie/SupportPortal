@@ -16,6 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.services.automation_ecs_admin_reader import (
+    create_automation_ecs_admin_reader,
+)
 from backend.services.automation_ecs_contracts import (
     AutomationIntakeEvent,
     ExecutionStatus,
@@ -272,11 +275,17 @@ def create_app(    *,
     store: AutomationEcsStore | None = None,
     dashboard_auth: DashboardAuthConfig | None = None,
     dashboard_reader: DashboardCaseReader | None = None,
+    admin_reader: Any | None = None,
 ) -> FastAPI:
     runtime = settings or AutomationEcsSettings.from_env("api")
     coordination_store = store or create_automation_ecs_store(runtime)
     auth = dashboard_auth or DashboardAuthConfig.from_env()
     case_reader = dashboard_reader or create_dashboard_case_reader(runtime)
+    admin_data_reader = (
+        admin_reader or create_automation_ecs_admin_reader(runtime)
+        if runtime.environment == "production"
+        else None
+    )
     if hmac.compare_digest(auth.password, runtime.intake_shared_token) or hmac.compare_digest(
         auth.session_secret, runtime.intake_shared_token
     ):
@@ -298,6 +307,11 @@ def create_app(    *,
         token=runtime.intake_shared_token,
     )
     base = runtime.base_path
+    admin_account = {
+        "account_id": "admin",
+        "display_name": "Production Admin",
+        "role": "admin",
+    }
 
     def require_dashboard_session(request: Request) -> None:
         token = str(request.cookies.get(DASHBOARD_COOKIE_NAME) or "")
@@ -434,7 +448,11 @@ def create_app(    *,
             raise HTTPException(status_code=401, detail="invalid dashboard credentials")
         token, expires_at = auth.create_session()
         response = JSONResponse(
-            content={"authenticated": True, "expires_at": expires_at},
+            content={
+                "authenticated": True,
+                "expires_at": expires_at,
+                "account": admin_account,
+            },
             headers={"Cache-Control": "no-store"},
         )
         response.set_cookie(
@@ -451,7 +469,7 @@ def create_app(    *,
     @app.get(f"{base}/dashboard/auth/session", dependencies=[Depends(require_dashboard_session)])
     async def dashboard_session() -> JSONResponse:
         return JSONResponse(
-            content={"authenticated": True},
+            content={"authenticated": True, "account": admin_account},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -587,6 +605,95 @@ def create_app(    *,
             headers={"Cache-Control": "no-store"},
         )
 
+    if admin_data_reader is not None:
+        admin_dependencies = [Depends(require_dashboard_session)]
+
+        @app.get(f"{base}/admin/api/accounts", dependencies=admin_dependencies)
+        async def admin_accounts() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.accounts()),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(f"{base}/admin/api/cases", dependencies=admin_dependencies)
+        async def admin_cases() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.cases()),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(f"{base}/admin/api/metrics", dependencies=admin_dependencies)
+        async def admin_metrics() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.metrics()),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(f"{base}/admin/api/audit", dependencies=admin_dependencies)
+        async def admin_audit(
+            limit: int = Query(default=100, ge=1, le=1000),
+        ) -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.audit(limit=limit)),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(
+            f"{base}/admin/api/engineer-schedules",
+            dependencies=admin_dependencies,
+        )
+        async def admin_engineer_schedules() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.engineer_schedules()),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(
+            f"{base}/admin/api/account-automation",
+            dependencies=admin_dependencies,
+        )
+        async def admin_account_automation(
+            page: int = Query(default=1, ge=1),
+            page_size: int = Query(default=50, ge=1, le=200),
+            route_status: str | None = Query(
+                default=None,
+                pattern=r"^(automation|automated|not_automated)$",
+            ),
+            category: str | None = Query(default=None, max_length=128),
+            created_from: str | None = Query(default=None, max_length=64),
+            created_to: str | None = Query(default=None, max_length=64),
+        ) -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(
+                    admin_data_reader.account_automation(
+                        page=page,
+                        page_size=page_size,
+                        route_status=route_status,
+                        category=category,
+                        created_from=created_from,
+                        created_to=created_to,
+                    )
+                ),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(f"{base}/admin/api/agent-config", dependencies=admin_dependencies)
+        async def admin_agent_config() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.agent_config()),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get(
+            f"{base}/admin/api/environment-config",
+            dependencies=admin_dependencies,
+        )
+        async def admin_environment_config() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.environment_config()),
+                headers={"Cache-Control": "no-store"},
+            )
+
     @app.get(
         f"{base}/api/integrations/slack/engineer-cases/thread-bindings/resolve",
         dependencies=[Depends(_require_n8n_request_token)],
@@ -640,7 +747,18 @@ def create_app(    *,
         except ReplySyncError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    dashboard_dir = FilePath(__file__).resolve().parents[1] / "ui" / "automation-ecs-production"
+    ui_root = FilePath(__file__).resolve().parents[1] / "ui"
+    if admin_data_reader is not None:
+        admin_dir = ui_root / "workspace-ui" / "admin"
+        if not admin_dir.is_dir():
+            raise RuntimeError(f"ECS Admin assets are missing: {admin_dir}")
+        app.mount(
+            f"{base}/admin",
+            StaticFiles(directory=admin_dir, html=True),
+            name="automation-ecs-production-admin-ui",
+        )
+
+    dashboard_dir = ui_root / "automation-ecs-production"
     if not dashboard_dir.is_dir():
         raise RuntimeError(f"ECS dashboard assets are missing: {dashboard_dir}")
     app.mount(

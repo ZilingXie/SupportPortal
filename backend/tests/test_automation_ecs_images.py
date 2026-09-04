@@ -36,10 +36,14 @@ def test_only_ecs_api_image_retains_read_only_dashboard_assets() -> None:
     route = _role_block("ecs-route", "ecs-worker")
     worker = _role_block("ecs-worker", "production")
     assert "! -name automation-ecs-production" in api
+    assert "! -name workspace-ui" in api
+    assert "! -name admin" in api
     assert "rm -rf /app/ui" not in api
     assert "rm -rf /app/backend/tests" in api
     assert "/app/ui /app/docs" in route
     assert "/app/ui /app/docs" in worker
+    assert "workspace-ui/admin" not in route
+    assert "workspace-ui/admin" not in worker
 
 
 def test_ecs_worker_retains_vendored_ragflow_skill() -> None:

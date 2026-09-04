@@ -1,6 +1,48 @@
 const WORKSPACE_ACCESS_TOKEN_KEY = "supportportal_admin_workspace_access_token";
 const WORKSPACE_ACCOUNT_KEY = "supportportal_admin_workspace_account";
 const WORKSPACE_AUTH_KEY = "supportportal_admin_workspace_account_id";
+const WORKSPACE_ADMIN_ENDPOINTS = Object.freeze({
+  authLogin: "/api/workspace/auth/login",
+  accounts: "/api/workspace/admin/accounts",
+  cases: "/api/workspace/cases?assignment_status=all",
+  metrics: "/api/workspace/admin/metrics",
+  audit: "/api/workspace/admin/audit?limit=200",
+  schedules: "/api/workspace/admin/engineer-schedules",
+  automation: "/api/workspace/admin/account-automation",
+  agentConfig: "/api/workspace/admin/agent-config",
+  environmentConfig: "/api/workspace/admin/environment-config",
+});
+const currentPath = String(globalThis.location?.pathname || globalThis.window?.location?.pathname || "");
+const isEcsProductionAdmin = currentPath.startsWith("/automation/production/admin");
+const ECS_ADMIN_ROOT = "/automation/production/admin/api";
+const ECS_READ_ONLY_ACTIONS = new Set([
+  "dispatch",
+  "reassign-due",
+  "edit-schedule",
+  "edit-prompt",
+  "schedule-prompt-version",
+  "unschedule-prompt-version",
+  "restore-prompt-version",
+  "toggle-persona-create",
+  "toggle-persona",
+  "publish-persona",
+  "rollback-persona",
+]);
+const adminEndpoints = isEcsProductionAdmin
+  ? Object.freeze({
+      authLogin: "/automation/production/dashboard/auth/login",
+      authSession: "/automation/production/dashboard/auth/session",
+      authLogout: "/automation/production/dashboard/auth/logout",
+      accounts: `${ECS_ADMIN_ROOT}/accounts`,
+      cases: `${ECS_ADMIN_ROOT}/cases`,
+      metrics: `${ECS_ADMIN_ROOT}/metrics`,
+      audit: `${ECS_ADMIN_ROOT}/audit?limit=200`,
+      schedules: `${ECS_ADMIN_ROOT}/engineer-schedules`,
+      automation: `${ECS_ADMIN_ROOT}/account-automation`,
+      agentConfig: `${ECS_ADMIN_ROOT}/agent-config`,
+      environmentConfig: `${ECS_ADMIN_ROOT}/environment-config`,
+    })
+  : WORKSPACE_ADMIN_ENDPOINTS;
 const ADMIN_SECTION_TITLES = {
   overview: "Operations Overview",
   "automated-cases": "Automated Cases",
@@ -28,8 +70,8 @@ const AUTOMATION_BEHAVIOR_KEYS = new Set([
 
 const root = document.getElementById("workspace-admin-root");
 
-let accessToken = readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "");
-let currentAccount = readStorage(WORKSPACE_ACCOUNT_KEY, null);
+let accessToken = isEcsProductionAdmin ? "" : readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "");
+let currentAccount = isEcsProductionAdmin ? null : readStorage(WORKSPACE_ACCOUNT_KEY, null);
 let adminSection = sectionFromHash();
 const initialAgentSelection = agentSelectionFromHash();
 let selectedAgentPath = initialAgentSelection.path;
@@ -134,8 +176,16 @@ function escapeHtml(value) {
 }
 
 async function fetchJson(url, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  if (
+    isEcsProductionAdmin &&
+    method !== "GET" &&
+    ![adminEndpoints.authLogin, adminEndpoints.authLogout].includes(String(url))
+  ) {
+    throw new Error("Production Admin is read-only");
+  }
   const headers = new Headers(options.headers || {});
-  if (accessToken) {
+  if (!isEcsProductionAdmin && accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
   const response = await fetch(url, { ...options, headers });
@@ -157,10 +207,27 @@ async function fetchJson(url, options = {}) {
 
 function isAdminAuthenticated() {
   return Boolean(
-    accessToken &&
+    (isEcsProductionAdmin || accessToken) &&
       currentAccount &&
       String(currentAccount.role || "").toLowerCase() === "admin"
   );
+}
+
+function applyReadOnlyControls() {
+  if (!isEcsProductionAdmin) return;
+  ECS_READ_ONLY_ACTIONS.forEach((action) => {
+    root.querySelectorAll(`[data-action="${action}"]`).forEach((control) => {
+      control.disabled = true;
+      control.setAttribute("aria-disabled", "true");
+      control.title = "Read-only in Production Admin";
+    });
+  });
+  root.querySelectorAll("[data-invitation-form], [data-schedule-form], [data-prompt-draft-form], [data-persona-create-form], [data-persona-draft-form]").forEach((form) => {
+    form.querySelectorAll("input, select, textarea, button").forEach((control) => {
+      control.disabled = true;
+      control.setAttribute("aria-disabled", "true");
+    });
+  });
 }
 
 function scheduleEngineers() {
@@ -884,6 +951,9 @@ function renderTokenDetailRow(item) {
   if (!usage || !usage.available || !expandedTokenCaseKeys.has(tokenCaseKey(item))) return "";
   const rag = (usage.sources && usage.sources.rag) || {};
   const automation = (usage.sources && usage.sources.automation) || {};
+  const ragSummary = rag.available === false
+    ? `<span class="admin-token-unavailable" title="${escapeHtml(rag.error_reason || "RAG token usage unavailable")}">Unavailable</span>`
+    : `${escapeHtml(formatTokenCount(rag.total_input_tokens))} in / ${escapeHtml(formatTokenCount(rag.total_output_tokens))} out / ${escapeHtml(formatTokenCount(rag.total_embedding_tokens))} emb`;
   const costByModel = {};
   const costEntries = (usage.cost_usd && Array.isArray(usage.cost_usd.by_model)) ? usage.cost_usd.by_model : [];
   costEntries.forEach((entry) => {
@@ -892,7 +962,7 @@ function renderTokenDetailRow(item) {
   return `<tr class="admin-token-detail-row"><td colspan="9">
     <div class="admin-token-detail">
       <section aria-label="RAG pipeline token usage">
-        <header><span class="admin-token-source admin-token-source-rag">RAG</span> ${escapeHtml(formatTokenCount(rag.total_input_tokens))} in / ${escapeHtml(formatTokenCount(rag.total_output_tokens))} out / ${escapeHtml(formatTokenCount(rag.total_embedding_tokens))} emb</header>
+        <header><span class="admin-token-source admin-token-source-rag">RAG</span> ${ragSummary}</header>
         <table class="admin-token-table"><thead><tr><th>Stage</th><th>In</th><th>Out</th><th>Calls</th></tr></thead><tbody>${renderTokenStageRows(rag.stage_totals)}</tbody></table>
       </section>
       <section aria-label="Automation chain token usage">
@@ -1556,7 +1626,8 @@ function renderEnvironmentConfig() {
   const items = sourceItems.filter(({ name, description }) => (
     name.toLowerCase().includes(normalizedQuery) || description.toLowerCase().includes(normalizedQuery)
   ));
-  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><p>Configuration names from the project root .env. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search names or descriptions" /></label><h2>Configuration names <span class="admin-count">${items.length}</span></h2><div class="admin-config-list">${items.length ? items.map(({ name, description }) => `<div class="admin-config-item"><div class="admin-config-copy"><code>${escapeHtml(name)}</code><span class="admin-config-description">${escapeHtml(description)}</span></div><button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy ${escapeHtml(name)}" aria-label="Copy ${escapeHtml(name)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></div>`).join("") : `<p>No matching configuration names or descriptions.</p>`}</div>`}</section>`;
+  const sourceLabel = isEcsProductionAdmin ? "the ECS API container environment" : "the project root .env";
+  return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><p>Configuration names from ${sourceLabel}. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search names or descriptions" /></label><h2>Configuration names <span class="admin-count">${items.length}</span></h2><div class="admin-config-list">${items.length ? items.map(({ name, description }) => `<div class="admin-config-item"><div class="admin-config-copy"><code>${escapeHtml(name)}</code><span class="admin-config-description">${escapeHtml(description)}</span></div><button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy ${escapeHtml(name)}" aria-label="Copy ${escapeHtml(name)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></div>`).join("") : `<p>No matching configuration names or descriptions.</p>`}</div>`}</section>`;
 }
 
 function syncAdminRailScrollPosition() {
@@ -1579,6 +1650,7 @@ function renderAdmin() {
   }
   if (loading) {
     root.innerHTML = renderAdminShell(`<p class="admin-card-detail">Loading Workspace Admin...</p>`);
+    applyReadOnlyControls();
     return;
   }
   const content = adminSection === "engineers"
@@ -1599,13 +1671,14 @@ function renderAdmin() {
     ? renderEnvironmentConfig()
     : renderOverview();
   root.innerHTML = renderAdminShell(content);
+  applyReadOnlyControls();
   syncAdminRailScrollPosition();
 }
 
 async function loadEnvironmentConfig({ render = true } = {}) {
   environmentLoadError = "";
   try {
-    const payload = await fetchJson("/api/workspace/admin/environment-config");
+    const payload = await fetchJson(adminEndpoints.environmentConfig);
     environmentData = payload || { names: [], items: [] };
   } catch (error) {
     environmentData = { names: [], items: [] };
@@ -1620,7 +1693,7 @@ async function loadAgentConfig({ render = true, force = false } = {}) {
   agentConfigLoadError = "";
   if (render) renderAdmin();
   try {
-    const payload = await fetchJson("/api/workspace/admin/agent-config");
+    const payload = await fetchJson(adminEndpoints.agentConfig);
     agentConfigData = payload || { agents: [], route_navigation: null, route_runtime: {}, automation_personas: [], automation_workflows: [] };
   } catch (error) {
     agentConfigData = null;
@@ -1642,12 +1715,12 @@ async function loadAdminData() {
   if (automationCategory) automationParams.set("category", automationCategory);
   try {
     const [accountPayload, casePayload, metricPayload, auditPayload, schedulePayload, automationPayload] = await Promise.all([
-      fetchJson("/api/workspace/admin/accounts"),
-      fetchJson("/api/workspace/cases?assignment_status=all"),
-      fetchJson("/api/workspace/admin/metrics"),
-      fetchJson("/api/workspace/admin/audit?limit=200"),
-      fetchJson("/api/workspace/admin/engineer-schedules"),
-      fetchJson(`/api/workspace/admin/account-automation?${automationParams}`),
+      fetchJson(adminEndpoints.accounts),
+      fetchJson(adminEndpoints.cases),
+      fetchJson(adminEndpoints.metrics),
+      fetchJson(adminEndpoints.audit),
+      fetchJson(adminEndpoints.schedules),
+      fetchJson(`${adminEndpoints.automation}?${automationParams}`),
     ]);
     accounts = Array.isArray(accountPayload.accounts) ? accountPayload.accounts : [];
     adminTickets = Array.isArray(casePayload.cases) ? casePayload.cases.map(normalizeAdminTicket) : [];
@@ -1666,9 +1739,11 @@ async function loadAdminData() {
 }
 
 function signOut(options = {}) {
-  removeStorage(WORKSPACE_ACCESS_TOKEN_KEY);
-  removeStorage(WORKSPACE_ACCOUNT_KEY);
-  removeStorage(WORKSPACE_AUTH_KEY);
+  if (!isEcsProductionAdmin) {
+    removeStorage(WORKSPACE_ACCESS_TOKEN_KEY);
+    removeStorage(WORKSPACE_ACCOUNT_KEY);
+    removeStorage(WORKSPACE_AUTH_KEY);
+  }
   accessToken = "";
   currentAccount = null;
   accounts = [];
@@ -1699,23 +1774,47 @@ function signOut(options = {}) {
 
 async function handleAdminLogin(form) {
   const data = new FormData(form);
-  const payload = await fetchJson("/api/workspace/auth/login", {
+  const identity = String(data.get("email") || "").trim();
+  const payload = await fetchJson(adminEndpoints.authLogin, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email: String(data.get("email") || "").trim(),
-      password: String(data.get("password") || ""),
-    }),
+    body: JSON.stringify(isEcsProductionAdmin
+      ? { username: identity, password: String(data.get("password") || "") }
+      : { email: identity, password: String(data.get("password") || "") }),
   });
   if (String(payload?.account?.role || "").toLowerCase() !== "admin") {
     throw new Error("Admin role required");
   }
-  accessToken = payload.access_token;
+  accessToken = isEcsProductionAdmin ? "" : payload.access_token;
   currentAccount = payload.account;
-  writeStorage(WORKSPACE_ACCESS_TOKEN_KEY, accessToken);
-  writeStorage(WORKSPACE_ACCOUNT_KEY, currentAccount);
-  writeStorage(WORKSPACE_AUTH_KEY, currentAccount.account_id);
+  if (!isEcsProductionAdmin) {
+    writeStorage(WORKSPACE_ACCESS_TOKEN_KEY, accessToken);
+    writeStorage(WORKSPACE_ACCOUNT_KEY, currentAccount);
+    writeStorage(WORKSPACE_AUTH_KEY, currentAccount.account_id);
+  }
   await loadAdminData();
+}
+
+async function handleSignOut() {
+  if (!isEcsProductionAdmin) {
+    signOut();
+    return;
+  }
+  try {
+    await fetchJson(adminEndpoints.authLogout, { method: "POST" });
+  } finally {
+    signOut();
+  }
+}
+
+async function restoreEcsAdminSession() {
+  try {
+    const payload = await fetchJson(adminEndpoints.authSession);
+    currentAccount = payload.account;
+    await loadAdminData();
+  } catch {
+    signOut();
+  }
 }
 
 async function handleInvitation(form) {
@@ -1812,8 +1911,9 @@ root.addEventListener("click", (event) => {
     return;
   }
   const action = event.target.closest("[data-action]")?.dataset.action;
+  if (isEcsProductionAdmin && ECS_READ_ONLY_ACTIONS.has(action)) return;
   if (action === "sign-out") {
-    signOut();
+    handleSignOut();
   } else if (action === "edit-schedule") {
     adminSection = "schedule";
     selectedEngineerId = event.target.closest("[data-engineer-id]")?.dataset.engineerId || "";
@@ -1969,6 +2069,10 @@ root.addEventListener("submit", (event) => {
     });
     return;
   }
+  if (
+    isEcsProductionAdmin &&
+    form.matches("[data-invitation-form], [data-schedule-form], [data-prompt-draft-form], [data-persona-create-form], [data-persona-draft-form]")
+  ) return;
   if (form.matches("[data-invitation-form]")) {
     handleInvitation(form);
     return;
@@ -1983,7 +2087,7 @@ root.addEventListener("submit", (event) => {
     automationCategory = String(formData.get("category") || "").trim();
     const params = new URLSearchParams();
     for (const [key, value] of formData.entries()) if (String(value).trim()) params.set(key, String(value).trim());
-    fetchJson(`/api/workspace/admin/account-automation?${params}`).then((payload) => { automationData = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
+    fetchJson(`${adminEndpoints.automation}?${params}`).then((payload) => { automationData = payload; renderAdmin(); }).catch((error) => { loadError = error.message; renderAdmin(); });
     return;
   }
   if (form.matches("[data-prompt-draft-form]")) {
@@ -2014,6 +2118,8 @@ window.addEventListener?.("hashchange", () => {
 
 normalizeAgentLocation(initialAgentSelection);
 renderAdmin();
-if (isAdminAuthenticated()) {
+if (isEcsProductionAdmin) {
+  restoreEcsAdminSession();
+} else if (isAdminAuthenticated()) {
   loadAdminData();
 }

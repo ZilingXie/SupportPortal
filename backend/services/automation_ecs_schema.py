@@ -11,10 +11,12 @@ import psycopg
 ACCOUNT_RUNTIME_TABLES = frozenset(
     {
         "support_tickets",
+        "support_ticket_messages",
         "support_ticket_events",
         "support_account_cases",
         "support_account_route_executions",
         "support_account_personas",
+        "support_account_case_llm_usage",
         "support_account_persona_assignments",
         "support_account_prompt_versions",
         "support_account_reply_jobs",
@@ -28,6 +30,9 @@ ACCOUNT_RUNTIME_TABLES = frozenset(
         "support_engineer_case_messages",
         "support_engineer_case_events",
         "support_engineer_slack_events",
+        "support_workspace_accounts",
+        "support_engineer_schedules",
+        "support_workspace_audit_events",
         "support_idempotency_records",
         "support_prompt_definitions",
         "support_prompt_versions",
