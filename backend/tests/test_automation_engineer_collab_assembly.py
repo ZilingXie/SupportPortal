@@ -50,6 +50,9 @@ class _Repo:
     def get_account_case_by_ticket_id(self, ticket_id):
         return {"account_case_id": "AC-13240", "customer_name": "Ziling Xie", "title": "Native SDK crash"}
 
+    def get_hermes_case_binding(self, engineer_case_id):
+        return None
+
     def resolve_account_persona(self, ticket_id):
         return dict(self.persona_assignment)
 

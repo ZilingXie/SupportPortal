@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,15 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.engineer_cases import build_new_engineer_case
+from backend.services.hermes_case_workflow import (
+    apply_hermes_output,
+    build_mock_output,
+    create_opening_turn,
+    evaluate_summary_guardrail,
+    freeze_summary,
+    record_human_authority,
+    start_hermes_case,
+)
 
 
 class AccountZendeskStatusSyncTests(unittest.TestCase):
@@ -246,6 +257,127 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
         account_case = self.repository.get_account_case(self.case_id)
         self.assertEqual(account_case["zendesk_ticket_status"], "open")
         self.assertEqual(account_case["automation_status"], "automation")
+
+    def test_hermes_solved_reopen_and_closed_keep_one_case_and_guard_promotion(self) -> None:
+        account_case = self.repository.get_account_case(self.case_id)
+        account_case.update(
+            automation_status="not_automated",
+            route_status="not_automated",
+            zendesk_ticket_status="open",
+        )
+        self.repository.save_account_case(account_case)
+        engineer_case_id = f"{self.ticket_id}-1"
+        engineer_case = build_new_engineer_case(
+            self.repository.get_ticket(self.ticket_id),
+            engineer_case_id=engineer_case_id,
+            case_sequence=1,
+            title="Enablement request",
+            status="investigating",
+            trigger_source="account_not_automated",
+            trigger_reason="technical request",
+            now_value="2026-08-21T08:01:00Z",
+        )
+        engineer_case["thread_id"] = f"{engineer_case_id}-round-1"
+        self.repository.save_engineer_case(engineer_case)
+        opening = create_opening_turn(
+            engineer_case_id=engineer_case_id,
+            client_ticket_id=self.ticket_id,
+            investigation_id=engineer_case["thread_id"],
+            problem_description="Please enable Media Relay.",
+            now_value="2026-08-21T08:01:00Z",
+        )
+        start_hermes_case(self.repository, request=opening)
+        claimed = self.repository.claim_next_hermes_turn(
+            owner_token="worker-1",
+            claimed_at="2026-08-21T08:02:00Z",
+            lease_expires_at="2026-08-21T08:03:00Z",
+        )
+        apply_hermes_output(
+            self.repository,
+            build_mock_output(claimed, now_value="2026-08-21T08:02:01Z"),
+        )
+        snapshot = freeze_summary(self.repository, engineer_case_id=engineer_case_id)
+        decision = evaluate_summary_guardrail(snapshot["summary"])
+        self.repository.save_hermes_summary_guardrail(
+            snapshot_id=snapshot["snapshot_id"],
+            expected_episode=1,
+            expected_conversation_version=0,
+            expected_output_id=snapshot["output_id"],
+            expected_ledger_revision=snapshot["ledger_revision"],
+            decision=decision["decision"],
+            reason=decision["reason"],
+            decided_at="2026-08-21T08:03:00Z",
+        )
+
+        solved = self.push_status("solved", updated_at="2026-08-21T09:00:00Z")
+        self.assertEqual(solved.status_code, 200, solved.text)
+        self.assertFalse(solved.json()["engineer_case_closed"])
+        self.assertEqual(solved.json()["hermes_lifecycle_status"], "awaiting_closed")
+        self.assertEqual(len(self.repository.list_ticket_engineer_cases(self.ticket_id)), 1)
+
+        reopened = self.push_status("open", updated_at="2026-08-21T10:00:00Z")
+        self.assertEqual(reopened.json()["hermes_lifecycle_status"], "active")
+        binding = self.repository.get_hermes_case_binding(engineer_case_id)
+        self.assertEqual(binding["episode"], 2)
+        self.assertEqual(len(self.repository.list_ticket_engineer_cases(self.ticket_id)), 1)
+
+        reopen_request = next(
+            row for row in self.repository.list_hermes_turn_requests(engineer_case_id)
+            if row["turn_kind"] == "reopen"
+        )
+        reopened_claim = self.repository.claim_hermes_turn(
+            request_id=reopen_request["request_id"],
+            owner_token="worker-1",
+            claimed_at="2026-08-21T10:01:00Z",
+            lease_expires_at="2026-08-21T10:02:00Z",
+        )
+        apply_hermes_output(
+            self.repository,
+            build_mock_output(reopened_claim, now_value="2026-08-21T10:01:01Z"),
+        )
+        current = freeze_summary(self.repository, engineer_case_id=engineer_case_id)
+        self.repository.save_hermes_summary_guardrail(
+            snapshot_id=current["snapshot_id"],
+            expected_episode=2,
+            expected_conversation_version=reopen_request["conversation_version"],
+            expected_output_id=current["output_id"],
+            expected_ledger_revision=current["ledger_revision"],
+            decision="passed",
+            reason="test",
+            decided_at="2026-08-21T10:02:00Z",
+        )
+        solved_again = self.push_status("solved", updated_at="2026-08-21T11:00:00Z")
+        self.assertEqual(solved_again.json()["hermes_lifecycle_status"], "awaiting_closed")
+        binding = self.repository.get_hermes_case_binding(engineer_case_id)
+        review_id = (
+            f"hermes-close-review:{engineer_case_id}:"
+            f"{binding['episode']}:{binding['current_ledger_revision']}"
+        )
+        review = self.repository.get_hermes_close_review(review_id)
+        record_human_authority(
+            self.repository,
+            engineer_case_id=engineer_case_id,
+            action="accept_and_finish",
+            actor_id="slack:U1",
+            target_output_id=review_id,
+            target_version=int(review["ledger_revision"]),
+            target_digest=hashlib.sha256(
+                json.dumps(
+                    review["review_payload"], sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest(),
+            now_value="2026-08-21T11:01:00Z",
+        )
+        closed = self.push_status("closed", updated_at="2026-08-21T12:00:00Z")
+        self.assertTrue(closed.json()["engineer_case_closed"])
+        self.assertEqual(closed.json()["hermes_lifecycle_status"], "awaiting_transport")
+        self.assertEqual(self.repository.get_hermes_case_binding(engineer_case_id)["status"], "closed")
+        self.assertFalse(
+            any(
+                row["status"] in {"queued", "active"}
+                for row in self.repository.list_hermes_turn_requests(engineer_case_id)
+            )
+        )
 
     def test_status_flows_to_summary_and_detail_payloads(self) -> None:
         synced = self.push_status("pending", updated_at="2026-08-21T09:00:00Z")

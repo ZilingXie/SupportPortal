@@ -247,6 +247,22 @@ def test_health_reports_release_and_fresh_worker_identity() -> None:
     assert ready.status_code == 200
     assert ready.json()["worker_heartbeats"][0]["age_seconds"] >= 0
     assert release.json()["provenance"]["release_id"] == "r1"
+    assert release.json()["hermes_case_workflow"] == {
+        "mode": "disabled",
+        "turn_contract_version": "v1",
+        "output_contract_version": "v1",
+        "producer_contract_version": None,
+    }
+
+
+def test_release_reports_mock_hermes_producer_contract(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "mock")
+    client, _ = _client()
+    with client:
+        release = client.get("/automation/production/health/release")
+    assert release.status_code == 200
+    assert release.json()["hermes_case_workflow"]["mode"] == "mock"
+    assert release.json()["hermes_case_workflow"]["producer_contract_version"] == "v1"
 
 
 def test_readiness_fails_without_both_fresh_worker_roles() -> None:
@@ -697,3 +713,57 @@ def test_engineer_repository_factory_initializes_prompt_runtime(monkeypatch) -> 
     assert api_module._engineer_ticket_repository() is repository
     assert initialized == ["automation-ecs-api"]
     reset_prompt_runtime_for_tests()
+
+
+def test_hermes_callback_uses_independent_token_and_typed_contract(monkeypatch) -> None:
+    output = {
+        "schema_version": "v1",
+        "output_id": "output-1",
+        "request_id": "request-1",
+        "engineer_case_id": "123-1",
+        "investigation_id": "INV-123-1",
+        "hermes_conversation_key": "supportportal:engineer-case:123-1",
+        "hermes_session_id": "session-1",
+        "episode": 1,
+        "conversation_version": 0,
+        "output_version": 1,
+        "output_kind": "investigation_result",
+        "round_id": None,
+        "text": "Investigation result: test",
+        "ledger_delta": {
+            "schema_version": "v1",
+            "current_conclusion_next_steps": "Investigation result: test",
+        },
+        "available_actions": [],
+        "producer_contract_version": "v1",
+        "created_at": "2026-09-05T08:00:00Z",
+    }
+    monkeypatch.setenv("HERMES_CALLBACK_TOKEN", "hermes-only-token")
+    with patch(
+        "backend.automation_ecs_api._engineer_ticket_repository", return_value=object()
+    ), patch(
+        "backend.automation_ecs_api.apply_hermes_output",
+        return_value={"status": "accepted", "output_id": "output-1"},
+    ):
+        client, _ = _client()
+        path = "/automation/production/api/integrations/hermes/callbacks"
+        with client:
+            assert client.post(path, json=output).status_code == 401
+            assert client.post(
+                path,
+                headers={"X-N8n-Request-Token": "hermes-only-token"},
+                json=output,
+            ).status_code == 401
+            response = client.post(
+                path,
+                headers={"X-Hermes-Callback-Token": "hermes-only-token"},
+                json=output,
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "accepted"
+            invalid = client.post(
+                path,
+                headers={"X-Hermes-Callback-Token": "hermes-only-token"},
+                json={**output, "extra": True},
+            )
+            assert invalid.status_code == 422

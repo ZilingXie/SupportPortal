@@ -96,21 +96,17 @@ from backend.services.enablement_archer_executor import (
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.engineer_assignment import EngineerAssignmentService
 from backend.services.engineer_cases import (
-    apply_case_context_to_engineer_case,
-    build_engineer_case_context,
     build_new_engineer_case,
     derive_engineer_case_title,
 )
 from backend.services.engineer_slack import (
     build_engineer_case_opened_event,
-    build_engineer_case_thread_event,
 )
+from backend.services.hermes_case_workflow import create_opening_turn, hermes_workflow_mode
 from backend.services.investigation_flow import (
     INVESTIGATING_STATUS,
     OPEN_STATUS,
-    build_investigation_opening_context,
     normalize_ticket_status,
-    start_or_refresh_investigation,
 )
 from backend.services.quota_field_extractor import QuotaFieldExtraction
 from backend.services.support_products import normalize_support_product
@@ -845,6 +841,7 @@ async def run_production_account_intake(
     normalized_processing_profile = str(processing_profile or "production").strip().lower()
     if normalized_processing_profile not in {"preproduction", "production"}:
         raise ValueError("processing_profile must be preproduction or production")
+    configured_hermes_mode = hermes_workflow_mode()
     timestamp = _now_iso()
     zendesk_ticket_url = _zendesk_ticket_url(zendesk_ticket_id or ticket_id)
 
@@ -1251,42 +1248,21 @@ async def run_production_account_intake(
                 "round_number": 1,
                 "round_state": "active",
             }
-            case_context = build_engineer_case_context(ticket, engineer_case)
-            opening_context = build_investigation_opening_context(
-                case_context,
-                trigger_reason=engineer_trigger_reason,
-            )
-            investigation_result = await _sync(
-                start_or_refresh_investigation,
-                case_context,
-                trigger_reason=engineer_trigger_reason,
-                trigger_source="account_not_automated",
-                now_value=timestamp,
-                next_status=INVESTIGATING_STATUS,
-                opening_context=opening_context,
-            )
-            engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
-            opening_messages = list(investigation_result.get("new_internal_messages") or [])
-            opening_event = None
-            for message in reversed(opening_messages):
-                if str(message.get("role") or "") == "engineer_ai" and str(message.get("content") or "").strip():
-                    active_investigation = case_context.get("active_investigation") or {}
-                    opening_event = build_engineer_case_thread_event(
-                        event_id=f"{engineer_case_id}:opening",
-                        event_type="engineer_ai_response",
-                        engineer_case_id=engineer_case_id,
-                        message_text=str(message.get("content") or "").strip(),
-                        investigation_id=str(active_investigation.get("id") or "").strip() or None,
-                    )
-                    break
+            opening_request = None
+            if configured_hermes_mode == "mock":
+                opening_request = create_opening_turn(
+                    engineer_case_id=engineer_case_id,
+                    client_ticket_id=ticket_id,
+                    investigation_id=str(engineer_case["thread_id"]),
+                    problem_description=question,
+                    now_value=timestamp,
+                ).model_dump(mode="json")
             await _sync(
                 repository.save_engineer_case,
                 engineer_case,
-                new_messages=opening_messages,
-                slack_events=[
-                    build_engineer_case_opened_event(account_case=billing_ticket, engineer_case=engineer_case),
-                    *([opening_event] if opening_event else []),
-                ],
+                new_messages=[],
+                slack_events=[build_engineer_case_opened_event(account_case=billing_ticket, engineer_case=engineer_case)],
+                hermes_opening_request=opening_request,
             )
             await _sync(
                 EngineerAssignmentService(repository).dispatch_case,

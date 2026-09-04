@@ -11,6 +11,22 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-05 - Hermes Case investigation keeps RAG and L0 promotion disabled (p2-146)
+
+- Summary:
+  - Added a PostgreSQL-only Case investigation ledger and a typed close-time `CaseKnowledgePromotion v1` outbox boundary for technical Engineer Cases.
+  - Investigation turns do not invoke SupportPortal RAG ingestion, TencentDB L0 capture, Case Memory activation, or a real promotion sink.
+- Reason:
+  - The Case workflow must preserve curated investigation history without allowing raw customer/Slack data, `internal_only`, `needs_review`, or inactive Case Memory candidates to become retrievable knowledge automatically.
+- Affected files or config:
+  - Hermes Case workflow/repository/schema and lifecycle tests.
+  - No retrieval logic, chunking, embeddings, RAG prompt, vector/BM25 table, RAGFlow endpoint, or memory-provider configuration changed.
+- Data impact:
+  - No documents, chunks, embeddings, indexes, L0 conversations, historical Cases, or external knowledge sinks were written.
+  - `closed` can only create a sanitized, idempotent promotion record with status `awaiting_transport`; no code in this task marks it `promoted`.
+- Verification:
+  - Unit and PostgreSQL lifecycle tests prove `solved` does not promote, `reopen` invalidates stale review/promotion state, unsafe safety labels fail closed, and `closed` creates at most one `awaiting_transport` record.
+
 ## 2026-09-01 - ECS Fraud extraction failures stop before reply RAG fallback (p2-110)
 
 - Summary:

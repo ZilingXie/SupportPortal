@@ -140,6 +140,11 @@ from backend.services.engineer_slack import (
     engineer_slack_configured,
     post_engineer_slack_event,
 )
+from backend.services.hermes_case_workflow import (
+    apply_hermes_output,
+    build_mock_output,
+    hermes_workflow_mode,
+)
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -2142,6 +2147,49 @@ def _drain_engineer_slack_events(*, limit: int = 20) -> None:
         )
 
 
+def _drain_mock_hermes_turns(*, limit: int = 20) -> int:
+    if hermes_workflow_mode() != "mock":
+        return 0
+    queued = ticket_repository.list_hermes_turn_requests()
+    processed = 0
+    for request in queued:
+        status = str(request.get("status") or "")
+        now = datetime.now(timezone.utc)
+        if processed >= limit or status not in {"queued", "active"}:
+            continue
+        if str(request.get("turn_kind") or "") not in {
+            "opening",
+            "engineer_feedback",
+            "reopen",
+        }:
+            continue
+        if status == "active" and str(request.get("lease_expires_at") or "") > now.isoformat():
+            continue
+        case_id = str(request.get("engineer_case_id") or "").strip()
+        if not ticket_repository.get_engineer_slack_thread_binding(case_id, active_only=False):
+            continue
+        claimed = ticket_repository.claim_hermes_turn(
+            request_id=str(request.get("request_id") or ""),
+            owner_token=f"mock-worker:{os.getpid()}",
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(seconds=60)).isoformat(),
+        )
+        if not claimed:
+            continue
+        receipt = apply_hermes_output(
+            ticket_repository,
+            build_mock_output(claimed, now_value=now_iso()),
+        )
+        if receipt.get("status") not in {"accepted", "idempotent"}:
+            LOGGER.warning(
+                "hermes_mock_output_rejected request_id=%s reason=%s",
+                claimed.get("request_id"),
+                receipt.get("reason") or "unknown",
+            )
+        processed += 1
+    return processed
+
+
 def _reconcile_production_zendesk_delivery(
     *,
     account_case_id: str,
@@ -2595,6 +2643,8 @@ def process_account_automation_once() -> None:
     _drain_production_zendesk_comment_deliveries(limit=20)
     _drain_account_slack_deliveries(limit=20)
     _drain_engineer_slack_events(limit=20)
+    if _drain_mock_hermes_turns(limit=20):
+        _drain_engineer_slack_events(limit=20)
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:

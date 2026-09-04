@@ -14,6 +14,8 @@ these paths) and `_normalize_engineer_case_payload_for_read` is skipped
 from __future__ import annotations
 
 import hmac
+import hashlib
+import json
 import os
 from typing import Any
 
@@ -39,6 +41,8 @@ from backend.services.automation_account_reply_sync import (
 
 SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE = "slack_engineer_case_message"
 SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE = "slack_engineer_case_action"
+SLACK_HERMES_SUMMARY_IDEMPOTENCY_SCOPE = "slack_hermes_summary_action"
+SLACK_HERMES_AUTHORITY_IDEMPOTENCY_SCOPE = "slack_hermes_authority_action"
 
 
 def _now_iso() -> str:
@@ -454,6 +458,34 @@ async def handle_slack_engineer_message(repository: Any, payload: dict[str, Any]
         )
         return ignored
 
+    hermes_binding = await _sync(repository.get_hermes_case_binding, engineer_case_id)
+    if isinstance(hermes_binding, dict):
+        from backend.services.hermes_case_workflow import queue_feedback_turn
+
+        request = await _sync(
+            queue_feedback_turn,
+            repository,
+            engineer_case_id=engineer_case_id,
+            input_text=text,
+            now_value=_now_iso(),
+        )
+        response = {
+            "status": "queued",
+            "event_id": event_id,
+            "engineer_case_id": engineer_case_id,
+            "request_id": request.request_id,
+            "conversation_version": request.conversation_version,
+            "episode": request.episode,
+        }
+        await _sync(
+            repository.complete_idempotent_request,
+            SLACK_ENGINEER_MESSAGE_IDEMPOTENCY_SCOPE,
+            event_id,
+            response_payload=response,
+            updated_at=_now_iso(),
+        )
+        return response
+
     try:
         result = await process_engineer_investigation_message(
             repository,
@@ -508,18 +540,32 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
     engineer_case_id = str(payload.get("engineer_case_id") or "").strip()
     action = str(payload.get("action") or "").strip()
     investigation_id = str(payload.get("investigation_id") or "").strip()
-    if not interaction_id or not engineer_case_id or action not in {"guardrail", "final_approve"} or not investigation_id:
+    hermes_authority_actions = {
+        "authorize_round", "accept_and_finish", "start_suggested_round", "stop_investigation"
+    }
+    allowed_actions = {"summarize", "guardrail", "final_approve", *hermes_authority_actions}
+    if not interaction_id or not engineer_case_id or action not in allowed_actions or not investigation_id:
         raise ReplySyncError(422, "interaction_id/engineer_case_id/action/investigation_id are required")
-    try:
-        draft_version = int(payload.get("draft_version") or 0)
-    except (TypeError, ValueError):
-        raise ReplySyncError(422, "draft_version must be an integer") from None
-    if draft_version < 1:
-        raise ReplySyncError(422, "draft_version must be >= 1")
+    draft_version = 0
+    if action in {"guardrail", "final_approve"}:
+        try:
+            draft_version = int(payload.get("draft_version") or 0)
+        except (TypeError, ValueError):
+            raise ReplySyncError(422, "draft_version must be an integer") from None
+        if draft_version < 1:
+            raise ReplySyncError(422, "draft_version must be >= 1")
+
+    action_scope = (
+        SLACK_HERMES_SUMMARY_IDEMPOTENCY_SCOPE
+        if action == "summarize"
+        else SLACK_HERMES_AUTHORITY_IDEMPOTENCY_SCOPE
+        if action in hermes_authority_actions
+        else SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE
+    )
 
     claim = await _sync(
         repository.begin_idempotent_request,
-        SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE,
+        action_scope,
         interaction_id,
         created_at=_now_iso(),
         retry_failed=True,
@@ -533,7 +579,7 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
     async def _complete(result_payload: dict[str, Any]) -> dict[str, Any]:
         await _sync(
             repository.complete_idempotent_request,
-            SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE,
+            action_scope,
             interaction_id,
             response_payload=result_payload,
             updated_at=_now_iso(),
@@ -556,6 +602,94 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
         if str(active_payload.get("id") or "").strip() != investigation_id:
             raise ReplySyncError(409, "stale investigation")
 
+        if action in hermes_authority_actions:
+            from backend.services.hermes_case_workflow import record_human_authority
+
+            binding = repository.get_hermes_case_binding(engineer_case_id)
+            if not isinstance(binding, dict):
+                raise ReplySyncError(409, "Hermes Case binding is missing")
+            if (
+                int(payload.get("episode") or 0) != int(binding["episode"])
+                or int(
+                    payload["conversation_version"]
+                    if payload.get("conversation_version") is not None
+                    else -1
+                )
+                != int(binding["conversation_version"])
+            ):
+                raise ReplySyncError(409, "stale Hermes authority action")
+            target_output_id = str(payload.get("output_id") or "").strip()
+            target_digest = str(payload.get("target_digest") or "").strip()
+            try:
+                target_version = int(payload.get("target_version") or 0)
+            except (TypeError, ValueError):
+                raise ReplySyncError(422, "invalid Hermes authority target") from None
+            if not target_output_id or target_version < 1 or not target_digest:
+                raise ReplySyncError(422, "invalid Hermes authority target")
+            if target_output_id.startswith("hermes-close-review:"):
+                review = repository.get_hermes_close_review(target_output_id)
+                if not isinstance(review, dict):
+                    raise ReplySyncError(409, "stale Hermes close review")
+                actual_digest = hashlib.sha256(
+                    json.dumps(
+                        review.get("review_payload") or {},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                if (
+                    str(review.get("status") or "") != "awaiting_closed"
+                    or int(review.get("episode") or 0) != int(binding["episode"])
+                    or int(review.get("ledger_revision") or 0) != target_version
+                    or not hmac.compare_digest(target_digest, actual_digest)
+                ):
+                    raise ReplySyncError(409, "stale Hermes close review")
+            else:
+                target_output = repository.get_hermes_output(target_output_id)
+                matching_action = next(
+                    (
+                        item
+                        for item in (target_output or {}).get("available_actions") or []
+                        if isinstance(item, dict) and str(item.get("action") or "") == action
+                    ),
+                    None,
+                )
+                if (
+                    not isinstance(target_output, dict)
+                    or not bool(target_output.get("accepted"))
+                    or target_output_id != str(binding.get("current_output_id") or "")
+                    or int(target_output.get("episode") or 0) != int(binding["episode"])
+                    or int(
+                        target_output["conversation_version"]
+                        if target_output.get("conversation_version") is not None
+                        else -1
+                    )
+                    != int(binding["conversation_version"])
+                    or not isinstance(matching_action, dict)
+                    or int(matching_action.get("target_version") or 0) != target_version
+                    or not hmac.compare_digest(
+                        target_digest, str(matching_action.get("target_digest") or "")
+                    )
+                ):
+                    raise ReplySyncError(409, "stale Hermes authority target")
+            event = record_human_authority(
+                repository,
+                engineer_case_id=engineer_case_id,
+                action=action,
+                actor_id=f"slack:{str(payload.get('slack_user_id') or '').strip()}",
+                target_output_id=target_output_id,
+                target_version=target_version,
+                target_digest=target_digest,
+                now_value=_now_iso(),
+            )
+            return await _complete({
+                "status": "authority_recorded",
+                "interaction_id": interaction_id,
+                "engineer_case_id": engineer_case_id,
+                "authority_event_id": event.authority_event_id,
+                "action": action,
+            })
+
         ticket = repository.get_ticket(
             str((engineer_case_payload.get("client_ticket_ref") or {}).get("ticket_id") or "")
         )
@@ -571,6 +705,161 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
             if isinstance(engineer_case.get("engineer_agent_state"), dict)
             else {}
         )
+
+        if action == "summarize":
+            from backend.services.automation_persona import (
+                ENGINEER_INVESTIGATION_REPLY_INTENT,
+                render_automation_reply,
+                resolve_customer_greeting_name,
+            )
+            from backend.services.hermes_case_workflow import (
+                evaluate_summary_guardrail,
+                freeze_summary,
+            )
+
+            binding = repository.get_hermes_case_binding(engineer_case_id)
+            if not isinstance(binding, dict):
+                raise ReplySyncError(409, "Hermes Case binding is missing")
+            supplied_digest = str(payload.get("output_digest") or "")
+            if (
+                str(payload.get("output_id") or "") != str(binding.get("current_output_id") or "")
+                or int(payload.get("episode") or 0) != int(binding["episode"])
+                or int(
+                    payload["conversation_version"]
+                    if payload.get("conversation_version") is not None
+                    else -1
+                )
+                != int(binding["conversation_version"])
+            ):
+                raise ReplySyncError(409, "stale Hermes summary action")
+            snapshot = freeze_summary(repository, engineer_case_id=engineer_case_id)
+            actual_digest = hashlib.sha256(snapshot["summary"].encode("utf-8")).hexdigest()
+            if not hmac.compare_digest(supplied_digest, actual_digest):
+                raise ReplySyncError(409, "stale Hermes summary digest")
+            if snapshot.get("guardrail_decision") is not None:
+                if (
+                    snapshot.get("guardrail_decision") != "passed"
+                    or (
+                        str(agent_state.get("hermes_summary_snapshot_id") or "")
+                        == str(snapshot["snapshot_id"])
+                        and bool(str(active.get("draft_customer_reply") or "").strip())
+                    )
+                ):
+                    return await _complete({
+                        "status": "summary_already_processed",
+                        "interaction_id": interaction_id,
+                        "engineer_case_id": engineer_case_id,
+                        "snapshot_id": snapshot["snapshot_id"],
+                        "reason": snapshot.get("guardrail_reason"),
+                        "draft_version": int(agent_state.get("draft_version") or 0),
+                    })
+                decision = {
+                    "decision": str(snapshot["guardrail_decision"]),
+                    "reason": str(snapshot.get("guardrail_reason") or ""),
+                    "normalized_summary": evaluate_summary_guardrail(snapshot["summary"])[
+                        "normalized_summary"
+                    ],
+                }
+            else:
+                decision = evaluate_summary_guardrail(snapshot["summary"])
+                repository.save_hermes_summary_guardrail(
+                    snapshot_id=snapshot["snapshot_id"],
+                    expected_episode=snapshot["episode"],
+                    expected_conversation_version=snapshot["conversation_version"],
+                    expected_output_id=snapshot["output_id"],
+                    expected_ledger_revision=snapshot["ledger_revision"],
+                    decision=decision["decision"],
+                    reason=decision["reason"],
+                    decided_at=_now_iso(),
+                )
+            message_text = "Summary guardrail requires human review."
+            slack_action = None
+            if decision["decision"] == "passed":
+                client_ticket_id = str(
+                    (engineer_case_payload.get("client_ticket_ref") or {}).get("ticket_id") or ""
+                )
+                account_case = repository.get_account_case_by_ticket_id(client_ticket_id) or {}
+                latest_customer = latest_customer_message(ticket)
+                facts = {
+                    "behavior": "engineer_support",
+                    "reply_intent": ENGINEER_INVESTIGATION_REPLY_INTENT,
+                    "provided_answer": decision["normalized_summary"],
+                    "latest_customer_message": latest_customer,
+                    "recent_public_conversation": latest_customer,
+                    "subject": str(account_case.get("title") or ticket.get("subject") or ""),
+                    "customer_language": detect_customer_reply_language(
+                        latest_customer, decision["normalized_summary"]
+                    ),
+                    "customer_first_name": resolve_customer_greeting_name(
+                        case_customer_name=account_case.get("customer_name"),
+                        requester_name=ticket.get("requester"),
+                    ),
+                }
+                persona_assignment = repository.resolve_account_persona(client_ticket_id)
+                rendered = render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment=persona_assignment,
+                    account_scope=False,
+                )
+                timestamp = _now_iso()
+                active["draft_customer_reply"] = rendered.content
+                active["state"] = "awaiting_confirmation"
+                active["final_confirmation_requested_at"] = timestamp
+                active["updated_at"] = timestamp
+                next_draft_version = int(agent_state.get("draft_version") or 0) + 1
+                agent_state.update(
+                    conversation_version=int(binding["conversation_version"]),
+                    draft_version=next_draft_version,
+                    hermes_summary_snapshot_id=snapshot["snapshot_id"],
+                    hermes_summary_guardrail={
+                        "decision": "passed",
+                        "reason": "test",
+                        "episode": snapshot["episode"],
+                        "conversation_version": snapshot["conversation_version"],
+                        "output_id": snapshot["output_id"],
+                        "ledger_revision": snapshot["ledger_revision"],
+                    },
+                    guided_reply_generation={
+                        "source": "automation_persona",
+                        "persona_key": str((persona_assignment or {}).get("persona_key") or ""),
+                        "persona_version": str((persona_assignment or {}).get("version") or ""),
+                        "model": rendered.model,
+                        "prompt_version": rendered.prompt_version,
+                    },
+                    reply_readiness={
+                        "has_conclusion": True,
+                        "has_proof": False,
+                        "has_solution_or_next_step": False,
+                        "source_mode": "hermes_summary_persona_assembled",
+                        "ready_for_customer_reply": False,
+                    },
+                    final_approval_required=False,
+                )
+                case_context["active_investigation"] = active
+                case_context["engineer_agent_state"] = agent_state
+                engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+                message_text = f"Persona Draft:\n{rendered.content}"
+                slack_action = "guardrail"
+                draft_version = next_draft_version
+            result_event = build_engineer_case_thread_event(
+                event_id=f"{interaction_id}:summary-result",
+                event_type="hermes_summary_guardrail_result",
+                engineer_case_id=engineer_case_id,
+                message_text=message_text,
+                investigation_id=investigation_id,
+                conversation_version=int(binding["conversation_version"]),
+                draft_version=draft_version if slack_action else None,
+                action=slack_action,
+            )
+            repository.save_engineer_case(engineer_case, new_messages=[], slack_events=[result_event])
+            return await _complete({
+                "status": "summary_guardrail_passed" if slack_action else "summary_guardrail_needs_review",
+                "interaction_id": interaction_id,
+                "engineer_case_id": engineer_case_id,
+                "snapshot_id": snapshot["snapshot_id"],
+                "reason": decision["reason"],
+                "draft_version": draft_version,
+            })
         current_draft_version = int(agent_state.get("draft_version") or 0)
         conversation_version = int(agent_state.get("conversation_version") or 0)
         if current_draft_version != draft_version:
@@ -770,7 +1059,7 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
     except Exception as exc:
         await _sync(
             repository.fail_idempotent_request,
-            SLACK_ENGINEER_ACTION_IDEMPOTENCY_SCOPE,
+            action_scope,
             interaction_id,
             response_payload={"status": "failed", "code": type(exc).__name__},
             updated_at=_now_iso(),

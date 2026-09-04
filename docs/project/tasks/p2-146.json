@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-146",
+  "title": "Hermes Case Workflow PostgreSQL 闭环",
+  "status": "active",
+  "owner": "codex",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "created_at": "2026-09-05",
+  "updated_at": "2026-09-05",
+  "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。",
+  "next_action": "代码与本地 PostgreSQL 验证完成后保持 workflow 默认 disabled；等待单独授权执行 preproduction mock canary、Production schema migration/activation、真实 Slack/Zendesk readback、真实 Hermes/AgentRelay 接入和 promotion sink 验收。",
+  "acceptance_criteria": [
+    "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
+    "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
+    "HermesTurnRequest v1、HermesInvestigationOutput v1、ledger delta、human authority 与 CaseKnowledgePromotion v1 使用严格 typed contract；mock 直接调用统一 output application handler，typed callback 鉴权且幂等。",
+    "当前 frozen summary 仅在规范化完整值精确等于 Investigation result: test 时 Summary Guardrail pass 且 reason=test；Persona、确定性客户回复检查、人工 Approve、Zendesk revision/readback 和幂等 outbox 均不能绕过。",
+    "Case 账本只保存 PostgreSQL 五段语义字段和 revision；读取时渲染 Markdown，不存在文件名、artifact path、EFS 或 Git Markdown。误判方向保留并标记纠正证据。",
+    "solved 仅保存 close review draft，reopen 复用同 Case/Slack thread/Markdown renderer/session 并递增 episode，closed 仅在 review/guardrail/sanitization 有效时创建 awaiting_transport promotion；调查期间不产生 L0。",
+    "真实 preproduction/production、Hermes、AgentRelay、Slack/Zendesk 和知识 sink 未经单独授权不执行，未运行项与风险在最终报告中明确列出。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "decision",
+      "label": "Approved PostgreSQL-only implementation boundary",
+      "details": "2026-09-05 用户明确批准实施修订计划：Case 调查账本全部保存到已有 PostgreSQL 表字段，需要人工查看时再渲染；不使用 EFS、文件名或 artifact path，并禁止生产部署、真实外部消息、历史回填和真实 Hermes/AgentRelay 调查。"
+    },
+    {
+      "type": "test",
+      "label": "PostgreSQL-only Hermes Case Workflow implemented",
+      "details": "新增 HermesTurnRequest v1、HermesInvestigationOutput v1、ledger delta v1、human authority v1、CaseKnowledgePromotion v1，Engineer Case opening/mock/feedback/Summarize/Persona/Guardrail/solved/reopen/closed 复用既有 Case、Slack/Zendesk outbox 与审批链；默认 HERMES_CASE_WORKFLOW_MODE=disabled。"
+    },
+    {
+      "type": "test",
+      "label": "Targeted and PostgreSQL verification",
+      "details": "计划及相邻整合套件 324 passed、63 subtests passed，并明确 deselect 两个已在干净 root main 复现的既有 multi-agent 失败；隔离 disposable PostgreSQL schema 7 passed 且无 skip。review 另验证 expired lease 原 request_id 重领、close authority 原子事务、Summary Guardrail 已落库后的 Persona retry、取消 turn 不可重领和显式 sanitization attestation。"
+    },
+    {
+      "type": "decision",
+      "label": "External acceptance intentionally not run",
+      "details": "未部署 Production，未运行 preproduction mock canary，未发送真实 Slack/Zendesk/客户消息，未执行真实 Hermes/AgentRelay 调查、历史回填、L0 capture 或真实知识晋升。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-09-05",
+      "event": "created",
+      "summary": "创建独立 p2-146 承接 Hermes Case Workflow PostgreSQL-only 实现，不重开 p2-113。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "implementation_verified",
+      "summary": "完成默认 disabled 的 PostgreSQL-only workflow、typed callback/authority transport、版本围栏与生命周期本地验证；Task 因外部验收未授权继续保持 active。"
+    }
+  ],
+  "legacy_ids": [],
+  "legacy_refs": [
+    "p2-113"
+  ],
+  "source_refs": [
+    "backend/services/automation_account_intake.py",
+    "backend/services/automation_engineer_collab.py",
+    "backend/services/hermes_case_workflow.py",
+    "backend/repositories/hermes_case_repository.py",
+    "backend/repositories/ticket_repository.py",
+    "backend/worker.py",
+    "backend/automation_ecs_api.py"
+  ]
+}

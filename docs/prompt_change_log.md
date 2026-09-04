@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-05 - Hermes Case Workflow uses typed mock output before Persona (p2-146)
+
+- Area or subsystem: Production technical Engineer Case investigation, Summary Guardrail, Persona assembly, and Slack human actions.
+- Prompt or model version: No model prompt, model, provider, or reasoning-effort change; shared contracts are `HermesTurnRequest v1`, `HermesInvestigationOutput v1`, `human authority v1`, and `CaseKnowledgePromotion v1`, with mock producer contract `v1`.
+- Reason: Replace the legacy deterministic opening investigation message with a durable, version-fenced Hermes Case Workflow while keeping real Hermes and AgentRelay outside this task.
+- Tooling and behavior change: In explicit `mock` mode, the persisted opening/feedback/reopen turn produces exact text `Investigation result: test` through the same typed output application handler used by the callback receiver. `Summarize` runs before Persona; exact `reason=test` bypasses only the normal Summary Guardrail decision and leaves deterministic customer-reply guardrail, final human approval, Zendesk revision/readback, and delivery idempotency intact. Default mode is `disabled`, and unknown modes fail closed.
+- Affected files or config: Hermes workflow/repository contracts, Account intake and Zendesk status sync, Engineer Slack collaboration/delivery, ECS callback/release health, Worker mock producer, and their focused tests. No external Hermes, AgentRelay, Slack, Zendesk, prompt store, or model configuration was changed.
+- Expected behavior change: A technical Case can retain one Engineer Case, Slack thread, conversation/session and PostgreSQL investigation ledger across feedback and reopen episodes; stale summary/authority/draft/approve actions cannot publish. The mock summary lacks proof, so the existing deterministic guardrail blocks final approval until valid evidence exists.
+- Verification: The consolidated planned and adjacent suite completed with 324 passed, 2 explicitly deselected unrelated Engineer multi-agent baseline failures, and 63 subtests. Disposable PostgreSQL integration completed with 7 passed and no skips. Review also verified expired-lease recovery, atomic close authority, Persona retry after a persisted Summary Guardrail, and explicit sanitization attestation.
+
 ## 2026-09-05 - Persona body becomes immutable with bounded semantic review (p2-144)
 
 - Area or subsystem: Account Automation Persona generation, customer-reply validation, and Worker publication.
