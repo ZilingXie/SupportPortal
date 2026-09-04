@@ -677,36 +677,83 @@ def route_ticket_back_to_queue(
             }
         ]
     put_status = 200
-    try:
-        _updated_payload, put_status = _request(
-            method="PUT",
-            url=ticket_url,
-            data={"ticket": update_payload},
-            timeout_seconds=timeout,
-        )
-    except ZendeskCommentError as exc:
-        if exc.category != "outcome_unknown":
-            raise
+    conflict_retried = False
+    while True:
         try:
-            reconciled_payload, reconciled_status = _request(
-                method="GET", url=ticket_url, timeout_seconds=timeout
+            _updated_payload, put_status = _request(
+                method="PUT",
+                url=ticket_url,
+                data={"ticket": update_payload},
+                timeout_seconds=timeout,
             )
-        except ZendeskCommentError:
+            break
+        except ZendeskCommentError as exc:
+            if exc.error_code == "zendesk_update_conflict" and not conflict_retried:
+                reconciled_payload, reconciled_status = _request(
+                    method="GET", url=ticket_url, timeout_seconds=timeout
+                )
+                reconciled_ticket = _ticket_from_payload(reconciled_payload)
+                reconciled_ticket_status = str(
+                    reconciled_ticket.get("status") or ""
+                ).strip().lower()
+                if reconciled_ticket_status in {"solved", "closed"}:
+                    raise _assignment_error(
+                        "permanent", error_code="zendesk_ticket_closed"
+                    ) from exc
+                reconciled = _route_back_state(
+                    ticket_id=normalized_ticket_id,
+                    ticket=reconciled_ticket,
+                    ai_assignee_id=ai_assignee_id,
+                    ai_group_id=ai_group_id,
+                    source_group_id=restored_group_id,
+                    status_code=reconciled_status,
+                    updated=False,
+                )
+                if reconciled is not None:
+                    return reconciled
+                updated_stamp = str(
+                    reconciled_ticket.get("updated_at") or ""
+                ).strip()
+                if not updated_stamp:
+                    raise _assignment_error(
+                        "outcome_unknown",
+                        error_code="zendesk_ticket_updated_at_missing",
+                    ) from exc
+                update_payload["updated_stamp"] = updated_stamp
+                if _assignment_required_field_missing(reconciled_ticket):
+                    update_payload["custom_fields"] = [
+                        {
+                            "id": int(ZENDESK_ASSIGNMENT_REQUIRED_FIELD_ID),
+                            "value": ZENDESK_ASSIGNMENT_REQUIRED_FIELD_VALUE,
+                        }
+                    ]
+                else:
+                    update_payload.pop("custom_fields", None)
+                conflict_retried = True
+                continue
+            if exc.category != "outcome_unknown":
+                raise
+            try:
+                reconciled_payload, reconciled_status = _request(
+                    method="GET", url=ticket_url, timeout_seconds=timeout
+                )
+            except ZendeskCommentError:
+                raise exc from None
+            reconciled = _route_back_state(
+                ticket_id=normalized_ticket_id,
+                ticket=_ticket_from_payload(reconciled_payload),
+                ai_assignee_id=ai_assignee_id,
+                ai_group_id=ai_group_id,
+                source_group_id=restored_group_id,
+                status_code=reconciled_status,
+                updated=True,
+            )
+            if reconciled is not None and (
+                reconciled.status == "assigned"
+                or reconciled.group_id == restored_group_id
+            ):
+                return reconciled
             raise exc from None
-        reconciled = _route_back_state(
-            ticket_id=normalized_ticket_id,
-            ticket=_ticket_from_payload(reconciled_payload),
-            ai_assignee_id=ai_assignee_id,
-            ai_group_id=ai_group_id,
-            source_group_id=restored_group_id,
-            status_code=reconciled_status,
-            updated=True,
-        )
-        if reconciled is not None and (
-            reconciled.status == "assigned" or reconciled.group_id == restored_group_id
-        ):
-            return reconciled
-        raise exc from None
 
     readback_payload, readback_status = _request(
         method="GET", url=ticket_url, timeout_seconds=timeout

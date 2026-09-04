@@ -4,7 +4,7 @@
   "title": "在 Account 处理失败后触发告警并进入 Human Review",
   "status": "done",
   "owner": "zac",
-  "summary": "增加 AI 故障告警和人工接管机制。",
+  "summary": "增加 AI 故障告警和人工接管机制；Production route-back 对首次 Zendesk safe-update 409 读取最新工单，已人工接管/已回队列则幂等成功，仍由 AI 持有则只使用新 updated_stamp 重试一次，已关闭或再次冲突继续 fail closed。",
   "next_action": "",
   "acceptance_criteria": [
     "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。",
@@ -29,10 +29,18 @@
       "number": 744,
       "url": "https://github.com/ZilingXie/SupportPortal/pull/744",
       "label": "PR #744"
+    },
+    {
+      "type": "test",
+      "label": "Zendesk route-back bounded 409 reconciliation",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_test_scenarios.py",
+      "details": "98 passed + 34 subtests。覆盖首次409后并发人工接管、并发回队列、仍由AI持有时使用fresh updated_stamp单次重试、并发关闭fail closed、第二次409不做第三次PUT；网络outcome_unknown原有GET reconciliation保持。"
     }
   ],
   "source_refs": [
-    "docs/roadmap/meetings.html#ticketing-system-2026-08-10"
+    "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
+    "backend/services/zendesk_ticket_assignment.py",
+    "backend/tests/test_zendesk_ticket_assignment.py"
   ],
   "created_at": "2026-08-10",
   "updated_at": "2026-08-24",
@@ -61,6 +69,11 @@
       "at": "2026-08-24",
       "event": "account_human_review_queue_mismatch_reconciliation",
       "summary": "修复 reply worker 直接写 manual_attention 的 prepare/publish 分支，并在 Account poller 增加 bounded Production reconciliation，处理 automation_status=human_review_required 且 route_status=automated、仍由 AI 持有的历史 case；queued/already_human_owned/outcome_unknown 不重复写 Zendesk。"
+    },
+    {
+      "at": "2026-09-04",
+      "event": "zendesk_route_back_conflict_reconciliation",
+      "summary": "13289的Human Review fallback暴露route-back首次safe-update 409直接失败；增加一次fresh-state协调，已人工接管/已回队列幂等成功，仍由AI持有仅重试一次，关闭或再次冲突fail closed。"
     }
   ],
   "legacy_refs": [
