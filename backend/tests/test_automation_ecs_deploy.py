@@ -337,6 +337,10 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "AUTOMATION_TERRAFORM_BIN" in script
     assert "-lock-timeout=60s" in script
     assert "-lock=false" not in script
+    assert (
+        "'.taskDefinition.containerDefinitions[] | select(.name == $role) "
+        '| .logConfiguration.options["awslogs-group"]\''
+    ) in script
     check_only = script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = script.index("backend.scripts.prompt_release sync")
     register = script.index("aws ecs register-task-definition")

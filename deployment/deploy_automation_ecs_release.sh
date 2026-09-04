@@ -140,7 +140,7 @@ verify_running_task() {
 verify_cloudwatch() {
   local start_ms="$1" role group count
   for role in api route worker; do
-    group="$(jq -r --arg role "${role}" '.containerDefinitions[] | select(.name == $role) | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/${role}.current.json")"
+    group="$(jq -r --arg role "${role}" '.taskDefinition.containerDefinitions[] | select(.name == $role) | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/${role}.current.json")"
     [[ -n "${group}" && "${group}" != "null" ]] || fail "${role} CloudWatch log group is missing"
     count="$(aws logs filter-log-events --region "${REGION}" --log-group-name "${group}" \
       --start-time "${start_ms}" --filter-pattern '?ERROR ?Traceback ?Exception' \
