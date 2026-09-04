@@ -288,6 +288,10 @@ class BuildAutomationEcsReleaseTests(unittest.TestCase):
         self.assertEqual(len(removals), 3)
         self.assertTrue(all("--platform" in call and "linux/amd64" in call for call in builds))
         self.assertTrue(all("oci-archive" in call for call in saves))
+        self.assertEqual(
+            [next(value for value in call if value.startswith("--pull=")) for call in builds],
+            ["--pull=always", "--pull=never", "--pull=never"],
+        )
 
 
 if __name__ == "__main__":
