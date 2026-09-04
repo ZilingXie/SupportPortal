@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -308,6 +310,8 @@ def test_verify_heartbeats_rejects_database_stale_record(tmp_path: Path) -> None
 
 def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_sync() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    main_script = script[script.index("main() {") :]
+    cleanup_script = script[script.index("cleanup() {") : script.index("run_terraform_zero_plan() {")]
     assert "DEPLOY_PRODUCTION_APPROVED" in script
     assert "--check-only" in script
     assert "run_terraform_zero_plan" in script
@@ -317,13 +321,13 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert '[[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"' in script
     assert 'mkdir -p -- "${PROJECT_ROOT}/.deployments"' in script
     assert "validate-suspension-recipients" in script
-    assert script.index("validate-suspension-recipients") < script.index(
+    assert main_script.index("validate-suspension-recipients") < main_script.index(
         'if [[ "${CHECK_ONLY}" = "1" ]]'
     )
-    route_worker = script.index("for role in route worker")
-    heartbeat = script.index('AUTOMATION_HEARTBEAT_DSN="${heartbeat_dsn}" wait_for_heartbeats')
-    api_update = script.index('role="api"')
-    activation = script.index("ACTIVATION_STARTED=1")
+    route_worker = main_script.index("for role in route worker")
+    heartbeat = main_script.index('AUTOMATION_HEARTBEAT_DSN="${heartbeat_dsn}" wait_for_heartbeats')
+    api_update = main_script.index("update_role_if_needed api")
+    activation = main_script.rindex("ACTIVATION_STARTED=1")
     assert route_worker < heartbeat < api_update < activation
     assert "HEARTBEAT_WAIT_TIMEOUT_SECONDS=90" in script
     assert "HEARTBEAT_RETRY_INTERVAL_SECONDS=5" in script
@@ -332,7 +336,7 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "--max-age-seconds 90" in script
     assert "last_error" not in script
     assert "rollback_services" in script
-    assert "requires reconciliation" in script
+    assert "reconciliation" in script
     assert "https://support.stellarix.space/health" in script
     assert "AUTOMATION_TERRAFORM_BIN" in script
     assert "-lock-timeout=60s" in script
@@ -341,15 +345,172 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
         "'.taskDefinition.containerDefinitions[] | select(.name == $role) "
         '| .logConfiguration.options["awslogs-group"]\''
     ) in script
-    check_only = script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
-    prompt_sync = script.index("backend.scripts.prompt_release sync")
+    check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
+    prompt_sync = main_script.index("backend.scripts.prompt_release sync")
     register = script.index("aws ecs register-task-definition")
     optional_tags = script.index("register_args+=(--tags")
     assert 'jq \'length\' "${tags_path}"' in script
     assert optional_tags < register
-    update_service = script.index("aws ecs update-service", script.index("main()"))
+    update_service = main_script.index("update_role_if_needed")
     assert check_only < prompt_sync
     assert check_only < register
     assert check_only < update_service
     assert '"${ACTIVATION_STARTED}" = "0"' in script
-    assert script.index("rollback_services", script.index("cleanup()")) < activation
+    assert "rollback_services" in cleanup_script
+    assert "verify_aws_credential_lifetime" in script
+    assert "aws configure export-credentials --format process" in script
+    assert "run_parallel_post_deploy_checks" in script
+    assert "automation-ecs-deploy-checkpoint-v1" in script
+    assert "automation-ecs-deploy-evidence-v1" in script
+    assert "taskDefinition.status" in script
+    assert "--resume" in script
+    assert "Release evidence:" in script
+    assert 'ROLLBACK_STATUS="succeeded"' in script
+    assert 'ROLLBACK_STATUS="failed"' in script
+    assert 'write_evidence "rollback_incomplete"' in script
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_credential_lifetime_preflight_fails_closed_without_leaking_credentials(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    expiration = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    _write_executable(
+        fake_bin / "aws",
+        """#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1:3] == ["sts", "get-caller-identity"]:
+    print("{}")
+elif sys.argv[1:4] == ["configure", "export-credentials", "--format"]:
+    payload = {"AccessKeyId":"AKIA_TEST_SECRET","SecretAccessKey":"DO_NOT_PRINT","SessionToken":"TOKEN_DO_NOT_PRINT"}
+    if os.environ.get("TEST_EXPIRATION"):
+        payload["Expiration"] = os.environ["TEST_EXPIRATION"]
+    print(json.dumps(payload))
+else:
+    raise SystemExit(2)
+""",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TEST_EXPIRATION": expiration,
+        }
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; REGION=us-east-1; PYTHON_BIN="$2"; AWS_MIN_CREDENTIAL_TTL_SECONDS=1800; verify_aws_credential_lifetime',
+            "bash",
+            str(DEPLOY_SCRIPT),
+            sys.executable,
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "expire too soon" in result.stderr
+    assert "AKIA_TEST_SECRET" not in result.stdout + result.stderr
+    assert "DO_NOT_PRINT" not in result.stdout + result.stderr
+
+    unknown_env = {**env, "AWS_SESSION_TOKEN": "EXPORTED_TEMPORARY_TOKEN"}
+    unknown_env.pop("TEST_EXPIRATION")
+    unknown = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; REGION=us-east-1; PYTHON_BIN="$2"; AWS_MIN_CREDENTIAL_TTL_SECONDS=1800; verify_aws_credential_lifetime',
+            "bash",
+            str(DEPLOY_SCRIPT),
+            sys.executable,
+        ],
+        cwd=ROOT,
+        env=unknown_env,
+        text=True,
+        capture_output=True,
+    )
+    assert unknown.returncode != 0
+    assert "expiration is unavailable" in unknown.stderr
+    assert "EXPORTED_TEMPORARY_TOKEN" not in unknown.stdout + unknown.stderr
+
+    valid_env = {
+        **env,
+        "TEST_EXPIRATION": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    }
+    valid = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; REGION=us-east-1; PYTHON_BIN="$2"; AWS_MIN_CREDENTIAL_TTL_SECONDS=1800; verify_aws_credential_lifetime',
+            "bash",
+            str(DEPLOY_SCRIPT),
+            sys.executable,
+        ],
+        cwd=ROOT,
+        env=valid_env,
+        text=True,
+        capture_output=True,
+    )
+    assert valid.returncode == 0, valid.stderr
+    assert "lifetime preflight passed" in valid.stdout
+    assert "AKIA_TEST_SECRET" not in valid.stdout + valid.stderr
+
+
+def test_resume_checkpoint_revalidates_identity_and_never_persists_dsn(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    promotion = tmp_path / "promotion.json"
+    manifest.write_text('{"release_id":"release-42"}', encoding="utf-8")
+    promotion.write_text('{"source_repository":"local-oci"}', encoding="utf-8")
+    state_dir = tmp_path / "deploy-state"
+    shell = """
+source "$1"
+PYTHON_BIN="$2"
+MANIFEST_PATH="$3"
+PROMOTION_RECORD="$4"
+AUTOMATION_ECS_DEPLOY_STATE_DIR="$5"
+RELEASE_ID=release-42
+GIT_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+PROMPT_RELEASE_ID=prompt-42
+REGION=us-east-1
+CLUSTER=supportportal-production
+API_SERVICE=api
+ROUTE_SERVICE=route
+WORKER_SERVICE=worker
+CHECK_ONLY=0
+RESUME="$6"
+prepare_deploy_workspace
+"""
+    args = [
+        "bash",
+        "-c",
+        shell,
+        "bash",
+        str(DEPLOY_SCRIPT),
+        sys.executable,
+        str(manifest),
+        str(promotion),
+        str(state_dir),
+    ]
+    env = {**os.environ, "PROMPT_RELEASE_TARGET_DSN": "postgresql://must-not-persist"}
+
+    created = subprocess.run([*args, "0"], cwd=ROOT, env=env, text=True, capture_output=True)
+    assert created.returncode == 0, created.stderr
+    assert state_dir.stat().st_mode & 0o777 == 0o700
+    assert (state_dir / "checkpoint.json").stat().st_mode & 0o777 == 0o600
+    resumed = subprocess.run([*args, "1"], cwd=ROOT, env=env, text=True, capture_output=True)
+    assert resumed.returncode == 0, resumed.stderr
+    assert "Validated deploy checkpoint" in resumed.stdout
+    assert "must-not-persist" not in (state_dir / "checkpoint.json").read_text(encoding="utf-8")
+
+    promotion.write_text('{"source_repository":"changed"}', encoding="utf-8")
+    mismatch = subprocess.run([*args, "1"], cwd=ROOT, env=env, text=True, capture_output=True)
+    assert mismatch.returncode != 0
+    assert "checkpoint identity does not match" in mismatch.stderr
