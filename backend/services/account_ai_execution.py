@@ -83,11 +83,14 @@ def invoke_account_responses_text(
     extra_payload: dict[str, Any] | None = None,
     stage: str = "account",
     validate_response: Callable[[LlmTextResult], None] | None = None,
+    max_attempts: int = ACCOUNT_MAX_RETRIES + 1,
 ) -> LlmTextResult:
-    """Invoke and validate an Account response within one four-call budget."""
+    """Invoke and validate an Account response within the requested call budget."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
     pinned = account_profile(profile)
     last_error: Exception | None = None
-    for attempt in range(ACCOUNT_MAX_RETRIES + 1):
+    for attempt in range(max_attempts):
         try:
             response = invoke_responses_text(
                 profile=pinned,
@@ -101,23 +104,23 @@ def invoke_account_responses_text(
             return response
         except Exception as exc:
             last_error = exc
-            if attempt >= ACCOUNT_MAX_RETRIES:
+            if attempt >= max_attempts - 1:
                 break
             LOGGER.warning(
                 "Account AI stage %s failed; retrying attempt %s/%s: %s",
                 stage,
                 attempt + 1,
-                ACCOUNT_MAX_RETRIES + 1,
+                max_attempts,
                 exc,
             )
     if isinstance(last_error, AccountProcessingFailure):
-        last_error.attempt_count = ACCOUNT_MAX_RETRIES + 1
+        last_error.attempt_count = max_attempts
         raise last_error
     raise AccountProcessingFailure(
         "account_ai_invocation_exhausted",
         _failure_detail(last_error) if last_error else "unknown model invocation failure",
         stage=stage,
-        attempt_count=ACCOUNT_MAX_RETRIES + 1,
+        attempt_count=max_attempts,
     ) from last_error
 
 
@@ -128,8 +131,11 @@ def invoke_account_json_payload(
     user_prompt: str,
     extra_payload: dict[str, Any] | None = None,
     stage: str,
+    max_attempts: int = ACCOUNT_MAX_RETRIES + 1,
 ) -> dict[str, Any]:
     """Invoke an Account model and require a JSON object on every attempt."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
     pinned = account_profile(profile)
     if not account_profile_has_primary_credentials(pinned):
         raise AccountProcessingFailure(
@@ -139,7 +145,7 @@ def invoke_account_json_payload(
             attempt_count=0,
         )
     last_error: Exception | None = None
-    for attempt in range(ACCOUNT_MAX_RETRIES + 1):
+    for attempt in range(max_attempts):
         try:
             response = invoke_responses_text(
                 profile=pinned,
@@ -154,20 +160,20 @@ def invoke_account_json_payload(
             return payload
         except Exception as exc:
             last_error = exc
-            if attempt >= ACCOUNT_MAX_RETRIES:
+            if attempt >= max_attempts - 1:
                 break
             LOGGER.warning(
                 "Account AI JSON stage %s failed; retrying attempt %s/%s: %s",
                 stage,
                 attempt + 1,
-                ACCOUNT_MAX_RETRIES + 1,
+                max_attempts,
                 exc,
             )
     raise AccountProcessingFailure(
         "account_ai_structured_output_exhausted",
         _failure_detail(last_error) if last_error else "unknown structured output failure",
         stage=stage,
-        attempt_count=ACCOUNT_MAX_RETRIES + 1,
+        attempt_count=max_attempts,
     ) from last_error
 
 

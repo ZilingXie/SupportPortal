@@ -161,6 +161,15 @@ def strip_generated_customer_greetings(value: object) -> str:
     return "\n\n".join(normalized).strip()
 
 
+def has_generated_customer_greeting(value: object) -> bool:
+    """Return whether a generated body includes an application-owned greeting."""
+    blocks = _split_paragraph_blocks(value)
+    return any(
+        _looks_like_salutation_block(block) or bool(_GENERATED_GREETING_PREFIX_RE.match(block))
+        for block in blocks[:2]
+    )
+
+
 def _looks_like_signature_identity_line(line: str) -> bool:
     if not _SIGNATURE_IDENTITY_LINE_RE.fullmatch(line):
         return False

@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-05 - Persona body becomes immutable with bounded semantic review (p2-144)
+
+- Area or subsystem: Account Automation Persona generation, customer-reply validation, and Worker publication.
+- Prompt or model version: `automation-persona-v25` -> `automation-persona-v26`; new `automation-persona-review-v1`; model profile unchanged (`automation_persona`, currently `gpt-5.6-luna/low`).
+- Reason: ECS Case 13292 received one correct Persona draft containing `we’ll ... within 24 hours`, but the Worker-side ASCII apostrophe detector missed Unicode `’ll` and appended a second 24-hour commitment. The defect exposed a wider ownership problem: deterministic post-processing could change Persona prose after generation.
+- Behavior change: Persona now generates every semantic sentence after the application greeting. A separate Reviewer checks required facts, contradictions, duplication, unsupported claims, and the intent policy; a failed first review supplies structured feedback to the same pinned Persona for one complete rewrite. The second failed review, invalid Reviewer payload, or invocation failure goes to Human Review before publication. Worker no longer appends Suspension/Enablement/Missing-information prose or strips model greetings.
+- Safety boundary: code retains fail-closed checks for empty/signed output, forbidden or invented values, misleading future state, App ID error overclaim, and affirmative Suspension close/reopen claims. Common apostrophes are normalized only in a temporary validation copy, so `'`, `‘`, `’`, `ʼ`, and `＇` have the same negation semantics while customer text remains unchanged.
+- Audit and budget: normal success is one Persona call plus one Reviewer call; one rewrite is at most four logical calls. Reply jobs persist only the passed body and review status/rounds/model/prompt/issue codes; rejected drafts and free-text feedback are not persisted, and `persona_contract_repair` is retired for new renders.
+- Verification: focused Account AI, Persona, Worker, intake, ECS, version-fence, scenario, composer, RAG, and engineer-collaboration regression: 464 passed + 120 subtests, including an exact two-generation/two-review call-budget assertion.
+
 ## 2026-09-04 - Prompt Release activation skips schema DDL
 
 - Area or subsystem: Prompt Release activation in the ECS Production deploy gate.
