@@ -258,6 +258,52 @@ Release，不会 register task definition，也不会 update ECS service。它�
 Manifest 或 Promotion Record。获得单独生产授权后执行同一命令但移除
 `--check-only`。
 
+部署开始前会执行 AWS identity 与凭据寿命预检。可读取 expiration 时默认要求至少
+剩余 2700 秒，并在每次 register/update/wait 边界前重新检查；可通过
+`AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS` 提高门槛。若当前 shell 导出了
+`AWS_SESSION_TOKEN`，但 provider 无法返回 expiration，命令会拒绝开始，避免临时
+凭据在 rollout 或 rollback 中途失效；此时应恢复使用可刷新的 AWS login/provider，
+不得靠降低门槛绕过未知到期时间。
+
+正式部署使用 release-scoped 状态目录：
+
+```text
+.deployments/ecs-deploy-<release_id>/
+  checkpoint.json
+  <role>.old-arn
+  <role>.new-arn
+  <role>.verified
+  evidence.json
+```
+
+首次执行若该目录已存在会 fail closed。确认它属于同一次 release 后，使用相同命令
+追加 `--resume`。恢复会重新验证 Manifest 与 Promotion Record SHA-256、Git commit、
+region/cluster/service identity、已注册 task definition 内容、ECR digest 和当前运行
+task；只有 ECS readback 与目标 revision/digest 完全相同的角色才跳过 update。不得仅凭
+本地 `<role>.verified` marker 判断完成。checkpoint 与 evidence 不保存 DSN、AWS
+credentials、收件人地址或 secret value。状态目录以 `0700`、文件以 `0600` 创建；成功
+后会删除完整 task definition副本和检查日志，只保留恢复/审计所需的 ARN、digest、
+Prompt identity与检查结论。失败时这些中间文件以私有权限保留，供同一次 release恢复。
+
+Route 与 Worker 会先完成 update，然后使用一次 ECS stable waiter共同等待；两者 digest
+和 heartbeat通过后才更新 API。API 稳定后，公网 health/provenance、CloudWatch错误窗口
+和 EC2 backup health作为只读检查并行执行。目标 Prompt sync 后还会从目标数据库执行
+一次只读 validate，确认 activation 前置内容可读且 CLI 没有执行 schema initialization。
+
+成功后统一证据写入：
+
+```text
+.deployments/ecs-deploy-<release_id>/evidence.json
+```
+
+其中包括 commit、Prompt Release build ref/content fingerprint、三个角色的旧/新 task
+definition ARN、期望 digest，以及 Terraform、ECR、收件人合同、heartbeat、public
+health、CloudWatch、EC2 backup和 Prompt activation 状态。失败时保留 checkpoint 和
+失败证据；若激活尚未开始仍按原顺序回滚，若激活已开始或目标已 active，则保持新栈并
+报告 `reconciliation_required`。
+回滚命令或 stable waiter 任一失败时，evidence明确记录 `rollback_incomplete` 和
+`checks.rollback=failed`，不得把已尝试回滚报告成恢复成功。
+
 Terraform 必须为已校验的 `1.9.8`；本机不在 PATH 时通过
 `AUTOMATION_TERRAFORM_BIN=/absolute/path/to/terraform` 指定。零漂移 plan 使用
 DynamoDB backend lock，并在 60 秒内无法取得锁时阻断发布。
@@ -269,7 +315,7 @@ DynamoDB backend lock，并在 60 秒内无法取得锁时阻断发布。
    与完整 `prompt_key + content_sha256` 指纹；目标本地 version remap 允许存在。
 3. 从三个 service 当前 revision 克隆 task definition，只替换 image 和五个 provenance
    字段；逐角色注册新 revision。
-4. 先更新 Route、Worker，等待 stable、核对运行 digest 和最新 heartbeat provenance；
+4. 先更新 Route、Worker，共同等待 stable、核对运行 digest 和最新 heartbeat provenance；
    再更新 API。
 5. 核对公网 live/release/ready、三个运行 digest、CloudWatch 和 EC2 backup。
 6. 全部健康后才激活目标 Prompt Release，并立即 validate/readback active 状态。

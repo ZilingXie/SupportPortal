@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -16,13 +17,34 @@ EC2_BACKUP_URL="${AUTOMATION_EC2_BACKUP_URL:-https://support.stellarix.space/hea
 TERRAFORM_DIR="${AUTOMATION_TERRAFORM_DIR:-${PROJECT_ROOT}/infra/terraform/production}"
 TERRAFORM_BIN="${AUTOMATION_TERRAFORM_BIN:-terraform}"
 CHECK_ONLY=0
+RESUME=0
 TEMP_DIR=""
+STATE_DIR=""
+REMOVE_TEMP_DIR=0
 DEPLOY_STARTED=0
 ACTIVATION_STARTED=0
 DEPLOY_COMPLETE=0
 UPDATED_ROLES=()
 HEARTBEAT_WAIT_TIMEOUT_SECONDS=90
 HEARTBEAT_RETRY_INTERVAL_SECONDS=5
+AWS_MIN_CREDENTIAL_TTL_SECONDS="${AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS:-2700}"
+RELEASE_ID=""
+GIT_COMMIT=""
+PROMPT_RELEASE_ID=""
+BUILD_TIME=""
+REGISTRY_ID=""
+PROMOTION_REPOSITORY=""
+PROMPT_SYNC_STATUS="not_started"
+PROMPT_ACTIVATION_STATUS="not_started"
+SOURCE_PROMPT_STATUS="not_started"
+TERRAFORM_STATUS="not_started"
+ECR_STATUS="not_started"
+SUSPENSION_RECIPIENTS_STATUS="not_started"
+HEARTBEAT_STATUS="not_started"
+PUBLIC_HEALTH_STATUS="not_started"
+CLOUDWATCH_STATUS="not_started"
+EC2_BACKUP_STATUS="not_started"
+ROLLBACK_STATUS="not_started"
 
 log() { printf '[ecs-deploy] %s\n' "$*"; }
 fail() { printf '[ecs-deploy] ERROR: %s\n' "$*" >&2; return 1; }
@@ -32,7 +54,7 @@ usage() {
 Usage:
   ./deployment/deploy_automation_ecs_release.sh \
     --manifest <release-manifest.json> \
-    --promotion-record <promotion-record.json> [--check-only]
+    --promotion-record <promotion-record.json> [--check-only | --resume]
 
 Both modes require the read-only source TICKET_DB_DSN. Deploy mode additionally
 requires DEPLOY_PRODUCTION_APPROVED=1 and PROMPT_RELEASE_TARGET_DSN. DSN values
@@ -41,6 +63,9 @@ Promotion Record.
 
 --check-only performs only read-only validation and never syncs Prompt Releases,
 registers task definitions, or updates ECS services.
+
+--resume reuses a release-scoped checkpoint only after revalidating its input
+fingerprints, registered task definitions, running revisions, and image digests.
 EOF
 }
 
@@ -58,10 +83,88 @@ parse_args() {
       --ec2-backup-url) [[ $# -ge 2 ]] || fail "--ec2-backup-url requires a value"; EC2_BACKUP_URL="$2"; shift 2 ;;
       --terraform-dir) [[ $# -ge 2 ]] || fail "--terraform-dir requires a value"; TERRAFORM_DIR="$2"; shift 2 ;;
       --check-only) CHECK_ONLY=1; shift ;;
+      --resume) RESUME=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1"; return 1 ;;
     esac
   done
+  [[ "${CHECK_ONLY}" = "0" || "${RESUME}" = "0" ]] || fail "--check-only and --resume are mutually exclusive"
+}
+
+file_sha256() {
+  "${PYTHON_BIN}" -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$1"
+}
+
+credential_expiration_epoch() {
+  local exported expiration
+  exported="$(aws configure export-credentials --format process 2>/dev/null || true)"
+  expiration="$(jq -r '.Expiration // empty' <<<"${exported}" 2>/dev/null || true)"
+  unset exported
+  [[ -n "${expiration}" ]] || return 0
+  "${PYTHON_BIN}" -c 'from datetime import datetime; import sys; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "${expiration}"
+}
+
+verify_aws_credential_lifetime() {
+  [[ "${AWS_MIN_CREDENTIAL_TTL_SECONDS}" =~ ^[0-9]+$ ]] || fail "AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS must be a non-negative integer"
+  aws sts get-caller-identity --region "${REGION}" --output json >/dev/null
+  local expiration_epoch now_epoch remaining
+  expiration_epoch="$(credential_expiration_epoch)"
+  if [[ -z "${expiration_epoch}" ]]; then
+    [[ -z "${AWS_SESSION_TOKEN:-}" ]] \
+      || fail "Temporary AWS session expiration is unavailable; use a refreshable AWS provider instead of exported session credentials"
+    log "AWS identity passed; provider did not expose a credential expiration"
+    return 0
+  fi
+  now_epoch="$(date -u +%s)"
+  remaining=$((expiration_epoch - now_epoch))
+  ((remaining >= AWS_MIN_CREDENTIAL_TTL_SECONDS)) \
+    || fail "AWS credentials expire too soon (${remaining}s remaining; require ${AWS_MIN_CREDENTIAL_TTL_SECONDS}s)"
+  log "AWS credential lifetime preflight passed (${remaining}s remaining)"
+}
+
+checkpoint_identity() {
+  local manifest_sha promotion_sha
+  manifest_sha="$(file_sha256 "${MANIFEST_PATH}")"
+  promotion_sha="$(file_sha256 "${PROMOTION_RECORD}")"
+  jq -n -S \
+    --arg schema_version "automation-ecs-deploy-checkpoint-v1" \
+    --arg manifest_sha256 "${manifest_sha}" \
+    --arg promotion_sha256 "${promotion_sha}" \
+    --arg release_id "${RELEASE_ID}" \
+    --arg git_commit "${GIT_COMMIT}" \
+    --arg prompt_release_id "${PROMPT_RELEASE_ID}" \
+    --arg region "${REGION}" \
+    --arg cluster "${CLUSTER}" \
+    --arg api_service "${API_SERVICE}" \
+    --arg route_service "${ROUTE_SERVICE}" \
+    --arg worker_service "${WORKER_SERVICE}" \
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,promotion_sha256:$promotion_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service}}'
+}
+
+prepare_deploy_workspace() {
+  mkdir -p -- "${PROJECT_ROOT}/.deployments"
+  if [[ "${CHECK_ONLY}" = "1" ]]; then
+    TEMP_DIR="$(mktemp -d "${PROJECT_ROOT}/.deployments/ecs-deploy-check.XXXXXX")"
+    REMOVE_TEMP_DIR=1
+    return 0
+  fi
+  STATE_DIR="${AUTOMATION_ECS_DEPLOY_STATE_DIR:-${PROJECT_ROOT}/.deployments/ecs-deploy-${RELEASE_ID}}"
+  if [[ "${RESUME}" = "1" ]]; then
+    [[ -f "${STATE_DIR}/checkpoint.json" ]] || fail "Deploy checkpoint not found for --resume: ${STATE_DIR}"
+    local expected existing
+    expected="$(checkpoint_identity)"
+    existing="$(jq -S . "${STATE_DIR}/checkpoint.json")"
+    [[ "${existing}" = "${expected}" ]] || fail "Deploy checkpoint identity does not match the requested release/environment"
+    TEMP_DIR="${STATE_DIR}"
+    log "Validated deploy checkpoint: ${STATE_DIR}"
+    return 0
+  fi
+  [[ ! -e "${STATE_DIR}" ]] || fail "Deploy checkpoint already exists; use --resume after reviewing ${STATE_DIR}"
+  mkdir -p -- "${STATE_DIR}"
+  chmod 700 "${STATE_DIR}"
+  TEMP_DIR="${STATE_DIR}"
+  checkpoint_identity >"${STATE_DIR}/checkpoint.json.tmp"
+  mv -- "${STATE_DIR}/checkpoint.json.tmp" "${STATE_DIR}/checkpoint.json"
 }
 
 service_name() {
@@ -72,19 +175,106 @@ service_name() {
   esac
 }
 
+add_updated_role() {
+  local candidate="$1" current
+  for current in "${UPDATED_ROLES[@]-}"; do
+    [[ "${current}" != "${candidate}" ]] || return 0
+  done
+  UPDATED_ROLES+=("${candidate}")
+}
+
+read_optional_file() {
+  local path="$1"
+  [[ -f "${path}" ]] && sed -n '1p' "${path}" || true
+}
+
+write_evidence() {
+  local status="$1" role old_arn new_arn verified expected_digest components prompt_build_ref prompt_fingerprint generated_at
+  [[ -n "${STATE_DIR}" && -d "${STATE_DIR}" ]] || return 0
+  components='{}'
+  for role in api route worker; do
+    old_arn="$(read_optional_file "${STATE_DIR}/${role}.old-arn")"
+    new_arn="$(read_optional_file "${STATE_DIR}/${role}.new-arn")"
+    verified="$(read_optional_file "${STATE_DIR}/${role}.verified")"
+    expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest // ""' "${MANIFEST_PATH}" 2>/dev/null || true)"
+    components="$(jq -c \
+      --arg role "${role}" --arg old_arn "${old_arn}" --arg new_arn "${new_arn}" \
+      --arg expected_digest "${expected_digest}" --arg verified "${verified}" \
+      '. + {($role):{old_task_definition:$old_arn,new_task_definition:$new_arn,expected_digest:$expected_digest,runtime_verified:($verified == "passed")}}' \
+      <<<"${components}")"
+  done
+  prompt_build_ref="$(jq -r '.identity.build_ref // ""' "${STATE_DIR}/prompt-sync.json" 2>/dev/null || true)"
+  prompt_fingerprint="$(jq -r '.identity.content_fingerprint // ""' "${STATE_DIR}/prompt-sync.json" 2>/dev/null || true)"
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -n -S \
+    --arg schema_version "automation-ecs-deploy-evidence-v1" \
+    --arg status "${status}" \
+    --arg release_id "${RELEASE_ID}" \
+    --arg git_commit "${GIT_COMMIT}" \
+    --arg generated_at "${generated_at}" \
+    --arg prompt_release_id "${PROMPT_RELEASE_ID}" \
+    --arg prompt_build_ref "${prompt_build_ref}" \
+    --arg prompt_fingerprint "${prompt_fingerprint}" \
+    --arg region "${REGION}" \
+    --arg cluster "${CLUSTER}" \
+    --arg registry_id "${REGISTRY_ID}" \
+    --arg repository "${PROMOTION_REPOSITORY}" \
+    --arg prompt_sync "${PROMPT_SYNC_STATUS}" \
+    --arg prompt_activation "${PROMPT_ACTIVATION_STATUS}" \
+    --arg source_prompt "${SOURCE_PROMPT_STATUS}" \
+    --arg terraform "${TERRAFORM_STATUS}" \
+    --arg ecr "${ECR_STATUS}" \
+    --arg suspension_recipients "${SUSPENSION_RECIPIENTS_STATUS}" \
+    --arg heartbeats "${HEARTBEAT_STATUS}" \
+    --arg public_health "${PUBLIC_HEALTH_STATUS}" \
+    --arg cloudwatch "${CLOUDWATCH_STATUS}" \
+    --arg ec2_backup "${EC2_BACKUP_STATUS}" \
+    --arg rollback "${ROLLBACK_STATUS}" \
+    --argjson components "${components}" \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    >"${STATE_DIR}/evidence.json.tmp"
+  mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
+}
+
+prune_success_artifacts() {
+  local role
+  for role in api route worker; do
+    rm -f -- \
+      "${STATE_DIR}/${role}.current.json" \
+      "${STATE_DIR}/${role}.register.json" \
+      "${STATE_DIR}/${role}.registered.json" \
+      "${STATE_DIR}/${role}.registered-rendered.json" \
+      "${STATE_DIR}/${role}.register.normalized.json" \
+      "${STATE_DIR}/${role}.registered-rendered.normalized.json" \
+      "${STATE_DIR}/${role}.tags.json"
+  done
+  rm -f -- "${STATE_DIR}/public-health.log" "${STATE_DIR}/cloudwatch.log" "${STATE_DIR}/ec2-backup.log"
+}
+
 rollback_services() {
   [[ "${DEPLOY_STARTED}" = "1" && "${ACTIVATION_STARTED}" = "0" ]] || return 0
   log "Deployment failed before Prompt activation; restoring captured task definitions"
-  local index role service old_arn
+  local index role service old_arn failed=0
+  ROLLBACK_STATUS="in_progress"
   for ((index=${#UPDATED_ROLES[@]}-1; index>=0; index--)); do
     role="${UPDATED_ROLES[index]}"
     service="$(service_name "${role}")"
     old_arn="$(<"${TEMP_DIR}/${role}.old-arn")"
-    aws ecs update-service --region "${REGION}" --cluster "${CLUSTER}" \
-      --service "${service}" --task-definition "${old_arn}" >/dev/null || true
-    aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" \
-      --services "${service}" || true
+    if ! aws ecs update-service --region "${REGION}" --cluster "${CLUSTER}" \
+      --service "${service}" --task-definition "${old_arn}" >/dev/null; then
+      failed=1
+    elif ! aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" \
+      --services "${service}"; then
+      failed=1
+    fi
+    rm -f -- "${TEMP_DIR}/${role}.verified"
   done
+  if [[ "${failed}" = "0" ]]; then
+    ROLLBACK_STATUS="succeeded"
+    return 0
+  fi
+  ROLLBACK_STATUS="failed"
+  return 1
 }
 
 cleanup() {
@@ -92,12 +282,21 @@ cleanup() {
   trap - EXIT
   if [[ ${status} -ne 0 ]]; then
     if [[ "${ACTIVATION_STARTED}" = "1" ]]; then
-      printf '[ecs-deploy] ERROR: Prompt activation outcome requires reconciliation; healthy new ECS services were not rolled back.\n' >&2
+      ROLLBACK_STATUS="not_applicable"
+      printf '[ecs-deploy] ERROR: Prompt Release is or may be active; ECS services were not blindly rolled back and require reconciliation.\n' >&2
+      write_evidence "reconciliation_required" || true
     else
-      rollback_services
+      if rollback_services; then
+        write_evidence "failed_before_activation" || true
+      else
+        printf '[ecs-deploy] ERROR: One or more ECS services could not be restored; reconciliation is required.\n' >&2
+        write_evidence "rollback_incomplete" || true
+      fi
     fi
   fi
-  [[ -z "${TEMP_DIR}" || ! -d "${TEMP_DIR}" ]] || rm -rf -- "${TEMP_DIR}"
+  if [[ "${REMOVE_TEMP_DIR}" = "1" && -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
+    rm -rf -- "${TEMP_DIR}"
+  fi
   exit "${status}"
 }
 
@@ -108,6 +307,7 @@ run_terraform_zero_plan() {
   local status=$?
   set -e
   [[ ${status} -eq 0 ]] || fail "Terraform production plan must be zero drift (exit 0, got ${status})"
+  TERRAFORM_STATUS="passed"
 }
 
 read_secret_value() {
@@ -137,6 +337,78 @@ verify_running_task() {
   [[ "${observed_digest}" = "${expected_digest}" ]] || fail "${role} running digest mismatch"
 }
 
+reuse_registered_task_definition() {
+  local role="$1" arn registered_path rendered_path expected_path actual_path
+  [[ "${RESUME}" = "1" && -f "${TEMP_DIR}/${role}.new-arn" && -f "${TEMP_DIR}/${role}.register.json" ]] || return 1
+  arn="$(<"${TEMP_DIR}/${role}.new-arn")"
+  registered_path="${TEMP_DIR}/${role}.registered.json"
+  rendered_path="${TEMP_DIR}/${role}.registered-rendered.json"
+  expected_path="${TEMP_DIR}/${role}.register.normalized.json"
+  actual_path="${TEMP_DIR}/${role}.registered-rendered.normalized.json"
+  aws ecs describe-task-definition --region "${REGION}" --task-definition "${arn}" \
+    --include TAGS >"${registered_path}" || return 1
+  [[ "$(jq -r '.taskDefinition.status // ""' "${registered_path}")" = "ACTIVE" ]] || return 1
+  "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy render-task-definition \
+    --role "${role}" --current "${registered_path}" \
+    --manifest "${MANIFEST_PATH}" --registry-id "${REGISTRY_ID}" --region "${REGION}" \
+    --output "${rendered_path}" >/dev/null || return 1
+  jq -S . "${TEMP_DIR}/${role}.register.json" >"${expected_path}"
+  jq -S . "${rendered_path}" >"${actual_path}"
+  cmp -s "${expected_path}" "${actual_path}" || return 1
+  log "Reusing validated ${role} task definition: ${arn}"
+  return 0
+}
+
+register_task_definition() {
+  local role="$1" tags_path new_arn
+  local -a register_args
+  if reuse_registered_task_definition "${role}"; then
+    return 0
+  fi
+  tags_path="${TEMP_DIR}/${role}.tags.json"
+  jq '.tags // []' "${TEMP_DIR}/${role}.current.json" >"${tags_path}"
+  register_args=(
+    --region "${REGION}"
+    --cli-input-json "file://${TEMP_DIR}/${role}.register.json"
+    --query 'taskDefinition.taskDefinitionArn'
+    --output text
+  )
+  if [[ "$(jq 'length' "${tags_path}")" -gt 0 ]]; then
+    register_args+=(--tags "file://${tags_path}")
+  fi
+  verify_aws_credential_lifetime
+  new_arn="$(aws ecs register-task-definition "${register_args[@]}")"
+  [[ -n "${new_arn}" && "${new_arn}" != "None" ]] || fail "${role} task definition registration failed"
+  printf '%s\n' "${new_arn}" >"${TEMP_DIR}/${role}.new-arn"
+}
+
+update_role_if_needed() {
+  local role="$1" service new_arn expected_digest
+  service="$(service_name "${role}")"
+  new_arn="$(<"${TEMP_DIR}/${role}.new-arn")"
+  expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest' "${MANIFEST_PATH}")"
+  if verify_running_task "${role}" "${service}" "${new_arn}" "${expected_digest}" >/dev/null 2>&1; then
+    add_updated_role "${role}"
+    printf 'passed\n' >"${TEMP_DIR}/${role}.verified"
+    log "${role} already runs the checkpoint revision and digest"
+    return 0
+  fi
+  verify_aws_credential_lifetime
+  aws ecs update-service --region "${REGION}" --cluster "${CLUSTER}" \
+    --service "${service}" --task-definition "${new_arn}" >/dev/null
+  add_updated_role "${role}"
+  rm -f -- "${TEMP_DIR}/${role}.verified"
+}
+
+verify_role_and_record() {
+  local role="$1" service new_arn expected_digest
+  service="$(service_name "${role}")"
+  new_arn="$(<"${TEMP_DIR}/${role}.new-arn")"
+  expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest' "${MANIFEST_PATH}")"
+  verify_running_task "${role}" "${service}" "${new_arn}" "${expected_digest}"
+  printf 'passed\n' >"${TEMP_DIR}/${role}.verified"
+}
+
 verify_cloudwatch() {
   local start_ms="$1" role group count
   for role in api route worker; do
@@ -147,6 +419,51 @@ verify_cloudwatch() {
       --query 'length(events)' --output text)"
     [[ "${count}" = "0" ]] || fail "${role} CloudWatch errors detected after deployment"
   done
+}
+
+verify_public_runtime() {
+  local release_json ready_json
+  curl -fsS "${BASE_URL}/health/live" >/dev/null
+  release_json="$(curl -fsS "${BASE_URL}/health/release")"
+  ready_json="$(curl -fsS "${BASE_URL}/health/ready")"
+  [[ "$(jq -r '.status' <<<"${ready_json}")" = "ok" ]] || fail "ECS readiness check failed"
+  [[ "$(jq -r '.provenance.release_id' <<<"${release_json}")" = "${RELEASE_ID}" ]] || fail "ECS release id mismatch"
+  [[ "$(jq -r '.provenance.git_commit' <<<"${release_json}")" = "${GIT_COMMIT}" ]] || fail "ECS Git commit mismatch"
+  [[ "$(jq -r '.provenance.prompt_release_id' <<<"${release_json}")" = "${PROMPT_RELEASE_ID}" ]] || fail "ECS Prompt Release mismatch"
+  [[ "$(jq -r '.provenance.build_time' <<<"${release_json}")" = "${BUILD_TIME}" ]] || fail "ECS build time mismatch"
+}
+
+run_parallel_post_deploy_checks() {
+  local deployment_start_ms="$1" failed=0 public_pid cloudwatch_pid backup_pid
+  (verify_public_runtime) >"${TEMP_DIR}/public-health.log" 2>&1 &
+  public_pid=$!
+  (verify_cloudwatch "${deployment_start_ms}") >"${TEMP_DIR}/cloudwatch.log" 2>&1 &
+  cloudwatch_pid=$!
+  (curl -fsS "${EC2_BACKUP_URL}" >/dev/null) >"${TEMP_DIR}/ec2-backup.log" 2>&1 &
+  backup_pid=$!
+
+  if wait "${public_pid}"; then
+    PUBLIC_HEALTH_STATUS="passed"
+  else
+    PUBLIC_HEALTH_STATUS="failed"
+    sed -n '1,80p' "${TEMP_DIR}/public-health.log" >&2
+    failed=1
+  fi
+  if wait "${cloudwatch_pid}"; then
+    CLOUDWATCH_STATUS="passed"
+  else
+    CLOUDWATCH_STATUS="failed"
+    sed -n '1,80p' "${TEMP_DIR}/cloudwatch.log" >&2
+    failed=1
+  fi
+  if wait "${backup_pid}"; then
+    EC2_BACKUP_STATUS="passed"
+  else
+    EC2_BACKUP_STATUS="failed"
+    sed -n '1,80p' "${TEMP_DIR}/ec2-backup.log" >&2
+    failed=1
+  fi
+  [[ "${failed}" = "0" ]] || fail "One or more post-deploy read-only checks failed"
 }
 
 wait_for_heartbeats() {
@@ -172,7 +489,7 @@ main() {
   [[ -n "${MANIFEST_PATH}" && -f "${MANIFEST_PATH}" ]] || fail "Release Manifest is required"
   [[ -n "${PROMOTION_RECORD}" && -f "${PROMOTION_RECORD}" ]] || fail "Promotion Record is required"
   [[ -n "${REGION}" ]] || fail "AWS region is required"
-  for command in aws curl git jq; do command -v "${command}" >/dev/null 2>&1 || fail "Missing command: ${command}"; done
+  for command in aws cmp curl git jq; do command -v "${command}" >/dev/null 2>&1 || fail "Missing command: ${command}"; done
   command -v "${TERRAFORM_BIN}" >/dev/null 2>&1 || [[ -x "${TERRAFORM_BIN}" ]] || fail "Terraform runtime is required"
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
   [[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"
@@ -183,48 +500,55 @@ main() {
 
   MANIFEST_PATH="$(cd -- "$(dirname -- "${MANIFEST_PATH}")" && pwd)/$(basename -- "${MANIFEST_PATH}")"
   PROMOTION_RECORD="$(cd -- "$(dirname -- "${PROMOTION_RECORD}")" && pwd)/$(basename -- "${PROMOTION_RECORD}")"
-  mkdir -p -- "${PROJECT_ROOT}/.deployments"
-  TEMP_DIR="$(mktemp -d "${PROJECT_ROOT}/.deployments/ecs-deploy.XXXXXX")"
 
   "${PYTHON_BIN}" -m backend.scripts.automation_release validate --manifest "${MANIFEST_PATH}" >/dev/null
-  local promotion_json registry_id record_region repository release_id git_commit prompt_release_id build_time
+  local promotion_json record_region
   promotion_json="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy validate-promotion \
     --manifest "${MANIFEST_PATH}" --promotion-record "${PROMOTION_RECORD}")"
-  registry_id="$(jq -r '.registry_id' <<<"${promotion_json}")"
+  REGISTRY_ID="$(jq -r '.registry_id' <<<"${promotion_json}")"
   record_region="$(jq -r '.region' <<<"${promotion_json}")"
-  repository="$(jq -r '.repository' <<<"${promotion_json}")"
+  PROMOTION_REPOSITORY="$(jq -r '.repository' <<<"${promotion_json}")"
   [[ "${record_region}" = "${REGION}" ]] || fail "Promotion Record region mismatch"
-  release_id="$(jq -r '.release_id' "${MANIFEST_PATH}")"
-  git_commit="$(jq -r '.git_commit' "${MANIFEST_PATH}")"
-  prompt_release_id="$(jq -r '.prompt_release_id' "${MANIFEST_PATH}")"
-  build_time="$(jq -r '.build_time' "${MANIFEST_PATH}")"
-  [[ "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" = "${git_commit}" ]] || fail "Manifest Git commit is not current HEAD"
+  RELEASE_ID="$(jq -r '.release_id' "${MANIFEST_PATH}")"
+  GIT_COMMIT="$(jq -r '.git_commit' "${MANIFEST_PATH}")"
+  PROMPT_RELEASE_ID="$(jq -r '.prompt_release_id' "${MANIFEST_PATH}")"
+  BUILD_TIME="$(jq -r '.build_time' "${MANIFEST_PATH}")"
+  [[ "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" = "${GIT_COMMIT}" ]] || fail "Manifest Git commit is not current HEAD"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=no)" ]] || fail "Working tree has tracked changes"
+  prepare_deploy_workspace
+  verify_aws_credential_lifetime
 
   run_terraform_zero_plan
   TICKET_DB_DSN="${TICKET_DB_DSN:-}" TICKET_DB_SCHEMA="${TICKET_DB_SCHEMA:-supportportal}" \
-    "${PYTHON_BIN}" -m backend.scripts.prompt_release validate --release-id "${prompt_release_id}" >/dev/null
+    "${PYTHON_BIN}" -m backend.scripts.prompt_release validate --release-id "${PROMPT_RELEASE_ID}" >/dev/null
+  SOURCE_PROMPT_STATUS="passed"
 
-  local role service current_arn expected_digest tag observed_digest
+  local role service current_arn baseline_arn expected_digest tag observed_digest
   for role in api route worker; do
     expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest' "${MANIFEST_PATH}")"
     tag="$(jq -r --arg role "${role}" '.components[$role].tag' "${MANIFEST_PATH}")"
-    observed_digest="$(aws ecr describe-images --region "${REGION}" --registry-id "${registry_id}" \
-      --repository-name "${repository}" --image-ids "imageTag=${tag}" \
+    observed_digest="$(aws ecr describe-images --region "${REGION}" --registry-id "${REGISTRY_ID}" \
+      --repository-name "${PROMOTION_REPOSITORY}" --image-ids "imageTag=${tag}" \
       --query 'imageDetails[0].imageDigest' --output text)"
     [[ "${observed_digest}" = "${expected_digest}" ]] || fail "${role} ECR digest mismatch"
     service="$(service_name "${role}")"
     current_arn="$(aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
       --services "${service}" --query 'services[0].taskDefinition' --output text)"
     [[ -n "${current_arn}" && "${current_arn}" != "None" ]] || fail "${role} service/task definition not found"
-    printf '%s\n' "${current_arn}" >"${TEMP_DIR}/${role}.old-arn"
-    aws ecs describe-task-definition --region "${REGION}" --task-definition "${current_arn}" \
+    if [[ "${RESUME}" = "1" && -f "${TEMP_DIR}/${role}.old-arn" ]]; then
+      baseline_arn="$(<"${TEMP_DIR}/${role}.old-arn")"
+    else
+      baseline_arn="${current_arn}"
+      printf '%s\n' "${baseline_arn}" >"${TEMP_DIR}/${role}.old-arn"
+    fi
+    aws ecs describe-task-definition --region "${REGION}" --task-definition "${baseline_arn}" \
       --include TAGS >"${TEMP_DIR}/${role}.current.json"
     "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy render-task-definition \
       --role "${role}" --current "${TEMP_DIR}/${role}.current.json" \
-      --manifest "${MANIFEST_PATH}" --registry-id "${registry_id}" --region "${REGION}" \
+      --manifest "${MANIFEST_PATH}" --registry-id "${REGISTRY_ID}" --region "${REGION}" \
       --output "${TEMP_DIR}/${role}.register.json" >/dev/null
   done
+  ECR_STATUS="passed"
 
   local suspension_reference suspension_recipients_json
   suspension_reference="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .secrets[] | select(.name == "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON") | .valueFrom' "${TEMP_DIR}/worker.current.json")"
@@ -233,8 +557,10 @@ main() {
     "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
       validate-suspension-recipients >/dev/null
   unset suspension_recipients_json
+  SUSPENSION_RECIPIENTS_STATUS="passed"
 
   curl -fsS "${EC2_BACKUP_URL}" >/dev/null || fail "EC2 /production backup health check failed"
+  EC2_BACKUP_STATUS="passed"
   if [[ "${CHECK_ONLY}" = "1" ]]; then
     log "Check-only passed; no Prompt Release, task definition, or ECS service was changed"
     return 0
@@ -243,41 +569,41 @@ main() {
   PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
     PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release sync \
-      --release-id "${prompt_release_id}" --defer-activation >"${TEMP_DIR}/prompt-sync.json"
-  [[ "$(jq -r '.sync.status' "${TEMP_DIR}/prompt-sync.json")" = "candidate" || "$(jq -r '.sync.status' "${TEMP_DIR}/prompt-sync.json")" = "active" ]] \
+      --release-id "${PROMPT_RELEASE_ID}" --defer-activation >"${TEMP_DIR}/prompt-sync.json"
+  PROMPT_SYNC_STATUS="$(jq -r '.sync.status' "${TEMP_DIR}/prompt-sync.json")"
+  [[ "${PROMPT_SYNC_STATUS}" = "candidate" || "${PROMPT_SYNC_STATUS}" = "active" ]] \
     || fail "Target Prompt Release is not deployable"
+  TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
+    TICKET_DB_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
+    "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
+      --release-id "${PROMPT_RELEASE_ID}" >/dev/null
+  log "Target Prompt Release activation preflight passed without schema initialization"
+  if [[ "${PROMPT_SYNC_STATUS}" = "active" ]]; then
+    ACTIVATION_STARTED=1
+    PROMPT_ACTIVATION_STATUS="active"
+    log "Target Prompt Release is already active; failures require reconciliation rather than blind rollback"
+  fi
 
-  local new_arn tags_path
-  local -a register_args
   for role in api route worker; do
-    tags_path="${TEMP_DIR}/${role}.tags.json"
-    jq '.tags // []' "${TEMP_DIR}/${role}.current.json" >"${tags_path}"
-    register_args=(
-      --region "${REGION}"
-      --cli-input-json "file://${TEMP_DIR}/${role}.register.json"
-      --query 'taskDefinition.taskDefinitionArn'
-      --output text
-    )
-    if [[ "$(jq 'length' "${tags_path}")" -gt 0 ]]; then
-      register_args+=(--tags "file://${tags_path}")
-    fi
-    new_arn="$(aws ecs register-task-definition "${register_args[@]}")"
-    [[ -n "${new_arn}" && "${new_arn}" != "None" ]] || fail "${role} task definition registration failed"
-    printf '%s\n' "${new_arn}" >"${TEMP_DIR}/${role}.new-arn"
+    register_task_definition "${role}"
   done
 
   local deployment_start_ms
-  deployment_start_ms="$(($(date -u +%s) * 1000))"
+  if [[ "${RESUME}" = "1" && -f "${TEMP_DIR}/deployment-start-ms" ]]; then
+    deployment_start_ms="$(<"${TEMP_DIR}/deployment-start-ms")"
+  else
+    deployment_start_ms="$(($(date -u +%s) * 1000))"
+    printf '%s\n' "${deployment_start_ms}" >"${TEMP_DIR}/deployment-start-ms"
+  fi
   DEPLOY_STARTED=1
   for role in route worker; do
-    service="$(service_name "${role}")"
-    new_arn="$(<"${TEMP_DIR}/${role}.new-arn")"
-    aws ecs update-service --region "${REGION}" --cluster "${CLUSTER}" \
-      --service "${service}" --task-definition "${new_arn}" >/dev/null
-    UPDATED_ROLES+=("${role}")
-    aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" --services "${service}"
-    expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest' "${MANIFEST_PATH}")"
-    verify_running_task "${role}" "${service}" "${new_arn}" "${expected_digest}"
+    update_role_if_needed "${role}"
+  done
+  verify_aws_credential_lifetime
+  aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" \
+    --services "${ROUTE_SERVICE}" "${WORKER_SERVICE}"
+  for role in route worker; do
+    verify_role_and_record "${role}"
   done
 
   local dsn_reference heartbeat_dsn
@@ -285,42 +611,35 @@ main() {
   heartbeat_dsn="$(read_secret_value "${dsn_reference}")"
   AUTOMATION_HEARTBEAT_DSN="${heartbeat_dsn}" wait_for_heartbeats
   unset heartbeat_dsn
+  HEARTBEAT_STATUS="passed"
 
-  role="api"
-  service="${API_SERVICE}"
-  new_arn="$(<"${TEMP_DIR}/api.new-arn")"
-  aws ecs update-service --region "${REGION}" --cluster "${CLUSTER}" \
-    --service "${service}" --task-definition "${new_arn}" >/dev/null
-  UPDATED_ROLES+=("api")
-  aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" --services "${service}"
-  expected_digest="$(jq -r '.components.api.digest' "${MANIFEST_PATH}")"
-  verify_running_task api "${service}" "${new_arn}" "${expected_digest}"
+  update_role_if_needed api
+  verify_aws_credential_lifetime
+  aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" --services "${API_SERVICE}"
+  verify_role_and_record api
+  run_parallel_post_deploy_checks "${deployment_start_ms}"
 
-  local release_json ready_json
-  curl -fsS "${BASE_URL}/health/live" >/dev/null
-  release_json="$(curl -fsS "${BASE_URL}/health/release")"
-  ready_json="$(curl -fsS "${BASE_URL}/health/ready")"
-  [[ "$(jq -r '.status' <<<"${ready_json}")" = "ok" ]] || fail "ECS readiness check failed"
-  [[ "$(jq -r '.provenance.release_id' <<<"${release_json}")" = "${release_id}" ]] || fail "ECS release id mismatch"
-  [[ "$(jq -r '.provenance.git_commit' <<<"${release_json}")" = "${git_commit}" ]] || fail "ECS Git commit mismatch"
-  [[ "$(jq -r '.provenance.prompt_release_id' <<<"${release_json}")" = "${prompt_release_id}" ]] || fail "ECS Prompt Release mismatch"
-  [[ "$(jq -r '.provenance.build_time' <<<"${release_json}")" = "${build_time}" ]] || fail "ECS build time mismatch"
-  verify_cloudwatch "${deployment_start_ms}"
-  curl -fsS "${EC2_BACKUP_URL}" >/dev/null || fail "EC2 /production backup health check failed"
-
+  verify_aws_credential_lifetime
   ACTIVATION_STARTED=1
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
     TICKET_DB_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release activate \
-      --release-id "${prompt_release_id}" >"${TEMP_DIR}/prompt-activate.json"
+      --release-id "${PROMPT_RELEASE_ID}" >"${TEMP_DIR}/prompt-activate.json"
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
     TICKET_DB_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
-      --release-id "${prompt_release_id}" >/dev/null
+      --release-id "${PROMPT_RELEASE_ID}" >/dev/null
   [[ "$(jq -r '.release.status' "${TEMP_DIR}/prompt-activate.json")" = "active" ]] \
     || fail "Target Prompt Release activation readback failed"
+  PROMPT_SYNC_STATUS="active"
+  PROMPT_ACTIVATION_STATUS="active"
   DEPLOY_COMPLETE=1
-  log "Deployment verified and target Prompt Release activated: ${release_id}"
+  write_evidence "complete"
+  prune_success_artifacts
+  log "Deployment verified and target Prompt Release activated: ${RELEASE_ID}"
+  log "Release evidence: ${STATE_DIR}/evidence.json"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
