@@ -23,7 +23,7 @@ breaker configuration. Only `task_definition` is ignored.
 
 The ECS cluster, ALB and HTTPS listener, ACM certificate, security groups,
 single CloudWatch log group, SSM parameters, execution/task roles, Graph EFS,
-Redis, and Hermes configuration are data sources or required inputs. This root
+and Hermes configuration are data sources or required inputs. This root
 does not create, update, or delete them. It also contains no Pilot resources,
 task definitions, Secrets Manager resources, ECR lifecycle policy, OIDC
 provider, release-manifest S3 bucket, or CloudWatch alarms.

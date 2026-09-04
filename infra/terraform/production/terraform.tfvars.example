@@ -11,7 +11,6 @@ shared_log_group_name      = "/ecs/supportportal/production"
 shared_task_execution_role_name = "REPLACE"
 shared_task_role_name           = "REPLACE"
 shared_graph_efs_file_system_id = "fs-REPLACE"
-shared_redis_replication_group_id = "REPLACE"
 shared_ssm_parameter_names = [
   "/supportportal/production/account-suspension-internal-email-recipients",
   "/supportportal/production/hermes-base-url",

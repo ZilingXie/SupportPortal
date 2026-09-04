@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T05:30:21Z",
-  "source_base_commit": "1f13334ea2dcc5cddd63747562ffb1dd02c2f199",
-  "registry_digest": "a17155b37aa8d406a527daeb459f04fef6a57c4404507545a1ebfdcc17aa5326",
+  "generated_at": "2026-09-04T06:56:25Z",
+  "source_base_commit": "b07a189bf0f19e76d62b926c9b85cc1e574e0caa",
+  "registry_digest": "8e0feca6fee352735f5d70fd35c5c6e849e8f5c379ce9058628f9898fcd38df1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2269,6 +2269,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "公网三项health通过；Route/Worker heartbeat为当前release且age\u003c1秒、provenance_mismatches为空；CloudWatch API/Route/Worker最近15分钟错误数0/0/0；https://support.stellarix.space/health正常；发布后远程锁定Terraform plan为No changes、exit 0。Worker无Pilot二进制/env/volume/mount，Graph EFS与Suspension secret保留；Archer GET、Graph /me、Zendesk identity探针通过。三组内部邮件JSON均有效To=1/Cc=1；用户确认Enablement保持zhonghuang。全过程未发送邮件、未创建/修改/重放工单。"
         },
         {
+          "type": "deployment",
+          "label": "Unused Production Valkey retirement and zero-drift readback",
+          "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
+          "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
+        },
+        {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
@@ -3398,6 +3404,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Two rollback-adjacent incidents caught and corrected",
           "command": "",
           "details": "① ECS worker td rev13 误基于旧 rev9 生成（回滚主 thread 镜像），立即基于最新 rev12 重新生成 rev14 纠正——register 前必查当前最新 revision；② EC2 up -d 未带部署变量集导致三容器落到 localhost/supportportal-app:unknown 旧镜像（compose 默认值），按部署日志恢复 APP_RUNTIME_IMAGE=52df67fcbbfc 等变量重建纠正——脱离部署脚本操作必须显式携带全部构建变量。另修复 init 容器 stage2 生成的 API_SERVER_KEY 写入共享 EFS .env（override=True 会覆盖 SSM 注入值）——一次性 fix task 删除该行。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes Fargate memory right-sizing revision 3",
+          "command": "aws ecs describe-services/describe-tasks; aws elbv2 describe-target-health; authenticated GET /v1/models; CloudWatch readback 2026-09-04",
+          "details": "依据2026-09-01至09-04指标（CPU平均3.63%/峰值93.27%，内存平均14.68%/峰值15.56%，原6 GiB下约0.96 GiB峰值）保留1 vCPU，仅将task memory由6144 MiB降为2048 MiB。revision 3与revision 2除memory外字节级一致；service rollout COMPLETED且1/1/0，唯一运行task与hermes/memory-core双容器均HEALTHY，两个image digest不变，TG最终仅一个healthy新target，鉴权/v1/models返回200且model_count=1。稳定后CloudWatch无新增异常命中；启动时SQLite delete/WAL偏差在revision 2已存在，非本次引入。Account API/Route/Worker保持revision 28/23/26、1/1/0。预计由约$52.67/月降至$39.69/月，节省约$13/月；回滚点为revision 2。"
         },
         {
           "type": "test",
@@ -6588,7 +6600,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
-        "Production Terraform使用远程加密版本化 state 和 DynamoDB lock，仅 import/manage ECR、Automation target group/listener rule及三 ECS service稳定配置；task_definition指针归发布脚本，线上共享 cluster/ALB/ACM/security group/log/SSM/IAM/EFS/Redis/Hermes不由该 root创建或删除。",
+        "Production Terraform使用远程加密版本化 state 和 DynamoDB lock，仅 import/manage ECR、Automation target group/listener rule及三 ECS service稳定配置；task_definition指针归发布脚本，线上共享 cluster/ALB/ACM/security group/log/SSM/IAM/EFS/Hermes不由该 root创建或删除。",
         "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker完成分类且仅对已有父Ticket的后续事件读取Persona，Automation Worker在ticket.created Processing先持久化父Ticket再固定Persona并执行AI、远端RAG与外部动作；角色之间通过隔离RDS schema内的durable Jobs交接，不依赖Redis/SQS或EC2 runtime。",
         "常规Release先以role tag上传supportportal/preproduction并按digest部署Preproduction，通过验收后复制相同OCI manifest到supportportal/production且禁止rebuild；Preproduction建立前获批的首次Production bootstrap允许从经Manifest验证的本地OCI直接发布，并必须记录source_repository=local-oci及保持digest完全一致。",
         "ECS Production切换后，support.stellarix.space/production及其独立 schema/Redis/worker长期保持为 EC2 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回该 endpoint，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
@@ -6829,6 +6841,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Post-release runtime, dependency and zero-drift gates",
           "command": "public live/release/ready; ECS task/digest and heartbeat readback; CloudWatch 15-minute scan; EC2 backup health; Terraform 1.9.8 plan; one-off Worker revision 26 read-only probes",
           "details": "公网三项health通过；Route/Worker heartbeat为当前release且age\u003c1秒、provenance_mismatches为空；CloudWatch API/Route/Worker最近15分钟错误数0/0/0；https://support.stellarix.space/health正常；发布后远程锁定Terraform plan为No changes、exit 0。Worker无Pilot二进制/env/volume/mount，Graph EFS与Suspension secret保留；Archer GET、Graph /me、Zendesk identity探针通过。三组内部邮件JSON均有效To=1/Cc=1；用户确认Enablement保持zhonghuang。全过程未发送邮件、未创建/修改/重放工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Unused Production Valkey retirement and zero-drift readback",
+          "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
+          "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
         }
       ],
       "source_refs": [
@@ -6982,6 +7000,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-04",
           "event": "ecs_production_release_ready_for_live_cases",
           "summary": "r20260904-1f13334经local-oci获批bootstrap和唯一正式deploy命令上线；三角色、Prompt Release、heartbeat、公网health、CloudWatch、EC2 backup、无Pilot Worker、依赖探针、收件人配置与发布后Terraform零漂移全部通过。技术阻塞已清理，等待用户提供三类全新工单做业务与外部readback；n8n不在本任务范围。"
+        },
+        {
+          "at": "2026-09-04",
+          "event": "unused_production_valkey_retired",
+          "summary": "在30天零业务命令/零键与无ECS消费者证据下，先完成获批的Terraform refresh-only state output清理，再删除supportportal-production-redis和无消费者redis-url参数；删除后业务ECS、公网health与远程锁定零漂移plan均正常。"
         }
       ],
       "legacy_refs": [
@@ -9383,7 +9406,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "engineer-workspace",
       "function_id": "engineer-investigation-reply",
       "created_at": "2026-09-01",
-      "updated_at": "2026-09-01",
+      "updated_at": "2026-09-04",
       "summary": "将本地 podman 的 Hermes 调查 agent 栈（hermes-agent + 腾讯 AgentMemory memory-core，agent-infra 仓库）迁移为 ECS Fargate 独立 service：单 task 双容器 awsvpc 模式 localhost 互通，memory-core 镜像 crane 复制进 ECR 免 Docker Hub 限流，hermes 镜像（含 memory_tencentdb 插件、pilot CLI 钉 sha256、一次性初始化工具）因 qemu 仿真 amd64 下 Node 构建段错误改在 zacBot 原生构建。公网入口 https://supportcenter.stellarix.space/v1（既有 ALB 新增 /v1/* listener rule priority 101，Hermes API_SERVER_KEY Bearer 鉴权，与 RAG 服务同安全模型）。数据全新起步：预生成 admin key（init-admin 支持传入 user_key，消除 volume/key 成对问题）经一次性 init task（run-task + command override，无需 Session Manager 插件）完成 init-admin、team agora-support（team-yipeq84apx）与 investigator agent（agt-yipfo802v8）创建；hermes-home/tdai-data/pilot-creds 三个 EFS Access Point 持久化，task role EFS inline policy 扩白名单 + authorizationConfig iam ENABLED（缺任一即 mount access denied）。生产灰度：EC2 /production（investigation reply 真实消费方，ECS worker 无该链路）.env 注入 ENGINEER_INVESTIGATION_REPLY_BASE_URL=https://supportcenter.stellarix.space/v1、_API_KEY、_TIMEOUT_SECONDS=300 并重建 api/worker×2 三容器；ECS worker td rev14 同步注入三 env（当前无消费方，investigation 链路上 ECS 时直接生效，基于主 thread 最新镜像 rev12 生成）。pilot 凭证首登（device flow）为遗留人工 gate。",
       "next_action": "下一个真实 needs_investigating 工单到达时观察 message_meta.model_name 指向自定义端点及 Hermes 侧回合质量；pilot 凭证首登（ECS Exec 或一次性 task 内 pilot auth login --device）按需执行；调查回合异步化（20s 同步契约 vs 分钟级回合）为二期。",
       "acceptance_criteria": [
@@ -9437,9 +9460,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Two rollback-adjacent incidents caught and corrected",
           "command": "",
           "details": "① ECS worker td rev13 误基于旧 rev9 生成（回滚主 thread 镜像），立即基于最新 rev12 重新生成 rev14 纠正——register 前必查当前最新 revision；② EC2 up -d 未带部署变量集导致三容器落到 localhost/supportportal-app:unknown 旧镜像（compose 默认值），按部署日志恢复 APP_RUNTIME_IMAGE=52df67fcbbfc 等变量重建纠正——脱离部署脚本操作必须显式携带全部构建变量。另修复 init 容器 stage2 生成的 API_SERVER_KEY 写入共享 EFS .env（override=True 会覆盖 SSM 注入值）——一次性 fix task 删除该行。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes Fargate memory right-sizing revision 3",
+          "command": "aws ecs describe-services/describe-tasks; aws elbv2 describe-target-health; authenticated GET /v1/models; CloudWatch readback 2026-09-04",
+          "details": "依据2026-09-01至09-04指标（CPU平均3.63%/峰值93.27%，内存平均14.68%/峰值15.56%，原6 GiB下约0.96 GiB峰值）保留1 vCPU，仅将task memory由6144 MiB降为2048 MiB。revision 3与revision 2除memory外字节级一致；service rollout COMPLETED且1/1/0，唯一运行task与hermes/memory-core双容器均HEALTHY，两个image digest不变，TG最终仅一个healthy新target，鉴权/v1/models返回200且model_count=1。稳定后CloudWatch无新增异常命中；启动时SQLite delete/WAL偏差在revision 2已存在，非本次引入。Account API/Route/Worker保持revision 28/23/26、1/1/0。预计由约$52.67/月降至$39.69/月，节省约$13/月；回滚点为revision 2。"
         }
       ],
-      "history": [],
+      "history": [
+        {
+          "at": "2026-09-04",
+          "event": "hermes_fargate_memory_right_sized",
+          "summary": "Hermes在保持1 vCPU、镜像、EFS、角色、网络与应用配置不变的前提下由6144 MiB缩容到2048 MiB并发布revision 3；ECS、双容器、TG、鉴权和稳定后日志验收通过，预计节省约$13/月。"
+        }
+      ],
       "legacy_ids": [],
       "legacy_refs": [],
       "source_refs": [
