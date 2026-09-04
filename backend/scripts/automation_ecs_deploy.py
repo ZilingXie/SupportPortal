@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -201,29 +200,29 @@ def verify_heartbeats(
         "db_schema": schema,
         "job_namespace": namespace,
     }
-    now = datetime.now(timezone.utc)
     newest: dict[str, dict[str, Any]] = {}
     with psycopg.connect(dsn) as connection, connection.cursor() as cursor:
         cursor.execute(
             sql.SQL(
-                "SELECT role,provenance,last_seen_at FROM {} "
+                "SELECT role,provenance,last_seen_at,clock_timestamp() FROM {} "
                 "WHERE namespace=%s AND role IN ('route','worker')"
             ).format(sql.Identifier(schema, "automation_worker_heartbeats")),
             (namespace,),
         )
-        for role, provenance, last_seen_at in cursor.fetchall():
+        for role, provenance, last_seen_at, observed_at in cursor.fetchall():
             normalized_role = str(role)
             current = newest.get(normalized_role)
             if current is None or last_seen_at > current["last_seen_at"]:
                 newest[normalized_role] = {
                     "provenance": provenance,
                     "last_seen_at": last_seen_at,
+                    "observed_at": observed_at,
                 }
     for role in ("route", "worker"):
         row = newest.get(role)
         if row is None:
             raise ValueError(f"latest {role} heartbeat is missing")
-        age = (now - row["last_seen_at"]).total_seconds()
+        age = (row["observed_at"] - row["last_seen_at"]).total_seconds()
         if age < 0 or age > max_age_seconds:
             raise ValueError(f"latest {role} heartbeat is stale")
         expected = {
