@@ -4,7 +4,7 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-1f13334（main@1f13334ea2dc）：API/Route/Worker revision 28/23/26均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1已激活。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-9bbb898（runtime commit 9bbb898e2f7d）：API/Route/Worker revision 30/25/28均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Prompt activation runtime-DSN schema DDL误调用由PR #1062修复并完成幂等reconciliation。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
   "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
@@ -21,6 +21,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "deployment",
+      "label": "ECS Production Suspension preclaim release and post-release gates",
+      "command": "deployment/deploy_automation_ecs_release.sh for r20260904-9bbb898 plus PR #1062 Prompt reconciliation and post-release readback",
+      "details": "local-oci Promotion Record 三 digest 与 ECR/Manifest 一致；API/Route/Worker revision 30/25/28 的运行 digest 分别为 sha256:06ad72a5ae40c7ceafd487517c2fcc020cc13b386e5c90ed69375b5088c7ec6f、sha256:ddfdc8ee30f8372e0d454699b3320f929ca30396751647a26d5d52d0ce073cd4、sha256:aee868133a588562ee2e7737f985fea7f2a181689bd308140886b3f1728f4f90。公网 ready、Route/Worker heartbeat、CloudWatch 0 error、EC2 backup、Terraform No changes、三类收件人结构与 Archer/Graph/Zendesk 只读探针均通过；目标 Prompt active/validate 通过。发布过程中一次固定 AWS credential 过期造成的混合 revision 已先完整回滚，后改为 AWS CLI 使用可刷新 login provider、仅 Terraform 子进程即时导出凭据后成功发布。"
+    },
     {
       "type": "test",
       "label": "ECS migration closeout implementation gates",
