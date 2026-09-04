@@ -32,9 +32,13 @@ class _FakeRepository:
     def save_account_route_execution(self, execution):
         self.saved_route_executions.append(dict(execution))
 
-    def save_engineer_case(self, engineer_case, new_messages=None, slack_events=None):
+    def save_engineer_case(
+        self, engineer_case, new_messages=None, slack_events=None, hermes_opening_request=None
+    ):
         self.saved_engineer_cases.append(dict(engineer_case))
-        self.engineer_case_saves.append((list(new_messages or []), list(slack_events or [])))
+        self.engineer_case_saves.append(
+            (list(new_messages or []), list(slack_events or []), hermes_opening_request)
+        )
 
     def sync_account_case_comments(self, *, ticket_id, account_case_id, snapshot, synced_at):
         self.comment_sync_baselines.append(
@@ -510,25 +514,22 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(len(repository.saved_engineer_cases), 1)
         self.assertEqual(repository.saved_engineer_cases[0]["thread_id"], "123-1-round-1")
 
-    def test_not_automated_opening_round_persists_messages_and_thread_event(self):
+    def test_not_automated_persists_root_event_and_mock_opening_turn(self):
         repository = _FakeRepository()
-        with self._base_patches():
-            outcome = self._run(
-                repository,
-                route_decision={**DECISION, "route_family": "billing_review", "execution_action": "human_review_required", "not_automated_reason": "outside_scope"},
-                route_classification={},
-            )
+        with patch.dict("os.environ", {"HERMES_CASE_WORKFLOW_MODE": "mock"}), self._base_patches():
+            outcome = self._run(repository, route_decision={
+                **DECISION,
+                "route_family": "billing_review",
+                "execution_action": "human_review_required",
+                "not_automated_reason": "outside_scope",
+            }, route_classification={})
         self.assertEqual(outcome["response_status"], "not_automated")
         self.assertEqual(len(repository.engineer_case_saves), 1)
-        new_messages, slack_events = repository.engineer_case_saves[0]
-        self.assertTrue(
-            any(str(message.get("role") or "") == "engineer_ai" for message in new_messages)
-        )
-        event_types = [str(event.get("event_type") or "") for event in slack_events]
-        self.assertTrue(any(event.get("event") == "opened" for event in slack_events))
-        self.assertIn("engineer_ai_response", event_types)
-        opening_events = [event for event in slack_events if str(event.get("event_type")) == "engineer_ai_response"]
-        self.assertTrue(str(opening_events[0].get("message_text") or "").strip())
+        new_messages, slack_events, opening_request = repository.engineer_case_saves[0]
+        self.assertEqual(new_messages, [])
+        self.assertEqual(slack_events, [{"event": "opened"}])
+        self.assertEqual(opening_request["turn_kind"], "opening")
+        self.assertEqual(opening_request["input_text"], "please verify")
         self.assertEqual(len(repository.comment_sync_baselines), 1)
         self.assertTrue(str(repository.comment_sync_baselines[0]["comments_revision"] or "").strip())
 

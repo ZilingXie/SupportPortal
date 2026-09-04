@@ -11,6 +11,8 @@ wired in the Slack collaboration phase instead.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -274,10 +276,14 @@ async def process_zendesk_comment_trigger(
             message_text="Cx has added a new comment",
             investigation_id=investigation_id or None,
         )
+        hermes_binding = repository.get_hermes_case_binding(engineer_case_id)
         repository.save_engineer_case(
             engineer_case_record,
             new_messages=customer_messages,
             slack_events=[customer_event],
+            hermes_reply_chain_invalidation_at=(
+                timestamp if isinstance(hermes_binding, dict) else None
+            ),
         )
         state = engineer_case_record.get("engineer_agent_state") or {}
         return await _complete(
@@ -1256,7 +1262,6 @@ async def sync_account_case_ticket_status(
     if (
         str(account_case.get("processing_profile") or "staging").strip().lower()
         == "production"
-        and automation_status == "not_automated"
     ):
         client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
         status_engineer_case = (
@@ -1269,7 +1274,7 @@ async def sync_account_case_ticket_status(
             if isinstance(status_engineer_case, dict)
             else ""
         )
-        if engineer_case_id:
+        if engineer_case_id and automation_status == "not_automated":
             active_investigation = (
                 status_engineer_case.get("active_investigation")
                 if isinstance(status_engineer_case.get("active_investigation"), dict)
@@ -1301,9 +1306,84 @@ async def sync_account_case_ticket_status(
         raise ReplySyncError(404, "Account Case not found") from exc
     engineer_case_closed = False
     normalized_zendesk_status = str(zendesk_status or "").strip().lower()
+    hermes_lifecycle_status: str | None = None
+    hermes_binding = None
+    hermes_case_payload = status_engineer_case
+    if isinstance(hermes_case_payload, dict):
+        hermes_case_id = str(hermes_case_payload.get("engineer_case_id") or "").strip()
+        hermes_binding = repository.get_hermes_case_binding(hermes_case_id) if hermes_case_id else None
+    if (
+        isinstance(hermes_binding, dict)
+        and str(result.get("status") or "").strip().lower() != "stale_ignored"
+    ):
+        from backend.services.hermes_case_workflow import (
+            HermesWorkflowConflict,
+            build_mock_sanitized_case_knowledge,
+            close_hermes_case,
+            record_case_solved,
+            reopen_hermes_case,
+        )
+
+        hermes_case_id = str(hermes_binding["engineer_case_id"])
+        if normalized_zendesk_status == "solved":
+            review = record_case_solved(
+                repository,
+                engineer_case_id=hermes_case_id,
+                now_value=_now_iso(),
+            )
+            review_event = build_engineer_case_thread_event(
+                event_id=f"engineer-slack:{hermes_case_id}:close-review:{review['review_id']}",
+                event_type="hermes_close_review_requested",
+                engineer_case_id=hermes_case_id,
+                message_text="Zendesk ticket is solved. Review the Case ledger before closure.",
+                investigation_id=str(hermes_binding["investigation_id"]),
+                conversation_version=int(hermes_binding["conversation_version"]),
+                action="accept_and_finish",
+            )
+            review_event["episode"] = int(hermes_binding["episode"])
+            review_event.update(
+                output_id=str(review["review_id"]),
+                target_version=int(review["ledger_revision"]),
+                target_digest=hashlib.sha256(
+                    json.dumps(
+                        review["review_payload"],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            )
+            repository.save_engineer_case(
+                _engineer_case_payload_to_record(hermes_case_payload),
+                new_messages=[],
+                slack_events=[review_event],
+            )
+            hermes_lifecycle_status = "awaiting_closed"
+        elif normalized_zendesk_status in {"new", "open", "pending", "hold"} and str(
+            hermes_binding.get("status") or ""
+        ) == "awaiting_closed":
+            reopen_hermes_case(
+                repository,
+                engineer_case_id=hermes_case_id,
+                input_text=f"Zendesk ticket reopened with status {normalized_zendesk_status}.",
+                now_value=_now_iso(),
+            )
+            hermes_lifecycle_status = "active"
+        elif normalized_zendesk_status == "closed":
+            ledger = repository.get_hermes_case_ledger(hermes_case_id) or {}
+            try:
+                close_hermes_case(
+                    repository,
+                    engineer_case_id=hermes_case_id,
+                    sanitized_payload=build_mock_sanitized_case_knowledge(ledger),
+                    now_value=_now_iso(),
+                )
+                hermes_lifecycle_status = "awaiting_transport"
+            except HermesWorkflowConflict:
+                hermes_lifecycle_status = "awaiting_close_review"
     if (
         normalized_zendesk_status in {"solved", "closed"}
         and str(result.get("status") or "").strip().lower() != "stale_ignored"
+        and hermes_lifecycle_status not in {"awaiting_closed", "awaiting_close_review"}
     ):
         client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
         active_case_payload = status_engineer_case or (
@@ -1353,9 +1433,14 @@ async def sync_account_case_ticket_status(
         "is_account_case": True,
         "zendesk_ticket_id": normalized_ticket_id,
         "account_case_id": account_case_id,
+        "zendesk_ticket_status": result.get("zendesk_ticket_status"),
+        "automation_status": result.get("automation_status"),
+        "local_ticket_closed": bool(result.get("local_ticket_closed")),
+        "restored_automation_status": result.get("restored_automation_status"),
         "zendesk_status": normalized_zendesk_status,
         "engineer_case_closed": engineer_case_closed,
+        "hermes_lifecycle_status": hermes_lifecycle_status,
         "engineer_slack_event_queued": bool(result.get("engineer_slack_event_queued")),
         "source_updated_at": source_updated_at,
-        "synced_at": result.get("synced_at"),
+        "synced_at": result.get("zendesk_status_synced_at") or result.get("synced_at"),
     }

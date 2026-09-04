@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T18:16:56Z",
-  "source_base_commit": "3659aacdafead4d1d41a99341be451d1e9c29e92",
-  "registry_digest": "2c83bba6c398d710a07fb64e7d5c9cf78dd9ef01c6d2b530ae7a7a96dd6d0d59",
+  "generated_at": "2026-09-04T20:27:22Z",
+  "source_base_commit": "8216f763427fc67ce161617603b718d14e7b36bd",
+  "registry_digest": "4ac2bae635bd0c466b88aede8d25d2bd6ee204781b2a81df28441013f6cc9c42",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2721,6 +2721,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=xieziling@agora.io delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
         },
         {
+          "type": "decision",
+          "label": "Approved PostgreSQL-only implementation boundary",
+          "details": "2026-09-05 用户明确批准实施修订计划：Case 调查账本全部保存到已有 PostgreSQL 表字段，需要人工查看时再渲染；不使用 EFS、文件名或 artifact path，并禁止生产部署、真实外部消息、历史回填和真实 Hermes/AgentRelay 调查。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL-only Hermes Case Workflow implemented",
+          "details": "新增 HermesTurnRequest v1、HermesInvestigationOutput v1、ledger delta v1、human authority v1、CaseKnowledgePromotion v1，Engineer Case opening/mock/feedback/Summarize/Persona/Guardrail/solved/reopen/closed 复用既有 Case、Slack/Zendesk outbox 与审批链；默认 HERMES_CASE_WORKFLOW_MODE=disabled。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted and PostgreSQL verification",
+          "details": "计划及相邻整合套件 324 passed、63 subtests passed，并明确 deselect 两个已在干净 root main 复现的既有 multi-agent 失败；隔离 disposable PostgreSQL schema 7 passed 且无 skip。review 另验证 expired lease 原 request_id 重领、close authority 原子事务、Summary Guardrail 已落库后的 Persona retry、取消 turn 不可重领和显式 sanitization attestation。"
+        },
+        {
+          "type": "decision",
+          "label": "External acceptance intentionally not run",
+          "details": "未部署 Production，未运行 preproduction mock canary，未发送真实 Slack/Zendesk/客户消息，未执行真实 Hermes/AgentRelay 调查、历史回填、L0 capture 或真实知识晋升。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -3064,7 +3084,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 22,
+      "task_count": 23,
       "done_count": 10,
       "blocked_count": 0
     },
@@ -10348,6 +10368,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-146",
+      "title": "Hermes Case Workflow PostgreSQL 闭环",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "created_at": "2026-09-05",
+      "updated_at": "2026-09-05",
+      "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。",
+      "next_action": "代码与本地 PostgreSQL 验证完成后保持 workflow 默认 disabled；等待单独授权执行 preproduction mock canary、Production schema migration/activation、真实 Slack/Zendesk readback、真实 Hermes/AgentRelay 接入和 promotion sink 验收。",
+      "acceptance_criteria": [
+        "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
+        "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
+        "HermesTurnRequest v1、HermesInvestigationOutput v1、ledger delta、human authority 与 CaseKnowledgePromotion v1 使用严格 typed contract；mock 直接调用统一 output application handler，typed callback 鉴权且幂等。",
+        "当前 frozen summary 仅在规范化完整值精确等于 Investigation result: test 时 Summary Guardrail pass 且 reason=test；Persona、确定性客户回复检查、人工 Approve、Zendesk revision/readback 和幂等 outbox 均不能绕过。",
+        "Case 账本只保存 PostgreSQL 五段语义字段和 revision；读取时渲染 Markdown，不存在文件名、artifact path、EFS 或 Git Markdown。误判方向保留并标记纠正证据。",
+        "solved 仅保存 close review draft，reopen 复用同 Case/Slack thread/Markdown renderer/session 并递增 episode，closed 仅在 review/guardrail/sanitization 有效时创建 awaiting_transport promotion；调查期间不产生 L0。",
+        "真实 preproduction/production、Hermes、AgentRelay、Slack/Zendesk 和知识 sink 未经单独授权不执行，未运行项与风险在最终报告中明确列出。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Approved PostgreSQL-only implementation boundary",
+          "details": "2026-09-05 用户明确批准实施修订计划：Case 调查账本全部保存到已有 PostgreSQL 表字段，需要人工查看时再渲染；不使用 EFS、文件名或 artifact path，并禁止生产部署、真实外部消息、历史回填和真实 Hermes/AgentRelay 调查。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL-only Hermes Case Workflow implemented",
+          "details": "新增 HermesTurnRequest v1、HermesInvestigationOutput v1、ledger delta v1、human authority v1、CaseKnowledgePromotion v1，Engineer Case opening/mock/feedback/Summarize/Persona/Guardrail/solved/reopen/closed 复用既有 Case、Slack/Zendesk outbox 与审批链；默认 HERMES_CASE_WORKFLOW_MODE=disabled。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted and PostgreSQL verification",
+          "details": "计划及相邻整合套件 324 passed、63 subtests passed，并明确 deselect 两个已在干净 root main 复现的既有 multi-agent 失败；隔离 disposable PostgreSQL schema 7 passed 且无 skip。review 另验证 expired lease 原 request_id 重领、close authority 原子事务、Summary Guardrail 已落库后的 Persona retry、取消 turn 不可重领和显式 sanitization attestation。"
+        },
+        {
+          "type": "decision",
+          "label": "External acceptance intentionally not run",
+          "details": "未部署 Production，未运行 preproduction mock canary，未发送真实 Slack/Zendesk/客户消息，未执行真实 Hermes/AgentRelay 调查、历史回填、L0 capture 或真实知识晋升。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "event": "created",
+          "summary": "创建独立 p2-146 承接 Hermes Case Workflow PostgreSQL-only 实现，不重开 p2-113。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "implementation_verified",
+          "summary": "完成默认 disabled 的 PostgreSQL-only workflow、typed callback/authority transport、版本围栏与生命周期本地验证；Task 因外部验收未授权继续保持 active。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-113"
+      ],
+      "source_refs": [
+        "backend/services/automation_account_intake.py",
+        "backend/services/automation_engineer_collab.py",
+        "backend/services/hermes_case_workflow.py",
+        "backend/repositories/hermes_case_repository.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/worker.py",
+        "backend/automation_ecs_api.py"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -15700,7 +15791,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production Non automated Case（含 technical 类）会创建一个 active Engineer Case，并在创建时自动生成确定性 opening investigation 回合（零 LLM）；SupportPortal 直接发送到固定 Slack Channel 并持久化 thread binding，n8n 只校验并转发固定 Team/Channel/thread 内的 `@bot` 消息与按钮交互。`@bot` 消息进入 **Hermes 调查回合**（ECS Hermes agent 端点 + 腾讯 AgentMemory 团队记忆的自主调查；消息是调查输入之一而非唯一技术事实来源）；Hermes 自报调查结论就绪后由 **automation-persona 自动组装客户回复**（engineer_investigation_reply intent：调查结论是唯一技术事实权威、单层 Hi {客户名} 问候、禁止引入结论之外的标识符），Draft 经 Guardrail 和 Final Approve 发布为 Zendesk public comment。客户新评论只更新 Case 上下文、使旧 Draft/审批失效并在原 thread 提示 `Cx has added a new comment`，不会自动调用 AI；下一次 `@bot` 才基于最新上下文生成新的调查回合。Zendesk status sync 会将真实状态变化通知发送到同一 Case thread，不触发 AI 或客户交付。发布一轮后 Engineer Case、派单和 thread 继续保持活跃。",
+        "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过默认关闭的 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期。",
         "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v26 Persona 首封只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复，经 review-v1 语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],

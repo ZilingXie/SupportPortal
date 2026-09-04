@@ -512,6 +512,126 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_support_engineer_slack_events_root_thread
       AND slack_channel_id IS NOT NULL
       AND slack_thread_ts IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS support_hermes_case_bindings (
+    engineer_case_id TEXT PRIMARY KEY REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    investigation_id TEXT NOT NULL,
+    hermes_conversation_key TEXT NOT NULL UNIQUE,
+    hermes_session_id TEXT,
+    binding_version INTEGER NOT NULL DEFAULT 1,
+    episode INTEGER NOT NULL DEFAULT 1 CHECK (episode >= 1),
+    conversation_version INTEGER NOT NULL DEFAULT 0 CHECK (conversation_version >= 0),
+    current_output_id TEXT,
+    current_ledger_revision INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK (status IN ('active', 'awaiting_closed', 'closed')),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_case_ledgers (
+    engineer_case_id TEXT PRIMARY KEY REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    problem_description TEXT NOT NULL DEFAULT '',
+    investigation_process TEXT NOT NULL DEFAULT '',
+    misjudgment_corrections TEXT NOT NULL DEFAULT '',
+    current_conclusion_next_steps TEXT NOT NULL DEFAULT '',
+    "references" TEXT NOT NULL DEFAULT '',
+    episode INTEGER NOT NULL DEFAULT 1 CHECK (episode >= 1),
+    revision INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK (status IN ('active', 'awaiting_closed', 'closed')),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_turn_requests (
+    request_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    request_payload JSONB NOT NULL,
+    turn_type TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'active', 'completed', 'cancelled')),
+    episode INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    hermes_session_id TEXT,
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_hermes_turn_requests_claim
+    ON support_hermes_turn_requests (status, created_at, request_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_hermes_turn_requests_one_active
+    ON support_hermes_turn_requests (engineer_case_id) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS support_hermes_outputs (
+    output_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    output_payload JSONB NOT NULL,
+    accepted BOOLEAN NOT NULL,
+    rejection_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_rejection_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    output_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    engineer_case_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_summary_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    episode INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    output_id TEXT NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('frozen', 'superseded')),
+    guardrail_decision TEXT,
+    guardrail_reason TEXT,
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_human_authority_events (
+    authority_event_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    event_payload JSONB NOT NULL,
+    episode INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_close_reviews (
+    review_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    episode INTEGER NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    review_payload JSONB NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_hermes_case_promotions (
+    promotion_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    episode INTEGER NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    promotion_payload JSONB NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('awaiting_transport', 'invalidated')),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     account_id TEXT PRIMARY KEY,
     email TEXT,

@@ -14,7 +14,15 @@ from uuid import NAMESPACE_URL, uuid5
 
 ENGINEER_SLACK_SCHEMA_VERSION = 1
 SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
-_SLACK_ACTIONS = frozenset({"guardrail", "final_approve"})
+_SLACK_ACTIONS = frozenset({
+    "summarize",
+    "guardrail",
+    "final_approve",
+    "authorize_round",
+    "accept_and_finish",
+    "start_suggested_round",
+    "stop_investigation",
+})
 
 
 @dataclass(frozen=True)
@@ -183,33 +191,96 @@ def _action_blocks(event: dict[str, Any]) -> list[dict[str, Any]] | None:
     if action not in _SLACK_ACTIONS:
         raise EngineerSlackDeliveryError("engineer_slack_action_invalid")
     investigation_id = str(event.get("investigation_id") or "").strip()
-    try:
-        draft_version = int(event.get("draft_version") or 0)
-    except (TypeError, ValueError) as exc:
-        raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid") from exc
-    if not investigation_id or draft_version < 1:
-        raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
-    value = json.dumps(
-        {
-            "action": action,
-            "investigation_id": investigation_id,
-            "draft_version": draft_version,
-            "guardrail_id": str(event.get("guardrail_id") or "").strip() or None,
-            "guardrail_version": str(event.get("guardrail_version") or "").strip() or None,
-        },
-        separators=(",", ":"),
-    )
+    value_payload: dict[str, Any] = {"action": action, "investigation_id": investigation_id}
+    if action in {"guardrail", "final_approve"}:
+        try:
+            draft_version = int(event.get("draft_version") or 0)
+        except (TypeError, ValueError) as exc:
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid") from exc
+        if not investigation_id or draft_version < 1:
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        value_payload.update(
+            draft_version=draft_version,
+            guardrail_id=str(event.get("guardrail_id") or "").strip() or None,
+            guardrail_version=str(event.get("guardrail_version") or "").strip() or None,
+        )
+    elif action == "summarize":
+        required = ("output_id", "output_digest", "episode", "conversation_version")
+        if not investigation_id or any(event.get(field) in (None, "") for field in required):
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        value_payload.update({field: event[field] for field in required})
+    else:
+        required = ("episode", "conversation_version")
+        if not investigation_id or any(event.get(field) in (None, "") for field in required):
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        value_payload.update({field: event[field] for field in required})
+        target_fields = ("output_id", "target_version", "target_digest")
+        supplied_target_fields = [event.get(field) not in (None, "") for field in target_fields]
+        if any(supplied_target_fields) and not all(supplied_target_fields):
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        if all(supplied_target_fields):
+            value_payload.update({field: event[field] for field in target_fields})
+    labels = {
+        "summarize": "Summarize",
+        "guardrail": "Run guardrail",
+        "final_approve": "Approve & publish",
+        "authorize_round": "Authorize round",
+        "accept_and_finish": "Accept and finish",
+        "start_suggested_round": "Start suggested round",
+        "stop_investigation": "Stop investigation",
+    }
     button: dict[str, Any] = {
         "type": "button",
         "text": {
             "type": "plain_text",
-            "text": "Approve & publish" if action == "final_approve" else "Run guardrail",
+            "text": labels[action],
         },
         "action_id": action,
-        "value": value,
+        "value": json.dumps(value_payload, separators=(",", ":")),
     }
     if action == "final_approve":
         button["style"] = "primary"
+    buttons = [button]
+    if action == "summarize":
+        authority_actions = event.get("authority_actions") or []
+        if not isinstance(authority_actions, list):
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        for item in authority_actions:
+            if not isinstance(item, dict):
+                raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+            authority_action = str(item.get("action") or "").strip()
+            if authority_action not in {
+                "authorize_round",
+                "accept_and_finish",
+                "start_suggested_round",
+                "stop_investigation",
+            }:
+                raise EngineerSlackDeliveryError("engineer_slack_action_invalid")
+            try:
+                target_version = int(item.get("target_version") or 0)
+            except (TypeError, ValueError) as exc:
+                raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid") from exc
+            target_digest = str(item.get("target_digest") or "").strip()
+            output_id = str(event.get("output_id") or "").strip()
+            if target_version < 1 or not target_digest or not output_id:
+                raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+            authority_value = {
+                "action": authority_action,
+                "investigation_id": investigation_id,
+                "output_id": output_id,
+                "episode": event["episode"],
+                "conversation_version": event["conversation_version"],
+                "target_version": target_version,
+                "target_digest": target_digest,
+            }
+            buttons.append(
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": labels[authority_action]},
+                    "action_id": authority_action,
+                    "value": json.dumps(authority_value, separators=(",", ":")),
+                }
+            )
     message_text = str(event.get("message_text") or "").strip()
     sections = [
         {
@@ -218,7 +289,7 @@ def _action_blocks(event: dict[str, Any]) -> list[dict[str, Any]] | None:
         }
         for offset in range(0, len(message_text), 3000)
     ]
-    return [*sections, {"type": "actions", "elements": [button]}]
+    return [*sections, {"type": "actions", "elements": buttons}]
 
 
 def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[str, Any]:

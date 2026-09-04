@@ -23,6 +23,7 @@ from backend.services.engineer_slack import (
     engineer_slack_configured,
     post_engineer_slack_event,
 )
+from backend.services.hermes_case_workflow import create_opening_turn
 
 
 DIRECT_ENV = {
@@ -241,6 +242,73 @@ class EngineerSlackContractTests(unittest.TestCase):
         self.assertEqual(payload["blocks"][-1]["elements"][0]["action_id"], "guardrail")
         self.assertEqual(result["slack_thread_ts"], "100.200")
 
+    def test_hermes_output_has_only_summarize_action_with_immutable_lineage(self) -> None:
+        event = build_engineer_case_thread_event(
+            event_id="event-hermes-output",
+            event_type="hermes_investigation_output",
+            engineer_case_id="EC-1",
+            message_text="Investigation result: test",
+            investigation_id="EC-1-round-1",
+            conversation_version=0,
+            action="summarize",
+        )
+        event.update(
+            output_id="output-1",
+            output_digest="digest-1",
+            episode=1,
+        )
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.201"}),
+        ) as urlopen:
+            post_engineer_slack_event(event, thread_ts="100.200")
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        button = payload["blocks"][-1]["elements"][0]
+        self.assertEqual(button["action_id"], "summarize")
+        value = json.loads(button["value"])
+        self.assertEqual(
+            set(value),
+            {"action", "investigation_id", "output_id", "output_digest", "episode", "conversation_version"},
+        )
+        self.assertEqual(value["action"], "summarize")
+
+    def test_round_plan_adds_typed_authority_button_without_reusing_summarize(self) -> None:
+        event = build_engineer_case_thread_event(
+            event_id="event-hermes-plan",
+            event_type="hermes_investigation_output",
+            engineer_case_id="EC-1",
+            message_text="Proposed round plan",
+            investigation_id="EC-1-round-1",
+            conversation_version=2,
+            action="summarize",
+        )
+        event.update(
+            output_id="output-plan-1",
+            output_digest="summary-digest",
+            episode=1,
+            authority_actions=[{
+                "action": "authorize_round",
+                "target_version": 3,
+                "target_digest": "plan-digest",
+            }],
+        )
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.201"}),
+        ) as urlopen:
+            post_engineer_slack_event(event, thread_ts="100.200")
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        buttons = payload["blocks"][-1]["elements"]
+        self.assertEqual([item["action_id"] for item in buttons], ["summarize", "authorize_round"])
+        summarize = json.loads(buttons[0]["value"])
+        authority = json.loads(buttons[1]["value"])
+        self.assertNotIn("target_digest", summarize)
+        self.assertEqual(authority["target_digest"], "plan-digest")
+        self.assertEqual(authority["target_version"], 3)
+        self.assertEqual(authority["output_id"], "output-plan-1")
+
     def test_action_text_is_split_to_slack_section_limit(self) -> None:
         event = build_engineer_case_thread_event(
             event_id="event-long-action",
@@ -360,6 +428,119 @@ class EngineerSlackOutboxRepositoryTests(unittest.TestCase):
 
 
 class EngineerSlackWorkerTests(unittest.TestCase):
+    def test_root_binding_precedes_mock_output_in_same_thread(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket, engineer_case = _ticket_and_case()
+        engineer_case["thread_id"] = "12874-1-round-1"
+        repository.save_ticket(ticket)
+        opening = create_opening_turn(
+            engineer_case_id=str(engineer_case["engineer_case_id"]),
+            client_ticket_id=str(ticket["ticket_id"]),
+            investigation_id=str(engineer_case["thread_id"]),
+            problem_description="Callback never fires.",
+            now_value="2026-09-05T08:00:00Z",
+        )
+        repository.save_engineer_case(
+            engineer_case,
+            slack_events=[_root_event(engineer_case)],
+            hermes_opening_request=opening.model_dump(mode="json"),
+        )
+        calls: list[tuple[str, str | None]] = []
+
+        def post(event, *, thread_ts=None):
+            calls.append((str(event["event_type"]), thread_ts))
+            message_ts = "100.200" if event["event_type"] == "engineer_case_opened" else "100.201"
+            return {
+                "event_id": event["event_id"],
+                "status": "delivered",
+                "failure_code": None,
+                "slack_channel_id": "C-TEST",
+                "slack_message_ts": message_ts,
+                "slack_thread_ts": thread_ts or message_ts,
+            }
+
+        environment = {
+            **DIRECT_ENV,
+            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production",
+            "HERMES_CASE_WORKFLOW_MODE": "mock",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_engineer_slack_event", side_effect=post):
+            worker._drain_engineer_slack_events(limit=20)
+            self.assertEqual(calls, [("engineer_case_opened", None)])
+            self.assertEqual(worker._drain_mock_hermes_turns(limit=20), 1)
+            worker._drain_engineer_slack_events(limit=20)
+
+        self.assertEqual(
+            calls,
+            [
+                ("engineer_case_opened", None),
+                ("hermes_investigation_output", "100.200"),
+            ],
+        )
+        events = repository.list_engineer_slack_events(
+            statuses=("delivered",), limit=20
+        )
+        hermes_event = next(
+            row["payload"] for row in events if row["event_type"] == "hermes_investigation_output"
+        )
+        self.assertEqual(hermes_event["message_text"], "Investigation result: test")
+        self.assertEqual(hermes_event["action"], "summarize")
+
+    def test_mock_worker_reclaims_the_same_request_after_an_expired_lease(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket, engineer_case = _ticket_and_case()
+        engineer_case["thread_id"] = "12874-1-round-1"
+        repository.save_ticket(ticket)
+        opening = create_opening_turn(
+            engineer_case_id=str(engineer_case["engineer_case_id"]),
+            client_ticket_id=str(ticket["ticket_id"]),
+            investigation_id=str(engineer_case["thread_id"]),
+            problem_description="Callback never fires.",
+            now_value="2026-09-05T08:00:00Z",
+        )
+        repository.save_engineer_case(
+            engineer_case,
+            slack_events=[_root_event(engineer_case)],
+            hermes_opening_request=opening.model_dump(mode="json"),
+        )
+
+        def post(event, *, thread_ts=None):
+            message_ts = "100.200" if event["event_type"] == "engineer_case_opened" else "100.201"
+            return {
+                "event_id": event["event_id"],
+                "status": "delivered",
+                "failure_code": None,
+                "slack_channel_id": "C-TEST",
+                "slack_message_ts": message_ts,
+                "slack_thread_ts": thread_ts or message_ts,
+            }
+
+        environment = {
+            **DIRECT_ENV,
+            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production",
+            "HERMES_CASE_WORKFLOW_MODE": "mock",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_engineer_slack_event", side_effect=post):
+            worker._drain_engineer_slack_events(limit=20)
+            first_claim = repository.claim_hermes_turn(
+                request_id=opening.request_id,
+                owner_token="crashed-worker",
+                claimed_at="2020-01-01T00:00:00+00:00",
+                lease_expires_at="2020-01-01T00:01:00+00:00",
+            )
+            self.assertEqual(first_claim["request_id"], opening.request_id)
+            self.assertEqual(worker._drain_mock_hermes_turns(limit=20), 1)
+
+        turns = repository.list_hermes_turn_requests(str(engineer_case["engineer_case_id"]))
+        self.assertEqual(turns[0]["request_id"], opening.request_id)
+        self.assertEqual(turns[0]["status"], "completed")
+
     def test_health_warning_is_production_only(self) -> None:
         missing = {key: "" for key in DIRECT_ENV}
         with patch.dict(

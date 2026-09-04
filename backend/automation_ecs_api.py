@@ -36,6 +36,13 @@ from backend.services.automation_ecs_store import (
     IntakeConflictError,
     create_automation_ecs_store,
 )
+from backend.services.hermes_case_workflow import (
+    HERMES_OUTPUT_VERSION,
+    HERMES_TURN_REQUEST_VERSION,
+    HermesInvestigationOutput,
+    apply_hermes_output,
+    hermes_workflow_mode,
+)
 
 
 class IntakeTokenMiddleware:
@@ -270,6 +277,14 @@ def _require_n8n_request_token(
         raise HTTPException(status_code=401, detail="invalid automation execution token")
 
 
+def _require_hermes_callback_token(
+    callback_token: str | None = Header(default=None, alias="X-Hermes-Callback-Token"),
+) -> None:
+    expected = str(os.getenv("HERMES_CALLBACK_TOKEN") or "").strip()
+    if not expected or not hmac.compare_digest(str(callback_token or ""), expected):
+        raise HTTPException(status_code=401, detail="invalid Hermes callback token")
+
+
 def create_app(    *,
     settings: AutomationEcsSettings | None = None,
     store: AutomationEcsStore | None = None,
@@ -390,7 +405,17 @@ def create_app(    *,
 
     @app.get(f"{base}/health/release")
     async def release() -> dict[str, Any]:
-        return {"status": "ok", "provenance": runtime.provenance().model_dump(mode="json")}
+        mode = hermes_workflow_mode()
+        return {
+            "status": "ok",
+            "provenance": runtime.provenance().model_dump(mode="json"),
+            "hermes_case_workflow": {
+                "mode": mode,
+                "turn_contract_version": HERMES_TURN_REQUEST_VERSION,
+                "output_contract_version": HERMES_OUTPUT_VERSION,
+                "producer_contract_version": "v1" if mode == "mock" else None,
+            },
+        }
 
     @app.get(f"{base}/health/ready")
     async def ready() -> dict[str, Any]:
@@ -746,6 +771,19 @@ def create_app(    *,
             return await handle_slack_engineer_action(_engineer_ticket_repository(), payload)
         except ReplySyncError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    @app.post(
+        f"{base}/api/integrations/hermes/callbacks",
+        dependencies=[Depends(_require_hermes_callback_token)],
+    )
+    async def ecs_post_hermes_callback(
+        output: HermesInvestigationOutput,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            apply_hermes_output,
+            _engineer_ticket_repository(),
+            output,
+        )
 
     ui_root = FilePath(__file__).resolve().parents[1] / "ui"
     if admin_data_reader is not None:

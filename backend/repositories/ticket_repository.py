@@ -47,6 +47,10 @@ from backend.services.production_automation_classification_email import (
     build_production_automation_classification_email,
 )
 from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
+from backend.repositories.hermes_case_repository import (
+    InMemoryHermesCaseRepositoryMixin,
+    PostgresHermesCaseRepositoryMixin,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -2057,6 +2061,8 @@ class TicketRepository(Protocol):
         new_messages: list[dict[str, Any]] | None = None,
         slack_events: list[dict[str, Any]] | None = None,
         zendesk_delivery: dict[str, Any] | None = None,
+        hermes_opening_request: dict[str, Any] | None = None,
+        hermes_reply_chain_invalidation_at: str | None = None,
     ) -> None:
         ...
 
@@ -2091,6 +2097,104 @@ class TicketRepository(Protocol):
     def resolve_engineer_slack_thread_binding(
         self, *, slack_channel_id: str, slack_thread_ts: str
     ) -> dict[str, Any] | None:
+        ...
+
+    def start_hermes_case(self, request: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def get_hermes_case_binding(self, engineer_case_id: str) -> dict[str, Any] | None:
+        ...
+
+    def get_hermes_case_ledger(self, engineer_case_id: str) -> dict[str, Any] | None:
+        ...
+
+    def get_hermes_output(self, output_id: str) -> dict[str, Any] | None:
+        ...
+
+    def get_hermes_rejection_receipt(self, output_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_hermes_turn_requests(
+        self, engineer_case_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def claim_next_hermes_turn(
+        self, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def claim_hermes_turn(
+        self, *, request_id: str, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def apply_hermes_output(
+        self, output: dict[str, Any], slack_event: dict[str, Any]
+    ) -> dict[str, Any]:
+        ...
+
+    def freeze_hermes_summary(
+        self, engineer_case_id: str, *, snapshot_id: str, frozen_at: str
+    ) -> dict[str, Any]:
+        ...
+
+    def save_hermes_summary_guardrail(
+        self,
+        *,
+        snapshot_id: str,
+        expected_episode: int,
+        expected_conversation_version: int,
+        expected_output_id: str,
+        expected_ledger_revision: int,
+        decision: str,
+        reason: str,
+        decided_at: str,
+    ) -> dict[str, Any]:
+        ...
+
+    def queue_hermes_feedback_turn(self, request: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def invalidate_hermes_reply_chain(
+        self, engineer_case_id: str, *, invalidated_at: str
+    ) -> dict[str, Any] | None:
+        ...
+
+    def record_hermes_authority_event(
+        self, event: dict[str, Any], request: dict[str, Any]
+    ) -> dict[str, Any]:
+        ...
+
+    def list_hermes_authority_events(
+        self, engineer_case_id: str
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def record_hermes_case_solved(
+        self, engineer_case_id: str, *, review_id: str, now_value: str
+    ) -> dict[str, Any]:
+        ...
+
+    def get_hermes_close_review(self, review_id: str) -> dict[str, Any] | None:
+        ...
+
+    def approve_hermes_close_review(
+        self, review_id: str, *, reviewer_id: str, now_value: str
+    ) -> dict[str, Any]:
+        ...
+
+    def approve_current_hermes_close_review(
+        self, engineer_case_id: str, *, reviewer_id: str, now_value: str
+    ) -> dict[str, Any]:
+        ...
+
+    def reopen_hermes_case(self, request: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def close_hermes_case(
+        self, promotion: dict[str, Any], *, now_value: str
+    ) -> dict[str, Any]:
         ...
 
     def claim_engineer_case(
@@ -2877,7 +2981,7 @@ class TicketRepository(Protocol):
         ...
 
 
-class InMemoryTicketRepository:
+class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
 
@@ -3842,6 +3946,7 @@ class InMemoryTicketRepository:
         self._prompt_versions: dict[str, list[dict[str, Any]]] = {}
         self._prompt_releases: dict[str, dict[str, Any]] = {}
         self._account_case_llm_usage: list[dict[str, Any]] = []
+        self._initialize_hermes_state()
         self._seed_account_persona_presets()
 
     def _seed_account_persona_presets(self) -> None:
@@ -5709,6 +5814,8 @@ class InMemoryTicketRepository:
         new_messages: list[dict[str, Any]] | None = None,
         slack_events: list[dict[str, Any]] | None = None,
         zendesk_delivery: dict[str, Any] | None = None,
+        hermes_opening_request: dict[str, Any] | None = None,
+        hermes_reply_chain_invalidation_at: str | None = None,
     ) -> None:
         with self._assignment_lock:
             self._save_engineer_case_unlocked(engineer_case, new_messages=new_messages)
@@ -5718,6 +5825,13 @@ class InMemoryTicketRepository:
                 self._engineer_slack_events.setdefault(record["event_id"], record)
             if isinstance(zendesk_delivery, dict):
                 self.create_account_zendesk_comment_delivery(**zendesk_delivery)
+            if isinstance(hermes_opening_request, dict):
+                self.start_hermes_case(hermes_opening_request)
+            if hermes_reply_chain_invalidation_at:
+                self.invalidate_hermes_reply_chain(
+                    str(engineer_case["engineer_case_id"]),
+                    invalidated_at=hermes_reply_chain_invalidation_at,
+                )
 
     def _save_engineer_case_unlocked(
         self,
@@ -7650,7 +7764,7 @@ def _build_trace_ticket_snapshot_payload(
     }
 
 
-class PostgresTicketRepository:
+class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
 
@@ -11772,6 +11886,7 @@ class PostgresTicketRepository:
                         self._table("support_billing_response_tokens"),
                     )
                 )
+                self._initialize_hermes_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
                 self._ensure_account_persona_presets(cur)
                 if runtime_role:
@@ -13019,6 +13134,8 @@ class PostgresTicketRepository:
         new_messages: list[dict[str, Any]] | None = None,
         slack_events: list[dict[str, Any]] | None = None,
         zendesk_delivery: dict[str, Any] | None = None,
+        hermes_opening_request: dict[str, Any] | None = None,
+        hermes_reply_chain_invalidation_at: str | None = None,
     ) -> None:
         saved = copy.deepcopy(engineer_case)
         engineer_case_id = str(saved.get("engineer_case_id") or "").strip()
@@ -13204,6 +13321,26 @@ class PostgresTicketRepository:
                                 record["created_at"],
                                 record["updated_at"],
                             ),
+                        )
+                    if isinstance(hermes_opening_request, dict):
+                        if str(hermes_opening_request.get("engineer_case_id") or "") != engineer_case_id:
+                            raise ValueError("Hermes opening request case does not match")
+                        self._start_hermes_case_cur(cur, hermes_opening_request)
+                    if hermes_reply_chain_invalidation_at:
+                        cur.execute(
+                            sql.SQL(
+                                "UPDATE {} SET conversation_version=conversation_version+1, "
+                                "current_output_id=NULL, binding_version=binding_version+1, "
+                                "updated_at=%s WHERE engineer_case_id=%s"
+                            ).format(self._table("support_hermes_case_bindings")),
+                            (hermes_reply_chain_invalidation_at, engineer_case_id),
+                        )
+                        cur.execute(
+                            sql.SQL(
+                                "UPDATE {} SET status='superseded', updated_at=%s "
+                                "WHERE engineer_case_id=%s AND status='frozen'"
+                            ).format(self._table("support_hermes_summary_snapshots")),
+                            (hermes_reply_chain_invalidation_at, engineer_case_id),
                         )
                     if normalized_delivery is not None:
                         cur.execute(

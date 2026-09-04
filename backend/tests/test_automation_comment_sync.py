@@ -57,6 +57,8 @@ class _FakeRepository:
     def __init__(self, account_case="default") -> None:
         self.account_case = dict(self.DEFAULT_CASE) if account_case == "default" else account_case
         self.synced: list[dict] = []
+        self.hermes_binding: dict | None = None
+        self.hermes_invalidations: list[tuple[str, str]] = []
 
     def get_account_case_by_ticket_id(self, ticket_id):
         return dict(self.account_case) if self.account_case is not None else None
@@ -70,6 +72,16 @@ class _FakeRepository:
 
     def complete_idempotent_request(self, scope, key, response_payload=None, updated_at=None):
         return {"state": "completed"}
+
+    def get_hermes_case_binding(self, engineer_case_id):
+        return dict(self.hermes_binding) if self.hermes_binding else None
+
+    def invalidate_hermes_reply_chain(self, engineer_case_id, *, invalidated_at):
+        self.hermes_invalidations.append((engineer_case_id, invalidated_at))
+        return {"engineer_case_id": engineer_case_id, "conversation_version": 2}
+
+    def queue_hermes_feedback_turn(self, request):
+        raise AssertionError("a Zendesk customer comment must not become Hermes feedback")
 
 
 class CommentSyncEndpointTest(unittest.TestCase):
@@ -240,9 +252,18 @@ class CommentTriggerTest(unittest.TestCase):
     def test_engineer_case_branch_records_customer_context_and_only_notifies_slack(self):
         repository = _FakeRepository()
         repository.account_case["automation_status"] = "not_automated"
+        repository.hermes_binding = {
+            "engineer_case_id": "123-1",
+            "conversation_version": 1,
+        }
         saved: list[dict] = []
 
-        def fake_save_engineer_case(engineer_case, new_messages=None, slack_events=None):
+        def fake_save_engineer_case(
+            engineer_case,
+            new_messages=None,
+            slack_events=None,
+            hermes_reply_chain_invalidation_at=None,
+        ):
             saved.append(
                 {
                     "engineer_case": engineer_case,
@@ -250,6 +271,11 @@ class CommentTriggerTest(unittest.TestCase):
                     "slack_events": slack_events,
                 }
             )
+            if hermes_reply_chain_invalidation_at:
+                repository.invalidate_hermes_reply_chain(
+                    engineer_case["engineer_case_id"],
+                    invalidated_at=hermes_reply_chain_invalidation_at,
+                )
 
         repository.get_active_engineer_case = lambda ticket_id, include_client_messages=True: {
             "engineer_case_id": "123-1",
@@ -294,6 +320,8 @@ class CommentTriggerTest(unittest.TestCase):
             "Cx has added a new comment",
         )
         self.assertNotIn("account type", str(saved[0]["slack_events"][0]).lower())
+        self.assertEqual(len(repository.hermes_invalidations), 1)
+        self.assertEqual(repository.hermes_invalidations[0][0], "123-1")
 
 
     def test_failed_outcome_is_stored_failed_and_replays_after_handler_repair(self):
