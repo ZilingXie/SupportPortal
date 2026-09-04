@@ -14,6 +14,7 @@ BUILD_TIME=""
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-}"
 BUILDER="${AUTOMATION_RELEASE_BUILDER:-auto}"
 PODMAN_BUILD_TAGS=()
+PODMAN_PULL_POLICY="always"
 
 log() { printf '[release] %s\n' "$*"; }
 fail() { printf '[release] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -78,7 +79,7 @@ build_role() {
   local podman_tag="localhost/supportportal-release-build:${role}-${RELEASE_ID}-$$"
   PODMAN_BUILD_TAGS+=("${podman_tag}")
   podman build \
-    --pull=always \
+    --pull="${PODMAN_PULL_POLICY}" \
     --platform linux/amd64 \
     --format oci \
     --build-arg "AUTOMATION_IMAGE_ROLE=ecs-${role}" \
@@ -88,6 +89,7 @@ build_role() {
     --tag "${podman_tag}" \
     "${PROJECT_ROOT}"
   podman save --format oci-archive --output "${output}" "${podman_tag}"
+  PODMAN_PULL_POLICY="never"
 }
 
 cleanup() {
