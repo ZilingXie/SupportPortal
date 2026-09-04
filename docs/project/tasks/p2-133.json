@@ -68,9 +68,20 @@
       "label": "Hermes Fargate memory right-sizing revision 3",
       "command": "aws ecs describe-services/describe-tasks; aws elbv2 describe-target-health; authenticated GET /v1/models; CloudWatch readback 2026-09-04",
       "details": "依据2026-09-01至09-04指标（CPU平均3.63%/峰值93.27%，内存平均14.68%/峰值15.56%，原6 GiB下约0.96 GiB峰值）保留1 vCPU，仅将task memory由6144 MiB降为2048 MiB。revision 3与revision 2除memory外字节级一致；service rollout COMPLETED且1/1/0，唯一运行task与hermes/memory-core双容器均HEALTHY，两个image digest不变，TG最终仅一个healthy新target，鉴权/v1/models返回200且model_count=1。稳定后CloudWatch无新增异常命中；启动时SQLite delete/WAL偏差在revision 2已存在，非本次引入。Account API/Route/Worker保持revision 28/23/26、1/1/0。预计由约$52.67/月降至$39.69/月，节省约$13/月；回滚点为revision 2。"
+    },
+    {
+      "type": "deployment",
+      "label": "Hermes EFS SQLite WAL offline conversion",
+      "command": "aws ecs update-service/run-task/describe-tasks; CloudWatch migration summary; independent read-only SQLite readback 2026-09-04",
+      "details": "保持config database.journal_mode=delete和service revision 3，先将Hermes缩到0并确认零运行/等待任务。主task definition的command override会被s6 profile reconcile旁路并恢复default profile，首次转换因数据库锁fail closed，5库备份后rollback=completed；改用显式entryPoint=python3 -c、仅挂hermes-home的临时maintenance task后，5库全部由WAL转DELETE并保留SQLite API备份于.journal-mode-backups/20260904T073609016904Z。独立只读task确认5/5 quick_check ok、DELETE 5、sidecar 0；恢复service后revision 3为1/1/0、双容器/TG健康、鉴权/v1/models 200且model_count=1，新task日志delete/WAL冲突0。临时maintenance:1已注销INACTIVE。"
     }
   ],
   "history": [
+    {
+      "at": "2026-09-04",
+      "event": "hermes_sqlite_journal_mode_repaired_offline",
+      "summary": "在短暂停机和全量SQLite API备份保护下，将hermes-home内5个历史WAL数据库离线转换为DELETE；独立只读readback、恢复后ECS/ALB/鉴权/日志验证通过，临时maintenance task definition已注销。"
+    },
     {
       "at": "2026-09-04",
       "event": "hermes_fargate_memory_right_sized",

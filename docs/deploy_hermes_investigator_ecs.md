@@ -112,14 +112,22 @@ print(invoke_responses_text(profile=p, system_prompt=\"probe\", user_prompt=\"Re
 - `supportportal-production-hermes:3` 从 revision 2 精确克隆，只修改 task-level memory；两个镜像 digest、角色、网络、命令、health check、secret 引用和三个 EFS volume 均未改变。回滚点为 revision 2。
 - 发布后 service 为 1/1/0、rollout `COMPLETED`，task 与双容器均 `HEALTHY`，target group 仅保留一个 healthy revision-3 target；鉴权 `GET /v1/models` 返回 200 和一个模型。
 - 预计月费从约 $52.67 降至约 $39.69，节省约 $13/月（按 Fargate 730 小时和一个公网 IPv4 估算，实际账单随运行小时及 AWS 单价变化）。
-- 新旧 revision 启动日志都存在既有 SQLite 配置偏差：配置要求 `journal_mode=delete`，EFS 上数据库已为 WAL，Hermes 为避免在线降级损坏而保留 WAL。本次缩容后稳定期无新增异常命中；该问题不由 revision 3 引入，后续应独立治理。
+- 缩容后发现的新旧 revision SQLite 配置偏差已通过下述离线流程修复；task definition 和应用配置仍保持 revision 3 与 `journal_mode=delete`。
+
+## 2026-09-04 SQLite journal mode 离线修复
+
+- Hermes 文档要求 NFS/EFS 使用 `database.journal_mode: delete`，因此没有把配置改成 WAL。先将 `supportportal-production-hermes` 缩到 0，并确认 service 与一次性任务均无运行或等待容器后再操作 EFS。
+- 第一次尝试复用 revision 3 加 `command` override 时，镜像 s6 entrypoint 的 profile reconcile 仍恢复了 `default` profile，数据库锁使转换 fail closed；5 个 SQLite API 备份均已完成且自动回滚成功，service 保持 0。该尝试证明主 task definition 的 command override 不满足离线维护前提。
+- 最终使用只含 Hermes 镜像和 `hermes-home` EFS 的临时 maintenance task definition，显式设置 `entryPoint=["python3","-c"]` 以绕过 s6/profile。转换前所有源库和 API 备份均通过 `PRAGMA quick_check`；5 个数据库由 WAL 转为 DELETE，备份保留在 `/opt/data/.journal-mode-backups/20260904T073609016904Z/`。
+- 独立只读任务再次验证 5/5 数据库 `quick_check=ok`、journal mode 均为 DELETE、WAL/SHM sidecar 为 0。随后恢复原 service revision 3：service 1/1/0、双容器 HEALTHY、唯一 target healthy、鉴权 `GET /v1/models` 200 且 model count 1；新 Hermes task 日志中的既有 delete/WAL 冲突为 0。
+- 临时 `supportportal-production-hermes-maintenance:1` 已注销为 INACTIVE。备份作为人工回滚证据保留，不纳入正常运行扫描；不得在服务在线时恢复或删除。
 
 ## 已踩的坑(操作前必读)
 
 1. **EFS mount access denied 三要素缺一不可**:该文件系统挂有 IAM policy(仅 ClientRootAccess/ClientWrite),挂载需要 ①task role identity policy 的 `ClientMount`(且 `AccessPointArn` 在白名单——新 AP 必须加入 `SupportPortalProductionEfsAccess` inline policy);②task definition 卷 `authorizationConfig.iam=ENABLED`;③EFS SG 放行 ECS SG 2049(已配)。报错形态:`mount.nfs4: access denied by server while mounting 127.0.0.1:/`。
 2. **脱离部署脚本操作 ECS task definition / EC2 compose 必先取当前态**:①ECS `register-task-definition` 前必查 service 当前 revision(本任务 rev13 曾误基于 rev9 回滚了主 thread 镜像,基于 rev12 重新生成 rev14 纠正);②EC2 `up -d` 必须显式带 `APP_RUNTIME_IMAGE/APP_BUILD_REF/APP_BUILD_TIME/PROMPT_RELEASE_ID/PROMPT_RELEASE_REQUIRED`——compose 默认值 `localhost/supportportal-app:unknown` 是旧镜像(本任务曾把三容器降级到 unknown,按部署日志恢复)。
 3. **stage2 hook 会在容器 env 无 `API_SERVER_KEY` 时生成随机 key 并 append 到 `/opt/data/.env`**,而 hermes 以 `override=True` 读 `.env`——主 task 重启后该随机值会覆盖 SSM 注入值导致 401。任何不带此 env 的容器(一次性 init/fix task)启动后都应检查并删除 `/opt/data/.env` 里的 `API_SERVER_KEY=` 行。
-4. hermes 容器 `command` 覆盖要小心:上游 ENTRYPOINT 是 `entrypoint-dispatch.sh`,`command` 覆盖的是它的 args;`gateway run` 以外的 args 走 dispatch 分发,一次性任务用 `python3 -c`/`sh -c` 均验证可行。
+4. **主 Hermes task definition 的 `command` override 不能作为离线维护入口**:上游 s6 ENTRYPOINT 会先运行 profile reconcile，持久化状态为 running 时会在 override 命令之外恢复 `default` profile并占用 SQLite。需要离线访问 `hermes-home` 时，必须先将 service 缩到 0，再使用只挂该 EFS、显式覆盖 `entryPoint` 且不含 s6/profile 或 memory-core 的独立 maintenance task definition；退出码、备份和只读 readback 全部确认后才能恢复 service。
 5. memory-core 无鉴权(本地先例 Bearer gate 关闭,与 proxy 有已知不兼容),安全边界 = 仅 hermes 容器 localhost 可达、8420 不对 ALB/TG 暴露——**不得**给 memory-core 建 target group。
 
 ## pilot CLI(镜像已带,凭证未首登)
