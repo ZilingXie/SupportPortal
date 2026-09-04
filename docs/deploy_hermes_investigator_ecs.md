@@ -1,6 +1,6 @@
 # Hermes 调查 Agent ECS 部署与生产灰度 Runbook
 
-状态:2026-09-01 已完整执行并验证(p2-133)。本 runbook 记录已创建的 AWS 资源、部署/初始化/灰度全流程,以及三个已踩过的坑。源码工作目录:`~/Desktop/personal_proj/agent-infra/`(hermes-agent 上游 + TencentDB-Agent-Memory + `deploy-ecs/` 部署产物)。
+状态:2026-09-04 已完整执行并验证(p2-133)。本 runbook 记录已创建的 AWS 资源、部署/初始化/灰度全流程,以及已踩过的坑。源码工作目录:`~/Desktop/personal_proj/agent-infra/`(hermes-agent 上游 + TencentDB-Agent-Memory + `deploy-ecs/` 部署产物)。
 
 ## 架构
 
@@ -11,14 +11,14 @@ EC2 /production worker (真实消费方)
         ▼
 ALB supportportal-production-alb  443 listener rule "/v1,/v1/*" priority 101
         ▼ TG supportportal-production-hermes (:8642)
-ECS Fargate task supportportal-production-hermes (1 vCPU / 6144 MB, X86_64)
+ECS Fargate task supportportal-production-hermes (1 vCPU / 2048 MiB, X86_64)
   ├─ memory-core  (ECR hermes 镜像仓, command 渲染 gateway YAML)  ←→ EFS /tdai-data
   └─ hermes       (dependsOn memory-core HEALTHY)                 ←→ EFS /hermes-home + /pilot-creds
         └─ localhost:8420 ← task 内共享 network namespace,hermes 记忆插件直连 memory-core
 ```
 
 - Hermes 是纯端点形态(OpenAI Responses 兼容,`API_SERVER_KEY` Bearer 鉴权);Slack 直连已取消(用户无权限 reinstall app)。
-- ECS worker(`automation_ecs_worker.py`)当前无 engineer investigation 链路(p1-53 延期),investigation reply 的真实消费方是 EC2 `/production` 的 main 栈 worker/api——灰度开关配在那里;ECS worker td rev14 同步注入了三 env,investigation 链路上 ECS 时直接生效。
+- ECS worker(`automation_ecs_worker.py`)当前无 engineer investigation 链路(p1-53 延期),investigation reply 的真实消费方是 EC2 `/production` 的 main 栈 worker/api——灰度开关配在那里;ECS worker 首次在 td rev14 注入三项配置，当前 rev26 仍保留 Hermes base URL/API key/timeout，investigation 链路上 ECS 时直接生效。
 - 调查回合实测分钟级,同步调用契约由 `ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS=300` 缓解(默认 20s);ALB idle timeout 300s;异步化是二期。
 
 ## 资源清单(已创建)
@@ -33,7 +33,7 @@ ECS Fargate task supportportal-production-hermes (1 vCPU / 6144 MB, X86_64)
 | task role policy | `SupportPortalProductionEfsAccess`(inline,`supportportal-production-ecs-task-role`)已含上述 3 AP 的 ClientMount/ClientWrite |
 | SG 规则 | ecs SG `sg-078925973e96ebd1c` 入站 8642 from alb SG ×2(`sg-01ef2fe5063473732`、`sg-0fba25adcbdf00ac9`) |
 | ALB | TG `supportportal-production-hermes/300baa72169f7f04`(健康检查 `GET /v1/health`)+ 443 listener rule `/v1,/v1/*` priority 101 |
-| ECS task definitions | `supportportal-production-hermes`(当前 :2)、`supportportal-production-hermes-init:1`(一次性初始化)、`supportportal-production-hermes-fix:1`(一次性修复)、worker `:14`(含三 env) |
+| ECS task definitions | `supportportal-production-hermes`(当前 :3，1 vCPU / 2048 MiB)、`supportportal-production-hermes-init:1`(一次性初始化)、`supportportal-production-hermes-fix:1`(一次性修复)、worker `:26`(仍含 Hermes base URL/API key/timeout 三项) |
 | ECS service | `supportportal-production-hermes`(1 副本,挂 TG,同 worker 网络:subnet-0d7cb079536f8c2da + ecs SG + 公网 IP) |
 | 记忆库身份 | admin user `usr-yipctouhlx`、team `team-yipeq84apx`(agora-support)、agent `agt-yipfo802v8`(investigator 双模式 prompt) |
 
@@ -105,6 +105,14 @@ print(invoke_responses_text(profile=p, system_prompt=\"probe\", user_prompt=\"Re
 ```
 
 回滚:`.env` 删三行 → 同命令重建三容器 → investigation reply 回 OpenAI 官方直连(fallback 链恢复)。Hermes service 可独立 scale-to-0,worker 调用失败按 p2-130 契约走 fail-closed 回退回合,不炸链路。
+
+## 2026-09-04 Fargate 内存缩容
+
+- 2026-09-01 至 2026-09-04 的 CloudWatch 指标：CPU 平均 3.63%、峰值 93.27%；内存平均 14.68%、峰值 15.56%（按原 6144 MiB 约 0.96 GiB 峰值）。因此保留 1 vCPU，仅将 task memory 从 6144 MiB 调整为 2048 MiB。
+- `supportportal-production-hermes:3` 从 revision 2 精确克隆，只修改 task-level memory；两个镜像 digest、角色、网络、命令、health check、secret 引用和三个 EFS volume 均未改变。回滚点为 revision 2。
+- 发布后 service 为 1/1/0、rollout `COMPLETED`，task 与双容器均 `HEALTHY`，target group 仅保留一个 healthy revision-3 target；鉴权 `GET /v1/models` 返回 200 和一个模型。
+- 预计月费从约 $52.67 降至约 $39.69，节省约 $13/月（按 Fargate 730 小时和一个公网 IPv4 估算，实际账单随运行小时及 AWS 单价变化）。
+- 新旧 revision 启动日志都存在既有 SQLite 配置偏差：配置要求 `journal_mode=delete`，EFS 上数据库已为 WAL，Hermes 为避免在线降级损坏而保留 WAL。本次缩容后稳定期无新增异常命中；该问题不由 revision 3 引入，后续应独立治理。
 
 ## 已踩的坑(操作前必读)
 

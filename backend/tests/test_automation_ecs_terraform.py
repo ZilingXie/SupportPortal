@@ -46,12 +46,13 @@ def test_shared_infrastructure_is_read_only_data_or_input() -> None:
         "aws_cloudwatch_log_group",
         "aws_iam_role",
         "aws_efs_file_system",
-        "aws_elasticache_replication_group",
         "aws_ssm_parameter",
     ):
         assert f'data "{data_source}"' in data
     assert 'variable "shared_acm_certificate_arn"' in variables
     assert 'variable "shared_ssm_parameter_names"' in variables
+    assert 'data "aws_elasticache_replication_group"' not in data
+    assert 'variable "shared_redis_replication_group_id"' not in variables
 
 
 def test_services_ignore_only_release_owned_task_definition_pointer() -> None:

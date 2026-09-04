@@ -8,7 +8,7 @@
   "module_id": "engineer-workspace",
   "function_id": "engineer-investigation-reply",
   "created_at": "2026-09-01",
-  "updated_at": "2026-09-01",
+  "updated_at": "2026-09-04",
   "summary": "将本地 podman 的 Hermes 调查 agent 栈（hermes-agent + 腾讯 AgentMemory memory-core，agent-infra 仓库）迁移为 ECS Fargate 独立 service：单 task 双容器 awsvpc 模式 localhost 互通，memory-core 镜像 crane 复制进 ECR 免 Docker Hub 限流，hermes 镜像（含 memory_tencentdb 插件、pilot CLI 钉 sha256、一次性初始化工具）因 qemu 仿真 amd64 下 Node 构建段错误改在 zacBot 原生构建。公网入口 https://supportcenter.stellarix.space/v1（既有 ALB 新增 /v1/* listener rule priority 101，Hermes API_SERVER_KEY Bearer 鉴权，与 RAG 服务同安全模型）。数据全新起步：预生成 admin key（init-admin 支持传入 user_key，消除 volume/key 成对问题）经一次性 init task（run-task + command override，无需 Session Manager 插件）完成 init-admin、team agora-support（team-yipeq84apx）与 investigator agent（agt-yipfo802v8）创建；hermes-home/tdai-data/pilot-creds 三个 EFS Access Point 持久化，task role EFS inline policy 扩白名单 + authorizationConfig iam ENABLED（缺任一即 mount access denied）。生产灰度：EC2 /production（investigation reply 真实消费方，ECS worker 无该链路）.env 注入 ENGINEER_INVESTIGATION_REPLY_BASE_URL=https://supportcenter.stellarix.space/v1、_API_KEY、_TIMEOUT_SECONDS=300 并重建 api/worker×2 三容器；ECS worker td rev14 同步注入三 env（当前无消费方，investigation 链路上 ECS 时直接生效，基于主 thread 最新镜像 rev12 生成）。pilot 凭证首登（device flow）为遗留人工 gate。",
   "next_action": "下一个真实 needs_investigating 工单到达时观察 message_meta.model_name 指向自定义端点及 Hermes 侧回合质量；pilot 凭证首登（ECS Exec 或一次性 task 内 pilot auth login --device）按需执行；调查回合异步化（20s 同步契约 vs 分钟级回合）为二期。",
   "acceptance_criteria": [
@@ -62,9 +62,21 @@
       "label": "Two rollback-adjacent incidents caught and corrected",
       "command": "",
       "details": "① ECS worker td rev13 误基于旧 rev9 生成（回滚主 thread 镜像），立即基于最新 rev12 重新生成 rev14 纠正——register 前必查当前最新 revision；② EC2 up -d 未带部署变量集导致三容器落到 localhost/supportportal-app:unknown 旧镜像（compose 默认值），按部署日志恢复 APP_RUNTIME_IMAGE=52df67fcbbfc 等变量重建纠正——脱离部署脚本操作必须显式携带全部构建变量。另修复 init 容器 stage2 生成的 API_SERVER_KEY 写入共享 EFS .env（override=True 会覆盖 SSM 注入值）——一次性 fix task 删除该行。"
+    },
+    {
+      "type": "deployment",
+      "label": "Hermes Fargate memory right-sizing revision 3",
+      "command": "aws ecs describe-services/describe-tasks; aws elbv2 describe-target-health; authenticated GET /v1/models; CloudWatch readback 2026-09-04",
+      "details": "依据2026-09-01至09-04指标（CPU平均3.63%/峰值93.27%，内存平均14.68%/峰值15.56%，原6 GiB下约0.96 GiB峰值）保留1 vCPU，仅将task memory由6144 MiB降为2048 MiB。revision 3与revision 2除memory外字节级一致；service rollout COMPLETED且1/1/0，唯一运行task与hermes/memory-core双容器均HEALTHY，两个image digest不变，TG最终仅一个healthy新target，鉴权/v1/models返回200且model_count=1。稳定后CloudWatch无新增异常命中；启动时SQLite delete/WAL偏差在revision 2已存在，非本次引入。Account API/Route/Worker保持revision 28/23/26、1/1/0。预计由约$52.67/月降至$39.69/月，节省约$13/月；回滚点为revision 2。"
     }
   ],
-  "history": [],
+  "history": [
+    {
+      "at": "2026-09-04",
+      "event": "hermes_fargate_memory_right_sized",
+      "summary": "Hermes在保持1 vCPU、镜像、EFS、角色、网络与应用配置不变的前提下由6144 MiB缩容到2048 MiB并发布revision 3；ECS、双容器、TG、鉴权和稳定后日志验收通过，预计节省约$13/月。"
+    }
+  ],
   "legacy_ids": [],
   "legacy_refs": [],
   "source_refs": [

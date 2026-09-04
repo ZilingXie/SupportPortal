@@ -55,11 +55,6 @@ variable "shared_graph_efs_file_system_id" {
   type        = string
 }
 
-variable "shared_redis_replication_group_id" {
-  description = "Shared Redis replication group id; Terraform does not own Redis."
-  type        = string
-}
-
 variable "shared_ssm_parameter_names" {
   description = "Shared runtime and Hermes SSM parameter names verified as external inputs."
   type        = list(string)

@@ -25,7 +25,6 @@ output "shared_dependency_readback" {
     execution_role_arn  = data.aws_iam_role.task_execution.arn
     task_role_arn       = data.aws_iam_role.task.arn
     graph_efs_arn       = data.aws_efs_file_system.graph.arn
-    redis_endpoint      = data.aws_elasticache_replication_group.redis.primary_endpoint_address
     ssm_parameter_arns  = { for name, parameter in data.aws_ssm_parameter.runtime : name => parameter.arn }
   }
 }

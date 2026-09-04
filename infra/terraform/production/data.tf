@@ -30,10 +30,6 @@ data "aws_efs_file_system" "graph" {
   file_system_id = var.shared_graph_efs_file_system_id
 }
 
-data "aws_elasticache_replication_group" "redis" {
-  replication_group_id = var.shared_redis_replication_group_id
-}
-
 data "aws_ssm_parameter" "runtime" {
   for_each = toset(var.shared_ssm_parameter_names)
   name     = each.value
