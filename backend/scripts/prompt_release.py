@@ -155,7 +155,7 @@ def _execute(args: argparse.Namespace, *, repository: Any | None = None, target_
     owned_repository = repository is None
     repo = repository or create_ticket_repository()
     try:
-        if args.command not in {"sync", "validate"}:
+        if args.command not in {"sync", "validate", "activate"}:
             repo.initialize()
         if args.command == "sync":
             owned_target = target_repository is None

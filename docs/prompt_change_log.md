@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-04 - Prompt Release activation skips schema DDL
+
+- Area or subsystem: Prompt Release activation in the ECS Production deploy gate.
+- Prompt or model versions: Prompt content, release identity, models, and Persona v25 are unchanged.
+- Reason: the Production runtime database identity has the DML permissions required to activate an existing Prompt Release but intentionally does not own the wider ticket schema. The activation CLI ran `repository.initialize()` before its idempotent release update, so a healthy ECS rollout ended with `must be owner of table support_tickets` before activation logic could read the already-active target release.
+- Tooling change: `activate` now follows the existing `sync` and `validate` schema boundary and operates only on the pre-provisioned Prompt tables. Missing or incompatible schema state still fails closed through validation or activation DML; no migration credential or broader database permission is introduced.
+- Verification: focused CLI regression asserts an already-active release is returned idempotently without calling `initialize()`, alongside the existing Prompt Release and deployment-gate suites.
+
 ## 2026-09-03 - Prompt Release sync does not run target schema DDL (p1-53)
 
 - Area or subsystem: Prompt Release source-to-target replication and ECS Production deploy gate.

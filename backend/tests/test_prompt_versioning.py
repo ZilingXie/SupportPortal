@@ -421,6 +421,29 @@ class PromptReleaseCliTests(unittest.TestCase):
         self.assertEqual(payload["validation"]["source"], "release")
         self.assertEqual(payload["validation"]["status"], "loaded")
 
+    def test_activate_does_not_run_schema_initialization(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.sync_prompt_catalog(
+            build_managed_prompt_catalog(),
+            actor_id="system",
+            created_at="2026-09-04T00:00:00+00:00",
+        )
+        active = repository.get_active_prompt_release()
+
+        with patch.object(
+            repository,
+            "initialize",
+            side_effect=AssertionError("activation must not run schema DDL"),
+        ) as initialize:
+            payload = run_prompt_release(
+                ["activate", "--release-id", active["release_id"]],
+                repository=repository,
+            )
+
+        initialize.assert_not_called()
+        self.assertEqual(payload["release"]["status"], "active")
+        self.assertEqual(payload["release"]["release_id"], active["release_id"])
+
 
 class PromptReleaseSyncTests(unittest.TestCase):
     def setUp(self) -> None:
