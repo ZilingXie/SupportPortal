@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -11,6 +12,7 @@ from backend.scripts.automation_ecs_deploy import (
     render_task_definition,
     validate_suspension_recipients,
     validate_promotion,
+    verify_heartbeats,
 )
 from backend.services.automation_ecs_contracts import RELEASE_MANIFEST_VERSION, SCHEMA_REVISION
 from backend.services.automation_release_manifest import contract_versions
@@ -226,6 +228,82 @@ def test_suspension_recipient_readback_validates_without_returning_addresses() -
     with patch.dict(os.environ, {env_name: "not-json"}, clear=False):
         with pytest.raises(ValueError, match="value is not valid JSON"):
             validate_suspension_recipients()
+
+
+def _heartbeat_provenance(role: str) -> dict[str, str]:
+    digest = "2" if role == "route" else "3"
+    return {
+        "environment": "production",
+        "service_role": role,
+        "release_id": "release-42",
+        "git_commit": "a" * 40,
+        "image_digest": f"sha256:{digest * 64}",
+        "build_time": "2026-09-03T01:02:03Z",
+        "prompt_release_id": "prompt-42",
+        "db_schema": "supportportal_production",
+        "job_namespace": "supportportal-production",
+    }
+
+
+def _heartbeat_connection(rows: list[tuple[object, ...]]) -> MagicMock:
+    cursor = MagicMock()
+    cursor.__enter__.return_value = cursor
+    cursor.fetchall.return_value = rows
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.cursor.return_value = cursor
+    return connection
+
+
+def test_verify_heartbeats_uses_database_observation_time(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    task_definition = _task_definition(tmp_path, "worker")
+    last_seen_at = datetime.now(timezone.utc) + timedelta(days=1)
+    observed_at = last_seen_at + timedelta(seconds=1)
+    rows = [
+        (role, _heartbeat_provenance(role), last_seen_at, observed_at)
+        for role in ("route", "worker")
+    ]
+
+    with (
+        patch.dict(os.environ, {"AUTOMATION_HEARTBEAT_DSN": "postgresql://unused"}),
+        patch(
+            "backend.scripts.automation_ecs_deploy.psycopg.connect",
+            return_value=_heartbeat_connection(rows),
+        ),
+    ):
+        result = verify_heartbeats(
+            manifest_path=manifest,
+            task_definition_path=task_definition,
+            max_age_seconds=90,
+        )
+
+    assert result == {"status": "ok", "roles": ["route", "worker"]}
+
+
+def test_verify_heartbeats_rejects_database_stale_record(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    task_definition = _task_definition(tmp_path, "worker")
+    last_seen_at = datetime.now(timezone.utc)
+    observed_at = last_seen_at + timedelta(seconds=91)
+    rows = [
+        (role, _heartbeat_provenance(role), last_seen_at, observed_at)
+        for role in ("route", "worker")
+    ]
+
+    with (
+        patch.dict(os.environ, {"AUTOMATION_HEARTBEAT_DSN": "postgresql://unused"}),
+        patch(
+            "backend.scripts.automation_ecs_deploy.psycopg.connect",
+            return_value=_heartbeat_connection(rows),
+        ),
+    ):
+        with pytest.raises(ValueError, match="latest route heartbeat is stale"):
+            verify_heartbeats(
+                manifest_path=manifest,
+                task_definition_path=task_definition,
+                max_age_seconds=90,
+            )
 
 
 def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_sync() -> None:
