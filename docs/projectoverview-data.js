@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T12:34:52Z",
-  "source_base_commit": "d0c5f9c2b6248aec11f04c72535902415a625815",
-  "registry_digest": "1145dd856e348b9f84d911a2ef19f36fe74d09121d163f34de91eacfc6f46237",
+  "generated_at": "2026-09-04T15:25:58Z",
+  "source_base_commit": "8c515e22b550c96b0a645b194b38cec1bf46c366",
+  "registry_digest": "8020a445274419a953236e900c955e75d4776c9eeb548a737d115e3bc226d516",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -940,6 +940,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression for one-shot suspension + persona v22",
           "command": ".venv/bin/python -m pytest backend/tests/test_account_intake.py backend/tests/test_automation_persona.py backend/tests/test_account_full_reroute.py backend/tests/test_account_reroute_dispatch.py backend/tests/test_worker.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_version_fence.py backend/tests/test_route_service_contract.py backend/tests/test_account_verification_automation.py backend/tests/test_account_slack_n8n.py backend/tests/test_automation_test_scenarios.py backend/tests/test_automation_account_intake.py -q",
           "details": "全绿：intake 177（新增 direct 一段式端到端含邮件先于 job 时序/邮箱 gate 四边界/邮件失败 fail-closed/no-op 跟单）、persona 61（新增自然变体通过+拒绝+补句 1 次调用 vs 否定 4 次重试拒绝）、full_reroute 15（新增 direct 分流+无邮箱 fail-closed）、reroute_dispatch 34（新增 direct rerun 恢复）、worker 120、composer/version-fence/route/verification 165、slack/scenarios/ECS 入口 49。唯一失败 test_non_ecs_worker_keeps_legacy_rag_service_executor 为 main 基线同顺序组合即复现的既有跨文件环境污染（单跑通过），非本任务引入。"
+        },
+        {
+          "type": "deployment",
+          "label": "Suspension preclaim fix deployed to ECS Production",
+          "command": "formal check-only and deploy for r20260904-9bbb898; Prompt activation reconciliation; ECS/public/heartbeat/CloudWatch/Terraform/dependency/ticket readback",
+          "details": "commit 9bbb898e2f7d 的 API/Route/Worker digest 已部署到 revision 30/25/28，均 1/1/0 且 COMPLETED；公网 live/release/ready 与新鲜 heartbeat provenance 完全匹配，目标 Prompt Release pr-c9b3a291ecf1 active 且 28 items validate 通过。Worker task definition 无 Pilot env/volume/mount、保留 Graph EFS 和 Suspension secret；三类收件人配置均为有效 JSON（To=1/Cc=1）；CloudWatch 发布窗口错误 0，Terraform 1.9.8 远程锁定 plan 为 No changes，EC2 backup 健康，Archer/Graph/Zendesk 只读探针均通过。13289/13291 在发布后 execution/job 增量均为 0、reply job 总数为 0。Prompt activation 的 runtime-DSN schema DDL 误调用由 PR #1062 修复并幂等 reconcile；全新 Suspension 工单仍是业务验收边界。"
         },
         {
           "type": "test",
@@ -2049,6 +2055,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production Suspension preclaim release and post-release gates",
+          "command": "deployment/deploy_automation_ecs_release.sh for r20260904-9bbb898 plus PR #1062 Prompt reconciliation and post-release readback",
+          "details": "local-oci Promotion Record 三 digest 与 ECR/Manifest 一致；API/Route/Worker revision 30/25/28 的运行 digest 分别为 sha256:06ad72a5ae40c7ceafd487517c2fcc020cc13b386e5c90ed69375b5088c7ec6f、sha256:ddfdc8ee30f8372e0d454699b3320f929ca30396751647a26d5d52d0ce073cd4、sha256:aee868133a588562ee2e7737f985fea7f2a181689bd308140886b3f1728f4f90。公网 ready、Route/Worker heartbeat、CloudWatch 0 error、EC2 backup、Terraform No changes、三类收件人结构与 Archer/Graph/Zendesk 只读探针均通过；目标 Prompt active/validate 通过。发布过程中一次固定 AWS credential 过期造成的混合 revision 已先完整回滚，后改为 AWS CLI 使用可刷新 login provider、仅 Terraform 子进程即时导出凭据后成功发布。"
         },
         {
           "type": "test",
@@ -6626,7 +6638,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-1f13334（main@1f13334ea2dc）：API/Route/Worker revision 28/23/26均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1已激活。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260904-9bbb898（runtime commit 9bbb898e2f7d）：API/Route/Worker revision 30/25/28均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Prompt activation runtime-DSN schema DDL误调用由PR #1062修复并完成幂等reconciliation。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
       "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
@@ -6643,6 +6655,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "ECS Production Suspension preclaim release and post-release gates",
+          "command": "deployment/deploy_automation_ecs_release.sh for r20260904-9bbb898 plus PR #1062 Prompt reconciliation and post-release readback",
+          "details": "local-oci Promotion Record 三 digest 与 ECR/Manifest 一致；API/Route/Worker revision 30/25/28 的运行 digest 分别为 sha256:06ad72a5ae40c7ceafd487517c2fcc020cc13b386e5c90ed69375b5088c7ec6f、sha256:ddfdc8ee30f8372e0d454699b3320f929ca30396751647a26d5d52d0ce073cd4、sha256:aee868133a588562ee2e7737f985fea7f2a181689bd308140886b3f1728f4f90。公网 ready、Route/Worker heartbeat、CloudWatch 0 error、EC2 backup、Terraform No changes、三类收件人结构与 Archer/Graph/Zendesk 只读探针均通过；目标 Prompt active/validate 通过。发布过程中一次固定 AWS credential 过期造成的混合 revision 已先完整回滚，后改为 AWS CLI 使用可刷新 login provider、仅 Terraform 子进程即时导出凭据后成功发布。"
+        },
         {
           "type": "test",
           "label": "ECS migration closeout implementation gates",
@@ -9998,7 +10016,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-03",
       "updated_at": "2026-09-04",
       "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除全部句式级正则（24h 三词同句及 p2-140 跨句三要素、suspension 疑问式、missing-info 格式、closing/第一人称、ownership、appid 句式），保留合同归一化/空响应/签名/生成期禁值/engineer 源值/将来时误导/appid overclaim/missing-info 禁时长，suspension 肯定 close/archive/reopen 声明禁止（主语绑定否定感知，仅 suspension 两 intent）；三个确定性拼装保留（missing-info 固定句、enablement 追加句、p2-140 的 suspension closing 追加句——漏说/否定承诺追加修复，close 声明仍拒）。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "保持 active。先把 ECS Suspension delivery-key preclaim 修复构建为新的 immutable Production release 并完成正式发布门禁；随后由用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 v25 closing 回复→assign→未 solved。13289 保留审计，不重放、不补发、不修改。",
+      "next_action": "保持 active。ECS Suspension delivery-key preclaim 修复已随 r20260904-9bbb898 上线并通过技术门禁；等待用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 v25 closing 回复→assign→未 solved。13289/13291 保留审计，不重放、不补发、不修改。",
       "acceptance_criteria": [
         "自然语言样本零重试过检；缺要点不再触发重生成（suspension closing 由追加句确定性恢复 24h 承诺）。",
         "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、missing-info 编造时长、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）。",
@@ -10007,10 +10025,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "suspension 收尾链：内部 handoff 邮件 sent→唯一公开回复→assign reviewer（事件 assigned）且无 zendesk_reviewer_notify_email 事件、不写 workflow.reviewer_notify_email；工单未 solved。",
         "S1/E1/E2/F1 剧本断言独立于生产 validator；S1 为一段式链路（无问邮箱环节）且不再断言 solved。"
       ],
-      "blockers": [
-        "ECS Production 当前 release r20260904-1f13334 尚未包含 Suspension delivery-key preclaim 修复，发布前不得继续正式 Suspension 工单验收。"
-      ],
+      "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Suspension preclaim fix deployed to ECS Production",
+          "command": "formal check-only and deploy for r20260904-9bbb898; Prompt activation reconciliation; ECS/public/heartbeat/CloudWatch/Terraform/dependency/ticket readback",
+          "details": "commit 9bbb898e2f7d 的 API/Route/Worker digest 已部署到 revision 30/25/28，均 1/1/0 且 COMPLETED；公网 live/release/ready 与新鲜 heartbeat provenance 完全匹配，目标 Prompt Release pr-c9b3a291ecf1 active 且 28 items validate 通过。Worker task definition 无 Pilot env/volume/mount、保留 Graph EFS 和 Suspension secret；三类收件人配置均为有效 JSON（To=1/Cc=1）；CloudWatch 发布窗口错误 0，Terraform 1.9.8 远程锁定 plan 为 No changes，EC2 backup 健康，Archer/Graph/Zendesk 只读探针均通过。13289/13291 在发布后 execution/job 增量均为 0、reply job 总数为 0。Prompt activation 的 runtime-DSN schema DDL 误调用由 PR #1062 修复并幂等 reconcile；全新 Suspension 工单仍是业务验收边界。"
+        },
         {
           "type": "test",
           "label": "ECS direct-handoff and recipient release gate integration",
@@ -10037,6 +10059,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "history": [
+        {
+          "at": "2026-09-04",
+          "event": "ecs_suspension_preclaim_release_deployed",
+          "summary": "包含 delivery-key persist-before-claim 修复的 r20260904-9bbb898 已部署到 ECS Production 并通过技术 readback；任务保持 active，仅等待用户全新 Suspension 工单业务验收。"
+        },
         {
           "at": "2026-09-04",
           "event": "ecs_production_release_deployed",
