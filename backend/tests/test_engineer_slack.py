@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
 import socket
 import unittest
 import urllib.error
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
@@ -14,6 +16,8 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from backend import main, worker
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.automation_account_reply_sync import ReplySyncError
+from backend.services.automation_engineer_collab import handle_slack_engineer_action
 from backend.services.engineer_cases import build_new_engineer_case
 from backend.services.engineer_slack import (
     EngineerSlackDeliveryError,
@@ -23,7 +27,14 @@ from backend.services.engineer_slack import (
     engineer_slack_configured,
     post_engineer_slack_event,
 )
-from backend.services.hermes_case_workflow import create_opening_turn
+from backend.services.hermes_case_workflow import (
+    approve_close_review,
+    build_mock_sanitized_case_knowledge,
+    close_hermes_case,
+    create_opening_turn,
+    queue_feedback_turn,
+    record_case_solved,
+)
 
 
 DIRECT_ENV = {
@@ -636,6 +647,221 @@ class EngineerSlackWorkerTests(unittest.TestCase):
         )
         self.assertEqual(hermes_event["message_text"], "Investigation result: test")
         self.assertEqual(hermes_event["action"], "summarize")
+
+    def test_combined_mock_case_reaches_exactly_once_zendesk_and_closed_promotion(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket, engineer_case = _ticket_and_case()
+        engineer_case["thread_id"] = "12874-1-round-1"
+        repository.save_ticket(ticket)
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-12874",
+                "billing_ticket_id": "AC-12874",
+                "client_ticket_id": "12874",
+                "title": "Token callback missing",
+                "question": "Callback never fires.",
+                "processing_profile": "production",
+                "zendesk_ticket_id": "12874",
+                "route_status": "not_automated",
+                "automation_status": "not_automated",
+                "created_at": "2026-09-05T08:00:00Z",
+            }
+        )
+        opening = create_opening_turn(
+            engineer_case_id="12874-1",
+            client_ticket_id="12874",
+            investigation_id="12874-1-round-1",
+            problem_description="Callback never fires.",
+            investigation_scope="Investigate the callback failure.",
+            completion_criteria=("Identify an evidence-backed conclusion.",),
+            now_value="2026-09-05T08:00:00Z",
+        )
+        repository.save_engineer_case(
+            engineer_case,
+            slack_events=[_root_event(engineer_case)],
+            hermes_opening_request=opening.model_dump(mode="json"),
+        )
+        slack_calls: list[tuple[str, str | None]] = []
+
+        def post_slack(event, *, thread_ts=None):
+            slack_calls.append((str(event["event_type"]), thread_ts))
+            message_ts = f"100.{200 + len(slack_calls) - 1}"
+            return {
+                "event_id": event["event_id"],
+                "status": "delivered",
+                "failure_code": None,
+                "slack_channel_id": "C-TEST",
+                "slack_message_ts": message_ts,
+                "slack_thread_ts": thread_ts or message_ts,
+            }
+
+        environment = {
+            **DIRECT_ENV,
+            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production",
+            "HERMES_CASE_WORKFLOW_MODE": "mock",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_engineer_slack_event", side_effect=post_slack):
+            worker._drain_engineer_slack_events(limit=20)
+            self.assertEqual(worker._drain_mock_hermes_turns(limit=20), 1)
+            worker._drain_engineer_slack_events(limit=20)
+            old_output = next(
+                row["payload"]
+                for row in repository.list_engineer_slack_events(statuses=("delivered",), limit=20)
+                if row["event_type"] == "hermes_investigation_output"
+            )
+            queue_feedback_turn(
+                repository,
+                engineer_case_id="12874-1",
+                input_text="@bot re-check the callback path",
+                now_value="2026-09-05T08:02:00Z",
+            )
+            with self.assertRaisesRegex(ReplySyncError, "stale Hermes summary action"):
+                asyncio.run(
+                    handle_slack_engineer_action(
+                        repository,
+                        {
+                            "interaction_id": "stale-summary",
+                            "engineer_case_id": "12874-1",
+                            "slack_user_id": "U-ENGINEER",
+                            "action": "summarize",
+                            "investigation_id": "12874-1-round-1",
+                            "output_id": old_output["output_id"],
+                            "output_digest": old_output["output_digest"],
+                            "episode": old_output["episode"],
+                            "conversation_version": old_output["conversation_version"],
+                        },
+                    )
+                )
+            self.assertEqual(worker._drain_mock_hermes_turns(limit=20), 1)
+            worker._drain_engineer_slack_events(limit=20)
+
+        self.assertEqual(
+            slack_calls[:2],
+            [("engineer_case_opened", None), ("hermes_investigation_output", "100.200")],
+        )
+        current_output = max(
+            (
+                row["payload"]
+                for row in repository.list_engineer_slack_events(statuses=("delivered",), limit=20)
+                if row["event_type"] == "hermes_investigation_output"
+            ),
+            key=lambda payload: int(payload["conversation_version"]),
+        )
+        summary = asyncio.run(
+            self._summarize_combined_case(repository, current_output)
+        )
+        guardrail_packet = {
+            "guardrail_id": "GRD-HERMES-E2E",
+            "guardrail_version": "engineer-guardrail-final-v2",
+            "decision": "approved_for_final_engineer_review",
+            "customer_reply": "Hello\n\nInvestigation result: test",
+            "blockers": [],
+        }
+        with patch(
+            "backend.services.automation_engineer_collab.run_engineer_guardrail_final",
+            return_value=guardrail_packet,
+        ):
+            guarded = asyncio.run(
+                handle_slack_engineer_action(
+                    repository,
+                    {
+                        "interaction_id": "guardrail-current",
+                        "engineer_case_id": "12874-1",
+                        "slack_user_id": "U-ENGINEER",
+                        "action": "guardrail",
+                        "investigation_id": "12874-1-round-1",
+                        "draft_version": summary["draft_version"],
+                    },
+                )
+            )
+        self.assertEqual(guarded["status"], "guardrail_passed")
+
+        with patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=SimpleNamespace(comments_revision="comments-rev-e2e"),
+        ):
+            approved = asyncio.run(
+                handle_slack_engineer_action(
+                    repository,
+                    {
+                        "interaction_id": "final-approve-current",
+                        "engineer_case_id": "12874-1",
+                        "slack_user_id": "U-ENGINEER",
+                        "action": "final_approve",
+                        "investigation_id": "12874-1-round-1",
+                        "draft_version": summary["draft_version"],
+                        "guardrail_id": guarded["guardrail_id"],
+                        "guardrail_version": guarded["guardrail_version"],
+                    },
+                )
+            )
+        self.assertEqual(approved["status"], "delivery_queued")
+        delivery = repository.list_account_zendesk_comment_deliveries(statuses=("queued",))[0]
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "read_ticket_ownership_snapshot",
+            return_value=SimpleNamespace(comments_revision="comments-rev-e2e"),
+        ), patch.object(
+            worker, "add_ticket_comment", return_value=SimpleNamespace(comment_id="comment-e2e")
+        ) as add_comment:
+            worker._deliver_engineer_approved_zendesk_comment(delivery)
+            worker._deliver_engineer_approved_zendesk_comment(delivery)
+        add_comment.assert_called_once_with(
+            ticket_id="12874",
+            body="Hello\n\nInvestigation result: test",
+            public=True,
+            solve=False,
+        )
+        self.assertEqual(
+            repository.list_account_zendesk_comment_deliveries(statuses=("delivered",))[0][
+                "zendesk_comment_id"
+            ],
+            "comment-e2e",
+        )
+
+        review = record_case_solved(repository, engineer_case_id="12874-1")
+        approve_close_review(
+            repository, review_id=review["review_id"], reviewer_id="slack:U-ENGINEER"
+        )
+        ledger = repository.get_hermes_case_ledger("12874-1")
+        promotion = close_hermes_case(
+            repository,
+            engineer_case_id="12874-1",
+            sanitized_payload=build_mock_sanitized_case_knowledge(ledger),
+        )
+        self.assertEqual(promotion.status, "awaiting_transport")
+        self.assertEqual(repository.get_hermes_case_binding("12874-1")["status"], "closed")
+
+    async def _summarize_combined_case(self, repository, output):
+        rendered = SimpleNamespace(
+            content="Hello\n\nInvestigation result: test",
+            model="test-persona",
+            prompt_version="persona-v1",
+        )
+        with patch(
+            "backend.services.automation_persona.render_automation_reply",
+            return_value=rendered,
+        ):
+            summarized = await handle_slack_engineer_action(
+                repository,
+                {
+                    "interaction_id": "summary-current",
+                    "engineer_case_id": "12874-1",
+                    "slack_user_id": "U-ENGINEER",
+                    "action": "summarize",
+                    "investigation_id": "12874-1-round-1",
+                    "output_id": output["output_id"],
+                    "output_digest": output["output_digest"],
+                    "episode": output["episode"],
+                    "conversation_version": output["conversation_version"],
+                },
+            )
+        self.assertEqual(summarized["status"], "summary_guardrail_passed")
+        self.assertEqual(summarized["reason"], "test")
+        return summarized
 
     def test_mock_worker_reclaims_the_same_request_after_an_expired_lease(self) -> None:
         repository = InMemoryTicketRepository()
