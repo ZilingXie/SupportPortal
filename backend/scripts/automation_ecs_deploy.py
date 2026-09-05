@@ -22,6 +22,7 @@ PROVENANCE_ENV_NAMES = {
     "APP_BUILD_TIME",
     "PROMPT_RELEASE_ID",
 }
+HERMES_CASE_WORKFLOW_MODES = {"disabled", "mock"}
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -110,6 +111,28 @@ def _secret_names(container: dict[str, Any]) -> set[str]:
     }
 
 
+def _set_environment_value(container: dict[str, Any], name: str, value: str) -> None:
+    environment = container.setdefault("environment", [])
+    matches = [item for item in environment if str(item.get("name") or "") == name]
+    if len(matches) > 1:
+        raise ValueError(f"task definition contains duplicate environment: {name}")
+    if matches:
+        matches[0]["value"] = value
+        return
+    environment.append({"name": name, "value": value})
+
+
+def _set_secret_reference(container: dict[str, Any], name: str, value_from: str) -> None:
+    secrets = container.setdefault("secrets", [])
+    matches = [item for item in secrets if str(item.get("name") or "") == name]
+    if len(matches) > 1:
+        raise ValueError(f"task definition contains duplicate secret: {name}")
+    if matches:
+        matches[0]["valueFrom"] = value_from
+        return
+    secrets.append({"name": name, "valueFrom": value_from})
+
+
 def validate_worker_contract(task_definition: dict[str, Any]) -> None:
     container = _container(task_definition, "worker")
     environment = _environment_map(container)
@@ -133,6 +156,7 @@ def render_task_definition(
     manifest_path: str | Path,
     registry_id: str,
     region: str,
+    hermes_case_workflow_mode: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -142,6 +166,11 @@ def render_task_definition(
         raise ValueError("taskDefinition object is required")
     if role == "worker":
         validate_worker_contract(task_definition)
+    if (
+        hermes_case_workflow_mode is not None
+        and hermes_case_workflow_mode not in HERMES_CASE_WORKFLOW_MODES
+    ):
+        raise ValueError("Hermes Case Workflow mode must be disabled or mock")
     manifest = read_manifest(Path(manifest_path))
     component = manifest.components[role]
     rendered = {
@@ -170,6 +199,44 @@ def render_task_definition(
         name = str(item.get("name") or "")
         if name in replacements:
             item["value"] = replacements[name]
+    if hermes_case_workflow_mode is not None and role in {"api", "worker"}:
+        _set_environment_value(
+            container,
+            "HERMES_CASE_WORKFLOW_MODE",
+            hermes_case_workflow_mode,
+        )
+    return rendered
+
+
+def render_schema_bootstrap_task_definition(
+    *,
+    current_path: str | Path,
+    manifest_path: str | Path,
+    registry_id: str,
+    region: str,
+    migration_secret_reference: str,
+) -> dict[str, Any]:
+    if ":parameter/" not in migration_secret_reference:
+        raise ValueError("schema bootstrap migration secret must be an SSM parameter ARN")
+    rendered = render_task_definition(
+        role="api",
+        current_path=current_path,
+        manifest_path=manifest_path,
+        registry_id=registry_id,
+        region=region,
+    )
+    rendered["family"] = "supportportal-production-schema-bootstrap"
+    container = _container(rendered, "api")
+    container["command"] = [
+        "python",
+        "-m",
+        "backend.scripts.automation_ecs_bootstrap",
+        "bootstrap",
+    ]
+    container.pop("healthCheck", None)
+    container["portMappings"] = []
+    for name in ("AUTOMATION_DB_MIGRATION_DSN", "TICKET_DB_MIGRATION_DSN"):
+        _set_secret_reference(container, name, migration_secret_reference)
     return rendered
 
 
@@ -263,7 +330,18 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--manifest", required=True)
     render.add_argument("--registry-id", required=True)
     render.add_argument("--region", required=True)
+    render.add_argument(
+        "--hermes-case-workflow-mode",
+        choices=sorted(HERMES_CASE_WORKFLOW_MODES),
+    )
     render.add_argument("--output", required=True)
+    bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
+    bootstrap.add_argument("--current", required=True)
+    bootstrap.add_argument("--manifest", required=True)
+    bootstrap.add_argument("--registry-id", required=True)
+    bootstrap.add_argument("--region", required=True)
+    bootstrap.add_argument("--migration-secret-reference", required=True)
+    bootstrap.add_argument("--output", required=True)
     heartbeat = subparsers.add_parser("verify-heartbeats")
     heartbeat.add_argument("--manifest", required=True)
     heartbeat.add_argument("--task-definition", required=True)
@@ -283,6 +361,20 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             manifest_path=args.manifest,
             registry_id=args.registry_id,
             region=args.region,
+            hermes_case_workflow_mode=args.hermes_case_workflow_mode,
+        )
+        Path(args.output).write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {"status": "ok", "output": args.output}
+    if args.command == "render-schema-bootstrap-task-definition":
+        result = render_schema_bootstrap_task_definition(
+            current_path=args.current,
+            manifest_path=args.manifest,
+            registry_id=args.registry_id,
+            region=args.region,
+            migration_secret_reference=args.migration_secret_reference,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
