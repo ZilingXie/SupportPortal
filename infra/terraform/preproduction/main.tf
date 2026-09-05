@@ -5,7 +5,7 @@ locals {
   environment          = "preproduction"
   parameter_prefix     = "/supportportal/preproduction"
   parameter_prefix_arn = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.parameter_prefix}"
-  backup_bucket_name   = var.hermes_backup_bucket_name != "" ? var.hermes_backup_bucket_name : "supportportal-hermes-preproduction-backup-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
+  backup_bucket_name   = var.hermes_backup_bucket_name != "" ? var.hermes_backup_bucket_name : "supportportal-hermes-preprod-backup-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
   tags = {
     Project     = "supportportal"
     Environment = local.environment

@@ -249,6 +249,16 @@ def test_preproduction_account_and_hermes_state_roles_are_isolated() -> None:
     assert "hermes_task_role_arn" in outputs
 
 
+def test_preproduction_default_backup_bucket_name_fits_s3_limit() -> None:
+    source = (PREPRODUCTION_TERRAFORM / "main.tf").read_text(encoding="utf-8")
+    expected = "supportportal-hermes-preprod-backup-891612554546-us-east-1"
+    assert len(expected) <= 63
+    assert (
+        '"supportportal-hermes-preprod-backup-'
+        '${data.aws_caller_identity.current.account_id}-${var.aws_region}"'
+    ) in source
+
+
 def test_preproduction_backend_and_secret_boundary_are_documented() -> None:
     backend = (PREPRODUCTION_TERRAFORM / "backend.tf.example").read_text(encoding="utf-8")
     readme = (PREPRODUCTION_TERRAFORM / "README.md").read_text(encoding="utf-8")
