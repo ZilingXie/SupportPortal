@@ -201,6 +201,12 @@ def _create_database_identity(
         )
     )
     cursor.execute(
+        sql.SQL("GRANT CREATE ON DATABASE {} TO {}").format(
+            sql.Identifier(cursor.connection.info.dbname),
+            sql.Identifier(config.migration_role),
+        )
+    )
+    cursor.execute(
         sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
             sql.Identifier(config.schema),
             sql.Identifier(config.runtime_role),
@@ -229,16 +235,32 @@ def _create_database_identity(
     cursor.execute(
         "SELECT has_schema_privilege(%s, %s, 'USAGE'), "
         "has_schema_privilege(%s, 'supportportal_production', 'USAGE'), "
-        "has_schema_privilege(%s, 'supportportal_production', 'USAGE')",
+        "has_schema_privilege(%s, 'supportportal_production', 'USAGE'), "
+        "has_database_privilege(%s, current_database(), 'CREATE'), "
+        "has_database_privilege(%s, current_database(), 'CREATE')",
         (
             config.runtime_role,
             config.schema,
             config.runtime_role,
             config.migration_role,
+            config.runtime_role,
+            config.migration_role,
         ),
     )
-    target_access, runtime_production_access, migration_production_access = cursor.fetchone()
-    if not target_access or runtime_production_access or migration_production_access:
+    (
+        target_access,
+        runtime_production_access,
+        migration_production_access,
+        runtime_database_create,
+        migration_database_create,
+    ) = cursor.fetchone()
+    if (
+        not target_access
+        or runtime_production_access
+        or migration_production_access
+        or runtime_database_create
+        or not migration_database_create
+    ):
         raise RuntimeError("Preproduction database role schema isolation check failed")
     cursor.execute(
         sql.SQL("REVOKE {} FROM CURRENT_USER").format(
