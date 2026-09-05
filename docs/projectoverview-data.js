@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T10:30:33Z",
-  "source_base_commit": "19d30d341308f3e0d905d885f4fe7bb5ade93b7e",
-  "registry_digest": "5650a63c54713a39b4552c866a10af015637f7b6bceb237f04630929e54830e5",
+  "generated_at": "2026-09-05T13:07:37Z",
+  "source_base_commit": "81c696a1171cd78b1e7ed743466b8f90bbc06ea2",
+  "registry_digest": "6b9a782ed8dec9a8d6050d94d5bd73707f309fc9ed7751613a3084b55905fa77",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1012,6 +1012,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona immutable-body and Worker review metadata regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py",
           "details": "464 passed + 120 subtests。覆盖单次调用预算、正常 2 次与重写 4 次 LLM 调用上限、Reviewer schema/failure、两轮整段重写、重复与缺失 24h、Unicode apostrophe、安全地板、greeting 重写、Missing-information/Enablement Persona 全文生成、Worker 原样持久化与 review metadata、RAG 外壳及 ECS Persona 透传。"
+        },
+        {
+          "type": "test",
+          "label": "Persona current-intent policy isolation regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py",
+          "details": "255 passed + 108 subtests。覆盖脱敏 Case 13302 RAG fixture、Missing-information/Submission/Enablement/Fraud/Suspension/completion policy 隔离、unmatched 与 non-Account scope 边界、Persona/Reviewer current-intent policy 一致、通用字段适用性、两轮预算、Human Review、Worker 正文不可变、RAG References 与 ECS 透传。"
         },
         {
           "type": "deployment",
@@ -10355,15 +10361,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
-      "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句。按用户决策升级 automation-persona-v26 并新增 automation-persona-review-v1：Persona 生成 greeting 后的全部语义正文，独立 LLM Reviewer 检查事实完整性、冲突、重复和 intent 合同；首轮失败只提供结构化 feedback 给同一 pinned Persona 整段重写，第二轮仍失败即 Human Review。Worker 禁止补写、裁剪或改写正文，只持久化通过稿和安全审计元数据；应用仅保留 greeting、RAG 引用、附件和 transport formatting 外壳。代码安全地板只拒绝危险输出，并在 validation copy 中统一常见 apostrophe，不改变客户正文。",
-      "next_action": "PR #1065 与最新 ECS Production r20260905-19d30d3 均已完成并验证继续包含v26/review-v1；保持 active，等待用户提供下一张全新 Account Suspension 工单，验收正文只含一次24h承诺、persona_review metadata、assign与未solved。不得创建、重放或回复历史工单。",
+      "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句；v26/review-v1 已完成正文不可变与有界语义审稿。随后 Case 13302 暴露第二个 prompt 根因：RAG 当前 intent 被无条件拼入 Submission Confirmation 与 Missing-information 合同，两轮都因 intent_policy_violation 拒绝。v27/review-v2 将共享约束与 current-intent policy 隔离，Persona 和 Reviewer 只按当前 intent 合同工作；调用预算、Human Review、安全地板、Worker 原样发布和应用外壳保持不变。",
+      "next_action": "合并并完成 v27/review-v2 的 official lightweight stack 验证；ECS Production 仍运行 v26/review-v1，需另行获得生产发布授权后按正式 Release 流程更新。发布后等待用户提供全新 RAG follow-up 与 Account Suspension 工单验收；不得创建、重放或回复历史工单。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
-        "Reviewer 使用现有 Automation Persona model profile 和固定 review-v1 prompt，严格输出 pass/revise、枚举 issue codes 与 feedback；拒稿和自由文本 feedback 不持久化。",
+        "Reviewer 使用现有 Automation Persona model profile 和固定 review-v2 prompt，只接收当前 intent policy，并严格输出 pass/revise、枚举 issue codes 与 feedback；拒稿和自由文本 feedback 不持久化。",
         "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
         "Worker payload 停止写 persona_contract_repair，改写 passed/rounds/reviewer model/review prompt version/issue codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
-        "ECS Production 发布 v26/review-v1 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；真实业务验收只使用用户后续创建的新工单。"
+        "ECS Production 发布 v27/review-v2 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；真实业务验收只使用用户后续创建的新工单。"
       ],
       "blockers": [],
       "evidence": [
@@ -10372,6 +10378,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Persona immutable-body and Worker review metadata regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_automation_test_scenarios.py backend/tests/test_customer_reply_composer.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py",
           "details": "464 passed + 120 subtests。覆盖单次调用预算、正常 2 次与重写 4 次 LLM 调用上限、Reviewer schema/failure、两轮整段重写、重复与缺失 24h、Unicode apostrophe、安全地板、greeting 重写、Missing-information/Enablement Persona 全文生成、Worker 原样持久化与 review metadata、RAG 外壳及 ECS Persona 透传。"
+        },
+        {
+          "type": "test",
+          "label": "Persona current-intent policy isolation regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py",
+          "details": "255 passed + 108 subtests。覆盖脱敏 Case 13302 RAG fixture、Missing-information/Submission/Enablement/Fraud/Suspension/completion policy 隔离、unmatched 与 non-Account scope 边界、Persona/Reviewer current-intent policy 一致、通用字段适用性、两轮预算、Human Review、Worker 正文不可变、RAG References 与 ECS 透传。"
         },
         {
           "type": "deployment",
@@ -10400,6 +10412,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "latest_main_release_verified",
           "summary": "后继最新main随r20260905-19d30d3部署并通过独立运行readback；v26/review-v1仍为当前Production实现，任务继续等待全新Suspension工单验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "current_intent_policy_isolated",
+          "summary": "Case 13302 暴露 RAG 被跨 intent 合同污染；v27/review-v2 已将 Persona 与 Reviewer 收窄到同一 current-intent policy，等待合并、本地栈验证和另行授权的 ECS 发布。"
         }
       ],
       "legacy_ids": [],
@@ -15916,7 +15933,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。",
         "production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
-        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；独立 LLM Reviewer 最多提供一轮结构化 feedback 让同一 Persona 整段重写，Worker 不补写、裁剪或改写通过稿。应用只添加 greeting、RAG 引用、附件与传输格式，生成或审稿失败时在客户发布前转 Human Review。",
+        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；Persona 只接收共享约束与当前 intent 的合同，独立 LLM Reviewer 只按同一 current-intent policy 审稿，最多提供一轮结构化 feedback 让同一 Persona 整段重写。Worker 不补写、裁剪或改写通过稿；应用只添加 greeting、RAG 引用、附件与传输格式，生成或审稿失败时在客户发布前转 Human Review。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",
@@ -15973,7 +15990,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
         "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。",
-        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v26 Persona 首封只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复，经 review-v1 语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
+        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ pinned Persona 首封只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复，经仅含当前 intent 合同的语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
