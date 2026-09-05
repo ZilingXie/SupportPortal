@@ -573,6 +573,10 @@ elif sys.argv[1:4] == ["configure", "export-credentials", "--format"]:
     if os.environ.get("TEST_EXPIRATION"):
         payload["Expiration"] = os.environ["TEST_EXPIRATION"]
     print(json.dumps(payload))
+elif sys.argv[1:3] == ["configure", "list"]:
+    provider = os.environ.get("TEST_PROVIDER_TYPE", "env")
+    print("NAME : VALUE : TYPE : LOCATION")
+    print(f"access_key : ****************TEST : {provider} :")
 else:
     raise SystemExit(2)
 """,
@@ -603,6 +607,25 @@ else:
     assert "expire too soon" in result.stderr
     assert "AKIA_TEST_SECRET" not in result.stdout + result.stderr
     assert "DO_NOT_PRINT" not in result.stdout + result.stderr
+
+    login_env = {**env, "TEST_PROVIDER_TYPE": "login"}
+    login = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; REGION=us-east-1; PYTHON_BIN="$2"; AWS_MIN_CREDENTIAL_TTL_SECONDS=1800; verify_aws_credential_lifetime',
+            "bash",
+            str(DEPLOY_SCRIPT),
+            sys.executable,
+        ],
+        cwd=ROOT,
+        env=login_env,
+        text=True,
+        capture_output=True,
+    )
+    assert login.returncode == 0, login.stderr
+    assert "refreshable login credential preflight passed" in login.stdout
+    assert "AKIA_TEST_SECRET" not in login.stdout + login.stderr
 
     unknown_env = {**env, "AWS_SESSION_TOKEN": "EXPORTED_TEMPORARY_TOKEN"}
     unknown_env.pop("TEST_EXPIRATION")

@@ -124,10 +124,15 @@ credential_expiration_epoch() {
   "${PYTHON_BIN}" -c 'from datetime import datetime; import sys; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "${expiration}"
 }
 
+aws_credential_provider_type() {
+  aws configure list 2>/dev/null \
+    | awk '$1 == "access_key" {print $5; exit}'
+}
+
 verify_aws_credential_lifetime() {
   [[ "${AWS_MIN_CREDENTIAL_TTL_SECONDS}" =~ ^[0-9]+$ ]] || fail "AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS must be a non-negative integer"
   aws sts get-caller-identity --region "${REGION}" --output json >/dev/null
-  local expiration_epoch now_epoch remaining
+  local expiration_epoch now_epoch provider_type remaining
   expiration_epoch="$(credential_expiration_epoch)"
   if [[ -z "${expiration_epoch}" ]]; then
     [[ -z "${AWS_SESSION_TOKEN:-}" ]] \
@@ -137,6 +142,13 @@ verify_aws_credential_lifetime() {
   fi
   now_epoch="$(date -u +%s)"
   remaining=$((expiration_epoch - now_epoch))
+  if ((remaining < AWS_MIN_CREDENTIAL_TTL_SECONDS)); then
+    provider_type="$(aws_credential_provider_type)"
+    if [[ "${provider_type}" = "login" ]]; then
+      log "AWS refreshable login credential preflight passed (${remaining}s current credential lifetime)"
+      return 0
+    fi
+  fi
   ((remaining >= AWS_MIN_CREDENTIAL_TTL_SECONDS)) \
     || fail "AWS credentials expire too soon (${remaining}s remaining; require ${AWS_MIN_CREDENTIAL_TTL_SECONDS}s)"
   log "AWS credential lifetime preflight passed (${remaining}s remaining)"
