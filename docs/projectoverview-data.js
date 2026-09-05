@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T21:35:29Z",
-  "source_base_commit": "184d57c491c8a55bbf6d73f9597063a9704d6986",
-  "registry_digest": "8037bdec1b0b2289fe82b186af3fd8b19580189843ca134fe3527129775c3463",
+  "generated_at": "2026-09-05T21:56:26Z",
+  "source_base_commit": "9db9c500748023a0bc2af3f8511cf59c26672092",
+  "registry_digest": "8a3ee12e6ff6d3989526279716c9a66b935b073d5fd3ef5e20fcf54c4b6c440a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7251,6 +7251,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-06",
           "event": "hermes_preproduction_migration_tooling_merged",
           "summary": "SupportPortal PR #1081补齐三个Hermes模型密钥的Preproduction隔离参数并保持API server key独立生成，官方lightweight栈验证通过；hermes-deploy PR #13合入digest-pinned双容器/三EFS生成器、私有Cloud Map服务、离线SQLite/S3完整备份、唯一writer迁移和失败回滚工具。当前补充短时效drain evidence命令，要求Production disabled且queued/active Hermes turn均为0；AWS Preproduction资源仍未创建。"
+        },
+        {
+          "at": "2026-09-06",
+          "event": "preproduction_backup_bucket_name_corrected",
+          "summary": "首次Preproduction add-only plan在写入前发现默认Hermes backup bucket名称超过S3 63字符上限；改为保留用途、环境、账号和区域身份的合法确定性名称，并增加长度合同测试后重新执行plan。"
         }
       ],
       "legacy_refs": [
