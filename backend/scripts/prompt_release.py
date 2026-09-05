@@ -195,7 +195,18 @@ def _execute(args: argparse.Namespace, *, repository: Any | None = None, target_
         if args.command == "prepare":
             return {"release": service.prepare_release(build_ref=args.build_ref)}
         if args.command == "validate":
-            return {"validation": service.validate_release(args.release_id)}
+            validation = service.validate_release(args.release_id)
+            release = repo.get_prompt_release(args.release_id)
+            if release is None:
+                raise ValueError(f"prompt release not found: {args.release_id}")
+            versions = _collect_release_versions(repo, release)
+            return {
+                "validation": validation,
+                "identity": {
+                    "build_ref": str(release.get("build_ref") or ""),
+                    "content_fingerprint": _release_content_fingerprint(versions),
+                },
+            }
         if args.command == "activate":
             return {"release": service.activate_release(args.release_id)}
         if args.command == "fail":

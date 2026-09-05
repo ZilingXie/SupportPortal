@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-06 - CodeBuild release and environment-accurate Preproduction runtime (p1-53)
+
+- Area or subsystem: ECS release tooling, Prompt Release deployment gate, Preproduction Account runtime identity, and Hermes activation configuration.
+- Prompt or model version: No prompt text, model, provider, or reasoning-effort change. Prompt Release content fingerprint validation is preserved across the new registry-backed Manifest v2 path.
+- Reason: Build each fixed main commit once on native linux/amd64 infrastructure, validate it in an isolated Production-equivalent Preproduction environment, then promote identical digests without rebuilding or copying environment data.
+- Behavioral boundary: Preproduction keeps its own path/schema/roles/namespace/Prompt target/secrets/logs/heartbeats while using the Production Account side-effect and Suspension direct-handoff contracts. n8n remains the sole ticket-admission controller. Production Hermes can be explicitly disabled with endpoint/key/callback secrets physically removed; real Hermes activation requires all three environment-specific secrets.
+- Verification boundary: Repository tests and Terraform validation prove generation and fail-closed contracts. CodeBuild, AWS infrastructure, Hermes state migration, live health, and business cases require separate post-merge evidence and are not claimed by this entry.
+
 ## 2026-09-05 - Persona and Reviewer isolate the current Account intent policy (p2-144)
 
 - Area or subsystem: Account Automation Persona generation and semantic review.

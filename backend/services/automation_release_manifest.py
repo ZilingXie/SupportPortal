@@ -16,6 +16,8 @@ from backend.services.automation_ecs_contracts import (
     HEARTBEAT_CONTRACT_VERSION,
     INTAKE_CONTRACT_VERSION,
     PROCESSING_CONTRACT_VERSION,
+    PREPRODUCTION_PUBLISH_RECORD_VERSION,
+    REGISTRY_RELEASE_MANIFEST_VERSION,
     RELEASE_MANIFEST_VERSION,
     ROUTE_CONTRACT_VERSION,
     SCHEMA_REVISION,
@@ -32,7 +34,7 @@ class ReleaseComponent(BaseModel):
     tag: str
     digest: str
     platform: Literal["linux/amd64"] = "linux/amd64"
-    oci_layout: str
+    oci_layout: str | None = None
 
     @field_validator("digest")
     @classmethod
@@ -53,7 +55,11 @@ class ReleaseComponent(BaseModel):
 class AutomationReleaseManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[RELEASE_MANIFEST_VERSION] = RELEASE_MANIFEST_VERSION
+    schema_version: Literal[
+        RELEASE_MANIFEST_VERSION,
+        REGISTRY_RELEASE_MANIFEST_VERSION,
+    ] = RELEASE_MANIFEST_VERSION
+    artifact_kind: Literal["oci-layout", "registry"] = "oci-layout"
     release_id: str
     git_commit: str = Field(min_length=7, max_length=64)
     build_time: datetime
@@ -79,6 +85,58 @@ class AutomationReleaseManifest(BaseModel):
                 raise ValueError("component key and role must match")
             if component.tag != f"{role}-{self.release_id}":
                 raise ValueError("component tag must be <role>-<release_id>")
+            if self.artifact_kind == "oci-layout" and not component.oci_layout:
+                raise ValueError("OCI layout manifest components require oci_layout")
+            if self.artifact_kind == "registry" and component.oci_layout is not None:
+                raise ValueError("registry manifest components must not contain oci_layout")
+        if self.schema_version == RELEASE_MANIFEST_VERSION and self.artifact_kind != "oci-layout":
+            raise ValueError("automation-release-v1 requires oci-layout artifacts")
+        if self.schema_version == REGISTRY_RELEASE_MANIFEST_VERSION:
+            if self.artifact_kind != "registry":
+                raise ValueError("automation-release-v2 requires registry artifacts")
+            if not re.fullmatch(r"[0-9a-f]{40}", self.git_commit):
+                raise ValueError("automation-release-v2 requires a full 40-character Git commit")
+        return self
+
+
+class PreproductionPublishComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tag: str
+    digest: str
+
+    @field_validator("digest")
+    @classmethod
+    def validate_digest(cls, value: str) -> str:
+        if not _DIGEST.fullmatch(value):
+            raise ValueError("published digest must be sha256:<64 lowercase hex>")
+        return value
+
+
+class PreproductionPublishRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[PREPRODUCTION_PUBLISH_RECORD_VERSION]
+    release_id: str
+    published_at: datetime
+    source_git_commit: str
+    codebuild_build_arn: str = Field(min_length=1)
+    codebuild_build_number: int = Field(ge=1)
+    registry_id: str = Field(pattern=r"^[0-9]{12}$")
+    region: str = Field(min_length=1)
+    target_repository: Literal["supportportal/preproduction"]
+    evidence_object_version: str = Field(min_length=1)
+    components: dict[str, PreproductionPublishComponent]
+
+    @model_validator(mode="after")
+    def validate_components(self) -> "PreproductionPublishRecord":
+        if set(self.components) != {"api", "route", "worker"}:
+            raise ValueError("Publish Record must contain api, route, and worker")
+        if not re.fullmatch(r"[0-9a-f]{40}", self.source_git_commit):
+            raise ValueError("Publish Record requires a full 40-character Git commit")
+        for role, component in self.components.items():
+            if component.tag != f"{role}-{self.release_id}":
+                raise ValueError("Publish Record component tag does not match release")
         return self
 
 
@@ -152,7 +210,12 @@ def write_manifest(manifest: AutomationReleaseManifest, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
-        json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            manifest.model_dump(mode="json", exclude_none=True),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     temporary.replace(path)
@@ -160,3 +223,23 @@ def write_manifest(manifest: AutomationReleaseManifest, path: Path) -> None:
 
 def read_manifest(path: Path) -> AutomationReleaseManifest:
     return AutomationReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def read_preproduction_publish_record(path: Path) -> PreproductionPublishRecord:
+    return PreproductionPublishRecord.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def validate_preproduction_publish_record(
+    manifest: AutomationReleaseManifest,
+    record: PreproductionPublishRecord,
+) -> None:
+    if manifest.schema_version != REGISTRY_RELEASE_MANIFEST_VERSION:
+        raise ValueError("Preproduction Publish Record requires automation-release-v2")
+    if record.release_id != manifest.release_id:
+        raise ValueError("Publish Record release_id does not match manifest")
+    if record.source_git_commit != manifest.git_commit:
+        raise ValueError("Publish Record Git commit does not match manifest")
+    for role, component in manifest.components.items():
+        published = record.components[role]
+        if published.tag != component.tag or published.digest != component.digest:
+            raise ValueError(f"Publish Record {role} component does not match manifest")

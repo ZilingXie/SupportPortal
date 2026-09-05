@@ -1,4 +1,4 @@
-"""Independent administrator sessions for the ECS Production dashboard."""
+"""Independent administrator sessions for an ECS Automation dashboard."""
 
 from __future__ import annotations
 

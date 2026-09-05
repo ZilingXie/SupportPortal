@@ -14,63 +14,26 @@ from backend.services.automation_contracts import (
 class AutomationContractsTest(unittest.TestCase):
     def test_environment_policy_matrix(self):
         self.assertIsNone(resolve_comment_visibility(AutomationEnvironment.STAGING, None))
-        self.assertEqual(
-            resolve_comment_visibility(AutomationEnvironment.PREPRODUCTION, None),
-            CommentVisibility.INTERNAL,
-        )
+        self.assertIsNone(resolve_comment_visibility(AutomationEnvironment.PREPRODUCTION, None))
         # Production no longer forces an immediate comment (p2-109 Phase B):
         # customer-visible replies are published by the parity worker, so the
         # visibility field is optional and unused at intake.
         self.assertIsNone(resolve_comment_visibility(AutomationEnvironment.PRODUCTION, None))
 
-    def test_preproduction_requires_allowlisted_ticket_and_internal_comment(self):
-        with patch.dict(os.environ, {"PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": "123,456"}, clear=False):
-            self.assertEqual(
-                validate_ticket_policy(
-                    AutomationEnvironment.PREPRODUCTION,
-                    "123",
-                    CommentVisibility.INTERNAL,
-                ),
-                CommentVisibility.INTERNAL,
-            )
-            with self.assertRaises(ValueError):
-                validate_ticket_policy(
-                    AutomationEnvironment.PREPRODUCTION,
-                    "789",
-                    CommentVisibility.INTERNAL,
-                )
-            with self.assertRaises(ValueError):
-                validate_ticket_policy(
-                    AutomationEnvironment.PREPRODUCTION,
-                    "123",
-                    CommentVisibility.EXTERNAL,
-                )
-
-    def test_preproduction_star_allowlist_admits_any_ticket(self):
-        with patch.dict(os.environ, {"PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": "*"}, clear=False):
-            self.assertEqual(
-                validate_ticket_policy(
-                    AutomationEnvironment.PREPRODUCTION,
-                    "999999",
-                    CommentVisibility.INTERNAL,
-                ),
-                CommentVisibility.INTERNAL,
-            )
-            with self.assertRaises(ValueError):
-                validate_ticket_policy(
-                    AutomationEnvironment.PREPRODUCTION,
-                    "999999",
-                    CommentVisibility.EXTERNAL,
-                )
-
-    def test_preproduction_empty_allowlist_stays_fail_closed(self):
-        with patch.dict(os.environ, {"PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST": ""}, clear=False):
-            with self.assertRaises(ValueError):
-                validate_ticket_policy(
-                    AutomationEnvironment.PREPRODUCTION,
-                    "123",
-                    CommentVisibility.INTERNAL,
-                )
+    def test_preproduction_matches_production_visibility_without_application_allowlist(self):
+        self.assertEqual(
+            validate_ticket_policy(
+                AutomationEnvironment.PREPRODUCTION,
+                "123",
+                CommentVisibility.EXTERNAL,
+            ),
+            CommentVisibility.EXTERNAL,
+        )
+        self.assertIsNone(
+            validate_ticket_policy(AutomationEnvironment.PREPRODUCTION, "789", None)
+        )
+        with self.assertRaisesRegex(ValueError, "requires zendesk_ticket_id"):
+            validate_ticket_policy(AutomationEnvironment.PREPRODUCTION, None, None)
 
     def test_production_visibility_is_optional(self):
         self.assertEqual(

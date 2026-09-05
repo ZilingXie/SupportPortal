@@ -18,7 +18,9 @@ PROCESSING_CONTRACT_VERSION = "automation-processing-v1"
 EXECUTION_CONTRACT_VERSION = "automation-execution-v1"
 HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
-SCHEMA_REVISION = "automation-ecs-001"
+REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
+PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
+SCHEMA_REVISION = "automation-ecs-002"
 
 _NUMERIC_ID_RE = re.compile(r"^\d{1,128}$")
 _EVENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]{0,239}$")
@@ -249,4 +251,3 @@ def canonical_payload_digest(payload: BaseModel | dict[str, Any]) -> str:
     value = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
     encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-

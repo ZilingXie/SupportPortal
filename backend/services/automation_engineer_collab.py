@@ -20,6 +20,7 @@ import os
 from typing import Any
 
 from backend.services.customer_reply_composer import detect_customer_reply_language
+from backend.services.account_processing_profiles import is_live_account_processing_profile
 from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
     build_engineer_case_context,
@@ -978,8 +979,8 @@ async def handle_slack_engineer_action(repository: Any, payload: dict[str, Any])
             raise ReplySyncError(409, "Guardrail approval is missing or stale")
         approved_content = str(guardrail.get("customer_reply") or "").strip()
         account_case = repository.get_account_case_by_ticket_id(str(ticket.get("ticket_id") or ""))
-        if not isinstance(account_case, dict) or str(account_case.get("processing_profile") or "").lower() != "production":
-            raise ReplySyncError(409, "Production Account Case is required")
+        if not isinstance(account_case, dict) or not is_live_account_processing_profile(account_case.get("processing_profile")):
+            raise ReplySyncError(409, "Live Account Case is required")
         account_case_id = str(account_case.get("account_case_id") or account_case.get("billing_ticket_id") or "").strip()
         zendesk_ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
         if not account_case_id or not zendesk_ticket_id or not approved_content:

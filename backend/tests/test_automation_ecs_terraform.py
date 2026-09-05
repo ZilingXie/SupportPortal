@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TERRAFORM = ROOT / "infra/terraform/production"
+PREPRODUCTION_TERRAFORM = ROOT / "infra/terraform/preproduction"
 
 
 def _read(name: str) -> str:
@@ -18,6 +19,13 @@ def _all_tf() -> str:
 
 def _resource_types(source: str) -> set[str]:
     return set(re.findall(r'^resource\s+"([^"]+)"\s+"', source, re.MULTILINE))
+
+
+def _preproduction_all_tf() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in PREPRODUCTION_TERRAFORM.glob("*.tf")
+    )
 
 
 def test_production_root_manages_only_the_imported_stable_boundary() -> None:
@@ -161,3 +169,111 @@ def test_production_root_has_no_release_or_secret_values() -> None:
     assert "REPLACE" in tfvars
     assert "oauth2-token" not in tfvars
     assert "postgresql://" not in tfvars
+
+
+def test_preproduction_root_owns_only_isolated_environment_resources() -> None:
+    source = _preproduction_all_tf()
+    resources = _resource_types(source)
+    assert {
+        "aws_ecs_cluster",
+        "aws_ecr_repository",
+        "aws_lb_target_group",
+        "aws_lb_listener_rule",
+        "aws_security_group",
+        "aws_cloudwatch_log_group",
+        "aws_iam_role",
+        "aws_efs_access_point",
+        "aws_service_discovery_private_dns_namespace",
+        "aws_service_discovery_service",
+        "aws_s3_bucket",
+        "aws_ecs_service",
+    } <= resources
+    assert 'resource "aws_rds_cluster"' not in source
+    assert 'resource "aws_db_instance"' not in source
+    assert 'resource "aws_lb"' not in source
+    assert 'resource "aws_efs_file_system"' not in source
+    assert 'resource "aws_ssm_parameter"' not in source
+    assert "postgresql://" not in source
+
+
+def test_preproduction_bootstrap_is_staged_without_target_or_task_definition_ownership() -> None:
+    variables = (PREPRODUCTION_TERRAFORM / "variables.tf").read_text(encoding="utf-8")
+    ecs = (PREPRODUCTION_TERRAFORM / "ecs.tf").read_text(encoding="utf-8")
+    readme = (PREPRODUCTION_TERRAFORM / "README.md").read_text(encoding="utf-8")
+    assert 'variable "create_account_services"' in variables
+    assert "default     = false" in variables
+    assert "var.create_account_services ? local.account_services : {}" in ecs
+    assert "ignore_changes = [task_definition]" in ecs
+    lifecycle = ecs.split("lifecycle {", 1)[1].split("}", 1)[0]
+    assert "desired_count" not in lifecycle
+    assert "network_configuration" not in lifecycle
+    assert 'resource "aws_ecs_task_definition"' not in _preproduction_all_tf()
+    assert "terraform -target" in readme
+    assert "without `terraform -target`" in readme
+
+
+def test_preproduction_network_and_runtime_identity_are_explicit() -> None:
+    source = _preproduction_all_tf()
+    network = (PREPRODUCTION_TERRAFORM / "network.tf").read_text(encoding="utf-8")
+    ecs = (PREPRODUCTION_TERRAFORM / "ecs.tf").read_text(encoding="utf-8")
+    assert 'name = "supportportal-preproduction"' in source
+    assert 'name                 = "supportportal/preproduction"' in source
+    assert 'path                = "/automation/preproduction/health/live"' in network
+    assert 'values = ["/automation/preproduction", "/automation/preproduction/*"]' in network
+    assert "referenced_security_group_id = var.shared_alb_security_group_id" in network
+    assert "referenced_security_group_id = aws_security_group.ecs.id" in network
+    assert "assign_public_ip = true" in ecs
+    assert 'name = "preproduction.supportportal.local"' in network
+    assert 'name = "hermes"' in network
+
+
+def test_preproduction_retains_three_releases_per_role() -> None:
+    source = (PREPRODUCTION_TERRAFORM / "main.tf").read_text(encoding="utf-8")
+    assert '["api", "route", "worker"]' in source
+    assert 'tagPrefixList = ["${role}-"]' in source
+    assert "countNumber   = 3" in source
+    assert "imageCountMoreThan" in source
+
+
+def test_preproduction_account_and_hermes_state_roles_are_isolated() -> None:
+    iam = (PREPRODUCTION_TERRAFORM / "iam.tf").read_text(encoding="utf-8")
+    outputs = (PREPRODUCTION_TERRAFORM / "outputs.tf").read_text(encoding="utf-8")
+    assert 'resource "aws_iam_role" "hermes_task"' in iam
+    account_policy = iam.split('resource "aws_iam_role_policy" "task_efs"', 1)[1].split(
+        'resource "aws_iam_role" "hermes_task"', 1
+    )[0]
+    assert "var.hermes_efs_access_point_arns" not in account_policy
+    hermes_policy = iam.split('resource "aws_iam_role_policy" "hermes_task"', 1)[1]
+    assert "var.hermes_efs_access_point_arns" in hermes_policy
+    assert 'Resource = "${aws_s3_bucket.hermes_backup.arn}/migration/*"' in hermes_policy
+    assert "hermes_task_role_arn" in outputs
+
+
+def test_preproduction_backend_and_secret_boundary_are_documented() -> None:
+    backend = (PREPRODUCTION_TERRAFORM / "backend.tf.example").read_text(encoding="utf-8")
+    readme = (PREPRODUCTION_TERRAFORM / "README.md").read_text(encoding="utf-8")
+    assert 'key            = "supportportal/ecs-preproduction/terraform.tfstate"' in backend
+    assert 'dynamodb_table = "supportportal-terraform-locks"' in backend
+    assert "SecureString values are never Terraform resources or variables" in readme
+    assert "register_automation_ecs_initial_task_definitions.sh" in readme
+
+
+def test_codebuild_release_project_allows_only_one_build_at_a_time() -> None:
+    source = (ROOT / "infra/terraform/release/main.tf").read_text(encoding="utf-8")
+    assert "concurrent_build_limit = 1" in source
+
+
+def test_codebuild_role_reads_requests_but_writes_only_release_evidence() -> None:
+    source = (ROOT / "infra/terraform/release/main.tf").read_text(encoding="utf-8")
+    request_statement = source.split('Sid      = "VersionedReleaseRequestRead"', 1)[1].split(
+        "},", 1
+    )[0]
+    evidence_statement = source.split(
+        'Sid      = "VersionedReleaseEvidenceWrite"', 1
+    )[1].split("},", 1)[0]
+    assert "s3:GetObjectVersion" in request_statement
+    assert "s3:PutObject" not in request_statement
+    assert 'requests/*' in request_statement
+    assert "s3:PutObject" in evidence_statement
+    assert 'releases/*' in evidence_statement
+    assert "s3:GetObject" not in evidence_statement

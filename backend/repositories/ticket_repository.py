@@ -17,6 +17,11 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 from backend.services.account_reply_jobs import ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+from backend.services.account_processing_profiles import (
+    ACCOUNT_PROCESSING_PROFILES,
+    is_live_account_processing_profile,
+    normalize_account_processing_profile,
+)
 from backend.services.automation_routing import (
     AUTOMATED_ROUTE_FAMILY,
     AUTOMATED_ROUTE_STATUS,
@@ -1089,9 +1094,9 @@ def _normalize_account_case_record(account_case: dict[str, Any]) -> dict[str, An
     normalized["account_case_id"] = str(
         normalized.get("account_case_id") or billing_ticket_id
     ).strip()
-    processing_profile = str(normalized.get("processing_profile") or "staging").strip().lower()
-    if processing_profile not in {"staging", "production"}:
-        raise ValueError("processing_profile must be staging or production")
+    processing_profile = normalize_account_processing_profile(
+        normalized.get("processing_profile")
+    )
     normalized["processing_profile"] = processing_profile
     normalized["zendesk_ticket_id"] = str(normalized.get("zendesk_ticket_id") or "").strip() or None
     normalized["zendesk_ticket_status"] = (
@@ -3521,8 +3526,8 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             processing_profile=processing_profile,
         )
         profile = str(processing_profile or "staging").strip().lower()
-        if profile not in {"staging", "production"}:
-            raise ValueError("processing_profile must be staging or production")
+        if profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
         filtered_items = [
             item for item in filtered_items
             if str(item.get("processing_profile") or "staging").strip().lower() == profile
@@ -4610,7 +4615,7 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             ).strip()
             production_delivery_eligible = bool(
                 billing_ticket is not None
-                and processing_profile == "production"
+                and is_live_account_processing_profile(processing_profile)
                 and account_case_id
                 and zendesk_ticket_id
                 and (
@@ -7374,8 +7379,8 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
         safe_limit = _safe_positive_int(limit, 30)
         safe_offset = _safe_non_negative_int(offset, 0)
         normalized_profile = str(processing_profile or "staging").strip().lower()
-        if normalized_profile not in {"staging", "production"}:
-            raise ValueError("processing_profile must be staging or production")
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
         items = sorted(
             self._billing_tickets.values(),
             key=lambda item: str(item.get("created_at") or ""),
@@ -7911,7 +7916,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
     ) -> dict[str, Any] | None:
         normalized_ticket_id = str(zendesk_ticket_id or "").strip()
         normalized_profile = str(processing_profile or "").strip().lower()
-        if not normalized_ticket_id or normalized_profile not in {"staging", "production"}:
+        if not normalized_ticket_id or normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
             return None
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
@@ -7943,10 +7948,11 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         normalized_profile = str(processing_profile or "").strip().lower()
         normalized_since = str(created_since or "").strip()
         normalized_limit = max(1, min(int(limit or 10), 50))
-        if not normalized_title or not normalized_since or normalized_profile not in {
-            "staging",
-            "production",
-        }:
+        if (
+            not normalized_title
+            or not normalized_since
+            or normalized_profile not in ACCOUNT_PROCESSING_PROFILES
+        ):
             return []
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
@@ -9397,8 +9403,8 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         normalized_route_status = str(route_status or "").strip()
         normalized_route_filter = str(route_filter or "").strip()
         normalized_profile = str(processing_profile or "staging").strip().lower()
-        if normalized_profile not in {"staging", "production"}:
-            raise ValueError("processing_profile must be staging or production")
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
 
         def _operation(conn: psycopg.Connection[Any]) -> tuple[list[dict[str, Any]], int]:
             with conn.cursor() as cur:
@@ -9553,8 +9559,8 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         normalized_route_status = str(route_status or "").strip()
         normalized_route_filter = str(route_filter or "").strip()
         normalized_profile = str(processing_profile or "staging").strip().lower()
-        if normalized_profile not in {"staging", "production"}:
-            raise ValueError("processing_profile must be staging or production")
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
 
         def _operation(conn: psycopg.Connection[Any]) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
             with conn.transaction():
@@ -11741,7 +11747,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                     sql.SQL(
                         "CREATE TABLE IF NOT EXISTS {} ("
                         "account_case_id TEXT PRIMARY KEY REFERENCES {}(account_case_id) ON DELETE CASCADE, "
-                        "processing_profile TEXT NOT NULL CHECK (processing_profile = 'production'), "
+                        "processing_profile TEXT NOT NULL CHECK (processing_profile IN ('preproduction', 'production')), "
                         "zendesk_ticket_id TEXT, zendesk_ticket_url TEXT, question TEXT NOT NULL, "
                         "classification_path TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT NOT NULL, "
                         "body TEXT NOT NULL, "
@@ -16214,8 +16220,8 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         normalized_automation_filter = str(automation_filter or "").strip()
         normalized_route_filter = str(route_filter or "").strip()
         normalized_profile = str(processing_profile or "staging").strip().lower()
-        if normalized_profile not in {"staging", "production"}:
-            raise ValueError("processing_profile must be staging or production")
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
@@ -16280,8 +16286,8 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         clauses: list[sql.SQL] = []
         params: list[Any] = []
         normalized_profile = str(processing_profile or "staging").strip().lower()
-        if normalized_profile not in {"staging", "production"}:
-            raise ValueError("processing_profile must be staging or production")
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
         clauses.append(sql.SQL("COALESCE(NULLIF(bt.processing_profile, ''), 'staging') = %s"))
         params.append(normalized_profile)
         if review_status:
@@ -17841,7 +17847,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                     account_case is not None
                     and delivery_case_row is not None
                     and str(delivery_case_row[0] or "").strip()
-                    and str(delivery_case_row[1] or "").strip().lower() == "production"
+                    and is_live_account_processing_profile(delivery_case_row[1])
                     and str(delivery_case_row[2] or "").strip()
                     and (
                         # RAG fallback answers publish after the case was

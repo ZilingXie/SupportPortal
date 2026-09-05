@@ -1,6 +1,86 @@
 # Automation ECS Release Runbook
 
-本文描述 build、publish、promotion 和唯一正式 Production 部署入口。发布记录必须明确镜像来自 Preproduction 或获批的本地 OCI bootstrap，不得混淆来源。
+本文描述 CodeBuild build、Preproduction publish/deploy、同 digest promotion 和正式 Production deploy。发布记录必须明确镜像来自 Preproduction 或获批的历史本地 OCI bootstrap，不得混淆来源。
+
+## Normal CodeBuild Release Path
+
+常规 release 固定一个可从 `origin/main` 到达的完整 40 位 commit。CodeBuild 使用
+`NO_SOURCE` project 拉取该 commit，一次构建 API/Route/Worker 三个原生
+`linux/amd64` 镜像，直接 push 到 immutable `supportportal/preproduction`，并把
+`automation-release-v2` Manifest 与 `automation-preproduction-publish-v1` Publish
+Record 写入加密、版本化的 release evidence bucket。CodeBuild 无 ECS、RDS 或
+Production ECR 写权限，不能自行部署。
+
+先通过独立 Terraform root 创建 release tooling：
+
+```bash
+terraform -chdir=infra/terraform/release init -reconfigure
+terraform -chdir=infra/terraform/release plan -out release.tfplan
+terraform -chdir=infra/terraform/release apply release.tfplan
+```
+
+之后从 clean、同步的 `main` 触发构建；源 Prompt DSN 只通过环境传递：
+
+```bash
+AUTOMATION_RELEASE_EVIDENCE_BUCKET=<versioned-bucket> \
+TICKET_DB_DSN=<source-dsn> \
+./deployment/start_automation_codebuild_release.sh \
+  --git-commit <full-main-sha> \
+  --prompt-release-id <active-prompt-release-id>
+```
+
+输出只包含无 secret 的 Manifest v2 和 Publish Record。requested/observed commit、
+三角色 tag/digest、平台、Prompt build ref/content fingerprint、CodeBuild ARN 与 S3
+object version 必须全部一致。第一次冷构建只记录耗时；warm-cache目标从下一次真实
+release测量，不为测速重复构建同一 release。
+
+## One-time Preproduction Bootstrap
+
+`infra/terraform/preproduction` 使用独立 remote state，自己管理 Preproduction
+cluster、ECR、target group/path rule、security group、日志、IAM、Graph EFS access
+point、Hermes私有Cloud Map服务和迁移备份桶；VPC、ALB、RDS、ACM和EFS file system
+只是共享输入。Terraform 不创建或读取 SecureString value。
+
+bootstrap分两次 add-only apply，不使用 `terraform -target`，也不复制 Production
+task definition：
+
+1. 以 `create_account_services=false` apply foundation。
+2. 运行 `backend.scripts.bootstrap_automation_preproduction --check-only`，确认目标
+   SSM namespace、schema和roles均为空；正式执行时创建全新
+   `supportportal_preproduction` schema、runtime/migration roles与独立SSM参数。
+3. 触发CodeBuild；对Manifest/Publish Record和ECR digest完成readback。
+4. 先运行 `register_automation_ecs_initial_task_definitions.sh --check-only`，再以
+   `AUTOMATION_INITIAL_TASK_DEFINITIONS_APPROVED=1` 注册三份canonical initial
+   definition。脚本只注册revision，不创建或更新Service。
+5. 将生成的 `account-services.auto.tfvars.json` 作为第二次plan输入，设置
+   `create_account_services=true`，只新增API/Route/Worker三个Service。
+6. 使用正式Preproduction deploy完成schema、Prompt、service、heartbeat及公网门禁，
+   最后要求Preproduction Terraform plan为exit 0。
+
+Preproduction保持真实环境身份：路径、schema、role、namespace、Prompt target、secret、
+日志和heartbeat均为`preproduction`；Account业务合同与Production相同，不存在应用
+allowlist或forced-internal comment。n8n是唯一工单入口控制，本流程不修改n8n。
+
+```bash
+DEPLOY_PREPRODUCTION_APPROVED=1 \
+TICKET_DB_DSN=<source-prompt-dsn> \
+PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
+./deployment/deploy_automation_ecs_release.sh \
+  --environment preproduction \
+  --manifest <release-manifest.json> \
+  --publish-record <publish-record.json> \
+  --bootstrap-account-schema \
+  --hermes-case-workflow-mode disabled
+```
+
+独立 `--check-only` 始终只读。正式 deploy 自带同一套 preflight，不要求紧邻执行一次
+重复 check-only。schema bootstrap 只有在健康 runtime 的 `schema_revision` 与
+Manifest一致且目标数据库直接 schema check成功时才跳过。
+
+Preproduction业务验收后，`promote_automation_release.sh`只复制已验收的三个digest到
+`supportportal/production`，不rebuild、不复制数据库、Prompt rows、secret、日志、
+task definition或Hermes状态；Production deploy仍要求独立
+`DEPLOY_PRODUCTION_APPROVED=1`与Promotion Record。
 
 ## Release Bundle
 
@@ -192,6 +272,8 @@ Preproduction真实验收与外部 readback完成后，由用户执行：
 ```bash
 ./deployment/promote_automation_release.sh \
   --manifest .deployments/releases/<release_id>/release-manifest.json \
+  --publish-record .deployments/releases/<release_id>/publish-record.json \
+  --preproduction-evidence .deployments/ecs-deploy-preproduction-<release_id>-real/evidence.json \
   --region <aws-region> \
   --registry-id <aws-account-id>
 ```
@@ -201,7 +283,8 @@ Preproduction真实验收与外部 readback完成后，由用户执行：
 1. 按 Manifest digest从 `supportportal/preproduction`读取原始 OCI manifest。
 2. 通过 registry-to-registry copy将原始 manifest及其 layers以同一 role tag写入 `supportportal/production`，不 build。
 3. 验证每个 Production digest与 Manifest完全相等。
-4. 生成单独的 `promotion-record.json`，不修改 Release Manifest。
+4. 验证Publish Record与Preproduction完整deploy evidence，并把两者SHA-256写入
+   `promotion-record.json`；不修改Release Manifest。
 
 Production task definition使用：
 
@@ -298,7 +381,7 @@ task definition family 和 task 归属，停止仍在运行的旧 task、注销�
 正式部署使用 release-scoped 状态目录：
 
 ```text
-.deployments/ecs-deploy-<release_id>/
+.deployments/ecs-deploy-<environment>-<release_id>[-<hermes_mode>]/
   checkpoint.json
   <role>.old-arn
   <role>.new-arn
@@ -323,7 +406,7 @@ Route 与 Worker 会先完成 update，然后使用一次 ECS stable waiter共�
 成功后统一证据写入：
 
 ```text
-.deployments/ecs-deploy-<release_id>/evidence.json
+.deployments/ecs-deploy-<environment>-<release_id>[-<hermes_mode>]/evidence.json
 ```
 
 其中包括 commit、Prompt Release build ref/content fingerprint、三个角色的旧/新 task
@@ -338,15 +421,18 @@ Terraform 必须为已校验的 `1.9.8`；本机不在 PATH 时通过
 `AUTOMATION_TERRAFORM_BIN=/absolute/path/to/terraform` 指定。零漂移 plan 使用
 DynamoDB backend lock，并在 60 秒内无法取得锁时阻断发布。
 
-固定执行顺序：
+两个环境的固定执行顺序：
 
-1. 要求真实 production Terraform refresh plan 为 exit `0`；exit `1/2` 都阻断发布。
-2. 校验源 Prompt Release，将目标同步为 candidate，并在状态切换前比较 build ref
+1. 要求目标环境真实 Terraform refresh plan 为 exit `0`；exit `1/2` 都阻断发布。
+2. 若显式请求 schema bootstrap，使用目标 API digest运行一次受控 migration task；
+   只有 exit 0才继续。全新 Preproduction必须先创建运行表，之后才能持久化 Prompt
+   Release candidate。
+3. 校验源 Prompt Release，将目标同步为 candidate，并在状态切换前比较 build ref
    与完整 `prompt_key + content_sha256` 指纹；目标本地 version remap 允许存在。
-3. 若显式请求 schema bootstrap，使用目标 API digest运行一次受控 migration task；
-   只有 exit 0才继续。
-4. 从三个 service 当前 revision 克隆 task definition，只替换 image、五个 provenance
-   字段和显式批准的 Hermes mode；逐角色注册新 revision。
+4. 从目标环境三个 service 当前 revision 克隆 task definition，只替换 image、五个
+   provenance字段和显式批准的Hermes mode；逐角色注册新revision。`disabled`会同时
+   删除Hermes endpoint、API key和callback token引用；active mode缺任一必需secret
+   时fail closed。
 5. 先更新 Route、Worker，共同等待 stable、核对运行 digest 和最新 heartbeat provenance；
    再更新 API。
 6. 核对公网 live/release/ready、Hermes mode、三个运行 digest、CloudWatch 和 EC2 backup。

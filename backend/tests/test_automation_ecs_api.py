@@ -520,6 +520,11 @@ def test_dashboard_runtime_and_static_assets_are_available_without_route_shadowi
         assert "AUTOMATION_INTAKE_SHARED_TOKEN" not in asset.text
         assert "author_name" not in asset.text
         assert "via_channel" not in asset.text
+        assert "preproduction|production" in asset.text
+        assert 'const basePath = `/automation/${environmentMatch[1]}`' in asset.text
+        assert "environmentLabel" in asset.text
+        assert "document.title" in asset.text
+        assert 'const basePath = "/automation/production"' not in asset.text
         _dashboard_login(client)
         runtime = client.get("/automation/production/dashboard/api/runtime")
         assert runtime.status_code == 200

@@ -93,6 +93,15 @@ class ProductionAutomationClassificationEmailTests(unittest.TestCase):
             )
         )
 
+    def test_preproduction_uses_same_contract_with_accurate_profile(self) -> None:
+        case = _case(processing_profile="preproduction")
+        self.assertTrue(is_production_automation_classification(case))
+        payload = build_production_automation_classification_email(case)
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["processing_profile"], "preproduction")
+        self.assertTrue(payload["subject"].startswith("[Preproduction Automation]"))
+
     def test_recipient_is_always_the_owner_for_every_category(self) -> None:
         # The classification notification is the automation owner's signal;
         # the suhrid/emmazhong routing belongs to the per-flow internal

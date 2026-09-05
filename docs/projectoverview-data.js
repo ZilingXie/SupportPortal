@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T15:59:19Z",
-  "source_base_commit": "21f29419ad52273dae436ebe9e216c20015028a0",
-  "registry_digest": "243e3895e74a36e0812624e077d328bfeb15344e24f010c7a80b42b1619d7e99",
+  "generated_at": "2026-09-05T20:26:04Z",
+  "source_base_commit": "e888b850e77afa9f9b170cfb1d84dea2ede4cd79",
+  "registry_digest": "15fc912949b454379c1eba9dc958b7dc16f4fe588031e1f7e740cdea5e33cae0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2090,6 +2090,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "CodeBuild and isolated Preproduction implementation contract",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q \u003c17个CodeBuild/Manifest/Promotion/Prompt/Preproduction bootstrap/Account/ECS/Worker/Dashboard定向测试文件>; Terraform 1.9.8 fmt/init/validate",
+          "details": "383 passed + 82 subtests；release与preproduction两个Terraform root均通过固定1.9.8 fmt -check、init -backend=false和validate。实现固定完整main SHA的CodeBuild构建、Manifest v2/Preproduction Publish Record、环境化deploy、canonical initial task definitions、schema revision跳过门禁、独立Preproduction schema/roles/SSM bootstrap、Terraform分阶段add-only root及Production等价Preproduction Account合同。Owner review额外收窄CodeBuild request前缀为只读、修复目标Prompt已active时的部署前失败回滚、兼容Buildx实际manifest media type并锁定正常晋升目标为Production。AWS apply、CodeBuild、Hermes迁移和双环境live evidence由后续阶段补充，本记录不预先声称云端完成。"
         },
         {
           "type": "deployment",
@@ -6785,10 +6791,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线最新 main 的 r20260905-19d30d3（runtime commit 19d30d341308）：API/Route/Worker revision 32/27/30均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active。该release包含p2-144 Persona v26/review-v1正文不可变链路、已完成的p2-145 Admin同源视图，以及p2-146 PostgreSQL-only Hermes Case Workflow；九张Hermes表已bootstrap，API/Worker显式启用mock。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。ECR仅保留当前release与两套完整回滚release。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类Account工单和technical Case readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
-      "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 与 technical 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee及Hermes mock/Slack/Approve外部readback；不修改n8n、不重放历史任务或outcome_unknown。业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
+      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 当前运行 r20260905-21f2941，API/Route/Worker revision 34/29/32与 Hermes mock 保持健康；n8n由用户独立控制。当前代码变更正在建立固定完整 main SHA 的 AWS CodeBuild 三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链。Preproduction将使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs和Production等价Account业务合同，无应用allowlist或forced-internal comment；当前Hermes状态将在单写者、离线backup和quick_check门禁下移至Preproduction real，Production则以同镜像配置revision物理移除Hermes endpoint/token/service/route。此摘要不预先声称代码已合并或云端Preproduction已创建。",
+      "next_action": "保持 active。先完成并合并CodeBuild/Preproduction发布与隔离合同，重启官方本地栈验证；再合并hermes-deploy环境化generator。之后只在Terraform add-only、全新数据库状态、Hermes idle/backup/quick_check和AWS身份门禁通过时创建Preproduction并迁移唯一Hermes writer，同时将Production切为Hermes disabled。最终提供双环境技术readback并停在用户创建全新业务工单之前；不修改n8n、不重放历史任务或outcome_unknown。",
       "acceptance_criteria": [
-        "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
+        "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
         "Production Terraform使用远程加密版本化 state 和 DynamoDB lock，仅 import/manage ECR、Automation target group/listener rule及三 ECS service稳定配置；task_definition指针归发布脚本，线上共享 cluster/ALB/ACM/security group/log/SSM/IAM/EFS/Hermes不由该 root创建或删除。",
         "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker完成分类且仅对已有父Ticket的后续事件读取Persona，Automation Worker在ticket.created Processing先持久化父Ticket再固定Persona并执行AI、远端RAG与外部动作；角色之间通过隔离RDS schema内的durable Jobs交接，不依赖Redis/SQS或EC2 runtime。",
@@ -6798,10 +6804,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
         "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
         "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
-        "正式Production发布只能使用要求Manifest、Promotion Record、零漂移plan和显式授权的deploy_automation_ecs_release.sh；Prompt先同步candidate，Route/Worker与heartbeat通过后再部署API，所有健康门禁通过后才activate；激活前失败回滚旧revision，激活结果不确定时要求readback reconciliation。"
+        "正式Production发布只能使用要求Manifest、Promotion Record、零漂移plan和显式授权的deploy_automation_ecs_release.sh；Prompt先同步candidate，Route/Worker与heartbeat通过后再部署API，所有健康门禁通过后才activate；激活前失败回滚旧revision，激活结果不确定时要求readback reconciliation。",
+        "常规release由无ECS/RDS/Production ECR写权限的CodeBuild从固定完整main commit一次构建三角色linux/amd64镜像，输出registry-backed Manifest v2和Preproduction Publish Record；首次Preproduction使用canonical definitions分阶段add-only bootstrap，不复制Production task definition。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "CodeBuild and isolated Preproduction implementation contract",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest -q \u003c17个CodeBuild/Manifest/Promotion/Prompt/Preproduction bootstrap/Account/ECS/Worker/Dashboard定向测试文件>; Terraform 1.9.8 fmt/init/validate",
+          "details": "383 passed + 82 subtests；release与preproduction两个Terraform root均通过固定1.9.8 fmt -check、init -backend=false和validate。实现固定完整main SHA的CodeBuild构建、Manifest v2/Preproduction Publish Record、环境化deploy、canonical initial task definitions、schema revision跳过门禁、独立Preproduction schema/roles/SSM bootstrap、Terraform分阶段add-only root及Production等价Preproduction Account合同。Owner review额外收窄CodeBuild request前缀为只读、修复目标Prompt已active时的部署前失败回滚、兼容Buildx实际manifest media type并锁定正常晋升目标为Production。AWS apply、CodeBuild、Hermes迁移和双环境live evidence由后续阶段补充，本记录不预先声称云端完成。"
+        },
         {
           "type": "deployment",
           "label": "ECS Production Suspension preclaim release and post-release gates",
@@ -7077,7 +7090,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-09-05",
+      "updated_at": "2026-09-06",
       "history": [
         {
           "at": "2026-08-25",
@@ -16091,7 +16104,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
         "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
-        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 使用同一组环境中立 OCI manifest 经 Preproduction 验收后按 digest 晋升 Production；Preproduction 建立前获批的首次 Production bootstrap 可直接发布经 Manifest 验证的本地 OCI，并在 Promotion Record 明确记录 `source_repository=local-oci`。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime。现有 EC2 `/production`、旧 release builder 与 n8n workflow 保持不变。",
+        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 由 AWS CodeBuild 固定完整 main commit，一次构建并发布三角色 linux/amd64 digest 到 Preproduction；Preproduction 使用独立 schema、roles、namespace、Prompt target、Secrets 和日志但执行与 Production 相同的 Account 业务合同，验收后只按相同 digest 晋升 Production、禁止 rebuild。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime；n8n workflow 保持由用户独立控制。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

@@ -11,6 +11,7 @@ from typing import Any
 
 from backend.services.account_automation_ownership import mark_production_ownership_released
 from backend.services.account_automation_reconciliation import reconcile_automation_execution_failure
+from backend.services.account_processing_profiles import is_live_account_processing_profile
 from backend.services.automation_routing import ACTIVE_AUTOMATION_SUBCATEGORIES, canonical_automation_subcategory
 from backend.services.zendesk_comments import (
     ZendeskCommentError,
@@ -63,17 +64,18 @@ def reconcile_account_human_review_queue_mismatches(
 ) -> list[AccountHumanReviewEscalationResult]:
     """Repair persisted Account cases marked for review but still AI-routed.
 
-    This is deliberately bounded and Production-only. The worker calls it as a
+    This is deliberately bounded and live-environment-only. The worker calls it as a
     reconciliation pass so cases created by an older failure branch (such as a
     reply job that was only marked ``manual_attention``) receive the same
     idempotent handoff as new failures.
     """
-    if str(processing_profile or "").strip().lower() != "production":
+    normalized_profile = str(processing_profile or "").strip().lower()
+    if not is_live_account_processing_profile(normalized_profile):
         return []
     cases = repository.list_account_cases(
         limit=max(1, min(int(limit), 100)),
         route_status="automated",
-        processing_profile="production",
+        processing_profile=normalized_profile,
     )
     results: list[AccountHumanReviewEscalationResult] = []
     for case in cases or []:
@@ -407,7 +409,7 @@ def escalate_account_case_to_human_review(
     note_comment_id: str | None = None
     route_failure_code: str | None = None
 
-    if processing_profile == "production" and active and zendesk_ticket_id:
+    if is_live_account_processing_profile(processing_profile) and active and zendesk_ticket_id:
         prior_context = account_case.get("automation_context")
         prior_context = prior_context if isinstance(prior_context, dict) else {}
         ownership = prior_context.get("zendesk_ownership")
@@ -457,7 +459,7 @@ def escalate_account_case_to_human_review(
             group_id=str(ownership.get("group_id") or "").strip() or None,
             failure_code=route_failure_code or note_error,
         )
-    elif processing_profile == "production" and active:
+    elif is_live_account_processing_profile(processing_profile) and active:
         internal_note_status = "skipped_missing_zendesk_ticket"
         route_back_status = "skipped_missing_zendesk_ticket"
 

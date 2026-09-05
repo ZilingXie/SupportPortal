@@ -16,6 +16,8 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from backend.services.account_processing_profiles import is_live_account_processing_profile
+
 from backend.services.account_automation_reconciliation import (
     reconcile_automation_execution_failure,
 )
@@ -1259,10 +1261,7 @@ async def sync_account_case_ticket_status(
     sync_timestamp = _now_iso()
     status_engineer_case = None
     engineer_slack_event = None
-    if (
-        str(account_case.get("processing_profile") or "staging").strip().lower()
-        == "production"
-    ):
+    if is_live_account_processing_profile(account_case.get("processing_profile")):
         client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
         status_engineer_case = (
             await _sync(repository.get_active_engineer_case, client_ticket_id, include_client_messages=True)

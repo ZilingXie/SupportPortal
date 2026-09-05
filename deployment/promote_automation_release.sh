@@ -7,6 +7,8 @@ SOURCE_REPOSITORY="supportportal/preproduction"
 TARGET_REPOSITORY="supportportal/production"
 MANIFEST_PATH=""
 PROMOTION_RECORD=""
+PUBLISH_RECORD=""
+PREPRODUCTION_EVIDENCE=""
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 REGISTRY_ID=""
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
@@ -25,6 +27,9 @@ Options:
   --target-repository <name>   Default: supportportal/production
   --registry-id <account-id>   Optional AWS account registry id
   --promotion-record <path>    Default: next to Release Manifest
+  --publish-record <path>      Required for normal Preproduction promotion
+  --preproduction-evidence <path>
+                               Required complete Preproduction deploy evidence
   --direct-production          Publish the Manifest's local OCI archives directly
                                to Production and record source_repository=local-oci
 
@@ -45,6 +50,8 @@ parse_args() {
       --source-repository) [[ $# -ge 2 ]] || fail "--source-repository requires a value"; SOURCE_REPOSITORY="$2"; SOURCE_REPOSITORY_EXPLICIT=1; shift 2 ;;
       --target-repository) [[ $# -ge 2 ]] || fail "--target-repository requires a value"; TARGET_REPOSITORY="$2"; shift 2 ;;
       --promotion-record) [[ $# -ge 2 ]] || fail "--promotion-record requires a value"; PROMOTION_RECORD="$2"; shift 2 ;;
+      --publish-record) [[ $# -ge 2 ]] || fail "--publish-record requires a value"; PUBLISH_RECORD="$2"; shift 2 ;;
+      --preproduction-evidence) [[ $# -ge 2 ]] || fail "--preproduction-evidence requires a value"; PREPRODUCTION_EVIDENCE="$2"; shift 2 ;;
       --direct-production) DIRECT_PRODUCTION=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1" ;;
@@ -66,9 +73,19 @@ main() {
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
     [[ "${SOURCE_REPOSITORY_EXPLICIT}" = "0" ]] || fail "--direct-production cannot be combined with --source-repository"
+    [[ -z "${PUBLISH_RECORD}" && -z "${PREPRODUCTION_EVIDENCE}" ]] \
+      || fail "--direct-production does not accept Preproduction evidence"
     command -v skopeo >/dev/null 2>&1 || fail "skopeo is required for direct Production publishing"
     SOURCE_REPOSITORY="local-oci"
   else
+    [[ "${SOURCE_REPOSITORY}" = "supportportal/preproduction" ]] \
+      || fail "normal promotion source must be supportportal/preproduction"
+    [[ "${TARGET_REPOSITORY}" = "supportportal/production" ]] \
+      || fail "normal promotion target must be supportportal/production"
+    [[ -n "${PUBLISH_RECORD}" && -f "${PUBLISH_RECORD}" ]] \
+      || fail "Preproduction Publish Record is required"
+    [[ -n "${PREPRODUCTION_EVIDENCE}" && -f "${PREPRODUCTION_EVIDENCE}" ]] \
+      || fail "complete Preproduction deploy evidence is required"
     command -v crane >/dev/null 2>&1 || fail "crane is required for digest-preserving registry copy"
   fi
 
@@ -78,7 +95,7 @@ main() {
   PROMOTION_RECORD="${PROMOTION_RECORD:-${manifest_dir}/promotion-record.json}"
   [[ ! -e "${PROMOTION_RECORD}" ]] || fail "Promotion Record already exists: ${PROMOTION_RECORD}"
 
-  local release_id
+  local release_id acceptance_json publish_record_sha256 deploy_evidence_sha256
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
     PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -m backend.scripts.automation_release \
       validate --manifest "${MANIFEST_PATH}" >/dev/null \
@@ -86,10 +103,30 @@ main() {
   fi
   release_id="$(PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -c 'import sys; from pathlib import Path; from backend.services.automation_release_manifest import read_manifest; print(read_manifest(Path(sys.argv[1])).release_id)' "${MANIFEST_PATH}")" \
     || fail "Release Manifest validation failed"
+  if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+    acceptance_json="$(PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
+      validate-preproduction-acceptance \
+      --manifest "${MANIFEST_PATH}" \
+      --publish-record "${PUBLISH_RECORD}" \
+      --deploy-evidence "${PREPRODUCTION_EVIDENCE}")" \
+      || fail "Preproduction release evidence validation failed"
+    publish_record_sha256="$(jq -r '.publish_record_sha256' <<<"${acceptance_json}")"
+    deploy_evidence_sha256="$(jq -r '.deploy_evidence_sha256' <<<"${acceptance_json}")"
+  fi
   if [[ -z "${REGISTRY_ID}" ]]; then
-    REGISTRY_ID="$(aws sts get-caller-identity --query Account --output text)"
+    if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+      REGISTRY_ID="$(jq -r '.registry_id' <<<"${acceptance_json}")"
+    else
+      REGISTRY_ID="$(aws sts get-caller-identity --query Account --output text)"
+    fi
   fi
   [[ "${REGISTRY_ID}" =~ ^[0-9]{12}$ ]] || fail "AWS registry id must be a 12-digit account id"
+  if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+    [[ "$(jq -r '.registry_id' <<<"${acceptance_json}")" = "${REGISTRY_ID}" ]] \
+      || fail "Preproduction evidence registry id mismatch"
+    [[ "$(jq -r '.region' <<<"${acceptance_json}")" = "${REGION}" ]] \
+      || fail "Preproduction evidence region mismatch"
+  fi
   local registry
   registry="${REGISTRY_ID}.dkr.ecr.${REGION}.amazonaws.com"
   local target_mutability
@@ -119,7 +156,6 @@ main() {
       source_digest="$(aws_ecr batch-get-image \
         --repository-name "${SOURCE_REPOSITORY}" \
         --image-ids "imageDigest=${expected}" \
-        --accepted-media-types application/vnd.oci.image.manifest.v1+json \
         --query 'images[0].imageId.imageDigest' --output text)"
     fi
     [[ "${source_digest}" = "${expected}" ]] || fail "${role} source digest mismatch: ${source_digest}"
@@ -154,13 +190,13 @@ main() {
     printf '%s\t%s\t%s\n' "${role}" "${tag}" "${expected}" >> "${records_file}"
   done
 
-  "${PYTHON_BIN}" - "${PROMOTION_RECORD}" "${release_id}" "${SOURCE_REPOSITORY}" "${TARGET_REPOSITORY}" "${REGION}" "${REGISTRY_ID}" "${records_file}" <<'PY'
+  "${PYTHON_BIN}" - "${PROMOTION_RECORD}" "${release_id}" "${SOURCE_REPOSITORY}" "${TARGET_REPOSITORY}" "${REGION}" "${REGISTRY_ID}" "${records_file}" "${publish_record_sha256:-}" "${deploy_evidence_sha256:-}" <<'PY'
 import datetime
 import json
 import pathlib
 import sys
 
-output, release_id, source, target, region, registry_id, rows = sys.argv[1:]
+output, release_id, source, target, region, registry_id, rows, publish_sha, deploy_sha = sys.argv[1:]
 components = {}
 for line in pathlib.Path(rows).read_text(encoding="utf-8").splitlines():
     role, tag, digest = line.split("\t")
@@ -175,6 +211,9 @@ payload = {
     "registry_id": registry_id or None,
     "components": components,
 }
+if source == "supportportal/preproduction":
+    payload["source_publish_record_sha256"] = publish_sha
+    payload["preproduction_deploy_evidence_sha256"] = deploy_sha
 path = pathlib.Path(output)
 temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

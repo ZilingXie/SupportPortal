@@ -1,4 +1,4 @@
-"""Read-only, Ticket-centric data contract for the ECS Production dashboard."""
+"""Read-only, Ticket-centric data contract for an ECS Automation dashboard."""
 
 from __future__ import annotations
 
@@ -365,7 +365,7 @@ class PostgresDashboardCaseReader:
                     LIMIT 1
                 ) AS execution ON TRUE
                 LEFT JOIN {account_cases} AS account_case
-                  ON account_case.processing_profile='production'
+                  ON account_case.processing_profile=%s
                  AND account_case.zendesk_ticket_id=automation_case.zendesk_ticket_id
                 LEFT JOIN LATERAL (
                     SELECT COUNT(*)::INTEGER AS execution_count
@@ -382,7 +382,12 @@ class PostgresDashboardCaseReader:
                 execution_where=sql.SQL(" AND ").join(execution_filters),
                 case_where=sql.SQL(" AND ").join(case_filters),
             ),
-            (*execution_params, self.settings.job_namespace, *case_params),
+            (
+                *execution_params,
+                self.settings.environment,
+                self.settings.job_namespace,
+                *case_params,
+            ),
         )
         return list(cursor.fetchall())
 
@@ -530,7 +535,7 @@ class PostgresDashboardCaseReader:
                     persona.display_name AS persona_display_name
                 FROM {automation_cases} AS automation_case
                 LEFT JOIN {account_cases} AS account_case
-                  ON account_case.processing_profile='production'
+                  ON account_case.processing_profile=%s
                  AND account_case.zendesk_ticket_id=automation_case.zendesk_ticket_id
                 LEFT JOIN {comment_sync} AS comment_sync
                   ON comment_sync.client_ticket_id=account_case.client_ticket_id
@@ -549,7 +554,11 @@ class PostgresDashboardCaseReader:
                 persona_assignments=self._table("support_account_persona_assignments"),
                 personas=self._table("support_account_personas"),
             ),
-            (self.settings.job_namespace, zendesk_ticket_id),
+            (
+                self.settings.environment,
+                self.settings.job_namespace,
+                zendesk_ticket_id,
+            ),
         )
         return cursor.fetchone()
 

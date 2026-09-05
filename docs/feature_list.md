@@ -52,7 +52,7 @@
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - /production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。
 - /account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。
-- 新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 使用同一组环境中立 OCI manifest 经 Preproduction 验收后按 digest 晋升 Production；Preproduction 建立前获批的首次 Production bootstrap 可直接发布经 Manifest 验证的本地 OCI，并在 Promotion Record 明确记录 `source_repository=local-oci`。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime。现有 EC2 `/production`、旧 release builder 与 n8n workflow 保持不变。
+- 新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 由 AWS CodeBuild 固定完整 main commit，一次构建并发布三角色 linux/amd64 digest 到 Preproduction；Preproduction 使用独立 schema、roles、namespace、Prompt target、Secrets 和日志但执行与 Production 相同的 Account 业务合同，验收后只按相同 digest 晋升 Production、禁止 rebuild。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime；n8n workflow 保持由用户独立控制。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成

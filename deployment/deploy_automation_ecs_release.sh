@@ -7,20 +7,24 @@ PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
 MANIFEST_PATH=""
 PROMOTION_RECORD=""
+PUBLISH_RECORD=""
+DEPLOY_RECORD=""
+ENVIRONMENT="${AUTOMATION_ENVIRONMENT:-production}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
-CLUSTER="${AUTOMATION_ECS_CLUSTER:-supportportal-production}"
-API_SERVICE="${AUTOMATION_ECS_API_SERVICE:-supportportal-production-api}"
-ROUTE_SERVICE="${AUTOMATION_ECS_ROUTE_SERVICE:-supportportal-production-route}"
-WORKER_SERVICE="${AUTOMATION_ECS_WORKER_SERVICE:-supportportal-production-worker}"
-BASE_URL="${AUTOMATION_ECS_BASE_URL:-https://supportcenter.stellarix.space/automation/production}"
+CLUSTER="${AUTOMATION_ECS_CLUSTER:-}"
+API_SERVICE="${AUTOMATION_ECS_API_SERVICE:-}"
+ROUTE_SERVICE="${AUTOMATION_ECS_ROUTE_SERVICE:-}"
+WORKER_SERVICE="${AUTOMATION_ECS_WORKER_SERVICE:-}"
+BASE_URL="${AUTOMATION_ECS_BASE_URL:-}"
 EC2_BACKUP_URL="${AUTOMATION_EC2_BACKUP_URL:-https://support.stellarix.space/health}"
-TERRAFORM_DIR="${AUTOMATION_TERRAFORM_DIR:-${PROJECT_ROOT}/infra/terraform/production}"
+TERRAFORM_DIR="${AUTOMATION_TERRAFORM_DIR:-}"
 TERRAFORM_BIN="${AUTOMATION_TERRAFORM_BIN:-terraform}"
 CHECK_ONLY=0
 RESUME=0
 BOOTSTRAP_ACCOUNT_SCHEMA=0
 HERMES_CASE_WORKFLOW_MODE=""
-SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-/supportportal/production/automation-db-migration-dsn}"
+SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-}"
+PROMPT_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-}"
 TEMP_DIR=""
 STATE_DIR=""
 REMOVE_TEMP_DIR=0
@@ -51,6 +55,7 @@ ROLLBACK_STATUS="not_started"
 SCHEMA_BOOTSTRAP_STATUS="not_requested"
 SCHEMA_BOOTSTRAP_TASK_DEFINITION=""
 SCHEMA_BOOTSTRAP_TASK_ARN=""
+SKIP_SCHEMA_BOOTSTRAP=0
 
 log() { printf '[ecs-deploy] %s\n' "$*"; }
 fail() { printf '[ecs-deploy] ERROR: %s\n' "$*" >&2; return 1; }
@@ -59,35 +64,66 @@ usage() {
   cat <<'EOF'
 Usage:
   ./deployment/deploy_automation_ecs_release.sh \
+    [--environment production|preproduction] \
     --manifest <release-manifest.json> \
-    --promotion-record <promotion-record.json> [--check-only | --resume]
+    (--promotion-record <promotion-record.json> | \
+     --publish-record <preproduction-publish-record.json>) \
+    [--check-only | --resume]
 
 Optional activation gates:
   --bootstrap-account-schema
-  --hermes-case-workflow-mode <disabled|mock>
+  --hermes-case-workflow-mode <disabled|mock|real>
 
 Both modes require the read-only source TICKET_DB_DSN. Deploy mode additionally
-requires DEPLOY_PRODUCTION_APPROVED=1 and PROMPT_RELEASE_TARGET_DSN. DSN values
-are never passed in argv, logged, or written to the Release Manifest or
-Promotion Record.
+requires the environment-specific approval variable and PROMPT_RELEASE_TARGET_DSN.
+DSN values are never passed in argv, logged, or written to release evidence.
 
 --check-only performs only read-only validation and never syncs Prompt Releases,
 registers task definitions, or updates ECS services.
 
---resume reuses a release-scoped checkpoint only after revalidating its input
-fingerprints, registered task definitions, running revisions, and image digests.
+--resume reuses an environment/release/mode-scoped checkpoint only after
+revalidating its input fingerprints, registered task definitions, running
+revisions, and image digests.
 
-Hermes mock activation requires --bootstrap-account-schema. The one-off
+Hermes mock or real activation requires --bootstrap-account-schema. The one-off
 bootstrap uses the release API image and the existing migration SecureString;
 the DSN is never read into this process or stored in deployment evidence.
 EOF
+}
+
+configure_environment_defaults() {
+  case "${ENVIRONMENT}" in
+    production)
+      CLUSTER="${CLUSTER:-supportportal-production}"
+      API_SERVICE="${API_SERVICE:-supportportal-production-api}"
+      ROUTE_SERVICE="${ROUTE_SERVICE:-supportportal-production-route}"
+      WORKER_SERVICE="${WORKER_SERVICE:-supportportal-production-worker}"
+      BASE_URL="${BASE_URL:-https://supportcenter.stellarix.space/automation/production}"
+      TERRAFORM_DIR="${TERRAFORM_DIR:-${PROJECT_ROOT}/infra/terraform/production}"
+      SCHEMA_MIGRATION_PARAMETER="${SCHEMA_MIGRATION_PARAMETER:-/supportportal/production/automation-db-migration-dsn}"
+      PROMPT_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA:-supportportal_production}"
+      ;;
+    preproduction)
+      CLUSTER="${CLUSTER:-supportportal-preproduction}"
+      API_SERVICE="${API_SERVICE:-supportportal-preproduction-api}"
+      ROUTE_SERVICE="${ROUTE_SERVICE:-supportportal-preproduction-route}"
+      WORKER_SERVICE="${WORKER_SERVICE:-supportportal-preproduction-worker}"
+      BASE_URL="${BASE_URL:-https://supportcenter.stellarix.space/automation/preproduction}"
+      TERRAFORM_DIR="${TERRAFORM_DIR:-${PROJECT_ROOT}/infra/terraform/preproduction}"
+      SCHEMA_MIGRATION_PARAMETER="${SCHEMA_MIGRATION_PARAMETER:-/supportportal/preproduction/automation-db-migration-dsn}"
+      PROMPT_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA:-supportportal_preproduction}"
+      ;;
+    *) fail "--environment must be preproduction or production" ;;
+  esac
 }
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --manifest) [[ $# -ge 2 ]] || fail "--manifest requires a value"; MANIFEST_PATH="$2"; shift 2 ;;
+      --environment) [[ $# -ge 2 ]] || fail "--environment requires a value"; ENVIRONMENT="$2"; shift 2 ;;
       --promotion-record) [[ $# -ge 2 ]] || fail "--promotion-record requires a value"; PROMOTION_RECORD="$2"; shift 2 ;;
+      --publish-record) [[ $# -ge 2 ]] || fail "--publish-record requires a value"; PUBLISH_RECORD="$2"; shift 2 ;;
       --region) [[ $# -ge 2 ]] || fail "--region requires a value"; REGION="$2"; shift 2 ;;
       --cluster) [[ $# -ge 2 ]] || fail "--cluster requires a value"; CLUSTER="$2"; shift 2 ;;
       --api-service) [[ $# -ge 2 ]] || fail "--api-service requires a value"; API_SERVICE="$2"; shift 2 ;;
@@ -104,11 +140,14 @@ parse_args() {
       *) fail "Unknown option: $1"; return 1 ;;
     esac
   done
+  configure_environment_defaults
   [[ "${CHECK_ONLY}" = "0" || "${RESUME}" = "0" ]] || fail "--check-only and --resume are mutually exclusive"
-  [[ -z "${HERMES_CASE_WORKFLOW_MODE}" || "${HERMES_CASE_WORKFLOW_MODE}" = "disabled" || "${HERMES_CASE_WORKFLOW_MODE}" = "mock" ]] \
-    || fail "--hermes-case-workflow-mode must be disabled or mock"
+  [[ -z "${HERMES_CASE_WORKFLOW_MODE}" || "${HERMES_CASE_WORKFLOW_MODE}" = "disabled" || "${HERMES_CASE_WORKFLOW_MODE}" = "mock" || "${HERMES_CASE_WORKFLOW_MODE}" = "real" ]] \
+    || fail "--hermes-case-workflow-mode must be disabled, mock, or real"
   [[ "${HERMES_CASE_WORKFLOW_MODE}" != "mock" || "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] \
     || fail "Hermes mock activation requires --bootstrap-account-schema"
+  [[ "${HERMES_CASE_WORKFLOW_MODE}" != "real" || "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] \
+    || fail "Hermes real activation requires --bootstrap-account-schema"
 }
 
 file_sha256() {
@@ -155,24 +194,26 @@ verify_aws_credential_lifetime() {
 }
 
 checkpoint_identity() {
-  local manifest_sha promotion_sha
+  local manifest_sha record_sha
   manifest_sha="$(file_sha256 "${MANIFEST_PATH}")"
-  promotion_sha="$(file_sha256 "${PROMOTION_RECORD}")"
+  DEPLOY_RECORD="${DEPLOY_RECORD:-${PUBLISH_RECORD:-${PROMOTION_RECORD}}}"
+  record_sha="$(file_sha256 "${DEPLOY_RECORD}")"
   jq -n -S \
     --arg schema_version "automation-ecs-deploy-checkpoint-v1" \
     --arg manifest_sha256 "${manifest_sha}" \
-    --arg promotion_sha256 "${promotion_sha}" \
+    --arg deploy_record_sha256 "${record_sha}" \
     --arg release_id "${RELEASE_ID}" \
     --arg git_commit "${GIT_COMMIT}" \
     --arg prompt_release_id "${PROMPT_RELEASE_ID}" \
     --arg region "${REGION}" \
+    --arg environment "${ENVIRONMENT}" \
     --arg cluster "${CLUSTER}" \
     --arg api_service "${API_SERVICE}" \
     --arg route_service "${ROUTE_SERVICE}" \
     --arg worker_service "${WORKER_SERVICE}" \
     --arg schema_bootstrap "${BOOTSTRAP_ACCOUNT_SCHEMA}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,promotion_sha256:$promotion_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode}'
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode}'
 }
 
 prepare_deploy_workspace() {
@@ -182,7 +223,11 @@ prepare_deploy_workspace() {
     REMOVE_TEMP_DIR=1
     return 0
   fi
-  STATE_DIR="${AUTOMATION_ECS_DEPLOY_STATE_DIR:-${PROJECT_ROOT}/.deployments/ecs-deploy-${RELEASE_ID}}"
+  local operation_suffix=""
+  if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
+    operation_suffix="-${HERMES_CASE_WORKFLOW_MODE}"
+  fi
+  STATE_DIR="${AUTOMATION_ECS_DEPLOY_STATE_DIR:-${PROJECT_ROOT}/.deployments/ecs-deploy-${ENVIRONMENT}-${RELEASE_ID}${operation_suffix}}"
   if [[ "${RESUME}" = "1" ]]; then
     [[ -f "${STATE_DIR}/checkpoint.json" ]] || fail "Deploy checkpoint not found for --resume: ${STATE_DIR}"
     local expected existing
@@ -252,6 +297,7 @@ write_evidence() {
     --arg prompt_build_ref "${prompt_build_ref}" \
     --arg prompt_fingerprint "${prompt_fingerprint}" \
     --arg region "${REGION}" \
+    --arg environment "${ENVIRONMENT}" \
     --arg cluster "${CLUSTER}" \
     --arg registry_id "${REGISTRY_ID}" \
     --arg repository "${PROMOTION_REPOSITORY}" \
@@ -271,7 +317,7 @@ write_evidence() {
     --arg schema_task_definition "${schema_task_definition}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
 }
@@ -365,7 +411,7 @@ run_terraform_zero_plan() {
     -detailed-exitcode -input=false -lock-timeout=60s -no-color >/dev/null
   local status=$?
   set -e
-  [[ ${status} -eq 0 ]] || fail "Terraform production plan must be zero drift (exit 0, got ${status})"
+  [[ ${status} -eq 0 ]] || fail "Terraform ${ENVIRONMENT} plan must be zero drift (exit 0, got ${status})"
   TERRAFORM_STATUS="passed"
 }
 
@@ -391,6 +437,8 @@ render_role_task_definition() {
     --manifest "${MANIFEST_PATH}"
     --registry-id "${REGISTRY_ID}"
     --region "${REGION}"
+    --environment "${ENVIRONMENT}"
+    --repository "${PROMOTION_REPOSITORY}"
     --output "${output_path}"
   )
   if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
@@ -402,18 +450,26 @@ render_role_task_definition() {
 
 prepare_schema_bootstrap() {
   [[ "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] || return 0
+  if schema_is_current; then
+    SKIP_SCHEMA_BOOTSTRAP=1
+    SCHEMA_BOOTSTRAP_STATUS="skipped_current"
+    log "${ENVIRONMENT} Account schema already matches the release; bootstrap skipped"
+    return 0
+  fi
   local migration_reference
   migration_reference="$(aws ssm get-parameter --region "${REGION}" \
     --name "${SCHEMA_MIGRATION_PARAMETER}" \
     --query 'Parameter.ARN' --output text)"
   [[ -n "${migration_reference}" && "${migration_reference}" != "None" ]] \
-    || fail "Production schema migration parameter is missing"
+    || fail "${ENVIRONMENT} schema migration parameter is missing"
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
     render-schema-bootstrap-task-definition \
     --current "${TEMP_DIR}/api.current.json" \
     --manifest "${MANIFEST_PATH}" \
     --registry-id "${REGISTRY_ID}" \
     --region "${REGION}" \
+    --environment "${ENVIRONMENT}" \
+    --repository "${PROMOTION_REPOSITORY}" \
     --migration-secret-reference "${migration_reference}" \
     --output "${TEMP_DIR}/schema-bootstrap.register.json" >/dev/null
   aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
@@ -423,6 +479,29 @@ prepare_schema_bootstrap() {
   [[ "$(jq -r '.awsvpcConfiguration.subnets | length' "${TEMP_DIR}/schema-bootstrap.network.json")" -gt 0 ]] \
     || fail "API service network configuration is unavailable for schema bootstrap"
   SCHEMA_BOOTSTRAP_STATUS="validated"
+}
+
+schema_is_current() {
+  local expected_revision health_json observed_revision dsn_reference runtime_dsn
+  expected_revision="$(jq -r '.schema_revision' "${MANIFEST_PATH}")"
+  health_json="$(curl -fsS "${BASE_URL}/health/release" 2>/dev/null)" || return 1
+  observed_revision="$(jq -r '.provenance.schema_revision // .schema_revision // ""' <<<"${health_json}")"
+  [[ -n "${expected_revision}" && "${observed_revision}" = "${expected_revision}" ]] || return 1
+  dsn_reference="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "api") | .secrets[] | select(.name == "AUTOMATION_DB_DSN") | .valueFrom' "${TEMP_DIR}/api.current.json")"
+  [[ -n "${dsn_reference}" && "${dsn_reference}" != "null" ]] || return 1
+  runtime_dsn="$(read_secret_value "${dsn_reference}")" || return 1
+  AUTOMATION_ENVIRONMENT="${ENVIRONMENT}" \
+    AUTOMATION_DB_DSN="${runtime_dsn}" \
+    AUTOMATION_DB_MIGRATION_DSN="${runtime_dsn}" \
+    AUTOMATION_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
+    AUTOMATION_DB_RESOURCE_ID="supportportal-${ENVIRONMENT}" \
+    AUTOMATION_JOB_NAMESPACE="supportportal-${ENVIRONMENT}" \
+    TICKET_DB_DSN="${runtime_dsn}" \
+    TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
+    "${PYTHON_BIN}" -m backend.scripts.automation_ecs_bootstrap check >/dev/null 2>&1
+  local status=$?
+  unset runtime_dsn
+  return "${status}"
 }
 
 reconcile_schema_bootstrap_checkpoint() {
@@ -439,7 +518,7 @@ reconcile_schema_bootstrap_checkpoint() {
   definition_family="$(aws ecs describe-task-definition --region "${REGION}" \
     --task-definition "${previous_definition}" \
     --query 'taskDefinition.family' --output text)"
-  [[ "${definition_family}" = "supportportal-production-schema-bootstrap" ]] \
+  [[ "${definition_family}" = "supportportal-${ENVIRONMENT}-schema-bootstrap" ]] \
     || fail "Schema bootstrap checkpoint task definition family mismatch"
   if [[ -n "${previous_task}" ]]; then
     task_json="$(aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
@@ -465,6 +544,7 @@ reconcile_schema_bootstrap_checkpoint() {
 
 run_schema_bootstrap() {
   [[ "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] || return 0
+  [[ "${SKIP_SCHEMA_BOOTSTRAP}" = "0" ]] || return 0
   local tags_path task_result_path exit_code reason
   local -a register_args
   reconcile_schema_bootstrap_checkpoint
@@ -508,7 +588,7 @@ run_schema_bootstrap() {
   aws ecs deregister-task-definition --region "${REGION}" \
     --task-definition "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" >/dev/null
   SCHEMA_BOOTSTRAP_TASK_DEFINITION=""
-  log "Production Account schema bootstrap passed"
+  log "${ENVIRONMENT} Account schema bootstrap passed"
 }
 
 verify_running_task() {
@@ -661,7 +741,7 @@ wait_for_heartbeats() {
   while true; do
     if "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy verify-heartbeats \
       --manifest "${MANIFEST_PATH}" --task-definition "${TEMP_DIR}/worker.register.json" \
-      --max-age-seconds 90 >/dev/null 2>&1; then
+      --max-age-seconds 90 --environment "${ENVIRONMENT}" >/dev/null 2>&1; then
       return 0
     fi
     if ((SECONDS >= deadline)); then
@@ -675,29 +755,48 @@ wait_for_heartbeats() {
 main() {
   parse_args "$@"
   trap cleanup EXIT
+  if [[ "${ENVIRONMENT}" = "production" ]]; then
+    [[ -n "${PROMOTION_RECORD}" && -z "${PUBLISH_RECORD}" ]] \
+      || fail "Production deploy requires only --promotion-record"
+    DEPLOY_RECORD="${PROMOTION_RECORD}"
+  else
+    [[ -n "${PUBLISH_RECORD}" && -z "${PROMOTION_RECORD}" ]] \
+      || fail "Preproduction deploy requires only --publish-record"
+    DEPLOY_RECORD="${PUBLISH_RECORD}"
+  fi
   [[ -n "${MANIFEST_PATH}" && -f "${MANIFEST_PATH}" ]] || fail "Release Manifest is required"
-  [[ -n "${PROMOTION_RECORD}" && -f "${PROMOTION_RECORD}" ]] || fail "Promotion Record is required"
+  [[ -n "${DEPLOY_RECORD}" && -f "${DEPLOY_RECORD}" ]] || fail "Environment deployment record is required"
   [[ -n "${REGION}" ]] || fail "AWS region is required"
   for command in aws cmp curl git jq; do command -v "${command}" >/dev/null 2>&1 || fail "Missing command: ${command}"; done
   command -v "${TERRAFORM_BIN}" >/dev/null 2>&1 || [[ -x "${TERRAFORM_BIN}" ]] || fail "Terraform runtime is required"
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
   [[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"
   if [[ "${CHECK_ONLY}" = "0" ]]; then
-    [[ "${DEPLOY_PRODUCTION_APPROVED:-}" = "1" ]] || fail "DEPLOY_PRODUCTION_APPROVED=1 is required"
+    if [[ "${ENVIRONMENT}" = "production" ]]; then
+      [[ "${DEPLOY_PRODUCTION_APPROVED:-}" = "1" ]] || fail "DEPLOY_PRODUCTION_APPROVED=1 is required"
+    else
+      [[ "${DEPLOY_PREPRODUCTION_APPROVED:-}" = "1" ]] || fail "DEPLOY_PREPRODUCTION_APPROVED=1 is required"
+    fi
     [[ -n "${PROMPT_RELEASE_TARGET_DSN:-}" ]] || fail "PROMPT_RELEASE_TARGET_DSN is required"
   fi
 
   MANIFEST_PATH="$(cd -- "$(dirname -- "${MANIFEST_PATH}")" && pwd)/$(basename -- "${MANIFEST_PATH}")"
-  PROMOTION_RECORD="$(cd -- "$(dirname -- "${PROMOTION_RECORD}")" && pwd)/$(basename -- "${PROMOTION_RECORD}")"
+  DEPLOY_RECORD="$(cd -- "$(dirname -- "${DEPLOY_RECORD}")" && pwd)/$(basename -- "${DEPLOY_RECORD}")"
 
   "${PYTHON_BIN}" -m backend.scripts.automation_release validate --manifest "${MANIFEST_PATH}" >/dev/null
   local promotion_json record_region
-  promotion_json="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy validate-promotion \
-    --manifest "${MANIFEST_PATH}" --promotion-record "${PROMOTION_RECORD}")"
+  if [[ "${ENVIRONMENT}" = "production" ]]; then
+    promotion_json="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy validate-promotion \
+      --manifest "${MANIFEST_PATH}" --promotion-record "${DEPLOY_RECORD}")"
+  else
+    promotion_json="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy validate-preproduction-publish \
+      --manifest "${MANIFEST_PATH}" --publish-record "${DEPLOY_RECORD}")"
+  fi
   REGISTRY_ID="$(jq -r '.registry_id' <<<"${promotion_json}")"
   record_region="$(jq -r '.region' <<<"${promotion_json}")"
   PROMOTION_REPOSITORY="$(jq -r '.repository' <<<"${promotion_json}")"
   [[ "${record_region}" = "${REGION}" ]] || fail "Promotion Record region mismatch"
+  [[ "${PROMOTION_REPOSITORY}" = "supportportal/${ENVIRONMENT}" ]] || fail "Deployment record repository does not match environment"
   RELEASE_ID="$(jq -r '.release_id' "${MANIFEST_PATH}")"
   GIT_COMMIT="$(jq -r '.git_commit' "${MANIFEST_PATH}")"
   PROMPT_RELEASE_ID="$(jq -r '.prompt_release_id' "${MANIFEST_PATH}")"
@@ -754,25 +853,27 @@ main() {
     return 0
   fi
 
+  # A fresh Preproduction identity has an empty schema. Create the runtime
+  # tables before attempting to persist the target Prompt Release candidate.
+  # No ECS service has been updated at this point.
+  run_schema_bootstrap
+
   PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-    PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
+    PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release sync \
       --release-id "${PROMPT_RELEASE_ID}" --defer-activation >"${TEMP_DIR}/prompt-sync.json"
   PROMPT_SYNC_STATUS="$(jq -r '.sync.status' "${TEMP_DIR}/prompt-sync.json")"
   [[ "${PROMPT_SYNC_STATUS}" = "candidate" || "${PROMPT_SYNC_STATUS}" = "active" ]] \
     || fail "Target Prompt Release is not deployable"
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-    TICKET_DB_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
+    TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
       --release-id "${PROMPT_RELEASE_ID}" >/dev/null
   log "Target Prompt Release activation preflight passed without schema initialization"
   if [[ "${PROMPT_SYNC_STATUS}" = "active" ]]; then
-    ACTIVATION_STARTED=1
     PROMPT_ACTIVATION_STATUS="active"
-    log "Target Prompt Release is already active; failures require reconciliation rather than blind rollback"
+    log "Target Prompt Release was already active before deployment; pre-activation failures remain rollback-safe"
   fi
-
-  run_schema_bootstrap
 
   for role in api route worker; do
     register_task_definition "${role}"
@@ -812,11 +913,11 @@ main() {
   verify_aws_credential_lifetime
   ACTIVATION_STARTED=1
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-    TICKET_DB_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
+    TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release activate \
       --release-id "${PROMPT_RELEASE_ID}" >"${TEMP_DIR}/prompt-activate.json"
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-    TICKET_DB_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-supportportal_production}" \
+    TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
       --release-id "${PROMPT_RELEASE_ID}" >/dev/null
   [[ "$(jq -r '.release.status' "${TEMP_DIR}/prompt-activate.json")" = "active" ]] \

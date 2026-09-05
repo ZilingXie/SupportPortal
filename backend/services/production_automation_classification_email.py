@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from backend.services.account_route_pipeline import account_case_labels
+from backend.services.account_processing_profiles import is_live_account_processing_profile
 from backend.services.automation_intake_compat import zendesk_ticket_id_from_source
 from backend.services.automation_routing import ACTIVE_AUTOMATION_SUBCATEGORIES
 
@@ -15,7 +16,7 @@ PRODUCTION_AUTOMATION_CLASSIFICATION_EMAIL_STATUS_FAILED = "failed"
 
 def is_production_automation_classification(case: dict[str, Any]) -> bool:
     return (
-        str(case.get("processing_profile") or "").strip().lower() == "production"
+        is_live_account_processing_profile(case.get("processing_profile"))
         and str(case.get("category") or "").strip().lower()
         in {"automation", "backend_operation", "account_billing"}
         # Only an actively automated case classifies: a closed or escalated
@@ -67,7 +68,8 @@ def build_production_automation_classification_email(
 
     question = str(case.get("question") or "").strip()
     subject_ticket = zendesk_ticket_id or account_case_id
-    subject = f"[Production Automation] Ticket {subject_ticket}"
+    processing_profile = str(case.get("processing_profile") or "production").strip().lower()
+    subject = f"[{processing_profile.title()} Automation] Ticket {subject_ticket}"
     body_link = zendesk_ticket_url or f"Unavailable ({failure_code or 'unknown'})"
     body = (
         f"Case: {body_link}\n\n"
@@ -76,7 +78,7 @@ def build_production_automation_classification_email(
     )
     return {
         "account_case_id": account_case_id,
-        "processing_profile": "production",
+        "processing_profile": processing_profile,
         "zendesk_ticket_id": zendesk_ticket_id,
         "zendesk_ticket_url": zendesk_ticket_url,
         "question": question,
