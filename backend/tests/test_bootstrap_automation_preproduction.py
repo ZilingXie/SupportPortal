@@ -111,7 +111,7 @@ def _connection() -> tuple[MagicMock, MagicMock]:
     cursor.__enter__.return_value = cursor
     cursor.fetchone.side_effect = [
         (False, False, False),
-        (True, False, False),
+        (True, False, False, False, True),
     ]
     connection = MagicMock()
     connection.__enter__.return_value = connection
@@ -198,6 +198,7 @@ def test_preproduction_bootstrap_creates_isolated_roles_and_secret_namespace() -
         if "supportportal_production" in value
     )
     assert grant_index < schema_index < isolation_index < revoke_index
+    assert any("GRANT CREATE ON DATABASE" in value for value in statements)
 
 
 def test_preproduction_bootstrap_check_only_has_no_writes() -> None:
@@ -281,9 +282,17 @@ def test_preproduction_bootstrap_role_membership_is_inside_database_transaction(
     assert any("REVOKE" in value and "CURRENT_USER" in value for value in statements)
 
 
-@pytest.mark.parametrize("role_access", [(True, True, False), (True, False, True)])
+@pytest.mark.parametrize(
+    "role_access",
+    [
+        (True, True, False, False, True),
+        (True, False, True, False, True),
+        (True, False, False, True, True),
+        (True, False, False, False, False),
+    ],
+)
 def test_preproduction_bootstrap_rejects_production_access_for_either_role(
-    role_access: tuple[bool, bool, bool],
+    role_access: tuple[bool, bool, bool, bool, bool],
 ) -> None:
     connection, cursor = _connection()
     cursor.fetchone.side_effect = [(False, False, False), role_access]
