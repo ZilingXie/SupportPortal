@@ -57,6 +57,30 @@ def test_preproduction_bootstrap_creates_isolated_roles_and_secret_namespace() -
     assert len(names) == len(set(names))
     assert all(name.startswith("/supportportal/preproduction/") for name in names)
     assert all(call.kwargs["Overwrite"] is False for call in ssm.put_parameter.call_args_list)
+    copied_suffixes = {
+        "hermes-openai-api-key",
+        "hermes-memory-llm-api-key",
+        "hermes-memory-embedding-api-key",
+    }
+    copied_values = {
+        call.kwargs["Name"].rsplit("/", 1)[-1]: call.kwargs["Value"]
+        for call in ssm.put_parameter.call_args_list
+        if call.kwargs["Name"].rsplit("/", 1)[-1] in copied_suffixes
+    }
+    assert copied_values == {
+        suffix: "postgresql://admin:secret@db/supportportal" for suffix in copied_suffixes
+    }
+    generated_api_key = next(
+        call.kwargs["Value"]
+        for call in ssm.put_parameter.call_args_list
+        if call.kwargs["Name"].endswith("/hermes-api-server-key")
+    )
+    assert generated_api_key != "postgresql://admin:secret@db/supportportal"
+    source_reads = {call.kwargs["Name"] for call in ssm.get_parameter.call_args_list}
+    assert {
+        f"/supportportal/production/{suffix}" for suffix in copied_suffixes
+    } <= source_reads
+    assert "/supportportal/production/hermes-api-server-key" not in source_reads
     rendered_sql = " ".join(str(call.args[0]) for call in cursor.execute.call_args_list)
     assert "CREATE ROLE" in rendered_sql
     assert "CREATE SCHEMA" in rendered_sql
