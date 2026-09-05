@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-05 - Persona and Reviewer isolate the current Account intent policy (p2-144)
+
+- Area or subsystem: Account Automation Persona generation and semantic review.
+- Prompt or model version: `automation-persona-v26` -> `automation-persona-v27`; `automation-persona-review-v1` -> `automation-persona-review-v2`; model profile unchanged (`automation_persona`, currently `gpt-5.6-luna/low`).
+- Reason: ECS Case 13302 successfully produced a RAG answer for the customer's App ID question, but both bounded Persona/Reviewer rounds were rejected with `intent_policy_violation`. The RAG policy was being concatenated with unconditional Submission Confirmation and Missing-information policies, whose status and next-step requirements contradicted the RAG-only source contract. Case 13299 had shown the same first-round issue before passing its rewrite.
+- Behavior change: Account prompts now contain only shared first-person/data-integrity constraints plus exactly one current-intent policy. Missing-information and Submission Confirmation policies are mutually exclusive; Enablement submission adds its 24-hour/weekdays requirements to the Submission policy; RAG, Fraud, Suspension, completion, and unmatched intents do not inherit unrelated rules. The generic prompt asks for status, missing information, and next step only when supplied and applicable.
+- Reviewer boundary: Reviewer v2 receives only `current_intent_policy`, not the shared prompt or policies for other intents. Generation/review call budgets, structured feedback, second-round Human Review, immutable Persona body, deterministic safety floor, Worker publication, and RAG reference assembly are unchanged.
+- Verification: focused Persona policy tests include a sanitized Case 13302 fixture (`what is appid?` plus the observed App ID explanation), six intent families, unmatched and non-Account scope boundaries, current-policy parity between Persona and Reviewer, and generic applicability wording. The planned Persona/Worker/RAG/comment-sync/ECS/version-fence regression completed with 255 passed + 108 subtests.
+
 ## 2026-09-05 - ECS release gate owns Hermes schema bootstrap and mock activation (p2-146)
 
 - Area or subsystem: ECS Production release tooling, Account runtime schema preflight, and Hermes Case Workflow activation.

@@ -36,7 +36,7 @@
 - staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。
 - production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
-- Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；独立 LLM Reviewer 最多提供一轮结构化 feedback 让同一 Persona 整段重写，Worker 不补写、裁剪或改写通过稿。应用只添加 greeting、RAG 引用、附件与传输格式，生成或审稿失败时在客户发布前转 Human Review。
+- Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；Persona 只接收共享约束与当前 intent 的合同，独立 LLM Reviewer 只按同一 current-intent policy 审稿，最多提供一轮结构化 feedback 让同一 Persona 整段重写。Worker 不补写、裁剪或改写通过稿；应用只添加 greeting、RAG 引用、附件与传输格式，生成或审稿失败时在客户发布前转 Human Review。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。
@@ -92,7 +92,7 @@
 - Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。
 - Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。
 - Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。
-- Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v26 Persona 首封只称 "this request"、说明内部审核中并承诺我们 24 小时内回复，经 review-v1 语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。
+- Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ pinned Persona 首封只称 "this request"、说明内部审核中并承诺我们 24 小时内回复，经仅含当前 intent 合同的语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。
 - Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。
 
 ### 未完成

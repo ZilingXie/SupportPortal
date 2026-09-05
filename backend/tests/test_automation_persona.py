@@ -65,8 +65,11 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertEqual(review.call_count, 1)
         self.assertEqual(review.call_args.kwargs["stage"], "automation_persona_review")
         self.assertEqual(review.call_args.kwargs["max_attempts"], 1)
+        review_payload = json.loads(review.call_args.kwargs["user_prompt"])
+        self.assertIn("For an Account Suspension handoff", review_payload["current_intent_policy"])
+        self.assertNotIn("reply_policy", review_payload)
         self.assertEqual(result.reviewer_model, "persona-model")
-        self.assertEqual(result.reviewer_prompt_version, "automation-persona-review-v1")
+        self.assertEqual(result.reviewer_prompt_version, "automation-persona-review-v2")
 
     def test_revision_path_uses_exactly_four_single_attempt_llm_calls(self) -> None:
         self.review_patcher.stop()
@@ -271,7 +274,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v26")
+        self.assertEqual(result.prompt_version, "automation-persona-v27")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -508,12 +511,17 @@ class AutomationPersonaTests(unittest.TestCase):
         facts = {
             "behavior": "rag_fallback_answer",
             "reply_intent": "rag_fallback_answer",
-            "provided_answer": "An App ID identifies an Agora project created in Console.",
+            "provided_answer": (
+                "An App ID is the Agora project identifier. Provide the App ID for the Media Relay project."
+            ),
+            "latest_customer_message": "what is appid?",
             "customer_first_name": "Maya",
         }
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
-            text="I checked this for you: an App ID identifies an Agora project created in Console.",
+            text=(
+                "An App ID is the Agora project identifier. Please provide the App ID for the Media Relay project."
+            ),
             model_name="persona-model",
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -527,10 +535,175 @@ class AutomationPersonaTests(unittest.TestCase):
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("restate the provided_answer technical content", system_prompt)
         self.assertIn("Do not invent links", system_prompt)
+        self.assertNotIn("For submission_confirmation", system_prompt)
+        self.assertNotIn("For request_missing_information", system_prompt)
         user_prompt = invoke.call_args.kwargs["user_prompt"]
-        self.assertIn("An App ID identifies an Agora project created in Console.", user_prompt)
+        self.assertIn("An App ID is the Agora project identifier", user_prompt)
+        self.assertIn("what is appid?", user_prompt)
         self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
-        self.assertIn("an App ID identifies an Agora project", result.content)
+        self.assertIn("An App ID is the Agora project identifier", result.content)
+
+        reviewer_policy = self.review_reply.call_args.kwargs["current_intent_policy"]
+        self.assertIn("restate the provided_answer technical content", reviewer_policy)
+        self.assertNotIn("For submission_confirmation", reviewer_policy)
+        self.assertNotIn("For request_missing_information", reviewer_policy)
+
+    def test_account_persona_selects_only_the_current_intent_policy(self) -> None:
+        cases = [
+            (
+                "missing_information",
+                build_automation_reply_facts(
+                    behavior="fraud_account",
+                    reply_intent="request_missing_information",
+                    missing_information=["Account type"],
+                ),
+                "Could you share the account type? I will continue coordinating once I have it.",
+                ("For request_missing_information",),
+                ("For submission_confirmation", "For a Fraud handoff"),
+            ),
+            (
+                "submission_confirmation",
+                build_automation_reply_facts(
+                    behavior="quota",
+                    reply_intent="submission_confirmation",
+                ),
+                "Thanks for sending this. I am reviewing it internally and will keep you posted.",
+                ("For submission_confirmation",),
+                ("For request_missing_information", "For an Enablement submission"),
+            ),
+            (
+                "enablement_submission",
+                build_automation_reply_facts(
+                    behavior="enablement",
+                    reply_intent="submission_confirmation",
+                ),
+                (
+                    "Thanks for sending this. I am reviewing it internally and will keep you posted. "
+                    "Activation may take up to 24 hours, and changes roll out Monday-Friday."
+                ),
+                ("For submission_confirmation", "For an Enablement submission"),
+                ("For request_missing_information",),
+            ),
+            (
+                "fraud_handoff",
+                build_automation_reply_facts(
+                    behavior="fraud_account",
+                    reply_intent="fraud_handoff_confirmation",
+                ),
+                "I have passed this to the relevant team, and someone will contact you within 24 hours.",
+                ("For a Fraud handoff",),
+                ("For submission_confirmation", "For request_missing_information"),
+            ),
+            (
+                "suspension_handoff",
+                closing_reply_facts(
+                    confirmed_email="customer@example.com",
+                    customer_name="Maya",
+                ),
+                (
+                    "Thank you for submitting this request. We are reviewing it internally and will get back "
+                    "to you within 24 hours."
+                ),
+                ("For an Account Suspension handoff",),
+                ("For submission_confirmation", "For request_missing_information"),
+            ),
+            (
+                "enablement_completion",
+                build_automation_reply_facts(
+                    behavior="enablement",
+                    reply_intent="enablement_completed_and_close",
+                ),
+                "The feature is already enabled, so I am closing this case now.",
+                ("For completed Enablement",),
+                ("For submission_confirmation", "For request_missing_information"),
+            ),
+            (
+                "unmatched_account_intent",
+                build_automation_reply_facts(
+                    behavior="quota",
+                    reply_intent="resolution_update",
+                ),
+                "I reviewed the supplied facts and have an update for you.",
+                (),
+                ("For submission_confirmation", "For request_missing_information"),
+            ),
+        ]
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+
+        for name, facts, body, expected_policies, excluded_policies in cases:
+            with self.subTest(name=name), patch(
+                "backend.services.automation_persona.resolve_model_profile", return_value=profile
+            ), patch(
+                "backend.services.automation_persona.invoke_responses_text",
+                return_value=SimpleNamespace(text=body, model_name="persona-model"),
+            ) as invoke:
+                self.review_reply.reset_mock()
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+
+            system_prompt = invoke.call_args.kwargs["system_prompt"]
+            reviewer_policy = self.review_reply.call_args.kwargs["current_intent_policy"]
+            for policy in expected_policies:
+                self.assertIn(policy, system_prompt)
+                self.assertIn(policy, reviewer_policy)
+            for policy in excluded_policies:
+                self.assertNotIn(policy, system_prompt)
+                self.assertNotIn(policy, reviewer_policy)
+            if name == "fraud_handoff":
+                self.assertNotIn(
+                    "never present an internal team, a job title, or a system as the party responsible",
+                    system_prompt,
+                )
+
+    def test_non_account_reply_does_not_receive_account_intent_policy(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Thanks for the update. I will keep you posted.",
+            model_name="persona-model",
+        )
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            self.review_reply.reset_mock()
+            render_automation_reply(
+                reply_facts={"behavior": "quota", "reply_intent": "submission_confirmation"},
+                persona_assignment={"content": {"instruction": "Warm"}},
+            )
+
+        self.assertNotIn("For submission_confirmation", invoke.call_args.kwargs["system_prompt"])
+        self.assertEqual(self.review_reply.call_args.kwargs["current_intent_policy"], "")
+
+    def test_account_persona_generic_instruction_only_requires_applicable_facts(self) -> None:
+        facts = {
+            "behavior": "rag_fallback_answer",
+            "reply_intent": "rag_fallback_answer",
+            "provided_answer": "An App ID is the Agora project identifier.",
+            "customer_first_name": "Maya",
+        }
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(text=facts["provided_answer"], model_name="persona-model")
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+
+        system_prompt = invoke.call_args.kwargs["system_prompt"]
+        self.assertIn("when supplied and applicable", system_prompt)
+        self.assertNotIn(
+            "Clearly state the current status, any information the customer needs to provide, and the next step.",
+            system_prompt,
+        )
 
     def test_render_rag_fallback_requires_provided_answer(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -846,7 +1019,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v26")
+        self.assertEqual(result.prompt_version, "automation-persona-v27")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1331,7 +1504,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "Activation may take up to 24 hours, and the change window is Monday-Friday.",
             result.content,
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v26")
+        self.assertEqual(result.prompt_version, "automation-persona-v27")
         self.assertEqual(invoke.call_count, 2)
         self.assertEqual(result.review_rounds, 2)
 
@@ -1694,7 +1867,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v26")
+        self.assertEqual(result.prompt_version, "automation-persona-v27")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)

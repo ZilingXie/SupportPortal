@@ -39,8 +39,8 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v26"
-AUTOMATION_PERSONA_REVIEW_PROMPT_VERSION = "automation-persona-review-v1"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v27"
+AUTOMATION_PERSONA_REVIEW_PROMPT_VERSION = "automation-persona-review-v2"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -597,7 +597,7 @@ def _review_automation_reply(
     *,
     profile: Any,
     facts: dict[str, Any],
-    reply_policy: str,
+    current_intent_policy: str,
     candidate_body: str,
 ) -> _AutomationPersonaReview:
     try:
@@ -618,7 +618,7 @@ def _review_automation_reply(
             user_prompt=json.dumps(
                 {
                     "automation_facts": _facts_for_persona_prompt(facts),
-                    "reply_policy": reply_policy,
+                    "current_intent_policy": current_intent_policy,
                     "candidate_body": candidate_body,
                 },
                 ensure_ascii=False,
@@ -729,19 +729,22 @@ def render_automation_reply(
         "one Markdown-style bullet line starting with '- ' for each item. Never use a numbered list or run multiple "
         "missing items together into one unbroken line. "
     )
-    ownership_policy = (
+    shared_account_policy = (
+        "For every Account reply, speak as the first-person owner of the customer conversation. Semantic fields "
+        "such as ownership_state and customer_update_commitment are instructions, not customer-facing phrases; "
+        "never repeat their raw values. Do not add facts that are not supplied by the application. "
+        if account_scope
+        else ""
+    )
+    submission_confirmation_policy = (
         "For submission_confirmation, write a concise, natural customer message in first person. Thank the customer, "
         "say that we are reviewing the request with our internal team, and promise to keep the customer posted when "
         "there is an update. A short patience sentence is appropriate. The internal team is a collaborator, never "
         "the party responsible for contacting the customer. Do not use job-title narration such as 'The assigned "
         "Support Engineer', 'the case is in progress with them', or any wording that makes the customer wait for an "
-        f"internal team to follow up. {missing_information_policy}Semantic "
-        "fields such as ownership_state and customer_update_commitment "
-        "are instructions, not customer-facing phrases; never repeat their raw values. "
-        if account_scope
-        else ""
+        "internal team to follow up. "
     )
-    reply_contract_policy = ""
+    current_intent_policy = ""
     prompt_version = (
         ENGINEER_GUIDED_PERSONA_PROMPT_VERSION
         if intent == ENGINEER_GUIDED_REPLY_INTENT
@@ -750,17 +753,21 @@ def render_automation_reply(
         else AUTOMATION_PERSONA_PROMPT_VERSION
     )
     behavior = str(facts.get("behavior") or "").strip().lower()
-    if behavior == "enablement" and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
-        reply_contract_policy = (
-            "For an Enablement submission, make two facts clear in your own words: activation may take up to 24 "
-            "hours, and changes roll out on weekdays (Monday-Friday). Weave them into your sentences rather than "
-            "quoting them like a policy line. Style reference (match the tone and rhythm, do not copy the "
-            "wording): 'Thanks for sending this over - I've logged the request and will handle the rest on my "
-            "side. Activation usually completes within 24 hours and changes go out on weekdays, so I'll keep an "
-            "eye on it and update you once it's live.' "
-        )
+    if account_scope and intent == "request_missing_information":
+        current_intent_policy = missing_information_policy
+    elif account_scope and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
+        current_intent_policy = submission_confirmation_policy
+        if behavior == "enablement":
+            current_intent_policy += (
+                "For an Enablement submission, make two facts clear in your own words: activation may take up to 24 "
+                "hours, and changes roll out on weekdays (Monday-Friday). Weave them into your sentences rather than "
+                "quoting them like a policy line. Style reference (match the tone and rhythm, do not copy the "
+                "wording): 'Thanks for sending this over - I've logged the request and will handle the rest on my "
+                "side. Activation usually completes within 24 hours and changes go out on weekdays, so I'll keep an "
+                "eye on it and update you once it's live.' "
+            )
     elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For a Fraud handoff, commit clearly that someone from the relevant team will contact the customer "
             "within 24 hours - keep the 24-hour promise exact, but phrase it in your own natural words rather "
             "than a fixed sentence. Style reference (match the tone and rhythm, do not copy the wording): "
@@ -768,7 +775,7 @@ def render_automation_reply(
             "reach out to you within 24 hours, so there's nothing you need to chase on your end.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For the first Account Suspension reply, ask the customer which email is most convenient and "
             "whether the email already on the ticket should be used. Commit that someone from the relevant team "
             "will contact them within 24 hours, phrased in your own natural words. Do not state that the ticket "
@@ -778,7 +785,7 @@ def render_automation_reply(
             "someone from their side will contact you within 24 hours.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For an Account Suspension handoff, cover three points in your own natural words: thank the "
             "customer for submitting the request, state that it is being reviewed internally, and commit "
             "that we will get back to them within 24 hours. Keep the reply brief - two or three short "
@@ -789,7 +796,7 @@ def render_automation_reply(
             "it internally and will get back to you within 24 hours.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For completed Enablement, deliver the good news warmly and clearly: the feature is already enabled "
             "- never describe the enablement as pending, delayed, or future work - and this case is closing now, "
             "in natural customer wording (for example 'closing this case'). Acknowledge the customer's wait or "
@@ -800,7 +807,7 @@ def render_automation_reply(
             "but if any questions come up later, feel free to open a new ticket and we'll take it from there.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For Archer-completed Enablement, use the same warm, natural tone as a completed Enablement reply, "
             "and deliver one clear fact in your own sentences: Media Relay is already enabled on the customer's "
             "project - do not mention regions, subscribe load, capacity numbers, or any other internal "
@@ -810,23 +817,23 @@ def render_automation_reply(
             "come up later, feel free to open a new ticket and we'll take it from there.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID:
-        reply_contract_policy = (
+        current_intent_policy = (
             "Explain that the supplied App ID has an invalid format and ask for the correct 32-character App ID. "
             "Do not claim enablement, handoff, an SLA, or case closure. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND:
-        reply_contract_policy = (
+        current_intent_policy = (
             "Explain that no matching project was found and ask the customer to verify and resend the App ID. "
             "Do not claim enablement, handoff, an SLA, or case closure. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For a completed Detailed Invoice request, explicitly state that the detailed invoice has been "
             "provided - attached to this very message when the facts say attachments are included - and "
             "explain that the ticket is closing. "
         )
     elif intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For a knowledge-base answer, restate the provided_answer technical content in your own natural "
             "first-person voice so it reads as your personal reply. Keep every technical fact, instruction, "
             "and conclusion exactly as provided: do not add, drop, soften, or re-interpret anything technical. "
@@ -834,7 +841,7 @@ def render_automation_reply(
             "reply. Do not mention knowledge bases, documentation searches, or where the content came from. "
         )
     elif intent == ENGINEER_GUIDED_REPLY_INTENT:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For an Engineer-guided reply, provided_answer is the only authority for customer-facing technical "
             "claims, instructions, versions, URLs, steps, and commitments. Preserve all of that source content "
             "while polishing its language and organization. Use latest_customer_message, recent_public_conversation, "
@@ -843,7 +850,7 @@ def render_automation_reply(
             "identifier, internal detail, or technical fact from that context. Do not mention Slack or the engineer. "
         )
     elif intent == ENGINEER_INVESTIGATION_REPLY_INTENT:
-        reply_contract_policy = (
+        current_intent_policy = (
             "For an Engineer investigation reply, provided_answer contains the verified AI investigation findings "
             "and is the only authority for customer-facing technical claims, root-cause statements, instructions, "
             "versions, URLs, steps, and commitments. Preserve all of that source content while polishing its "
@@ -853,20 +860,20 @@ def render_automation_reply(
             "identifier, internal detail, or technical fact from that context. Do not mention Slack, the engineer, "
             "AI investigation, or any internal tooling. "
         )
-    reply_policy = f"{ownership_policy}{reply_contract_policy}"
+    reply_policy = f"{shared_account_policy}{current_intent_policy}"
     system_prompt = (
         f"Prompt version: {prompt_version}.\n"
         "You are the customer-facing Automation Persona. Write the final customer reply from the "
-        "structured Automation facts supplied by the application. Use only those facts. Clearly state "
-        "the current status, any information the customer needs to provide, and the next step. Preserve "
+        "structured Automation facts supplied by the application. Use only those facts. State the current status, "
+        "information the customer needs to provide, and the next step only when supplied and applicable. Preserve "
         "all supplied facts and explicit values without inventing or silently changing them. Match the "
         "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
         "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
         "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
         "Every point named in the reply policy below is required content: make sure each one is actually "
         "expressed somewhere in your reply, always in your own words and phrasing. "
-        "You are the human owner of this case: speak in first person (I/we) and never present an internal "
-        "team, a job title, or a system as the party responsible for handling or contacting the customer. "
+        "You are the human owner of this case: speak in first person (I/we), and do not narrate a job title or "
+        "system as the author of the reply. Follow the current intent policy for who performs the next action. "
         "Vary sentence structure and rhythm - combine related points with natural connectors or a dash "
         "instead of one flat sentence per fact, and use customer vocabulary (for example 'closing this "
         "case' rather than 'archiving this case'). "
@@ -933,7 +940,7 @@ def render_automation_reply(
         review = _review_automation_reply(
             profile=profile,
             facts=facts,
-            reply_policy=reply_policy,
+            current_intent_policy=current_intent_policy,
             candidate_body=candidate_body,
         )
         if review.verdict == "pass":

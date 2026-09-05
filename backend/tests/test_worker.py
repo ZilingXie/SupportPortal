@@ -4561,7 +4561,7 @@ class WorkerResilienceTests(unittest.TestCase):
             review_status="passed",
             review_rounds=1,
             reviewer_model="gpt-5.4-mini",
-            reviewer_prompt_version="automation-persona-review-v1",
+            reviewer_prompt_version="automation-persona-review-v2",
             review_issue_codes=(),
         )
 
@@ -5396,7 +5396,7 @@ class WorkerResilienceTests(unittest.TestCase):
             review_status="passed",
             review_rounds=1,
             reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v1",
+            reviewer_prompt_version="automation-persona-review-v2",
             review_issue_codes=(),
         )
 
@@ -5884,7 +5884,7 @@ class WorkerResilienceTests(unittest.TestCase):
             review_status="passed",
             review_rounds=1,
             reviewer_model="test-model",
-            reviewer_prompt_version="automation-persona-review-v1",
+            reviewer_prompt_version="automation-persona-review-v2",
             review_issue_codes=(),
         )
         followup_job["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING
@@ -6108,7 +6108,7 @@ class WorkerResilienceTests(unittest.TestCase):
             review_status="passed",
             review_rounds=1,
             reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v1",
+            reviewer_prompt_version="automation-persona-review-v2",
             review_issue_codes=(),
         )
 
@@ -6171,11 +6171,11 @@ class WorkerResilienceTests(unittest.TestCase):
                 "We are archiving this case now. If you have further questions, you can open a new ticket."
             ),
             model="persona-model",
-            prompt_version="automation-persona-v26",
+            prompt_version="automation-persona-v27",
             review_status="passed",
             review_rounds=1,
             reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v1",
+            reviewer_prompt_version="automation-persona-review-v2",
             review_issue_codes=(),
         )
 
@@ -6184,12 +6184,12 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._publish_account_reply_job(job)
 
-        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v26")
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v27")
         self.assertEqual(
             render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v26")
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v27")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
@@ -6328,7 +6328,7 @@ class WorkerResilienceTests(unittest.TestCase):
             review_status="passed",
             review_rounds=1,
             reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v1",
+            reviewer_prompt_version="automation-persona-review-v2",
             review_issue_codes=(),
         )
 
@@ -6347,7 +6347,7 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(job["payload"]["persona_reviewer_model"], "persona-model")
         self.assertEqual(
             job["payload"]["persona_review_prompt_version"],
-            "automation-persona-review-v1",
+            "automation-persona-review-v2",
         )
         self.assertEqual(job["payload"]["persona_review_issue_codes"], [])
         self.assertNotIn("persona_contract_repair", job["payload"])
@@ -6433,7 +6433,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 review_status="passed",
                 review_rounds=1,
                 reviewer_model="persona-model",
-                reviewer_prompt_version="automation-persona-review-v1",
+                reviewer_prompt_version="automation-persona-review-v2",
                 review_issue_codes=(),
             ),
         ):
