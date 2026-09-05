@@ -1,16 +1,109 @@
 from __future__ import annotations
 
+import json
+import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from backend.scripts.bootstrap_automation_preproduction import (
+    AwsSsmClient,
     BootstrapConfig,
     GENERATED_TOKEN_SUFFIXES,
     SOURCE_COPY_SUFFIXES,
     bootstrap,
     main,
 )
+
+
+def test_ssm_cli_payload_uses_private_short_lived_file_not_argv() -> None:
+    observed: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        payload_uri = command[command.index("--cli-input-json") + 1]
+        payload_path = payload_uri.removeprefix("file://")
+        observed["command"] = command
+        observed["payload_path"] = payload_path
+        observed["mode"] = os.stat(payload_path).st_mode & 0o777
+        with open(payload_path, encoding="utf-8") as payload_file:
+            observed["payload"] = json.load(payload_file)
+        assert "input" not in kwargs
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    with patch(
+        "backend.scripts.bootstrap_automation_preproduction.subprocess.run",
+        side_effect=fake_run,
+    ):
+        AwsSsmClient("us-east-1").put_parameter(
+            Name="/supportportal/preproduction/test",
+            Value="redacted-secret-value",
+            Type="SecureString",
+            Overwrite=False,
+        )
+
+    assert "redacted-secret-value" not in " ".join(observed["command"])
+    assert observed["mode"] == 0o600
+    assert observed["payload"] == {
+        "Name": "/supportportal/preproduction/test",
+        "Value": "redacted-secret-value",
+        "Type": "SecureString",
+        "Overwrite": False,
+    }
+    assert not os.path.exists(str(observed["payload_path"]))
+
+
+def test_ssm_cli_payload_file_is_removed_when_subprocess_fails() -> None:
+    observed_path = ""
+
+    def fake_run(command: list[str], **_: object) -> SimpleNamespace:
+        nonlocal observed_path
+        observed_path = command[command.index("--cli-input-json") + 1].removeprefix("file://")
+        assert os.path.exists(observed_path)
+        raise OSError("subprocess failed")
+
+    with (
+        patch(
+            "backend.scripts.bootstrap_automation_preproduction.subprocess.run",
+            side_effect=fake_run,
+        ),
+        pytest.raises(OSError, match="subprocess failed"),
+    ):
+        AwsSsmClient("us-east-1").put_parameter(
+            Name="/supportportal/preproduction/test",
+            Value="redacted-secret-value",
+            Type="SecureString",
+        )
+
+    assert observed_path
+    assert not os.path.exists(observed_path)
+
+
+def test_ssm_cli_payload_file_is_removed_when_serialization_fails() -> None:
+    observed_path = ""
+
+    def fake_dump(_: object, payload_file: object) -> None:
+        nonlocal observed_path
+        observed_path = str(payload_file.name)
+        raise TypeError("serialization failed")
+
+    with (
+        patch(
+            "backend.scripts.bootstrap_automation_preproduction.json.dump",
+            side_effect=fake_dump,
+        ),
+        patch("backend.scripts.bootstrap_automation_preproduction.subprocess.run") as run,
+        pytest.raises(TypeError, match="serialization failed"),
+    ):
+        AwsSsmClient("us-east-1").put_parameter(
+            Name="/supportportal/preproduction/test",
+            Value="redacted-secret-value",
+            Type="SecureString",
+        )
+
+    run.assert_not_called()
+    assert observed_path
+    assert not os.path.exists(observed_path)
 
 
 def _connection() -> tuple[MagicMock, MagicMock]:
