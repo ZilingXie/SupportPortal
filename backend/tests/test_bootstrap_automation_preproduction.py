@@ -85,6 +85,26 @@ def test_preproduction_bootstrap_creates_isolated_roles_and_secret_namespace() -
     assert "CREATE ROLE" in rendered_sql
     assert "CREATE SCHEMA" in rendered_sql
     assert "supportportal_production" in rendered_sql
+    statements = [str(call.args[0]) for call in cursor.execute.call_args_list]
+    grant_index = next(
+        index
+        for index, value in enumerate(statements)
+        if "GRANT" in value and "CURRENT_USER" in value
+    )
+    schema_index = next(
+        index for index, value in enumerate(statements) if "CREATE SCHEMA" in value
+    )
+    revoke_index = next(
+        index
+        for index, value in enumerate(statements)
+        if "REVOKE" in value and "CURRENT_USER" in value
+    )
+    isolation_index = next(
+        index
+        for index, value in enumerate(statements)
+        if "supportportal_production" in value
+    )
+    assert grant_index < schema_index < isolation_index < revoke_index
 
 
 def test_preproduction_bootstrap_check_only_has_no_writes() -> None:
@@ -145,6 +165,27 @@ def test_preproduction_bootstrap_removes_partial_ssm_writes_on_failure() -> None
     deleted = ssm.delete_parameters.call_args.kwargs["Names"]
     assert len(deleted) == 2
     assert all(name.startswith("/supportportal/preproduction/") for name in deleted)
+
+
+def test_preproduction_bootstrap_role_membership_is_inside_database_transaction() -> None:
+    connection, cursor = _connection()
+    ssm = _ssm()
+    with (
+        patch("backend.scripts.bootstrap_automation_preproduction._ssm_client", return_value=ssm),
+        patch("backend.scripts.bootstrap_automation_preproduction.psycopg.connect", return_value=connection),
+    ):
+        bootstrap(
+            BootstrapConfig(
+                region="us-east-1",
+                source_prefix="/supportportal/production",
+                target_prefix="/supportportal/preproduction",
+                hermes_base_url="http://hermes.preproduction.supportportal.local:8642",
+            )
+        )
+    connection.transaction.assert_called_once_with()
+    statements = [str(call.args[0]) for call in cursor.execute.call_args_list]
+    assert any("GRANT" in value and "CURRENT_USER" in value for value in statements)
+    assert any("REVOKE" in value and "CURRENT_USER" in value for value in statements)
 
 
 @pytest.mark.parametrize("role_access", [(True, True, False), (True, False, True)])

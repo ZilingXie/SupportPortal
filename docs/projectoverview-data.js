@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T21:56:26Z",
-  "source_base_commit": "9db9c500748023a0bc2af3f8511cf59c26672092",
-  "registry_digest": "8a3ee12e6ff6d3989526279716c9a66b935b073d5fd3ef5e20fcf54c4b6c440a",
+  "generated_at": "2026-09-05T22:04:39Z",
+  "source_base_commit": "b1c2d73fcc8533756eb74f52844b6db2bd798cba",
+  "registry_digest": "0b04abb190bba6a40bda8582222cff6da41c820da64aac5324e9b63ee2ee9346",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -7256,6 +7256,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-06",
           "event": "preproduction_backup_bucket_name_corrected",
           "summary": "首次Preproduction add-only plan在写入前发现默认Hermes backup bucket名称超过S3 63字符上限；改为保留用途、环境、账号和区域身份的合法确定性名称，并增加长度合同测试后重新执行plan。"
+        },
+        {
+          "at": "2026-09-06",
+          "event": "preproduction_database_role_bootstrap_corrected",
+          "summary": "首次数据库bootstrap在同一事务内因PostgreSQL 16要求schema owner可SET ROLE而失败并完整回滚；修复为事务内临时授予新migration role、完成schema/default privilege与Production隔离验证后立即revoke，并补充SQL顺序及原子回滚测试。"
         }
       ],
       "legacy_refs": [

@@ -168,6 +168,11 @@ def _create_database_identity(
         )
     )
     cursor.execute(
+        sql.SQL("GRANT {} TO CURRENT_USER").format(
+            sql.Identifier(config.migration_role),
+        )
+    )
+    cursor.execute(
         sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
             sql.Identifier(config.schema),
             sql.Identifier(config.migration_role),
@@ -220,6 +225,11 @@ def _create_database_identity(
     target_access, runtime_production_access, migration_production_access = cursor.fetchone()
     if not target_access or runtime_production_access or migration_production_access:
         raise RuntimeError("Preproduction database role schema isolation check failed")
+    cursor.execute(
+        sql.SQL("REVOKE {} FROM CURRENT_USER").format(
+            sql.Identifier(config.migration_role),
+        )
+    )
 
 
 def _put_parameters(client: Any, values: dict[str, str], created: list[str]) -> None:
