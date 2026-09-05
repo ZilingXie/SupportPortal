@@ -984,6 +984,7 @@ function formatModelRateUsd(value) {
 }
 
 function renderModelPricingStrip() {
+  if (isEcsProductionAdmin) return "";
   const entries = Array.isArray(automationData.model_pricing) ? automationData.model_pricing : [];
   if (!entries.length) return "";
   const items = entries.map((entry) => {

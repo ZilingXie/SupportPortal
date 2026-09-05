@@ -125,6 +125,22 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             pathname="/automation/production/admin/",
         )
 
+    def test_ecs_admin_hides_model_pricing_strip(self) -> None:
+        self.run_admin_app_script(
+            """
+            automationData = {
+              metrics: { total_account_cases: 1, automated_cases: 1, not_automated_cases: 0, automation_rate: 1 },
+              cases: [],
+              model_pricing: [
+                { provider: 'openai', model: 'gpt-5.6-luna', input_usd_per_1m: 0.2, cached_input_usd_per_1m: 0.02, output_usd_per_1m: 1.2, embedding_usd_per_1m: null, priced: true }
+              ]
+            };
+            const markup = renderAutomatedCases();
+            if (markup.includes('Model pricing') || markup.includes('admin-model-pricing')) throw new Error('ECS model pricing strip must be hidden');
+            """,
+            pathname="/automation/production/admin/",
+        )
+
     def test_account_automation_hierarchical_agent_config_and_environment_tabs_are_operational(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")

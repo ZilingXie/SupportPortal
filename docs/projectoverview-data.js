@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T10:30:33Z",
-  "source_base_commit": "19d30d341308f3e0d905d885f4fe7bb5ade93b7e",
-  "registry_digest": "5650a63c54713a39b4552c866a10af015637f7b6bceb237f04630929e54830e5",
+  "generated_at": "2026-09-05T12:59:55Z",
+  "source_base_commit": "81c696a1171cd78b1e7ed743466b8f90bbc06ea2",
+  "registry_digest": "443aed7709442e665fed8fc635aeebe436d97f6980c71fca91b67a687495227e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2492,6 +2492,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Official local stack compatibility",
           "details": "PR #1066 合并后官方 local_lightweight/remote DB 栈运行 build 8216f763427f，旧 /workspace/admin/ 继续正常提供共享 UI、Bearer 登录和可写功能；Production 根看板与既有只读 API 回归正常。"
+        },
+        {
+          "type": "decision",
+          "label": "Owner requested ECS-only pricing removal",
+          "details": "2026-09-05 用户要求移除 `/automation/production/admin/#automated-cases` 的 Model pricing section，并授权继续实施；范围不包含旧 Workspace Admin 或 token/cost 详情。"
+        },
+        {
+          "type": "test",
+          "label": "ECS-only UI contract verified",
+          "details": "2026-09-05：`node --check ui/workspace-ui/admin/app.js` 通过；`backend/tests/test_workspace_admin_ui_contract.py` 30 passed，验证 ECS pathname 即使收到 model_pricing 也不渲染 strip，同时既有 Workspace Admin pricing 与 token/cost 详情契约继续通过；Project Overview 与 Feature List 校验通过。"
         }
       ],
       "source_refs": [
@@ -2504,7 +2514,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 5,
+      "task_count": 6,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -10616,6 +10626,59 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/automation_ecs_schema.py",
         "deployment/deploy_automation_ecs_release.sh",
         "docs/deploy_automation_ecs_release.md"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-147",
+      "title": "ECS Production Admin 隐藏 Model Pricing",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-05",
+      "updated_at": "2026-09-05",
+      "summary": "仅在 `/automation/production/admin/#automated-cases` 隐藏顶层 Model pricing section；旧 `/workspace/admin/` 的 pricing 展示和两端 Case token/cost 详情保持不变。",
+      "next_action": "完成 PR 合并、本地官方栈验证和 ECS Production 公网验收后关闭任务。",
+      "acceptance_criteria": [
+        "ECS Production Admin 的 Automated Cases 页面不渲染 Model pricing section，即使 Admin API payload 包含 model_pricing 数据。",
+        "旧 `/workspace/admin/` 继续渲染 Model pricing section，不改变共享 Admin 的其他栏目、布局或行为。",
+        "Automated Cases 的 Page tokens、单 Case token 用量、By model 与 Cost 详情保持不变。",
+        "不修改 Admin API、Production 数据读取、认证或只读边界；正式发布后公网页面验证无该 section。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Owner requested ECS-only pricing removal",
+          "details": "2026-09-05 用户要求移除 `/automation/production/admin/#automated-cases` 的 Model pricing section，并授权继续实施；范围不包含旧 Workspace Admin 或 token/cost 详情。"
+        },
+        {
+          "type": "test",
+          "label": "ECS-only UI contract verified",
+          "details": "2026-09-05：`node --check ui/workspace-ui/admin/app.js` 通过；`backend/tests/test_workspace_admin_ui_contract.py` 30 passed，验证 ECS pathname 即使收到 model_pricing 也不渲染 strip，同时既有 Workspace Admin pricing 与 token/cost 详情契约继续通过；Project Overview 与 Feature List 校验通过。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-05",
+          "event": "created",
+          "summary": "创建 p2-147 承接 ECS Production Admin 的局部 UI 隐藏调整。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "implementation_verified",
+          "summary": "ECS-only 条件渲染与双路径 UI 契约验证完成；任务保持 active，等待合并、本地官方栈和公网 Production 验收。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-145"
+      ],
+      "source_refs": [
+        "ui/workspace-ui/admin/app.js",
+        "backend/tests/test_workspace_admin_ui_contract.py"
       ]
     },
     {
