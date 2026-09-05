@@ -77,6 +77,25 @@ PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
 重复 check-only。schema bootstrap 只有在健康 runtime 的 `schema_revision` 与
 Manifest一致且目标数据库直接 schema check成功时才跳过。
 
+## Hermes Drain Evidence
+
+迁移现有 Hermes EFS state 前，先用 `disable_production_hermes.sh` 将 Production
+API/Worker 切为 `HERMES_CASE_WORKFLOW_MODE=disabled` 并完成健康 readback。随后生成
+短时效、无 secret 的 drain evidence：
+
+```bash
+.venv/bin/python -m backend.scripts.create_hermes_drain_evidence \
+  --output .deployments/hermes-preproduction/drain-evidence.json
+```
+
+该命令只接受 canonical Production cluster/service/base URL/DSN参数名，数据库连接强制
+`default_transaction_read_only=on`。只有 Hermes service稳定为`1/1/0`、公网release
+readback为`disabled`，且`support_hermes_turn_requests`的`queued/active`均为0时才会
+原子写文件。输出只包含生成时间、service/task definition和计数；不包含DSN、SSM值、
+工单或消息内容。Hermes迁移命令必须在10分钟内消费该evidence，并再次核对当前task
+definition，否则fail closed。三个service还必须各自只有一个`COMPLETED` deployment，避免在
+rollout切换窗口内生成错误的排空证据。
+
 Preproduction业务验收后，`promote_automation_release.sh`只复制已验收的三个digest到
 `supportportal/production`，不rebuild、不复制数据库、Prompt rows、secret、日志、
 task definition或Hermes状态；Production deploy仍要求独立

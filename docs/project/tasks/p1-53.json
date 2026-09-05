@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 当前运行 r20260905-21f2941，API/Route/Worker revision 34/29/32与 Hermes mock 保持健康；n8n由用户独立控制。main已合并固定完整 main SHA 的 AWS CodeBuild 三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链，但云端Preproduction尚未创建。Preproduction将使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs和Production等价Account业务合同，无应用allowlist或forced-internal comment；当前Hermes状态将在单写者、离线backup和quick_check门禁下移至Preproduction real，Production则以同镜像配置revision物理移除Hermes endpoint/token/service/route。",
-  "next_action": "保持 active。先补齐Preproduction Hermes三个模型密钥的隔离参数bootstrap并合并hermes-deploy环境化generator。之后只在Terraform add-only、全新数据库状态、Hermes idle/backup/quick_check和AWS身份门禁通过时创建Preproduction并迁移唯一Hermes writer，同时将Production切为Hermes disabled。最终提供双环境技术readback并停在用户创建全新业务工单之前；不修改n8n、不重放历史任务或outcome_unknown。",
+  "next_action": "保持 active。CodeBuild/Preproduction基础、Hermes模型密钥bootstrap和hermes-deploy环境化迁移工具已完成代码合并；下一步只在Terraform add-only、全新数据库状态、Hermes disabled/drain evidence、离线backup/quick_check和AWS身份门禁通过时创建Preproduction并迁移唯一Hermes writer，同时物理清理Production Hermes。最终提供双环境技术readback并停在用户创建全新业务工单之前；不修改n8n、不重放历史任务或outcome_unknown。",
   "acceptance_criteria": [
     "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -459,6 +459,11 @@
       "at": "2026-09-06",
       "event": "codebuild_preproduction_foundation_merged",
       "summary": "PR #1080已将固定SHA CodeBuild、Manifest v2、Preproduction Publish Record、独立release/preproduction Terraform state、初始task definitions与Production等价Account合同合入main@7ecae6a并完成官方lightweight栈验证。上线前复核发现Preproduction bootstrap尚缺Hermes三个模型密钥的隔离参数，当前修复保持API server key独立生成并仅复制模型凭据；云端资源尚未创建或修改。"
+    },
+    {
+      "at": "2026-09-06",
+      "event": "hermes_preproduction_migration_tooling_merged",
+      "summary": "SupportPortal PR #1081补齐三个Hermes模型密钥的Preproduction隔离参数并保持API server key独立生成，官方lightweight栈验证通过；hermes-deploy PR #13合入digest-pinned双容器/三EFS生成器、私有Cloud Map服务、离线SQLite/S3完整备份、唯一writer迁移和失败回滚工具。当前补充短时效drain evidence命令，要求Production disabled且queued/active Hermes turn均为0；AWS Preproduction资源仍未创建。"
     }
   ],
   "legacy_refs": [
