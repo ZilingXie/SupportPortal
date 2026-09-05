@@ -9,8 +9,8 @@
   "function_id": "account-production-environment",
   "created_at": "2026-09-05",
   "updated_at": "2026-09-05",
-  "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。",
-  "next_action": "用户已授权发布最新 main 并测试全部当前能力。先 finalize 正式 schema/bootstrap + mock activation 门禁，再从合并后的最新 main 构建并部署 ECS Production release；发布后等待用户新建 technical Case，核对唯一 Engineer Case/Slack thread、mock output、Summary/Persona/Approve 与 Zendesk readback。真实 Hermes/AgentRelay 接入和 promotion sink 仍待单独实现与授权。",
+  "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。ECS Production r20260905-19d30d3 已完成九表bootstrap并在API/Worker显式启用mock。",
+  "next_action": "保持 active，等待用户新建全新 technical Case，核对唯一 Engineer Case/Slack thread、精确mock output、Summarize、Summary Guardrail、Persona/Approve与Zendesk readback；不得创建、重放或回复历史工单。真实 Hermes/AgentRelay 接入和promotion sink仍待单独实现与授权。",
   "acceptance_criteria": [
     "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
     "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -51,6 +51,11 @@
       "type": "test",
       "label": "Hermes schema and activation release gates",
       "details": "正式deploy新增显式bootstrap+mock组合门禁：API镜像一次性task仅引用既有migration SecureString ARN，服务更新前完成幂等DDL；API/Worker注入mock、Route不注入，公网release marker必须readback一致。Hermes九张表加入runtime schema preflight；中断后resume会先验证并清理旧bootstrap task再幂等重跑。deploy/admin/bootstrap定向测试30 passed；Hermes/Persona/Account/ECS整合回归293 passed + 65 subtests；隔离PostgreSQL回归7 passed且临时schema已清理。"
+    },
+    {
+      "type": "deployment",
+      "label": "ECS Production Hermes mock release and independent readback",
+      "details": "PR #1069/#1070随clean main@19d30d341308的r20260905-19d30d3正式发布。schema bootstrap成功，API/Worker的HERMES_CASE_WORKFLOW_MODE=mock且公网release marker一致；API/Route/Worker revision 32/27/30均1/1/0、COMPLETED并匹配Manifest digest。revision 30只读探针在READ ONLY事务确认九张support_hermes_*表全部存在；Archer GET、Graph /me、Zendesk identity、CloudWatch零错误、EC2 backup与Terraform 1.9.8 No changes均通过。未创建/修改/回复工单，真实technical Case验收仍待用户执行。"
     }
   ],
   "history": [
@@ -68,6 +73,11 @@
       "at": "2026-09-05",
       "event": "production_release_authorized",
       "summary": "用户授权发布最新main并测试当前全部能力；开始补齐唯一正式ECS deploy的schema bootstrap和mock activation门禁，完成后将发布Production并停在用户创建新technical Case之前。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "production_mock_release_deployed",
+      "summary": "r20260905-19d30d3已完成schema bootstrap并在ECS Production启用Hermes mock；九表、三服务provenance、依赖探针、CloudWatch、backup与Terraform零漂移均通过，任务保持active等待用户全新technical Case验收。"
     }
   ],
   "legacy_ids": [],
