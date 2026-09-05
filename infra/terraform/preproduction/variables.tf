@@ -33,6 +33,11 @@ variable "shared_efs_security_group_id" {
   type        = string
 }
 
+variable "shared_rds_security_group_id" {
+  description = "Security group protecting the shared PostgreSQL instance."
+  type        = string
+}
+
 variable "hermes_efs_access_point_arns" {
   description = "Existing Hermes access point ARNs authorized only for the migrated Preproduction writer."
   type        = list(string)

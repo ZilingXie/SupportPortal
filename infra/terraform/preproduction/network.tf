@@ -40,6 +40,15 @@ resource "aws_vpc_security_group_ingress_rule" "efs_from_preproduction" {
   description                  = "Preproduction tasks to shared EFS mount targets"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "postgres_from_preproduction" {
+  security_group_id            = var.shared_rds_security_group_id
+  referenced_security_group_id = aws_security_group.ecs.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  description                  = "Preproduction Automation tasks to shared PostgreSQL"
+}
+
 resource "aws_lb_target_group" "automation" {
   name        = "supportportal-preproduction-tg"
   port        = 8000

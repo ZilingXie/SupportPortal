@@ -222,6 +222,14 @@ def test_preproduction_network_and_runtime_identity_are_explicit() -> None:
     assert 'values = ["/automation/preproduction", "/automation/preproduction/*"]' in network
     assert "referenced_security_group_id = var.shared_alb_security_group_id" in network
     assert "referenced_security_group_id = aws_security_group.ecs.id" in network
+    assert "security_group_id            = var.shared_rds_security_group_id" in network
+    postgres_rule = network.split(
+        'resource "aws_vpc_security_group_ingress_rule" "postgres_from_preproduction"', 1
+    )[1]
+    assert "from_port                    = 5432" in postgres_rule
+    assert "to_port                      = 5432" in postgres_rule
+    assert 'ip_protocol                  = "tcp"' in postgres_rule
+    assert 'cidr_ipv4' not in postgres_rule
     assert "assign_public_ip = true" in ecs
     assert 'name = "preproduction.supportportal.local"' in network
     assert 'name = "hermes"' in network
