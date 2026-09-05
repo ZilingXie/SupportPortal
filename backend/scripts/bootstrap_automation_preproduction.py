@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,15 +61,28 @@ class AwsSsmClient:
 
     def _run(self, arguments: list[str], payload: dict[str, Any] | None = None) -> dict[str, Any]:
         command = ["aws", "ssm", *arguments, "--region", self.region, "--output", "json"]
-        if payload is not None:
-            command.extend(["--cli-input-json", "file:///dev/stdin"])
-        completed = subprocess.run(
-            command,
-            input=json.dumps(payload) if payload is not None else None,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        payload_path: str | None = None
+        try:
+            if payload is not None:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    prefix="supportportal-ssm-",
+                    delete=False,
+                ) as payload_file:
+                    payload_path = payload_file.name
+                    os.chmod(payload_path, 0o600)
+                    json.dump(payload, payload_file)
+                command.extend(["--cli-input-json", f"file://{payload_path}"])
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        finally:
+            if payload_path is not None:
+                os.unlink(payload_path)
         if completed.returncode != 0:
             raise RuntimeError("AWS SSM operation failed")
         value = json.loads(completed.stdout or "{}")
