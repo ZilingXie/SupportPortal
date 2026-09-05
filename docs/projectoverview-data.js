@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T14:38:05Z",
-  "source_base_commit": "560d30b6dcbcc719ab3cd8c242bc5f8f572772c4",
-  "registry_digest": "bfd3d54c56398fc0f4ab7d6ea06acc96ae850ce64530665e8d637a93336d01fe",
+  "generated_at": "2026-09-05T15:59:19Z",
+  "source_base_commit": "21f29419ad52273dae436ebe9e216c20015028a0",
+  "registry_digest": "243e3895e74a36e0812624e077d328bfeb15344e24f010c7a80b42b1619d7e99",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1035,6 +1035,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Production v27/review-v2 immutable release",
           "command": "deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
           "details": "main@d2fe9223f554 以 r20260905-d2fe922 发布到 API/Route/Worker revision 33/28/31；三服务均 1/1/0、COMPLETED，运行 digest 分别为 sha256:703c3da6.../sha256:be6e3d86.../sha256:4b8a2052...，与 linux/amd64 Manifest、ECR 和 Promotion Record 一致。公网 live/release/ready、当前 Route/Worker heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 部署窗口错误 0、EC2 backup 和 Terraform 1.9.8 发布后 No changes 均通过，Hermes 保持 mock。Worker 镜像实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 且无 Pilot；revision 31 一次性只读探针 exit 0，确认 9 张 Hermes 表、三类收件人精确匹配、Archer GET、Graph /me 和 Zendesk identity，未创建、修改、回复或重放工单，未发送邮件。"
+        },
+        {
+          "type": "deployment",
+          "label": "Current-main ECS Production release",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
+          "details": "clean main@21f29419ad52 以 linux/amd64 Release r20260905-21f2941 发布到 API/Route/Worker revision 34/29/32，运行 digest 分别为 sha256:c11ec3d2.../sha256:6beb3f45.../sha256:64c7181e...，与 Manifest、不可变 ECR tag 和 local-oci Promotion Record 精确一致。正式 check-only 与部署门禁通过；独立 readback 确认三服务 1/1/0、COMPLETED，公网 live/release/ready、Route/Worker heartbeat、CloudWatch 30 分钟错误 0、EC2 backup、Terraform 1.9.8 No changes，以及源端/目标端 Prompt Release pr-c9b3a291ecf1 active、build ref 76d22d5ae1a3、28 个 Prompt 全部一致。精确 Worker OCI 实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 和 Hermes v1 manifest，且无 Pilot；revision 32 一次性只读探针 exit 0，确认 Hermes 九表、三类收件人、Archer GET、Graph /me 与 Zendesk identity。未创建、修改、回复或重放工单，未发送邮件。"
         },
         {
           "type": "test",
@@ -2834,6 +2840,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Canonical real Runtime joint repair",
           "details": "SupportPortal与Runtime使用逐字节相同的v1 schema/fixture bundle；real producer、strict callback、authority transaction、native wake、read-only Case Knowledge、no-L0和close-time promotion transport均有定向测试。12场景仅标记为Runtime/Relay component harness，使用canonical HTTP入口和synthetic identity；没有连接真实外部系统。"
+        },
+        {
+          "type": "deployment",
+          "label": "Canonical SupportPortal Runtime deployed in mock mode",
+          "details": "clean main@21f29419ad52 以 r20260905-21f2941 发布到 ECS Production API/Route/Worker revision 34/29/32；schema bootstrap幂等通过，公网release与Worker task definition均确认HERMES_CASE_WORKFLOW_MODE=mock。三服务1/1/0、COMPLETED且运行digest匹配Manifest；revision 32只读探针确认canonical Hermes九表全部存在。CloudWatch错误0、EC2 backup健康、Terraform 1.9.8 No changes。真实Hermes/AgentRelay、外部消息与知识promotion未启用。"
         },
         {
           "type": "test",
@@ -10427,6 +10438,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Production v27/review-v2 immutable release",
           "command": "deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
           "details": "main@d2fe9223f554 以 r20260905-d2fe922 发布到 API/Route/Worker revision 33/28/31；三服务均 1/1/0、COMPLETED，运行 digest 分别为 sha256:703c3da6.../sha256:be6e3d86.../sha256:4b8a2052...，与 linux/amd64 Manifest、ECR 和 Promotion Record 一致。公网 live/release/ready、当前 Route/Worker heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 部署窗口错误 0、EC2 backup 和 Terraform 1.9.8 发布后 No changes 均通过，Hermes 保持 mock。Worker 镜像实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 且无 Pilot；revision 31 一次性只读探针 exit 0，确认 9 张 Hermes 表、三类收件人精确匹配、Archer GET、Graph /me 和 Zendesk identity，未创建、修改、回复或重放工单，未发送邮件。"
+        },
+        {
+          "type": "deployment",
+          "label": "Current-main ECS Production release",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
+          "details": "clean main@21f29419ad52 以 linux/amd64 Release r20260905-21f2941 发布到 API/Route/Worker revision 34/29/32，运行 digest 分别为 sha256:c11ec3d2.../sha256:6beb3f45.../sha256:64c7181e...，与 Manifest、不可变 ECR tag 和 local-oci Promotion Record 精确一致。正式 check-only 与部署门禁通过；独立 readback 确认三服务 1/1/0、COMPLETED，公网 live/release/ready、Route/Worker heartbeat、CloudWatch 30 分钟错误 0、EC2 backup、Terraform 1.9.8 No changes，以及源端/目标端 Prompt Release pr-c9b3a291ecf1 active、build ref 76d22d5ae1a3、28 个 Prompt 全部一致。精确 Worker OCI 实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 和 Hermes v1 manifest，且无 Pilot；revision 32 一次性只读探针 exit 0，确认 Hermes 九表、三类收件人、Archer GET、Graph /me 与 Zendesk identity。未创建、修改、回复或重放工单，未发送邮件。"
         }
       ],
       "history": [
@@ -10454,6 +10471,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "v27_ecs_release_verified",
           "summary": "r20260905-d2fe922 已将 v27/review-v2 部署到 ECS Production 并通过正式门禁与独立运行 readback；任务保持 active，等待用户全新真实工单验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "current_main_ecs_release_verified",
+          "summary": "r20260905-21f2941 已将当前 main 完整发布到 ECS Production；v27/review-v2、运行 provenance、依赖与零漂移门禁全部通过，任务继续等待用户全新真实工单验收。"
         }
       ],
       "legacy_ids": [],
@@ -10583,8 +10605,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "account-production-environment",
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
-      "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。代码默认 disabled，现网仍为此前批准的 mock 配置，本次联合修复未部署。",
-      "next_action": "保持 active；联合修复按 Server、MCP、MemoryCore、hermes-deploy、SupportPortal 顺序完成合并后，Production schema activation、真实 zac-agent、Slack/Zendesk、TencentDB 和 Hermes 部署及新 technical Case 验收仍需单独授权。",
+      "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。canonical SupportPortal Runtime 已随当前 main 部署，Production schema 已激活但 HERMES_CASE_WORKFLOW_MODE 仍为 mock；真实 Hermes/AgentRelay 未启用。",
+      "next_action": "保持 active；等待用户用全新 technical Case 验收 Production mock 链路。真实 zac-agent、Slack/Zendesk 外部闭环、TencentDB、Hermes/AgentRelay 部署和知识 promotion sink 仍需单独授权。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -10635,6 +10657,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Canonical real Runtime joint repair",
           "details": "SupportPortal与Runtime使用逐字节相同的v1 schema/fixture bundle；real producer、strict callback、authority transaction、native wake、read-only Case Knowledge、no-L0和close-time promotion transport均有定向测试。12场景仅标记为Runtime/Relay component harness，使用canonical HTTP入口和synthetic identity；没有连接真实外部系统。"
+        },
+        {
+          "type": "deployment",
+          "label": "Canonical SupportPortal Runtime deployed in mock mode",
+          "details": "clean main@21f29419ad52 以 r20260905-21f2941 发布到 ECS Production API/Route/Worker revision 34/29/32；schema bootstrap幂等通过，公网release与Worker task definition均确认HERMES_CASE_WORKFLOW_MODE=mock。三服务1/1/0、COMPLETED且运行digest匹配Manifest；revision 32只读探针确认canonical Hermes九表全部存在。CloudWatch错误0、EC2 backup健康、Terraform 1.9.8 No changes。真实Hermes/AgentRelay、外部消息与知识promotion未启用。"
         }
       ],
       "history": [
@@ -10662,6 +10689,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "real_runtime_joint_repair_implemented",
           "summary": "完成默认disabled的canonical real producer/Runtime、受限Relay与no-L0知识边界；保持所有内部PR未合并且未部署，等待联合Review和后续授权。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "canonical_runtime_mock_release_deployed",
+          "summary": "canonical SupportPortal Runtime 已随 r20260905-21f2941 部署到 ECS Production，schema与九表readback通过且继续使用mock；真实Hermes/AgentRelay仍未启用。"
         }
       ],
       "legacy_ids": [],

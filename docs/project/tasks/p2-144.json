@@ -49,6 +49,12 @@
       "label": "ECS Production v27/review-v2 immutable release",
       "command": "deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
       "details": "main@d2fe9223f554 以 r20260905-d2fe922 发布到 API/Route/Worker revision 33/28/31；三服务均 1/1/0、COMPLETED，运行 digest 分别为 sha256:703c3da6.../sha256:be6e3d86.../sha256:4b8a2052...，与 linux/amd64 Manifest、ECR 和 Promotion Record 一致。公网 live/release/ready、当前 Route/Worker heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 部署窗口错误 0、EC2 backup 和 Terraform 1.9.8 发布后 No changes 均通过，Hermes 保持 mock。Worker 镜像实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 且无 Pilot；revision 31 一次性只读探针 exit 0，确认 9 张 Hermes 表、三类收件人精确匹配、Archer GET、Graph /me 和 Zendesk identity，未创建、修改、回复或重放工单，未发送邮件。"
+    },
+    {
+      "type": "deployment",
+      "label": "Current-main ECS Production release",
+      "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
+      "details": "clean main@21f29419ad52 以 linux/amd64 Release r20260905-21f2941 发布到 API/Route/Worker revision 34/29/32，运行 digest 分别为 sha256:c11ec3d2.../sha256:6beb3f45.../sha256:64c7181e...，与 Manifest、不可变 ECR tag 和 local-oci Promotion Record 精确一致。正式 check-only 与部署门禁通过；独立 readback 确认三服务 1/1/0、COMPLETED，公网 live/release/ready、Route/Worker heartbeat、CloudWatch 30 分钟错误 0、EC2 backup、Terraform 1.9.8 No changes，以及源端/目标端 Prompt Release pr-c9b3a291ecf1 active、build ref 76d22d5ae1a3、28 个 Prompt 全部一致。精确 Worker OCI 实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 和 Hermes v1 manifest，且无 Pilot；revision 32 一次性只读探针 exit 0，确认 Hermes 九表、三类收件人、Archer GET、Graph /me 与 Zendesk identity。未创建、修改、回复或重放工单，未发送邮件。"
     }
   ],
   "history": [
@@ -76,6 +82,11 @@
       "at": "2026-09-05",
       "event": "v27_ecs_release_verified",
       "summary": "r20260905-d2fe922 已将 v27/review-v2 部署到 ECS Production 并通过正式门禁与独立运行 readback；任务保持 active，等待用户全新真实工单验收。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "current_main_ecs_release_verified",
+      "summary": "r20260905-21f2941 已将当前 main 完整发布到 ECS Production；v27/review-v2、运行 provenance、依赖与零漂移门禁全部通过，任务继续等待用户全新真实工单验收。"
     }
   ],
   "legacy_ids": [],
