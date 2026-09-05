@@ -16,6 +16,9 @@ from psycopg import conninfo, sql
 
 SOURCE_COPY_SUFFIXES = (
     "openai-api-key",
+    "hermes-openai-api-key",
+    "hermes-memory-llm-api-key",
+    "hermes-memory-embedding-api-key",
     "zendesk-basic-auth",
     "rag-service-url",
     "rag-service-shared-token",
