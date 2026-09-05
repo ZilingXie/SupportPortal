@@ -132,6 +132,9 @@ main() {
       target_digest="${existing}"
     elif [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
       skopeo copy --preserve-digests \
+        --retry-times 3 \
+        --retry-delay 5s \
+        --dest-precompute-digests \
         "oci-archive:${layout_path}" \
         "docker://${registry}/${TARGET_REPOSITORY}:${tag}"
       target_digest="$(aws_ecr batch-get-image \

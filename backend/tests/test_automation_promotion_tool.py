@@ -169,6 +169,9 @@ def test_promotion_copies_manifests_and_layers_and_verifies_identical_digests_wi
     assert "batch-get-image" in script
     assert "crane copy" in script
     assert "skopeo copy --preserve-digests" in script
+    assert "--retry-times 3" in script
+    assert "--retry-delay 5s" in script
+    assert "--dest-precompute-digests" in script
     assert "put-image" not in script
     assert '[[ "${target_digest}" = "${expected}" ]]' in script
     assert "automation-promotion-v1" in script
@@ -186,7 +189,10 @@ def test_direct_production_publishes_local_archives_and_records_explicit_source(
     calls = [json.loads(line) for line in (state / "skopeo.jsonl").read_text().splitlines()]
     copies = [call for call in calls if call[:2] == ["copy", "--preserve-digests"]]
     assert len(copies) == 3
-    assert all(call[2].startswith("oci-archive:") for call in copies)
+    assert all(call[-2].startswith("oci-archive:") for call in copies)
+    assert all(call[call.index("--retry-times") + 1] == "3" for call in copies)
+    assert all(call[call.index("--retry-delay") + 1] == "5s" for call in copies)
+    assert all("--dest-precompute-digests" in call for call in copies)
     assert all("supportportal/preproduction" not in json.dumps(call) for call in calls)
     aws_calls = [json.loads(line) for line in (state / "aws.jsonl").read_text().splitlines()]
     scoped_calls = [call for call in aws_calls if call[:1] == ["ecr"] and call[1] != "get-login-password"]
