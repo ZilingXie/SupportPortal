@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T13:08:17Z",
-  "source_base_commit": "5c1dd571c51ca827b510eef150050bc0c7d5e5b1",
-  "registry_digest": "b279cc10fb8a9055fa7038a8a5bb4e1e44799ab21b631c73c8638a463bf45029",
+  "generated_at": "2026-09-05T14:21:14Z",
+  "source_base_commit": "d2fe9223f55402d27f8b22cca0b74f016f25b805",
+  "registry_digest": "388f1bb1e419985712f76a1515fafb44efaf41f773b51e8078f945097be3b154",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1029,6 +1029,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Latest-main carry-forward verification",
           "details": "后继main@19d30d341308随r20260905-19d30d3部署到API/Route/Worker revision 32/27/30，三服务1/1/0且COMPLETED，运行digest与Manifest一致。公网release/ready、当前heartbeat、CloudWatch、EC2 backup和Terraform No changes通过；revision 30只读探针再次确认无Pilot且Archer/Graph/Zendesk依赖正常。当前release继续包含automation-persona-v26与automation-persona-review-v1，真实正文验收仍仅等待用户创建的新Suspension工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production v27/review-v2 immutable release",
+          "command": "deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
+          "details": "main@d2fe9223f554 以 r20260905-d2fe922 发布到 API/Route/Worker revision 33/28/31；三服务均 1/1/0、COMPLETED，运行 digest 分别为 sha256:703c3da6.../sha256:be6e3d86.../sha256:4b8a2052...，与 linux/amd64 Manifest、ECR 和 Promotion Record 一致。公网 live/release/ready、当前 Route/Worker heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 部署窗口错误 0、EC2 backup 和 Terraform 1.9.8 发布后 No changes 均通过，Hermes 保持 mock。Worker 镜像实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 且无 Pilot；revision 31 一次性只读探针 exit 0，确认 9 张 Hermes 表、三类收件人精确匹配、Archer GET、Graph /me 和 Zendesk identity，未创建、修改、回复或重放工单，未发送邮件。"
         },
         {
           "type": "test",
@@ -10372,7 +10378,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
       "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句；v26/review-v1 已完成正文不可变与有界语义审稿。随后 Case 13302 暴露第二个 prompt 根因：RAG 当前 intent 被无条件拼入 Submission Confirmation 与 Missing-information 合同，两轮都因 intent_policy_violation 拒绝。v27/review-v2 将共享约束与 current-intent policy 隔离，Persona 和 Reviewer 只按当前 intent 合同工作；调用预算、Human Review、安全地板、Worker 原样发布和应用外壳保持不变。",
-      "next_action": "合并并完成 v27/review-v2 的 official lightweight stack 验证；ECS Production 仍运行 v26/review-v1，需另行获得生产发布授权后按正式 Release 流程更新。发布后等待用户提供全新 RAG follow-up 与 Account Suspension 工单验收；不得创建、重放或回复历史工单。",
+      "next_action": "ECS Production 已运行 v27/review-v2；等待用户提供全新 RAG follow-up 与 Account Suspension 工单号后进行业务验收追踪。不得代替用户创建工单，不重放或回复历史工单。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
@@ -10405,6 +10411,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Latest-main carry-forward verification",
           "details": "后继main@19d30d341308随r20260905-19d30d3部署到API/Route/Worker revision 32/27/30，三服务1/1/0且COMPLETED，运行digest与Manifest一致。公网release/ready、当前heartbeat、CloudWatch、EC2 backup和Terraform No changes通过；revision 30只读探针再次确认无Pilot且Archer/Graph/Zendesk依赖正常。当前release继续包含automation-persona-v26与automation-persona-review-v1，真实正文验收仍仅等待用户创建的新Suspension工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production v27/review-v2 immutable release",
+          "command": "deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
+          "details": "main@d2fe9223f554 以 r20260905-d2fe922 发布到 API/Route/Worker revision 33/28/31；三服务均 1/1/0、COMPLETED，运行 digest 分别为 sha256:703c3da6.../sha256:be6e3d86.../sha256:4b8a2052...，与 linux/amd64 Manifest、ECR 和 Promotion Record 一致。公网 live/release/ready、当前 Route/Worker heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 部署窗口错误 0、EC2 backup 和 Terraform 1.9.8 发布后 No changes 均通过，Hermes 保持 mock。Worker 镜像实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 且无 Pilot；revision 31 一次性只读探针 exit 0，确认 9 张 Hermes 表、三类收件人精确匹配、Archer GET、Graph /me 和 Zendesk identity，未创建、修改、回复或重放工单，未发送邮件。"
         }
       ],
       "history": [
@@ -10427,6 +10439,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "current_intent_policy_isolated",
           "summary": "Case 13302 暴露 RAG 被跨 intent 合同污染；v27/review-v2 已将 Persona 与 Reviewer 收窄到同一 current-intent policy，等待合并、本地栈验证和另行授权的 ECS 发布。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "v27_ecs_release_verified",
+          "summary": "r20260905-d2fe922 已将 v27/review-v2 部署到 ECS Production 并通过正式门禁与独立运行 readback；任务保持 active，等待用户全新真实工单验收。"
         }
       ],
       "legacy_ids": [],
