@@ -529,7 +529,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(new_messages, [])
         self.assertEqual(slack_events, [{"event": "opened"}])
         self.assertEqual(opening_request["turn_kind"], "opening")
-        self.assertEqual(opening_request["input_text"], "please verify")
+        self.assertEqual(opening_request["input"]["problem_description"], "please verify")
         self.assertEqual(len(repository.comment_sync_baselines), 1)
         self.assertTrue(str(repository.comment_sync_baselines[0]["comments_revision"] or "").strip())
 

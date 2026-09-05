@@ -1249,12 +1249,17 @@ async def run_production_account_intake(
                 "round_state": "active",
             }
             opening_request = None
-            if configured_hermes_mode == "mock":
+            if configured_hermes_mode in {"mock", "real"}:
                 opening_request = create_opening_turn(
                     engineer_case_id=engineer_case_id,
                     client_ticket_id=ticket_id,
                     investigation_id=str(engineer_case["thread_id"]),
                     problem_description=question,
+                    investigation_scope="Investigate the reported technical issue and identify evidence-backed next steps.",
+                    completion_criteria=(
+                        "State the current evidence-backed conclusion.",
+                        "Record unresolved blockers, conflicts, and required follow-up.",
+                    ),
                     now_value=timestamp,
                 ).model_dump(mode="json")
             await _sync(

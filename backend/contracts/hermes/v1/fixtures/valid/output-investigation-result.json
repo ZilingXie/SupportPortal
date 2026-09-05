@@ -1,0 +1,26 @@
+{
+  "available_actions": [],
+  "conversation_version": 0,
+  "created_at": "2026-09-05T08:01:00Z",
+  "engineer_case_id": "case-1",
+  "episode": 1,
+  "hermes_conversation_key": "supportportal:engineer-case:case-1",
+  "hermes_session_id": "hermes-session:case-1",
+  "investigation_id": "investigation-1",
+  "ledger_delta": {
+    "current_conclusion_next_steps": "Investigation result: test",
+    "investigation_process": "Investigation result: test",
+    "misjudgment_corrections": null,
+    "problem_description": null,
+    "references": null,
+    "schema_version": "v1"
+  },
+  "output_id": "hermes-output-1",
+  "output_kind": "investigation_result",
+  "output_version": 1,
+  "producer_contract_version": "v1",
+  "request_id": "hermes-request:case-1:1:0:opening",
+  "round_id": null,
+  "schema_version": "v1",
+  "text": "Investigation result: test"
+}

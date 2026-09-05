@@ -1,0 +1,236 @@
+{
+  "$defs": {
+    "HermesLedgerDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "current_conclusion_next_steps": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Conclusion Next Steps"
+        },
+        "investigation_process": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Investigation Process"
+        },
+        "misjudgment_corrections": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Misjudgment Corrections"
+        },
+        "problem_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Problem Description"
+        },
+        "references": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "References"
+        },
+        "schema_version": {
+          "const": "v1",
+          "default": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "title": "HermesLedgerDelta",
+      "type": "object"
+    },
+    "HermesOutputAction": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "authorize_round",
+            "accept_and_finish",
+            "start_suggested_round",
+            "stop_investigation"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "target_digest": {
+          "minLength": 1,
+          "title": "Target Digest",
+          "type": "string"
+        },
+        "target_round_id": {
+          "minLength": 1,
+          "title": "Target Round Id",
+          "type": "string"
+        },
+        "target_version": {
+          "minimum": 1,
+          "title": "Target Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "target_round_id",
+        "target_version",
+        "target_digest"
+      ],
+      "title": "HermesOutputAction",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "available_actions": {
+      "items": {
+        "$ref": "#/$defs/HermesOutputAction"
+      },
+      "title": "Available Actions",
+      "type": "array"
+    },
+    "conversation_version": {
+      "minimum": 0,
+      "title": "Conversation Version",
+      "type": "integer"
+    },
+    "created_at": {
+      "minLength": 1,
+      "title": "Created At",
+      "type": "string"
+    },
+    "engineer_case_id": {
+      "minLength": 1,
+      "title": "Engineer Case Id",
+      "type": "string"
+    },
+    "episode": {
+      "minimum": 1,
+      "title": "Episode",
+      "type": "integer"
+    },
+    "hermes_conversation_key": {
+      "minLength": 1,
+      "title": "Hermes Conversation Key",
+      "type": "string"
+    },
+    "hermes_session_id": {
+      "minLength": 1,
+      "title": "Hermes Session Id",
+      "type": "string"
+    },
+    "investigation_id": {
+      "minLength": 1,
+      "title": "Investigation Id",
+      "type": "string"
+    },
+    "ledger_delta": {
+      "$ref": "#/$defs/HermesLedgerDelta"
+    },
+    "output_id": {
+      "minLength": 1,
+      "title": "Output Id",
+      "type": "string"
+    },
+    "output_kind": {
+      "enum": [
+        "investigation_result",
+        "round_plan",
+        "review_packet",
+        "investigation_status"
+      ],
+      "title": "Output Kind",
+      "type": "string"
+    },
+    "output_version": {
+      "minimum": 1,
+      "title": "Output Version",
+      "type": "integer"
+    },
+    "producer_contract_version": {
+      "const": "v1",
+      "title": "Producer Contract Version",
+      "type": "string"
+    },
+    "request_id": {
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "round_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Round Id"
+    },
+    "schema_version": {
+      "const": "v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "text": {
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "output_id",
+    "request_id",
+    "engineer_case_id",
+    "investigation_id",
+    "hermes_conversation_key",
+    "hermes_session_id",
+    "episode",
+    "conversation_version",
+    "output_version",
+    "output_kind",
+    "round_id",
+    "text",
+    "ledger_delta",
+    "available_actions",
+    "producer_contract_version",
+    "created_at"
+  ],
+  "title": "HermesInvestigationOutput",
+  "type": "object"
+}

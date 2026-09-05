@@ -428,6 +428,152 @@ class EngineerSlackOutboxRepositoryTests(unittest.TestCase):
 
 
 class EngineerSlackWorkerTests(unittest.TestCase):
+    @staticmethod
+    def _promotion_repository():
+        repository = Mock()
+        promotion = {"promotion_id": "promotion-one", "status": "awaiting_transport"}
+        repository.list_hermes_promotions.return_value = [promotion]
+        repository.claim_hermes_promotion.return_value = dict(promotion)
+        return repository
+
+    def _real_repository(self):
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket, engineer_case = _ticket_and_case()
+        engineer_case["thread_id"] = "12874-1-round-1"
+        repository.save_ticket(ticket)
+        opening = create_opening_turn(
+            engineer_case_id=str(engineer_case["engineer_case_id"]),
+            client_ticket_id=str(ticket["ticket_id"]),
+            investigation_id=str(engineer_case["thread_id"]),
+            problem_description="Callback never fires.",
+            investigation_scope="Investigate the callback failure.",
+            completion_criteria=("Identify an evidence-backed conclusion.",),
+            now_value="2026-09-05T08:00:00Z",
+        )
+        repository.save_engineer_case(
+            engineer_case,
+            slack_events=[_root_event(engineer_case)],
+            hermes_opening_request=opening.model_dump(mode="json"),
+        )
+        root_event = repository.list_engineer_slack_events(statuses=("queued",))[0]
+        repository.complete_engineer_slack_event(
+            event_id=root_event["event_id"], status="delivered", failure_code=None,
+            slack_channel_id="C-TEST", slack_message_ts="100.200",
+            slack_thread_ts="100.200", completed_at="2026-09-05T08:00:01Z",
+        )
+        return repository, opening
+
+    def test_real_worker_202_moves_turn_to_awaiting_result(self) -> None:
+        repository, opening = self._real_repository()
+        environment = {
+            "HERMES_CASE_WORKFLOW_MODE": "real",
+            "HERMES_INVESTIGATION_RUNTIME_URL": "http://127.0.0.1:8765",
+            "HERMES_INVESTIGATION_RUNTIME_TOKEN": "synthetic-token",
+        }
+        sent = []
+
+        def post(payload):
+            sent.append(payload)
+            return {"ok": True, "request_id": payload["request_id"], "status": "accepted"}
+
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_hermes_turn", side_effect=post):
+            self.assertEqual(worker._drain_real_hermes_turns(limit=20), 1)
+            self.assertEqual(worker._drain_real_hermes_turns(limit=20), 0)
+
+        turn = repository.list_hermes_turn_requests()[0]
+        self.assertEqual(turn["status"], "awaiting_result")
+        self.assertEqual(sent[0]["request_id"], opening.request_id)
+        self.assertEqual(sent[0]["slack_thread_ts"], "100.200")
+        self.assertEqual(len(sent), 1)
+
+    def test_real_worker_unknown_outcome_requeues_identical_frozen_payload(self) -> None:
+        repository, opening = self._real_repository()
+        environment = {
+            "HERMES_CASE_WORKFLOW_MODE": "real",
+            "HERMES_INVESTIGATION_RUNTIME_URL": "http://127.0.0.1:8765",
+            "HERMES_INVESTIGATION_RUNTIME_TOKEN": "synthetic-token",
+        }
+        sent = []
+
+        def post(payload):
+            sent.append(json.loads(json.dumps(payload, sort_keys=True)))
+            if len(sent) == 1:
+                raise worker.HermesRuntimeDeliveryError(
+                    "hermes_runtime_outcome_unknown", "synthetic disconnect", retryable=True
+                )
+            return {"ok": True, "request_id": payload["request_id"], "status": "accepted"}
+
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_hermes_turn", side_effect=post):
+            self.assertEqual(worker._drain_real_hermes_turns(limit=20), 1)
+            self.assertEqual(repository.list_hermes_turn_requests()[0]["status"], "queued")
+            self.assertEqual(worker._drain_real_hermes_turns(limit=20), 1)
+
+        self.assertEqual(sent, [sent[0], sent[0]])
+        self.assertEqual(sent[0]["request_id"], opening.request_id)
+        self.assertEqual(repository.list_hermes_turn_requests()[0]["status"], "awaiting_result")
+
+    def test_real_promotion_worker_records_accepted_receipt(self) -> None:
+        repository = self._promotion_repository()
+        environment = {
+            "HERMES_CASE_WORKFLOW_MODE": "real",
+            "HERMES_INVESTIGATION_RUNTIME_URL": "http://127.0.0.1:8765",
+            "HERMES_INVESTIGATION_RUNTIME_TOKEN": "synthetic-token",
+        }
+        receipt = {"ok": True, "promotion": {"promotion_id": "promotion-one", "status": "accepted"}}
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_hermes_promotion", return_value=receipt):
+            self.assertEqual(worker._drain_real_hermes_promotions(limit=20), 1)
+        repository.complete_hermes_promotion_delivery.assert_called_once_with(
+            "promotion-one", owner_token=unittest.mock.ANY, status="accepted",
+            receipt=receipt, failure_code=None, completed_at=unittest.mock.ANY,
+        )
+
+    def test_real_promotion_worker_records_explicit_failure(self) -> None:
+        repository = self._promotion_repository()
+        environment = {
+            "HERMES_CASE_WORKFLOW_MODE": "real",
+            "HERMES_INVESTIGATION_RUNTIME_URL": "http://127.0.0.1:8765",
+            "HERMES_INVESTIGATION_RUNTIME_TOKEN": "synthetic-token",
+        }
+        error = worker.HermesRuntimeDeliveryError("hermes_runtime_rejected", "rejected", retryable=False)
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_hermes_promotion", side_effect=error):
+            self.assertEqual(worker._drain_real_hermes_promotions(limit=20), 1)
+        self.assertEqual(
+            repository.complete_hermes_promotion_delivery.call_args.kwargs["status"], "failed"
+        )
+
+    def test_real_promotion_worker_does_not_retry_unknown_outcome(self) -> None:
+        repository = self._promotion_repository()
+        environment = {
+            "HERMES_CASE_WORKFLOW_MODE": "real",
+            "HERMES_INVESTIGATION_RUNTIME_URL": "http://127.0.0.1:8765",
+            "HERMES_INVESTIGATION_RUNTIME_TOKEN": "synthetic-token",
+        }
+        error = worker.HermesRuntimeDeliveryError(
+            "hermes_runtime_outcome_unknown", "disconnected", retryable=True
+        )
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ), patch.object(worker, "post_hermes_promotion", side_effect=error) as post:
+            self.assertEqual(worker._drain_real_hermes_promotions(limit=20), 1)
+            repository.list_hermes_promotions.return_value = [
+                {"promotion_id": "promotion-one", "status": "outcome_unknown"}
+            ]
+            self.assertEqual(worker._drain_real_hermes_promotions(limit=20), 0)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(
+            repository.complete_hermes_promotion_delivery.call_args.kwargs["status"],
+            "outcome_unknown",
+        )
+
     def test_root_binding_precedes_mock_output_in_same_thread(self) -> None:
         repository = InMemoryTicketRepository()
         repository.initialize()
@@ -439,6 +585,8 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             client_ticket_id=str(ticket["ticket_id"]),
             investigation_id=str(engineer_case["thread_id"]),
             problem_description="Callback never fires.",
+            investigation_scope="Investigate the callback failure.",
+            completion_criteria=("Identify an evidence-backed conclusion.",),
             now_value="2026-09-05T08:00:00Z",
         )
         repository.save_engineer_case(
@@ -500,6 +648,8 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             client_ticket_id=str(ticket["ticket_id"]),
             investigation_id=str(engineer_case["thread_id"]),
             problem_description="Callback never fires.",
+            investigation_scope="Investigate the callback failure.",
+            completion_criteria=("Identify an evidence-backed conclusion.",),
             now_value="2026-09-05T08:00:00Z",
         )
         repository.save_engineer_case(

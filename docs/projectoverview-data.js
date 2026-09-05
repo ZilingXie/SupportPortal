@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T14:23:03Z",
-  "source_base_commit": "befb6eb873100251bdce13470ceeb07667163b4c",
-  "registry_digest": "0a76c80356295130806025aeb85263460709ab841aeb31691cdd43db9b4bd0ac",
+  "generated_at": "2026-09-05T14:31:39Z",
+  "source_base_commit": "82c74dd871725d40070e654d5c7d5dc109a7c1a3",
+  "registry_digest": "57e2ad51b6f0b726dc9b91a7bfbe956d186e18cf125efa6f55f3a4a46bb10370",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2829,6 +2829,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "ECS Production Hermes mock release and independent readback",
           "details": "PR #1069/#1070随clean main@19d30d341308的r20260905-19d30d3正式发布。schema bootstrap成功，API/Worker的HERMES_CASE_WORKFLOW_MODE=mock且公网release marker一致；API/Route/Worker revision 32/27/30均1/1/0、COMPLETED并匹配Manifest digest。revision 30只读探针在READ ONLY事务确认九张support_hermes_*表全部存在；Archer GET、Graph /me、Zendesk identity、CloudWatch零错误、EC2 backup与Terraform 1.9.8 No changes均通过。未创建/修改/回复工单，真实technical Case验收仍待用户执行。"
+        },
+        {
+          "type": "test",
+          "label": "Canonical real Runtime joint repair",
+          "details": "SupportPortal与Runtime使用逐字节相同的v1 schema/fixture bundle；real producer、strict callback、authority transaction、native wake、read-only Case Knowledge、no-L0和close-time promotion transport均有定向测试。12场景仅标记为Runtime/Relay component harness，使用canonical HTTP入口和synthetic identity；没有连接真实外部系统。"
         },
         {
           "type": "test",
@@ -10578,8 +10583,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "account-production-environment",
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
-      "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。ECS Production r20260905-19d30d3 已完成九表bootstrap并在API/Worker显式启用mock。",
-      "next_action": "保持 active，等待用户新建全新 technical Case，核对唯一 Engineer Case/Slack thread、精确mock output、Summarize、Summary Guardrail、Persona/Approve与Zendesk readback；不得创建、重放或回复历史工单。真实 Hermes/AgentRelay 接入和promotion sink仍待单独实现与授权。",
+      "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。代码默认 disabled，现网仍为此前批准的 mock 配置，本次联合修复未部署。",
+      "next_action": "保持 active；先完成四个内部 PR 的联合 Review，再按 Server、MCP、hermes-deploy、SupportPortal 顺序另行授权合并。Production schema activation、真实 zac-agent、Slack/Zendesk、TencentDB 和 Hermes 部署及新 technical Case验收均需单独授权。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -10587,7 +10592,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "当前 frozen summary 仅在规范化完整值精确等于 Investigation result: test 时 Summary Guardrail pass 且 reason=test；Persona、确定性客户回复检查、人工 Approve、Zendesk revision/readback 和幂等 outbox 均不能绕过。",
         "Case 账本只保存 PostgreSQL 五段语义字段和 revision；读取时渲染 Markdown，不存在文件名、artifact path、EFS 或 Git Markdown。误判方向保留并标记纠正证据。",
         "solved 仅保存 close review draft，reopen 复用同 Case/Slack thread/Markdown renderer/session 并递增 episode，closed 仅在 review/guardrail/sanitization 有效时创建 awaiting_transport promotion；调查期间不产生 L0。",
-        "Production schema migration、mock activation和新 Case验收仅在用户明确授权后执行；真实 Hermes、AgentRelay 和知识 sink仍需单独实现与授权，未运行项与风险在最终报告中明确列出。"
+        "real mode、AgentRelay和两个知识 sink通过隔离合同与组合路径验证；Production schema activation、真实 zac-agent、Slack/Zendesk、TencentDB、Hermes部署和新 Case验收仅在用户另行授权后执行。"
       ],
       "blockers": [],
       "evidence": [
@@ -10625,6 +10630,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "ECS Production Hermes mock release and independent readback",
           "details": "PR #1069/#1070随clean main@19d30d341308的r20260905-19d30d3正式发布。schema bootstrap成功，API/Worker的HERMES_CASE_WORKFLOW_MODE=mock且公网release marker一致；API/Route/Worker revision 32/27/30均1/1/0、COMPLETED并匹配Manifest digest。revision 30只读探针在READ ONLY事务确认九张support_hermes_*表全部存在；Archer GET、Graph /me、Zendesk identity、CloudWatch零错误、EC2 backup与Terraform 1.9.8 No changes均通过。未创建/修改/回复工单，真实technical Case验收仍待用户执行。"
+        },
+        {
+          "type": "test",
+          "label": "Canonical real Runtime joint repair",
+          "details": "SupportPortal与Runtime使用逐字节相同的v1 schema/fixture bundle；real producer、strict callback、authority transaction、native wake、read-only Case Knowledge、no-L0和close-time promotion transport均有定向测试。12场景仅标记为Runtime/Relay component harness，使用canonical HTTP入口和synthetic identity；没有连接真实外部系统。"
         }
       ],
       "history": [
@@ -10647,6 +10657,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "production_mock_release_deployed",
           "summary": "r20260905-19d30d3已完成schema bootstrap并在ECS Production启用Hermes mock；九表、三服务provenance、依赖探针、CloudWatch、backup与Terraform零漂移均通过，任务保持active等待用户全新technical Case验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "real_runtime_joint_repair_implemented",
+          "summary": "完成默认disabled的canonical real producer/Runtime、受限Relay与no-L0知识边界；保持所有内部PR未合并且未部署，等待联合Review和后续授权。"
         }
       ],
       "legacy_ids": [],
@@ -16084,7 +16099,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。",
+        "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 或受控 real Runtime 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。",
         "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ pinned Persona 首封只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复，经仅含当前 intent 合同的语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],

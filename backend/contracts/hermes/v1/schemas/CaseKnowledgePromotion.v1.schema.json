@@ -1,0 +1,255 @@
+{
+  "$defs": {
+    "ClosedRevisionProof": {
+      "additionalProperties": false,
+      "properties": {
+        "closed_at": {
+          "minLength": 1,
+          "title": "Closed At",
+          "type": "string"
+        },
+        "episode": {
+          "minimum": 1,
+          "title": "Episode",
+          "type": "integer"
+        },
+        "ledger_revision": {
+          "minimum": 1,
+          "title": "Ledger Revision",
+          "type": "integer"
+        },
+        "status": {
+          "const": "closed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "episode",
+        "ledger_revision",
+        "closed_at"
+      ],
+      "title": "ClosedRevisionProof",
+      "type": "object"
+    },
+    "CorrectionRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "correction": {
+          "minLength": 1,
+          "title": "Correction",
+          "type": "string"
+        },
+        "incorrect_direction": {
+          "minLength": 1,
+          "title": "Incorrect Direction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "incorrect_direction",
+        "correction"
+      ],
+      "title": "CorrectionRecord",
+      "type": "object"
+    },
+    "PromotionVerdict": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "verdict": {
+          "const": "pass",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "reason"
+      ],
+      "title": "PromotionVerdict",
+      "type": "object"
+    },
+    "SanitizedCaseKnowledge": {
+      "additionalProperties": false,
+      "properties": {
+        "problem_pattern": {
+          "default": "",
+          "title": "Problem Pattern",
+          "type": "string"
+        },
+        "references": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "resolution": {
+          "default": "",
+          "title": "Resolution",
+          "type": "string"
+        },
+        "root_cause": {
+          "default": "",
+          "title": "Root Cause",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "verification": {
+          "default": "",
+          "title": "Verification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "title": "SanitizedCaseKnowledge",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "applicability": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Applicability",
+      "type": "array"
+    },
+    "client_ticket_id": {
+      "minLength": 1,
+      "title": "Client Ticket Id",
+      "type": "string"
+    },
+    "closed_revision_proof": {
+      "$ref": "#/$defs/ClosedRevisionProof"
+    },
+    "content_hash": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "corrections": {
+      "items": {
+        "$ref": "#/$defs/CorrectionRecord"
+      },
+      "title": "Corrections",
+      "type": "array"
+    },
+    "created_at": {
+      "minLength": 1,
+      "title": "Created At",
+      "type": "string"
+    },
+    "engineer_case_id": {
+      "minLength": 1,
+      "title": "Engineer Case Id",
+      "type": "string"
+    },
+    "episode": {
+      "minimum": 1,
+      "title": "Episode",
+      "type": "integer"
+    },
+    "evidence_categories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Categories",
+      "type": "array"
+    },
+    "guardrail": {
+      "$ref": "#/$defs/PromotionVerdict"
+    },
+    "investigation_id": {
+      "minLength": 1,
+      "title": "Investigation Id",
+      "type": "string"
+    },
+    "ledger_revision": {
+      "minimum": 1,
+      "title": "Ledger Revision",
+      "type": "integer"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "promotion_id": {
+      "minLength": 1,
+      "title": "Promotion Id",
+      "type": "string"
+    },
+    "review": {
+      "$ref": "#/$defs/PromotionVerdict"
+    },
+    "sanitization": {
+      "$ref": "#/$defs/PromotionVerdict"
+    },
+    "sanitized_knowledge": {
+      "$ref": "#/$defs/SanitizedCaseKnowledge"
+    },
+    "schema_version": {
+      "const": "v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "awaiting_transport",
+      "title": "Status",
+      "type": "string"
+    },
+    "targets": {
+      "items": {
+        "enum": [
+          "tencentdb_knowledge",
+          "skill_evolution"
+        ],
+        "type": "string"
+      },
+      "title": "Targets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "promotion_id",
+    "engineer_case_id",
+    "client_ticket_id",
+    "investigation_id",
+    "episode",
+    "ledger_revision",
+    "status",
+    "sanitized_knowledge",
+    "evidence_categories",
+    "applicability",
+    "limitations",
+    "corrections",
+    "review",
+    "guardrail",
+    "sanitization",
+    "closed_revision_proof",
+    "content_hash",
+    "targets",
+    "created_at"
+  ],
+  "title": "CaseKnowledgePromotion",
+  "type": "object"
+}

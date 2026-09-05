@@ -143,7 +143,14 @@ from backend.services.engineer_slack import (
 from backend.services.hermes_case_workflow import (
     apply_hermes_output,
     build_mock_output,
+    freeze_turn_request_for_delivery,
     hermes_workflow_mode,
+)
+from backend.services.hermes_runtime import (
+    HermesRuntimeDeliveryError,
+    hermes_runtime_configured,
+    post_hermes_promotion,
+    post_hermes_turn,
 )
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
@@ -2166,8 +2173,15 @@ def _drain_mock_hermes_turns(*, limit: int = 20) -> int:
         if status == "active" and str(request.get("lease_expires_at") or "") > now.isoformat():
             continue
         case_id = str(request.get("engineer_case_id") or "").strip()
-        if not ticket_repository.get_engineer_slack_thread_binding(case_id, active_only=False):
+        binding = ticket_repository.get_engineer_slack_thread_binding(case_id, active_only=False)
+        if not isinstance(binding, dict):
             continue
+        request = freeze_turn_request_for_delivery(
+            ticket_repository,
+            request,
+            slack_channel_id=str(binding.get("slack_channel_id") or ""),
+            slack_thread_ts=str(binding.get("slack_thread_ts") or ""),
+        ).model_dump(mode="json")
         claimed = ticket_repository.claim_hermes_turn(
             request_id=str(request.get("request_id") or ""),
             owner_token=f"mock-worker:{os.getpid()}",
@@ -2185,6 +2199,112 @@ def _drain_mock_hermes_turns(*, limit: int = 20) -> int:
                 "hermes_mock_output_rejected request_id=%s reason=%s",
                 claimed.get("request_id"),
                 receipt.get("reason") or "unknown",
+            )
+        processed += 1
+    return processed
+
+
+def _drain_real_hermes_turns(*, limit: int = 20) -> int:
+    if hermes_workflow_mode() != "real":
+        return 0
+    if not hermes_runtime_configured():
+        LOGGER.warning("hermes_runtime_delivery_paused failure_code=hermes_runtime_not_configured")
+        return 0
+    processed = 0
+    for request in ticket_repository.list_hermes_turn_requests():
+        status = str(request.get("status") or "")
+        now = datetime.now(timezone.utc)
+        if processed >= limit or status not in {"queued", "active"}:
+            continue
+        if status == "active" and str(request.get("lease_expires_at") or "") > now.isoformat():
+            continue
+        case_id = str(request.get("engineer_case_id") or "").strip()
+        binding = ticket_repository.get_engineer_slack_thread_binding(case_id, active_only=False)
+        if not isinstance(binding, dict):
+            continue
+        frozen = freeze_turn_request_for_delivery(
+            ticket_repository,
+            request,
+            slack_channel_id=str(binding.get("slack_channel_id") or ""),
+            slack_thread_ts=str(binding.get("slack_thread_ts") or ""),
+        )
+        owner_token = f"real-worker:{os.getpid()}"
+        claimed = ticket_repository.claim_hermes_turn(
+            request_id=frozen.request_id,
+            owner_token=owner_token,
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(seconds=60)).isoformat(),
+        )
+        if not claimed:
+            continue
+        try:
+            receipt = post_hermes_turn(frozen.model_dump(mode="json"))
+        except HermesRuntimeDeliveryError as exc:
+            ticket_repository.record_hermes_turn_delivery_failure(
+                frozen.request_id,
+                owner_token=owner_token,
+                failure_code=exc.code,
+                retryable=exc.retryable,
+                failed_at=now_iso(),
+            )
+            LOGGER.warning(
+                "hermes_runtime_delivery_failed request_id=%s failure_code=%s retryable=%s",
+                frozen.request_id,
+                exc.code,
+                exc.retryable,
+            )
+            processed += 1
+            continue
+        ticket_repository.mark_hermes_turn_awaiting_result(
+            frozen.request_id,
+            owner_token=owner_token,
+            receipt=receipt,
+            accepted_at=now_iso(),
+        )
+        processed += 1
+    return processed
+
+
+def _drain_real_hermes_promotions(*, limit: int = 20) -> int:
+    if hermes_workflow_mode() != "real" or not hermes_runtime_configured():
+        return 0
+    processed = 0
+    fields = {
+        "schema_version", "promotion_id", "engineer_case_id", "client_ticket_id",
+        "investigation_id", "episode", "ledger_revision", "status",
+        "sanitized_knowledge", "evidence_categories", "applicability", "limitations",
+        "corrections", "review", "guardrail", "sanitization", "closed_revision_proof",
+        "content_hash", "targets", "created_at",
+    }
+    for promotion in ticket_repository.list_hermes_promotions():
+        now = datetime.now(timezone.utc)
+        status = str(promotion.get("status") or "")
+        if processed >= limit or status not in {"awaiting_transport", "active"}:
+            continue
+        if status == "active" and str(promotion.get("lease_expires_at") or "") > now.isoformat():
+            continue
+        owner_token = f"promotion-worker:{os.getpid()}"
+        claimed = ticket_repository.claim_hermes_promotion(
+            str(promotion.get("promotion_id") or ""), owner_token=owner_token,
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(seconds=60)).isoformat(),
+        )
+        if not claimed:
+            continue
+        try:
+            payload = {key: claimed[key] for key in fields if key in claimed}
+            payload["status"] = "awaiting_transport"
+            receipt = post_hermes_promotion(payload)
+        except HermesRuntimeDeliveryError as exc:
+            ticket_repository.complete_hermes_promotion_delivery(
+                claimed["promotion_id"], owner_token=owner_token,
+                status="outcome_unknown" if exc.retryable else "failed",
+                receipt=None, failure_code=exc.code, completed_at=now_iso(),
+            )
+        else:
+            ticket_repository.complete_hermes_promotion_delivery(
+                claimed["promotion_id"], owner_token=owner_token, status="accepted",
+                receipt=receipt, failure_code=None, completed_at=now_iso(),
             )
         processed += 1
     return processed
@@ -2645,6 +2765,9 @@ def process_account_automation_once() -> None:
     _drain_engineer_slack_events(limit=20)
     if _drain_mock_hermes_turns(limit=20):
         _drain_engineer_slack_events(limit=20)
+    if _drain_real_hermes_turns(limit=20):
+        _drain_engineer_slack_events(limit=20)
+    _drain_real_hermes_promotions(limit=20)
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:

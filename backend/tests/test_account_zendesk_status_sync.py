@@ -284,6 +284,8 @@ class AccountZendeskStatusSyncTests(unittest.TestCase):
             client_ticket_id=self.ticket_id,
             investigation_id=engineer_case["thread_id"],
             problem_description="Please enable Media Relay.",
+            investigation_scope="Investigate the technical request.",
+            completion_criteria=("Identify an evidence-backed conclusion.",),
             now_value="2026-08-21T08:01:00Z",
         )
         start_hermes_case(self.repository, request=opening)

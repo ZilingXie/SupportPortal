@@ -413,7 +413,7 @@ def create_app(    *,
                 "mode": mode,
                 "turn_contract_version": HERMES_TURN_REQUEST_VERSION,
                 "output_contract_version": HERMES_OUTPUT_VERSION,
-                "producer_contract_version": "v1" if mode == "mock" else None,
+                "producer_contract_version": "v1" if mode in {"mock", "real"} else None,
             },
         }
 

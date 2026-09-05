@@ -73,6 +73,8 @@ def _start(repository: InMemoryTicketRepository) -> dict:
         client_ticket_id="123",
         investigation_id="INV-123-1",
         problem_description="Customer cannot join.",
+        investigation_scope="Investigate the reported join failure.",
+        completion_criteria=("Identify an evidence-backed conclusion.",),
         now_value="2026-09-05T08:00:00Z",
     )
     start_hermes_case(repository, request=request)
@@ -232,14 +234,12 @@ def test_cancelled_turn_cannot_be_reclaimed_after_case_close() -> None:
     close_hermes_case(
         repository,
         engineer_case_id="123-1",
-        sanitized_payload={
-            "summary": "safe",
-            "safety_label": "sanitized",
-            "sanitization_report": {
-                "decision": "passed",
-                "reason": "reviewed_close_packet",
-            },
-        },
+        sanitized_payload=build_mock_sanitized_case_knowledge(
+            {
+                "current_conclusion_next_steps": CANONICAL_TEST_INVESTIGATION_RESULT,
+                "references": "",
+            }
+        ),
         now_value="2026-09-05T08:04:00Z",
     )
     authority_request = next(
@@ -279,8 +279,8 @@ def test_mock_close_sanitization_only_accepts_the_canonical_mock_ledger() -> Non
             "current_conclusion_next_steps": CANONICAL_TEST_INVESTIGATION_RESULT,
             "references": "",
         }
-    )["sanitization_report"] == {
-        "decision": "passed",
+    )["sanitization"] == {
+        "verdict": "pass",
         "reason": "canonical_mock_test",
     }
     with pytest.raises(HermesWorkflowConflict, match="sanitization"):
@@ -360,6 +360,7 @@ def test_round_authority_persists_explicit_target_and_separate_turn() -> None:
             "available_actions": (
                 HermesOutputAction(
                     action="authorize_round",
+                    target_round_id="round-1",
                     target_version=1,
                     target_digest="plan-digest-1",
                 ),
@@ -417,8 +418,8 @@ def test_round_authority_persists_explicit_target_and_separate_turn() -> None:
     assert event["target_output_id"] == output.output_id
     requests = repository.list_hermes_turn_requests("123-1")
     authority_request = next(row for row in requests if row["turn_kind"] == "round_authority")
-    assert authority_request["human_authority_event_ref"] == event["authority_event_id"]
-    assert authority_request["approved_round_plan_digest"] == "plan-digest-1"
+    assert authority_request["human_authority"]["authority_event_id"] == event["authority_event_id"]
+    assert authority_request["human_authority"]["target_digest"] == "plan-digest-1"
 
     with pytest.raises(ReplySyncError, match="stale Hermes authority target"):
         asyncio.run(
@@ -645,12 +646,12 @@ def test_solved_reopen_closed_reuses_case_ledger_session_and_invalidates_old_rev
         repository,
         engineer_case_id="123-1",
         sanitized_payload={
-            "summary": "Customer-safe conclusion",
-            "safety_label": "sanitized",
-            "sanitization_report": {
-                "decision": "passed",
-                "reason": "reviewed_close_packet",
-            },
+            "sanitized_knowledge": {"summary": "Customer-safe conclusion"},
+            "evidence_categories": ["reviewed_case_evidence"],
+            "applicability": ["this closed case"],
+            "limitations": [],
+            "corrections": [],
+            "sanitization": {"verdict": "pass", "reason": "reviewed_close_packet"},
         },
         now_value="2026-09-05T08:07:00Z",
     )
