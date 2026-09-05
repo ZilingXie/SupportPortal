@@ -4,7 +4,8 @@ This root owns the stable Preproduction Automation infrastructure: cluster,
 immutable ECR repository, target group and `/automation/preproduction` listener
 rule, security group, log group, isolated Account and Hermes task roles, shared
 execution role, isolated Graph EFS access point, private Hermes service discovery, migration-backup bucket, and
-the API/Route/Worker services. Shared VPC, ALB, RDS, ACM, and EFS are inputs.
+the API/Route/Worker services, plus the exact Preproduction-to-RDS/EFS ingress
+rules. Shared VPC, ALB, RDS, ACM, security groups, and EFS are inputs.
 SecureString values are never Terraform resources or variables.
 
 Bootstrap is intentionally staged without `terraform -target`:
