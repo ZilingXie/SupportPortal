@@ -12,6 +12,7 @@ GIT_COMMIT=""
 RELEASE_ID=""
 PROMPT_RELEASE_ID=""
 OUTPUT_DIR=""
+REQUEST_DIR=""
 
 log() { printf '[codebuild-trigger] %s\n' "$*"; }
 fail() { printf '[codebuild-trigger] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -60,11 +61,11 @@ main() {
   git -C "${PROJECT_ROOT}" merge-base --is-ancestor "${GIT_COMMIT}" origin/main \
     || fail "Requested Git commit is not reachable from origin/main"
 
-  local request_dir request_path validation prompt_build_ref prompt_fingerprint request_key request_version
+  local request_path validation prompt_build_ref prompt_fingerprint request_key request_version
   mkdir -p "${PROJECT_ROOT}/.deployments"
-  request_dir="$(mktemp -d "${PROJECT_ROOT}/.deployments/codebuild-request.XXXXXX")"
-  trap 'rm -rf -- "${request_dir}"' EXIT
-  request_path="${request_dir}/request.json"
+  REQUEST_DIR="$(mktemp -d "${PROJECT_ROOT}/.deployments/codebuild-request.XXXXXX")"
+  trap 'rm -rf -- "${REQUEST_DIR}"' EXIT
+  request_path="${REQUEST_DIR}/request.json"
   validation="$(cd "${PROJECT_ROOT}" && TICKET_DB_DSN="${TICKET_DB_DSN:-}" TICKET_DB_SCHEMA="${TICKET_DB_SCHEMA:-supportportal}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release validate --release-id "${PROMPT_RELEASE_ID}")" \
     || fail "Prompt Release validation failed"

@@ -188,3 +188,6 @@ def test_codebuild_trigger_is_fixed_sha_secret_free_and_does_not_deploy() -> Non
     assert "register-task-definition" not in script
     assert "TICKET_DB_DSN" not in script.split("environment-variables-override", 1)[1]
     assert "PROMPT_RELEASE_TARGET_DSN" not in script
+    assert 'REQUEST_DIR=""' in script
+    assert "local request_dir" not in script
+    assert "trap 'rm -rf -- \"${REQUEST_DIR}\"' EXIT" in script
