@@ -1,9 +1,9 @@
 -- Apply with the migration role to each ticket database used by the shared repository.
--- Only production cases can create rows; staging remains side-effect free.
+-- Only live-environment cases can create rows; staging remains side-effect free.
 
 CREATE TABLE IF NOT EXISTS support_account_automation_classification_emails (
     account_case_id TEXT PRIMARY KEY REFERENCES support_account_cases(account_case_id) ON DELETE CASCADE,
-    processing_profile TEXT NOT NULL CHECK (processing_profile = 'production'),
+    processing_profile TEXT NOT NULL CHECK (processing_profile IN ('preproduction', 'production')),
     zendesk_ticket_id TEXT,
     zendesk_ticket_url TEXT,
     question TEXT NOT NULL,

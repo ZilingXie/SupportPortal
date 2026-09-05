@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any, Iterator
+from unittest.mock import MagicMock
 
 from backend.services.automation_ecs_dashboard_reader import (
     PostgresDashboardCaseReader,
@@ -165,3 +167,32 @@ def test_collected_fields_allow_only_contract_keys_and_shallow_safe_values() -> 
         handler="enablement",
         subcategory="enablement",
     ) == {}
+
+
+def test_postgres_reader_uses_the_runtime_environment_as_account_profile() -> None:
+    settings = replace(
+        _settings(),
+        environment="preproduction",
+        base_path="/automation/preproduction",
+        db_schema="supportportal_preproduction",
+        job_namespace="supportportal-preproduction",
+    )
+    reader = PostgresDashboardCaseReader(settings)
+    cursor = MagicMock()
+    cursor.fetchall.return_value = []
+
+    reader._list_rows(
+        cursor,
+        zendesk_ticket_id=None,
+        execution_id=None,
+        execution_status=None,
+        event_type=None,
+    )
+
+    parameters = cursor.execute.call_args.args[1]
+    assert parameters == (
+        "supportportal-preproduction",
+        "preproduction",
+        "supportportal-preproduction",
+        "supportportal-preproduction",
+    )

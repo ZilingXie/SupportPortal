@@ -6,6 +6,10 @@ import copy
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from backend.services.account_processing_profiles import (
+    normalize_account_processing_profile,
+)
 from uuid import uuid4
 
 # The v8 pipeline is deliberately fenced by status as well as payload.  Older
@@ -82,15 +86,15 @@ class AccountReplyContractError(ValueError):
 
 def account_reply_delay_seconds_for_profile(processing_profile: str) -> int:
     """Return the artificial reply delay for one validated environment profile."""
-    normalized_profile = str(processing_profile or "staging").strip().lower()
+    normalized_profile = normalize_account_processing_profile(processing_profile)
     if normalized_profile == "staging":
         return 0
-    if normalized_profile == "production":
+    if normalized_profile in {"preproduction", "production"}:
         return _ACCOUNT_REPLY_RANDOM.randint(
             ACCOUNT_REPLY_DELAY_MIN_SECONDS,
             ACCOUNT_REPLY_DELAY_MAX_SECONDS,
         )
-    raise ValueError("processing_profile must be staging or production")
+    raise AssertionError("unreachable processing profile")
 
 
 def normalize_account_reply_contract(

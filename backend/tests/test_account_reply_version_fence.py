@@ -45,8 +45,16 @@ class AccountReplyVersionFenceTests(unittest.TestCase):
         )
 
     def test_unknown_processing_profile_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "processing_profile must be staging or production"):
+        with self.assertRaisesRegex(ValueError, "staging, preproduction, or production"):
             account_reply_delay_seconds_for_profile("preview")
+
+    @patch("backend.services.account_reply_jobs._ACCOUNT_REPLY_RANDOM.randint", return_value=420)
+    def test_preproduction_uses_live_reply_delay(self, randint) -> None:
+        self.assertEqual(account_reply_delay_seconds_for_profile("preproduction"), 420)
+        randint.assert_called_once_with(
+            ACCOUNT_REPLY_DELAY_MIN_SECONDS,
+            ACCOUNT_REPLY_DELAY_MAX_SECONDS,
+        )
 
     def test_new_persona_job_is_invisible_to_legacy_worker_statuses(self) -> None:
         repository = InMemoryTicketRepository()

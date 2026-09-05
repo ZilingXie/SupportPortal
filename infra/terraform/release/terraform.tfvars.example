@@ -1,0 +1,4 @@
+aws_region = "us-east-1"
+
+# Optional; the default includes the active AWS account id and region.
+evidence_bucket_name = "supportportal-release-evidence-123456789012-us-east-1"

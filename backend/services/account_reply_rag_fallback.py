@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.services.account_processing_profiles import is_live_account_processing_profile
+
 from backend.services.account_human_review_escalation import (
     escalate_account_case_to_human_review,
 )
@@ -238,7 +240,7 @@ def escalate_unexpected_reply_to_human(
     )
     processing_profile = str(account_case.get("processing_profile") or "staging").strip().lower()
     return {
-        "mode": "production" if processing_profile == "production" else "staging",
+        "mode": "production" if is_live_account_processing_profile(processing_profile) else "staging",
         "internal_note_status": escalation.internal_note_status,
         "route_back_status": escalation.route_back_status,
         "handoff_status": escalation.handoff_status,

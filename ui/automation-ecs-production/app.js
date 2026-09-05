@@ -1,5 +1,11 @@
 const app = document.getElementById("app");
-const basePath = "/automation/production";
+const environmentMatch = window.location.pathname.match(
+  /^\/automation\/(preproduction|production)(?:\/|$)/,
+);
+if (!environmentMatch) throw new Error("Unsupported Automation dashboard path");
+const basePath = `/automation/${environmentMatch[1]}`;
+const environmentLabel = environmentMatch[1] === "preproduction" ? "Preproduction" : "Production";
+document.title = `${environmentLabel} Automation Cases | Stellarix Support`;
 
 const categoryFallback = [
   { id: "all", label: "All", children: [] },
@@ -357,7 +363,7 @@ function renderLogin() {
       <section class="login-panel" aria-labelledby="login-title">
         <div class="brand-mark" aria-hidden="true">S</div>
         <p class="eyebrow">Stellarix Support</p>
-        <h1 id="login-title">Production cases</h1>
+        <h1 id="login-title">${environmentLabel} cases</h1>
         <form id="login-form">
           <label class="field" for="username"><span>Administrator</span><input id="username" name="username" autocomplete="username" required /></label>
           <label class="field" for="password"><span>Password</span><input id="password" name="password" type="password" autocomplete="current-password" required /></label>
@@ -461,7 +467,7 @@ function renderPagination() {
 }
 
 function renderCaseList() {
-  return `<section class="case-list-pane" aria-labelledby="case-list-title"><div class="pane-heading"><div><span class="eyebrow">Production queue</span><h1 id="case-list-title">Tickets</h1></div><span class="result-count">${escapeHtml(state.total)}</span></div>${renderCaseItems()}${renderPagination()}</section>`;
+  return `<section class="case-list-pane" aria-labelledby="case-list-title"><div class="pane-heading"><div><span class="eyebrow">${environmentLabel} queue</span><h1 id="case-list-title">Tickets</h1></div><span class="result-count">${escapeHtml(state.total)}</span></div>${renderCaseItems()}${renderPagination()}</section>`;
 }
 
 function renderFacts(items) {
@@ -587,7 +593,7 @@ function renderDashboard() {
   const workspaceClasses = ["workspace", state.showMobileDetail ? "show-mobile-detail" : ""].filter(Boolean).join(" ");
   return `
     <header class="app-header">
-      <div class="app-identity"><div class="brand-mark" aria-hidden="true">S</div><div><strong>Production Automation</strong><small>Ticket operations</small></div></div>
+      <div class="app-identity"><div class="brand-mark" aria-hidden="true">S</div><div><strong>${environmentLabel} Automation</strong><small>Ticket operations</small></div></div>
       <div class="header-actions"><button class="button button-secondary filter-toggle" id="open-filters" type="button" aria-expanded="${state.filterOpen}">Filters</button><button class="button button-secondary" id="refresh" type="button">Refresh</button><button class="button button-quiet header-signout" id="logout" type="button">Sign out</button></div>
     </header>
     ${renderRuntimeStrip()}
@@ -680,7 +686,7 @@ function bindEvents() {
 
 function render() {
   if (state.loading) {
-    app.innerHTML = `<main class="boot-state"><span class="spinner" aria-hidden="true"></span><strong>Loading Production cases</strong></main>`;
+    app.innerHTML = `<main class="boot-state"><span class="spinner" aria-hidden="true"></span><strong>Loading ${environmentLabel} cases</strong></main>`;
   } else if (!state.authenticated) {
     app.innerHTML = renderLogin();
   } else {

@@ -114,7 +114,11 @@ def test_account_automation_cycle_is_public_and_does_not_start_redis_consumer():
         worker, "_drain_production_zendesk_comment_deliveries"
     ) as zendesk, patch.object(worker, "_drain_account_slack_deliveries") as slack, patch.object(
         worker, "_drain_engineer_slack_events"
-    ) as engineer_slack, patch.dict(
+    ) as engineer_slack, patch.object(
+        worker, "reconcile_account_human_review_queue_mismatches"
+    ) as reconcile, patch.object(
+        worker, "_drain_production_automation_classification_emails"
+    ) as classification_email, patch.dict(
         os.environ,
         {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "preproduction"},
         clear=False,
@@ -125,6 +129,8 @@ def test_account_automation_cycle_is_public_and_does_not_start_redis_consumer():
     zendesk.assert_called_once_with(limit=20)
     slack.assert_called_once_with(limit=20)
     engineer_slack.assert_called_once_with(limit=20)
+    assert reconcile.call_args.kwargs["processing_profile"] == "preproduction"
+    classification_email.assert_called_once_with(limit=20)
 
 
 def _route_decision(*, action: str, scope_label: str, reason: str) -> types.SimpleNamespace:

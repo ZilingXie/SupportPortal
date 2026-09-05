@@ -68,6 +68,74 @@ def _release_bundle(tmp_path: Path) -> Path:
     return manifest
 
 
+def _registry_release_bundle(tmp_path: Path) -> tuple[Path, Path, Path]:
+    manifest = _release_bundle(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["schema_version"] = "automation-release-v2"
+    payload["artifact_kind"] = "registry"
+    for component in payload["components"].values():
+        component.pop("oci_layout")
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    publish = tmp_path / "publish-record.json"
+    publish.write_text(
+        json.dumps(
+            {
+                "schema_version": "automation-preproduction-publish-v1",
+                "release_id": "release-42",
+                "published_at": "2026-09-06T00:00:00Z",
+                "source_git_commit": "a" * 40,
+                "codebuild_build_arn": "arn:aws:codebuild:us-east-1:123456789012:build/example:1",
+                "codebuild_build_number": 1,
+                "registry_id": "123456789012",
+                "region": "us-east-1",
+                "target_repository": "supportportal/preproduction",
+                "evidence_object_version": "version-1",
+                "components": {
+                    role: {"tag": item["tag"], "digest": item["digest"]}
+                    for role, item in payload["components"].items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "preproduction-evidence.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": "automation-ecs-deploy-evidence-v1",
+                "status": "complete",
+                "environment": "preproduction",
+                "release_id": "release-42",
+                "git_commit": "a" * 40,
+                "prompt_release": {"release_id": "prompt-42"},
+                "registry": {
+                    "id": "123456789012",
+                    "repository": "supportportal/preproduction",
+                },
+                "components": {
+                    role: {"expected_digest": item["digest"], "runtime_verified": True}
+                    for role, item in payload["components"].items()
+                },
+                "checks": {
+                    "terraform_zero_drift": "passed",
+                    "source_prompt": "passed",
+                    "ecr": "passed",
+                    "suspension_recipients": "passed",
+                    "schema_bootstrap": "passed",
+                    "prompt_sync": "active",
+                    "heartbeats": "passed",
+                    "public_health": "passed",
+                    "cloudwatch": "passed",
+                    "ec2_backup": "passed",
+                    "prompt_activation": "active",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest, publish, evidence
+
+
 def _fake_tools(tmp_path: Path) -> tuple[Path, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -87,7 +155,11 @@ elif args[:2] == ["ecr", "describe-repositories"]:
     print(os.environ.get("PROMOTION_TEST_MUTABILITY", "IMMUTABLE"))
 elif args[:2] == ["ecr", "batch-get-image"]:
     image_id = args[args.index("--image-ids") + 1]
-    tag = image_id.split("=", 1)[1]
+    kind, value = image_id.split("=", 1)
+    if kind == "imageDigest":
+        print(value)
+        sys.exit(0)
+    tag = value
     digit = {"api": "1", "route": "2", "worker": "3"}[tag.split("-", 1)[0]]
     if os.environ.get("PROMOTION_TEST_MISMATCH") == tag:
         print("sha256:" + "9" * 64)
@@ -115,6 +187,24 @@ elif args[:2] == ["copy", "--preserve-digests"]:
     (state / tag).touch()
 else:
     print("unexpected skopeo invocation", args, file=sys.stderr)
+    sys.exit(1)
+""",
+    )
+    _write_executable(
+        fake_bin / "crane",
+        """#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+state = pathlib.Path(os.environ["PROMOTION_TEST_STATE"])
+with (state / "crane.jsonl").open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(args) + "\\n")
+if args[:2] == ["auth", "login"]:
+    sys.stdin.read()
+elif args[:1] == ["copy"]:
+    tag = args[-1].rsplit(":", 1)[1]
+    (state / tag).touch()
+else:
+    print("unexpected crane invocation", args, file=sys.stderr)
     sys.exit(1)
 """,
     )
@@ -175,8 +265,55 @@ def test_promotion_copies_manifests_and_layers_and_verifies_identical_digests_wi
     assert "put-image" not in script
     assert '[[ "${target_digest}" = "${expected}" ]]' in script
     assert "automation-promotion-v1" in script
+    assert "--publish-record" in script
+    assert "--preproduction-evidence" in script
+    assert "validate-preproduction-acceptance" in script
+    assert "source_publish_record_sha256" in script
+    assert "preproduction_deploy_evidence_sha256" in script
     assert "docker build" not in script
     assert "buildx" not in script
+    assert "normal promotion target must be supportportal/production" in script
+    assert "--accepted-media-types" not in script
+
+
+def test_registry_promotion_requires_and_records_preproduction_evidence(tmp_path: Path) -> None:
+    manifest, publish, evidence = _registry_release_bundle(tmp_path)
+    fake_bin, state = _fake_tools(tmp_path)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "AUTOMATION_RELEASE_PYTHON": sys.executable,
+            "PROMOTION_TEST_STATE": str(state),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--publish-record",
+            str(publish),
+            "--preproduction-evidence",
+            str(evidence),
+            "--region",
+            "us-east-1",
+            "--registry-id",
+            "123456789012",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads((tmp_path / "promotion-record.json").read_text(encoding="utf-8"))
+    assert record["source_repository"] == "supportportal/preproduction"
+    assert record["source_publish_record_sha256"].startswith("sha256:")
+    assert record["preproduction_deploy_evidence_sha256"].startswith("sha256:")
+    calls = [json.loads(line) for line in (state / "crane.jsonl").read_text().splitlines()]
+    assert len([call for call in calls if call[:1] == ["copy"]]) == 3
 
 
 def test_direct_production_publishes_local_archives_and_records_explicit_source(tmp_path: Path) -> None:

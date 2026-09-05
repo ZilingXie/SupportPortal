@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS support_account_cases (
     account_case_id TEXT NOT NULL UNIQUE,
     billing_ticket_id TEXT PRIMARY KEY,
     client_ticket_id TEXT NOT NULL UNIQUE REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
-    processing_profile TEXT NOT NULL DEFAULT 'staging' CHECK (processing_profile IN ('staging', 'production')),
+    processing_profile TEXT NOT NULL DEFAULT 'staging' CHECK (processing_profile IN ('staging', 'preproduction', 'production')),
     zendesk_ticket_id TEXT,
     origin_staging_case_id TEXT,
     rule_release JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS support_account_slack_deliveries (
 
 CREATE TABLE IF NOT EXISTS support_account_automation_classification_emails (
     account_case_id TEXT PRIMARY KEY REFERENCES support_account_cases(account_case_id) ON DELETE CASCADE,
-    processing_profile TEXT NOT NULL CHECK (processing_profile = 'production'),
+    processing_profile TEXT NOT NULL CHECK (processing_profile IN ('preproduction', 'production')),
     zendesk_ticket_id TEXT,
     zendesk_ticket_url TEXT,
     question TEXT NOT NULL,

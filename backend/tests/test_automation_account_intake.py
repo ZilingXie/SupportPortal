@@ -275,7 +275,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(workflow["closing_reply_job_id"], "job-suspension")
         self.assertTrue(workflow["handoff_delivery_key"])
 
-    def test_preproduction_suspension_keeps_contact_confirmation_stage(self):
+    def test_preproduction_suspension_uses_direct_handoff_contract(self):
         repository = _FakeRepository()
         with self._base_patches():
             outcome = self._run(
@@ -287,14 +287,16 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         self.assertEqual(outcome["response_status"], "automation")
         self.assertEqual(
             outcome["reply_job"]["reply_intent"],
-            "account_suspension_contact_confirmation_request",
+            "account_suspension_handoff_and_close",
         )
-        self.assertEqual(outcome["internal_email_send_status"], "not_applicable")
+        self.assertEqual(outcome["internal_email_send_status"], "sent")
+        self.assertEqual(outcome["account_case"]["processing_profile"], "preproduction")
         workflow = outcome["account_case"]["automation_context"][
             "account_suspension_contact_workflow"
         ]
-        self.assertEqual(workflow["state"], "awaiting_contact_confirmation")
-        self.assertNotIn("intake_mode", workflow)
+        self.assertEqual(workflow["state"], "closing_reply_pending")
+        self.assertEqual(workflow["intake_mode"], "direct_handoff")
+        self.assertEqual(workflow["confirmed_email_source"], "ticket_email")
 
     def test_production_suspension_invalid_email_fails_closed_without_side_effects(self):
         repository = _FakeRepository()

@@ -124,7 +124,6 @@ POLICIES: dict[AutomationEnvironment, EnvironmentPolicy] = {
         writes_zendesk=True,
         performs_ownership=True,
         performs_status=True,
-        forced_visibility=CommentVisibility.INTERNAL,
     ),
     AutomationEnvironment.PRODUCTION: EnvironmentPolicy(
         environment=AutomationEnvironment.PRODUCTION,
@@ -166,11 +165,6 @@ def resolve_comment_visibility(
     return requested
 
 
-def preproduction_ticket_allowlist() -> frozenset[str]:
-    raw = str(os.getenv("PREPRODUCTION_ZENDESK_TICKET_ALLOWLIST") or "")
-    return frozenset(item.strip() for item in raw.split(",") if item.strip())
-
-
 def validate_ticket_policy(
     environment: AutomationEnvironment,
     zendesk_ticket_id: str | None,
@@ -181,13 +175,6 @@ def validate_ticket_policy(
     normalized_ticket = str(zendesk_ticket_id or "").strip()
     if policy.writes_zendesk and not normalized_ticket:
         raise ValueError(f"{environment.value} requires zendesk_ticket_id")
-    if environment == AutomationEnvironment.PREPRODUCTION:
-        allowlist = preproduction_ticket_allowlist()
-        # "*" is the explicit operator opt-out for operators that gate which
-        # tickets reach preproduction upstream (for example in the n8n
-        # workflow); an unset or empty allowlist stays fail-closed.
-        if "*" not in allowlist and (not allowlist or normalized_ticket not in allowlist):
-            raise ValueError("preproduction ticket is not in the configured allowlist")
     return visibility
 
 

@@ -65,6 +65,7 @@ from backend.services.account_suspension_field_extractor import (
     AccountSuspensionFieldExtraction,
     extract_account_suspension_fields,
 )
+from backend.services.account_processing_profiles import is_live_account_processing_profile
 from backend.services.account_verification_automation import (
     build_account_verification_automation_result,
 )
@@ -880,7 +881,7 @@ async def run_production_account_intake(
     suspension_direct_handoff = (
         is_automation_route
         and route == "account_suspension"
-        and normalized_processing_profile == "production"
+        and is_live_account_processing_profile(normalized_processing_profile)
     )
 
     persona_assignment = None

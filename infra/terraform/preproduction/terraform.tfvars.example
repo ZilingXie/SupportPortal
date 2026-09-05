@@ -1,0 +1,13 @@
+vpc_id                       = "vpc-REPLACE"
+public_subnet_ids             = ["subnet-REPLACE-A", "subnet-REPLACE-B"]
+shared_https_listener_arn     = "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT:listener/app/REPLACE"
+shared_alb_security_group_id  = "sg-REPLACE"
+shared_graph_efs_file_system_id = "fs-REPLACE"
+shared_efs_security_group_id  = "sg-REPLACE"
+hermes_efs_access_point_arns  = [
+  "arn:aws:elasticfilesystem:us-east-1:ACCOUNT:access-point/fsap-REPLACE",
+]
+
+# Set only after the canonical initial task definitions are registered.
+create_account_services = false
+account_task_definition_arns = {}

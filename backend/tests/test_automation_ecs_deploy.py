@@ -11,8 +11,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from backend.scripts.automation_ecs_deploy import (
+    render_initial_task_definition,
+    render_production_hermes_disabled_task_definition,
     render_schema_bootstrap_task_definition,
     render_task_definition,
+    validate_preproduction_acceptance,
     validate_suspension_recipients,
     validate_promotion,
     verify_heartbeats,
@@ -23,6 +26,10 @@ from backend.services.automation_release_manifest import contract_versions
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SCRIPT = ROOT / "deployment/deploy_automation_ecs_release.sh"
+INITIAL_TASK_DEFINITIONS_SCRIPT = (
+    ROOT / "deployment/register_automation_ecs_initial_task_definitions.sh"
+)
+PRODUCTION_HERMES_DISABLE_SCRIPT = ROOT / "deployment/disable_production_hermes.sh"
 
 
 def _manifest(tmp_path: Path) -> Path:
@@ -57,6 +64,7 @@ def _manifest(tmp_path: Path) -> Path:
 
 def _task_definition(tmp_path: Path, role: str, *, pilot: bool = False) -> Path:
     environment = [
+        {"name": "AUTOMATION_ENVIRONMENT", "value": "production"},
         {"name": "AUTOMATION_RELEASE_ID", "value": "old-release"},
         {"name": "AUTOMATION_IMAGE_DIGEST", "value": "sha256:" + "0" * 64},
         {"name": "APP_BUILD_REF", "value": "old-commit"},
@@ -67,12 +75,40 @@ def _task_definition(tmp_path: Path, role: str, *, pilot: bool = False) -> Path:
     ]
     if pilot:
         environment.append({"name": "PILOT_BIN", "value": "/app/bin/pilot"})
-    secrets = [{"name": "AUTOMATION_DB_DSN", "valueFrom": "arn:aws:ssm:::parameter/db"}]
+    secrets = [
+        {
+            "name": "AUTOMATION_DB_DSN",
+            "valueFrom": (
+                "arn:aws:ssm:us-east-1:123456789012:"
+                "parameter/supportportal/production/automation-db-dsn"
+            ),
+        }
+    ]
     if role == "worker":
         secrets.append(
             {
                 "name": "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
                 "valueFrom": "arn:aws:ssm:::parameter/suspension",
+            }
+        )
+    if role in {"api", "worker"}:
+        secrets.extend(
+            [
+                {
+                    "name": "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:::parameter/hermes-url",
+                },
+                {
+                    "name": "ENGINEER_INVESTIGATION_REPLY_API_KEY",
+                    "valueFrom": "arn:aws:ssm:::parameter/hermes-key",
+                },
+            ]
+        )
+    if role == "api":
+        secrets.append(
+            {
+                "name": "HERMES_CALLBACK_TOKEN",
+                "valueFrom": "arn:aws:ssm:::parameter/hermes-callback-token",
             }
         )
     payload = {
@@ -180,6 +216,235 @@ def test_render_task_definition_explicitly_sets_hermes_mode_on_api_and_worker(
         for item in route["containerDefinitions"][0]["environment"]
     }
     assert "HERMES_CASE_WORKFLOW_MODE" not in route_environment
+
+
+def test_render_task_definition_disabled_removes_hermes_secret_references(
+    tmp_path: Path,
+) -> None:
+    rendered = render_task_definition(
+        role="worker",
+        current_path=_task_definition(tmp_path, "worker"),
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        hermes_case_workflow_mode="disabled",
+    )
+    container = rendered["containerDefinitions"][0]
+    secret_names = {item["name"] for item in container["secrets"]}
+    assert "ENGINEER_INVESTIGATION_REPLY_BASE_URL" not in secret_names
+    assert "ENGINEER_INVESTIGATION_REPLY_API_KEY" not in secret_names
+    assert "HERMES_CALLBACK_TOKEN" not in secret_names
+    assert {
+        item["name"]: item["value"] for item in container["environment"]
+    }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+def test_render_task_definition_can_activate_hermes_from_disabled_preproduction(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    current = _task_definition(tmp_path, role)
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    environment = {item["name"]: item for item in container["environment"]}
+    environment["AUTOMATION_ENVIRONMENT"]["value"] = "preproduction"
+    environment["AUTOMATION_DB_SCHEMA"]["value"] = "supportportal_preproduction"
+    environment["AUTOMATION_JOB_NAMESPACE"]["value"] = "supportportal-preproduction"
+    container["secrets"] = [
+        item
+        for item in container["secrets"]
+        if item["name"] not in {
+            "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
+            "ENGINEER_INVESTIGATION_REPLY_API_KEY",
+            "HERMES_CALLBACK_TOKEN",
+        }
+    ]
+    next(
+        item for item in container["secrets"] if item["name"] == "AUTOMATION_DB_DSN"
+    )["valueFrom"] = (
+        "arn:aws:ssm:us-east-1:123456789012:"
+        "parameter/supportportal/preproduction/automation-db-dsn"
+    )
+    current.write_text(json.dumps(payload), encoding="utf-8")
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        hermes_case_workflow_mode="real",
+    )
+
+    secret_references = {
+        item["name"]: item["valueFrom"]
+        for item in rendered["containerDefinitions"][0]["secrets"]
+    }
+    assert secret_references["ENGINEER_INVESTIGATION_REPLY_BASE_URL"].endswith(
+        "/supportportal/preproduction/hermes-base-url"
+    )
+    assert secret_references["ENGINEER_INVESTIGATION_REPLY_API_KEY"].endswith(
+        "/supportportal/preproduction/hermes-api-server-key"
+    )
+    if role == "api":
+        assert secret_references["HERMES_CALLBACK_TOKEN"].endswith(
+            "/supportportal/preproduction/hermes-callback-token"
+        )
+    else:
+        assert "HERMES_CALLBACK_TOKEN" not in secret_references
+
+
+def test_render_task_definition_rejects_cross_environment_ssm_prefix(
+    tmp_path: Path,
+) -> None:
+    current = _task_definition(tmp_path, "api")
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    environment = {item["name"]: item for item in container["environment"]}
+    environment["AUTOMATION_ENVIRONMENT"]["value"] = "preproduction"
+    environment["AUTOMATION_DB_SCHEMA"]["value"] = "supportportal_preproduction"
+    environment["AUTOMATION_JOB_NAMESPACE"]["value"] = "supportportal-preproduction"
+    current.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="environment SSM parameter prefix"):
+        render_task_definition(
+            role="api",
+            current_path=current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            hermes_case_workflow_mode="real",
+        )
+
+
+def test_configuration_only_hermes_disable_preserves_image_and_provenance(
+    tmp_path: Path,
+) -> None:
+    current = _task_definition(tmp_path, "worker")
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    container["image"] = (
+        "123456789012.dkr.ecr.us-east-1.amazonaws.com/"
+        "supportportal/production@sha256:" + "0" * 64
+    )
+    container["environment"].extend(
+        [
+            {"name": "HERMES_CASE_WORKFLOW_MODE", "value": "mock"},
+            {"name": "ENGINEER_INVESTIGATION_REPLY_BASE_URL", "value": "https://example.invalid"},
+        ]
+    )
+    current.write_text(json.dumps(payload), encoding="utf-8")
+
+    rendered, changed = render_production_hermes_disabled_task_definition(
+        role="worker",
+        current_path=current,
+    )
+
+    assert changed is True
+    rendered_container = rendered["containerDefinitions"][0]
+    assert rendered_container["image"] == container["image"]
+    environment = {item["name"]: item["value"] for item in rendered_container["environment"]}
+    assert environment["APP_BUILD_REF"] == "old-commit"
+    assert environment["AUTOMATION_RELEASE_ID"] == "old-release"
+    assert environment["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
+    assert "ENGINEER_INVESTIGATION_REPLY_BASE_URL" not in environment
+    assert not (
+        {
+            "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
+            "ENGINEER_INVESTIGATION_REPLY_API_KEY",
+            "HERMES_CALLBACK_TOKEN",
+        }
+        & {item["name"] for item in rendered_container["secrets"]}
+    )
+
+    rendered_path = tmp_path / "rendered.json"
+    rendered_path.write_text(json.dumps(rendered), encoding="utf-8")
+    second, second_changed = render_production_hermes_disabled_task_definition(
+        role="worker",
+        current_path=rendered_path,
+    )
+    assert second_changed is False
+    assert second == rendered
+
+
+def test_production_hermes_disable_command_is_guarded_and_configuration_only() -> None:
+    script = PRODUCTION_HERMES_DISABLE_SCRIPT.read_text(encoding="utf-8")
+    assert "PRODUCTION_HERMES_DISABLE_APPROVED=1" in script
+    assert "render-production-hermes-disabled-task-definition" in script
+    assert "services-stable" in script
+    assert "Restoring captured Production task definitions" in script
+    assert "supportportal-production-route" not in script
+    assert "PROMPT_RELEASE_TARGET_DSN" not in script
+    assert "supportportal/production@" not in script
+
+
+def test_render_initial_preproduction_worker_is_environment_isolated(
+    tmp_path: Path,
+) -> None:
+    rendered = render_initial_task_definition(
+        role="worker",
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        execution_role_arn="arn:aws:iam::123456789012:role/preproduction-execution",
+        task_role_arn="arn:aws:iam::123456789012:role/preproduction-task",
+        log_group_name="/ecs/supportportal/preproduction",
+        parameter_prefix_arn=(
+            "arn:aws:ssm:us-east-1:123456789012:"
+            "parameter/supportportal/preproduction"
+        ),
+        hermes_case_workflow_mode="real",
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
+    )
+    serialized = json.dumps(rendered, sort_keys=True)
+    assert "supportportal/production" not in serialized
+    assert "supportportal_production" not in serialized
+    assert "supportportal-production" not in serialized
+    container = rendered["containerDefinitions"][0]
+    environment = {item["name"]: item["value"] for item in container["environment"]}
+    assert environment["AUTOMATION_ENVIRONMENT"] == "preproduction"
+    assert environment["ACCOUNT_DEFAULT_PROCESSING_PROFILE"] == "preproduction"
+    assert environment["HERMES_CASE_WORKFLOW_MODE"] == "real"
+    secret_names = {item["name"] for item in container["secrets"]}
+    assert {
+        "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
+        "ENGINEER_INVESTIGATION_REPLY_API_KEY",
+        "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+    } <= secret_names
+
+    api = render_initial_task_definition(
+        role="api",
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        execution_role_arn="arn:aws:iam::123456789012:role/preproduction-execution",
+        task_role_arn="arn:aws:iam::123456789012:role/preproduction-task",
+        log_group_name="/ecs/supportportal/preproduction",
+        parameter_prefix_arn=(
+            "arn:aws:ssm:us-east-1:123456789012:"
+            "parameter/supportportal/preproduction"
+        ),
+        hermes_case_workflow_mode="real",
+    )
+    assert "HERMES_CALLBACK_TOKEN" in {
+        item["name"] for item in api["containerDefinitions"][0]["secrets"]
+    }
+    health_check = api["containerDefinitions"][0]["healthCheck"]
+    health_command = health_check["command"][1]
+    assert "python -c" in health_command
+    assert "urllib.request.urlopen" in health_command
+    assert "curl" not in health_command
+    assert health_check["startPeriod"] == 60
 
 
 def test_render_schema_bootstrap_uses_api_image_and_secret_references(
@@ -343,6 +608,110 @@ def test_promotion_record_must_match_all_manifest_digests(tmp_path: Path) -> Non
         validate_promotion(manifest, record)
 
 
+def test_preproduction_acceptance_binds_publish_and_runtime_evidence(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest_payload["schema_version"] = "automation-release-v2"
+    manifest_payload["artifact_kind"] = "registry"
+    for component in manifest_payload["components"].values():
+        component.pop("oci_layout")
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    publish = tmp_path / "publish-record.json"
+    publish.write_text(
+        json.dumps(
+            {
+                "schema_version": "automation-preproduction-publish-v1",
+                "release_id": "release-42",
+                "published_at": "2026-09-06T00:00:00Z",
+                "source_git_commit": "a" * 40,
+                "codebuild_build_arn": "arn:aws:codebuild:us-east-1:123456789012:build/example:1",
+                "codebuild_build_number": 1,
+                "registry_id": "123456789012",
+                "region": "us-east-1",
+                "target_repository": "supportportal/preproduction",
+                "evidence_object_version": "version-1",
+                "components": {
+                    role: {"tag": component["tag"], "digest": component["digest"]}
+                    for role, component in manifest_payload["components"].items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "preproduction-evidence.json"
+    evidence_payload = {
+        "schema_version": "automation-ecs-deploy-evidence-v1",
+        "status": "complete",
+        "environment": "preproduction",
+        "release_id": "release-42",
+        "git_commit": "a" * 40,
+        "prompt_release": {"release_id": "prompt-42"},
+        "registry": {"id": "123456789012", "repository": "supportportal/preproduction"},
+        "components": {
+            role: {"expected_digest": component["digest"], "runtime_verified": True}
+            for role, component in manifest_payload["components"].items()
+        },
+        "checks": {
+            "terraform_zero_drift": "passed",
+            "source_prompt": "passed",
+            "ecr": "passed",
+            "suspension_recipients": "passed",
+            "schema_bootstrap": "passed",
+            "prompt_sync": "active",
+            "heartbeats": "passed",
+            "public_health": "passed",
+            "cloudwatch": "passed",
+            "ec2_backup": "passed",
+            "prompt_activation": "active",
+        },
+    }
+    evidence.write_text(json.dumps(evidence_payload), encoding="utf-8")
+
+    result = validate_preproduction_acceptance(manifest, publish, evidence)
+    assert result["repository"] == "supportportal/preproduction"
+    assert result["publish_record_sha256"].startswith("sha256:")
+    assert result["deploy_evidence_sha256"].startswith("sha256:")
+
+    evidence_payload["components"]["worker"]["runtime_verified"] = False
+    evidence.write_text(json.dumps(evidence_payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="worker runtime evidence"):
+        validate_preproduction_acceptance(manifest, publish, evidence)
+
+
+def test_preproduction_promotion_record_requires_acceptance_hashes(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    record = tmp_path / "promotion-record.json"
+    record.write_text(
+        json.dumps(
+            {
+                "schema_version": "automation-promotion-v1",
+                "release_id": "release-42",
+                "source_repository": "supportportal/preproduction",
+                "target_repository": "supportportal/production",
+                "registry_id": "123456789012",
+                "region": "us-east-1",
+                "components": {
+                    role: {
+                        "tag": f"{role}-release-42",
+                        "source_digest": f"sha256:{digit * 64}",
+                        "target_digest": f"sha256:{digit * 64}",
+                    }
+                    for role, digit in (("api", "1"), ("route", "2"), ("worker", "3"))
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="source_publish_record_sha256"):
+        validate_promotion(manifest, record)
+    payload = json.loads(record.read_text(encoding="utf-8"))
+    payload["source_publish_record_sha256"] = "sha256:" + "4" * 64
+    payload["preproduction_deploy_evidence_sha256"] = "sha256:" + "5" * 64
+    record.write_text(json.dumps(payload), encoding="utf-8")
+    assert validate_promotion(manifest, record)["repository"] == "supportportal/production"
+
+
 def test_suspension_recipient_readback_validates_without_returning_addresses() -> None:
     env_name = "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
     with patch.dict(
@@ -440,6 +809,46 @@ def test_verify_heartbeats_rejects_database_stale_record(tmp_path: Path) -> None
             )
 
 
+def test_verify_preproduction_heartbeats_require_preproduction_identity(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    task_definition = _task_definition(tmp_path, "worker")
+    payload = json.loads(task_definition.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    values = {item["name"]: item for item in container["environment"]}
+    values["AUTOMATION_ENVIRONMENT"]["value"] = "preproduction"
+    values["AUTOMATION_DB_SCHEMA"]["value"] = "supportportal_preproduction"
+    values["AUTOMATION_JOB_NAMESPACE"]["value"] = "supportportal-preproduction"
+    task_definition.write_text(json.dumps(payload), encoding="utf-8")
+    now = datetime.now(timezone.utc)
+    rows = []
+    for role in ("route", "worker"):
+        provenance = _heartbeat_provenance(role)
+        provenance.update(
+            {
+                "environment": "preproduction",
+                "db_schema": "supportportal_preproduction",
+                "job_namespace": "supportportal-preproduction",
+            }
+        )
+        rows.append((role, provenance, now, now))
+    with (
+        patch.dict(os.environ, {"AUTOMATION_HEARTBEAT_DSN": "postgresql://unused"}),
+        patch(
+            "backend.scripts.automation_ecs_deploy.psycopg.connect",
+            return_value=_heartbeat_connection(rows),
+        ),
+    ):
+        result = verify_heartbeats(
+            manifest_path=manifest,
+            task_definition_path=task_definition,
+            max_age_seconds=90,
+            environment="preproduction",
+        )
+    assert result["status"] == "ok"
+
+
 def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_sync() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     main_script = script[script.index("main() {") :]
@@ -452,7 +861,7 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "--hermes-case-workflow-mode" in script
     assert "Hermes mock activation requires --bootstrap-account-schema" in script
     assert "render-schema-bootstrap-task-definition" in script
-    assert "AUTOMATION_DB_MIGRATION_DSN" not in script
+    assert "--migration-dsn" not in script
     assert "TICKET_DB_MIGRATION_DSN" not in script
     assert "--target-dsn" not in script
     assert "PROMPT_RELEASE_TARGET_DSN=" in script
@@ -486,6 +895,10 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = main_script.index("backend.scripts.prompt_release sync")
     schema_bootstrap = main_script.index("run_schema_bootstrap")
+    assert "schema_is_current" in script
+    assert 'SCHEMA_BOOTSTRAP_STATUS="skipped_current"' in script
+    assert "backend.scripts.automation_ecs_bootstrap check" in script
+    assert '"${observed_revision}" = "${expected_revision}"' in script
     service_registration = main_script.index("for role in api route worker", schema_bootstrap)
     reconcile_bootstrap = script.index("reconcile_schema_bootstrap_checkpoint")
     run_bootstrap = script.index("run_schema_bootstrap()")
@@ -494,8 +907,8 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert 'jq \'length\' "${tags_path}"' in script
     assert optional_tags < register
     update_service = main_script.index("update_role_if_needed")
-    assert check_only < prompt_sync
-    assert prompt_sync < schema_bootstrap
+    assert check_only < schema_bootstrap
+    assert schema_bootstrap < prompt_sync
     assert schema_bootstrap < service_registration
     assert reconcile_bootstrap < run_bootstrap < register
     assert "Schema bootstrap checkpoint task definition family mismatch" in script
@@ -520,6 +933,57 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert 'ROLLBACK_STATUS="succeeded"' in script
     assert 'ROLLBACK_STATUS="failed"' in script
     assert 'write_evidence "rollback_incomplete"' in script
+    already_active = script.split(
+        'if [[ "${PROMPT_SYNC_STATUS}" = "active" ]]; then', 1
+    )[1].split("fi", 1)[0]
+    assert "ACTIVATION_STARTED" not in already_active
+    assert "pre-activation failures remain rollback-safe" in already_active
+
+
+def test_formal_deploy_script_has_strict_preproduction_record_and_approval_boundary() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "--environment" in script
+    assert "--publish-record" in script
+    assert "validate-preproduction-publish" in script
+    assert "DEPLOY_PREPRODUCTION_APPROVED=1 is required" in script
+    assert "supportportal-preproduction-api" in script
+    assert "supportportal/preproduction" in script
+    assert "supportportal_preproduction" in script
+    assert '--environment "${ENVIRONMENT}"' in script
+    assert '--repository "${PROMOTION_REPOSITORY}"' in script
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; parse_args --environment preproduction --publish-record record.json; '
+            'printf "%s|%s|%s|%s|%s" "$CLUSTER" "$API_SERVICE" "$BASE_URL" '
+            '"$TERRAFORM_DIR" "$PROMPT_TARGET_SCHEMA"',
+            "bash",
+            str(DEPLOY_SCRIPT),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "supportportal-preproduction|supportportal-preproduction-api|"
+        "https://supportcenter.stellarix.space/automation/preproduction|"
+        f"{ROOT}/infra/terraform/preproduction|supportportal_preproduction"
+    )
+
+
+def test_initial_task_definition_bootstrap_never_updates_or_creates_service() -> None:
+    script = INITIAL_TASK_DEFINITIONS_SCRIPT.read_text(encoding="utf-8")
+    assert "render-initial-task-definition" in script
+    assert "validate-preproduction-publish" in script
+    assert "AUTOMATION_INITIAL_TASK_DEFINITIONS_APPROVED=1" in script
+    assert "aws ecs register-task-definition" in script
+    assert "aws ecs update-service" not in script
+    assert "aws ecs create-service" not in script
+    assert "supportportal/production" not in script
+    assert "supportportal_production" not in script
 
 
 def test_hermes_mock_cli_requires_explicit_schema_bootstrap() -> None:
@@ -720,6 +1184,12 @@ prepare_deploy_workspace
     mismatch = subprocess.run([*args, "1"], cwd=ROOT, env=env, text=True, capture_output=True)
     assert mismatch.returncode != 0
     assert "checkpoint identity does not match" in mismatch.stderr
+
+
+def test_default_checkpoint_path_is_scoped_by_environment_and_hermes_mode() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "ecs-deploy-${ENVIRONMENT}-${RELEASE_ID}${operation_suffix}" in script
+    assert 'operation_suffix="-${HERMES_CASE_WORKFLOW_MODE}"' in script
 
 
 def test_resume_reconciles_only_matching_schema_bootstrap_checkpoint(

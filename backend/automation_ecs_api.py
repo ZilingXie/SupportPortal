@@ -324,7 +324,7 @@ def create_app(    *,
     base = runtime.base_path
     admin_account = {
         "account_id": "admin",
-        "display_name": "Production Admin",
+        "display_name": f"{runtime.environment.title()} Admin",
         "role": "admin",
     }
 

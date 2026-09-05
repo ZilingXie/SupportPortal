@@ -79,6 +79,7 @@ from backend.services.account_reply_jobs import (
     is_account_reply_persona_preparing_status,
     is_account_reply_persona_publishing_status,
 )
+from backend.services.account_processing_profiles import is_live_account_processing_profile
 from backend.services.automation_persona import (
     AUTOMATION_PERSONA_PROMPT_VERSION,
     AutomationPersonaError,
@@ -1298,7 +1299,7 @@ def _deliver_production_account_reply_to_zendesk(
     account_case = ticket_repository.get_account_case_by_ticket_id(ticket_id)
     if not isinstance(account_case, dict):
         return
-    if str(account_case.get("processing_profile") or "staging").strip().lower() != "production":
+    if not is_live_account_processing_profile(account_case.get("processing_profile")):
         return
     # RAG fallback answers reply to an unexpected customer message after the
     # case was re-routed away from its automation handler, so the case no
@@ -2001,7 +2002,7 @@ def _deliver_engineer_approved_zendesk_comment(delivery: dict[str, Any]) -> None
 
 
 def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
-    if str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower() != "production":
+    if not is_live_account_processing_profile(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE")):
         return
     if not account_slack_n8n_configured():
         LOGGER.warning("account_slack_delivery_paused failure_code=account_slack_n8n_config_incomplete")
@@ -2077,7 +2078,7 @@ def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
 
 
 def _drain_engineer_slack_events(*, limit: int = 20) -> None:
-    if str(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging").strip().lower() != "production":
+    if not is_live_account_processing_profile(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE")):
         return
     if not engineer_slack_configured():
         LOGGER.warning("engineer_slack_delivery_paused failure_code=engineer_slack_config_incomplete")
@@ -2715,7 +2716,7 @@ def process_account_automation_once() -> None:
     processing_profile = str(
         os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE") or "staging"
     ).strip().lower()
-    if processing_profile == "production":
+    if is_live_account_processing_profile(processing_profile):
         reconcile_account_human_review_queue_mismatches(
             repository=ticket_repository,
             processing_profile=processing_profile,
