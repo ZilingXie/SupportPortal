@@ -4,8 +4,8 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260905-8216f76（runtime commit 8216f763427f）：API/Route/Worker revision 31/26/29均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。该release包含p2-144 Persona v26/review-v1正文不可变链路和p2-145 Admin同源视图代码；Admin 已完成独立公网视觉、严格只读、Production SQL对账及schema/namespace隔离验收并由p2-145关闭。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
-  "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
+  "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线最新 main 的 r20260905-19d30d3（runtime commit 19d30d341308）：API/Route/Worker revision 32/27/30均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active。该release包含p2-144 Persona v26/review-v1正文不可变链路、已完成的p2-145 Admin同源视图，以及p2-146 PostgreSQL-only Hermes Case Workflow；九张Hermes表已bootstrap，API/Worker显式启用mock。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。ECR仅保留当前release与两套完整回滚release。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类Account工单和technical Case readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+  "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 与 technical 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee及Hermes mock/Slack/Approve外部readback；不修改n8n、不重放历史任务或outcome_unknown。业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
   "acceptance_criteria": [
     "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -268,6 +268,12 @@
       "label": "Unused Production Valkey retirement and zero-drift readback",
       "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
       "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
+    },
+    {
+      "type": "deployment",
+      "label": "Latest-main ECS Production release r20260905-19d30d3",
+      "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh --bootstrap-account-schema --hermes-case-workflow-mode mock; independent post-release readback",
+      "details": "从clean main@19d30d341308f3e0d905d885f4fe7bb5ade93b7e构建并部署。API/Route/Worker revision 32/27/30均为1/1/0且COMPLETED；运行digest分别为sha256:f94d0d5c99d668a6c2bd06046508dc7f3fcd194a61e63e8ceba346b172d35141、sha256:eadc43d519094293157e461baffe8bfab6d593e2c568fc3372e3a867ba29c74e、sha256:ec3b010890aed6471138e5d56d5a65ed97b78a27cd292bfdd6cb75e213e2b2e7，与Manifest/ECR/Promotion Record一致。Prompt Release pr-c9b3a291ecf1 active，Hermes mode=mock且九张表齐全；当前Route/Worker heartbeat age<1秒、provenance_mismatches为空。revision 30一次性只读探针通过三组精确收件人To=1/Cc=1、无Pilot、Archer GET、Graph /me、Zendesk identity；CloudWatch自build窗口错误0、EC2 backup健康、Terraform 1.9.8远程锁定plan为No changes/exit 0。ECR按当前加两套回滚策略保留9个manifest，删除12个旧或未部署tag且零失败。全过程未发送邮件、未创建/修改/重放工单。"
     }
   ],
   "source_refs": [
@@ -436,6 +442,11 @@
       "at": "2026-09-05",
       "event": "ecs_production_admin_accepted",
       "summary": "p2-145完成共享Session、10栏视觉/响应式、严格只读API与控件、Production SQL对账、无写入及schema/namespace trap验收并关闭；总体迁移任务继续等待三类全新业务工单、Preproduction与EC2 Staging。"
+    },
+    {
+      "at": "2026-09-05",
+      "event": "latest_main_and_hermes_mock_release_deployed",
+      "summary": "r20260905-19d30d3已部署到API/Route/Worker revision 32/27/30；Hermes PostgreSQL schema和mock模式、Persona v26/review-v1、Admin及全部既有Account修复均包含在当前运行镜像。正式门禁、独立依赖探针、CloudWatch、EC2 backup、ECR保留集和Terraform零漂移均通过，等待用户创建全新工单验收。"
     }
   ],
   "legacy_refs": [

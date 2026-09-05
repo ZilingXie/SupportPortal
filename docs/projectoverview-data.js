@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T05:21:36Z",
-  "source_base_commit": "90ea7446af2fa525ebdbabffda3a36d04661904c",
-  "registry_digest": "a30c9d1f63838a6d6d739afefc58d2701d068978a4e9a73341a6ee87fe83f9c2",
+  "generated_at": "2026-09-05T10:30:33Z",
+  "source_base_commit": "19d30d341308f3e0d905d885f4fe7bb5ade93b7e",
+  "registry_digest": "5650a63c54713a39b4552c866a10af015637f7b6bceb237f04630929e54830e5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1018,6 +1018,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Production v26/review-v1 immutable release",
           "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
           "details": "PR #1065 squash commit ec887c9 已合并；按用户确认从随后包含 PR #1066 的最新 main 8216f763427f 构建 r20260905-8216f76。API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，运行 digest 与 Manifest/ECR/Promotion Record 一致。公网 live/release/ready、最新 heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 错误 0、EC2 backup、Terraform 1.9.8 发布后 No changes 均通过。Worker OCI 与 task definition 证明 v26/review-v1 生效、三类 deterministic prose repair 与 greeting strip 不存在、无 Pilot；一次性同 revision 只读探针通过 Archer GET、Graph /me 与 Zendesk identity，未创建或修改工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Latest-main carry-forward verification",
+          "details": "后继main@19d30d341308随r20260905-19d30d3部署到API/Route/Worker revision 32/27/30，三服务1/1/0且COMPLETED，运行digest与Manifest一致。公网release/ready、当前heartbeat、CloudWatch、EC2 backup和Terraform No changes通过；revision 30只读探针再次确认无Pilot且Archer/Graph/Zendesk依赖正常。当前release继续包含automation-persona-v26与automation-persona-review-v1，真实正文验收仍仅等待用户创建的新Suspension工单。"
         },
         {
           "type": "test",
@@ -2317,6 +2322,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
         },
         {
+          "type": "deployment",
+          "label": "Latest-main ECS Production release r20260905-19d30d3",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh --bootstrap-account-schema --hermes-case-workflow-mode mock; independent post-release readback",
+          "details": "从clean main@19d30d341308f3e0d905d885f4fe7bb5ade93b7e构建并部署。API/Route/Worker revision 32/27/30均为1/1/0且COMPLETED；运行digest分别为sha256:f94d0d5c99d668a6c2bd06046508dc7f3fcd194a61e63e8ceba346b172d35141、sha256:eadc43d519094293157e461baffe8bfab6d593e2c568fc3372e3a867ba29c74e、sha256:ec3b010890aed6471138e5d56d5a65ed97b78a27cd292bfdd6cb75e213e2b2e7，与Manifest/ECR/Promotion Record一致。Prompt Release pr-c9b3a291ecf1 active，Hermes mode=mock且九张表齐全；当前Route/Worker heartbeat age\u003c1秒、provenance_mismatches为空。revision 30一次性只读探针通过三组精确收件人To=1/Cc=1、无Pilot、Archer GET、Graph /me、Zendesk identity；CloudWatch自build窗口错误0、EC2 backup健康、Terraform 1.9.8远程锁定plan为No changes/exit 0。ECR按当前加两套回滚策略保留9个manifest，删除12个旧或未部署tag且零失败。全过程未发送邮件、未创建/修改/重放工单。"
+        },
+        {
           "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
@@ -2786,6 +2797,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Hermes schema and activation release gates",
           "details": "正式deploy新增显式bootstrap+mock组合门禁：API镜像一次性task仅引用既有migration SecureString ARN，服务更新前完成幂等DDL；API/Worker注入mock、Route不注入，公网release marker必须readback一致。Hermes九张表加入runtime schema preflight；中断后resume会先验证并清理旧bootstrap task再幂等重跑。deploy/admin/bootstrap定向测试30 passed；Hermes/Persona/Account/ECS整合回归293 passed + 65 subtests；隔离PostgreSQL回归7 passed且临时schema已清理。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production Hermes mock release and independent readback",
+          "details": "PR #1069/#1070随clean main@19d30d341308的r20260905-19d30d3正式发布。schema bootstrap成功，API/Worker的HERMES_CASE_WORKFLOW_MODE=mock且公网release marker一致；API/Route/Worker revision 32/27/30均1/1/0、COMPLETED并匹配Manifest digest。revision 30只读探针在READ ONLY事务确认九张support_hermes_*表全部存在；Archer GET、Graph /me、Zendesk identity、CloudWatch零错误、EC2 backup与Terraform 1.9.8 No changes均通过。未创建/修改/回复工单，真实technical Case验收仍待用户执行。"
         },
         {
           "type": "test",
@@ -6726,8 +6742,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线 r20260905-8216f76（runtime commit 8216f763427f）：API/Route/Worker revision 31/26/29均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active且28 items validate通过。该release包含p2-144 Persona v26/review-v1正文不可变链路和p2-145 Admin同源视图代码；Admin 已完成独立公网视觉、严格只读、Production SQL对账及schema/namespace隔离验收并由p2-145关闭。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类新工单readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
-      "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee与外部provider readback；不修改n8n、不重放历史任务或outcome_unknown。三类业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
+      "summary": "按 Production → Preproduction → EC2 Staging 的顺序迁移 Automation。ECS Production 已通过唯一正式发布命令上线最新 main 的 r20260905-19d30d3（runtime commit 19d30d341308）：API/Route/Worker revision 32/27/30均稳定1/1/0，运行digest与local-oci Promotion Record/Manifest一致；Prompt Release pr-c9b3a291ecf1为active。该release包含p2-144 Persona v26/review-v1正文不可变链路、已完成的p2-145 Admin同源视图，以及p2-146 PostgreSQL-only Hermes Case Workflow；九张Hermes表已bootstrap，API/Worker显式启用mock。公网health、heartbeat provenance、CloudWatch、EC2 backup、Worker无Pilot、Archer/Graph/Zendesk只读依赖探针及发布后Terraform 1.9.8远程锁定零漂移plan全部通过。ECR仅保留当前release与两套完整回滚release。Production Terraform仅管理已import的ECR、Automation target group、priority 10 listener rule和三service稳定配置，task_definition指针继续归发布脚本。用户确认Enablement内部review收件人保持zhonghuang，Fraud/Suspension为Suhrid，三组均为To=1/Cc=1。n8n切流由用户另行处理；真实三类Account工单和technical Case readback、Preproduction与EC2 Staging仍待完成，EC2 /production继续作为健康backup。",
+      "next_action": "保持 active。等待用户提供全新 Enablement、Fraud、Account Suspension 与 technical 工单号，逐单核对Execution/Job/Delivery、客户回复、邮件、Zendesk状态/assignee及Hermes mock/Slack/Approve外部readback；不修改n8n、不重放历史任务或outcome_unknown。业务验收后继续单独建设Preproduction，并恢复Preproduction同digest晋升Production的常规发布路径；EC2 Staging按后续阶段推进。",
       "acceptance_criteria": [
         "release builder 从干净 commit各构建一次 linux/amd64 的 api、route、worker OCI artifact；三个安全镜像均物理排除 rerun/reset、backend.main、测试代码和项目内 rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6990,6 +7006,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Unused Production Valkey retirement and zero-drift readback",
           "command": "terraform apply -refresh-only; terraform plan -detailed-exitcode; ElastiCache/SSM/ECS/public-health readback 2026-09-04",
           "details": "删除前30天CurrItems平均/最大均为0、ProcessedCommands总和为0，且ECS task definition无Redis配置；用户授权后先以refresh-only仅清理远程state output（0 add/0 change/0 destroy），正常锁定plan恢复exit 0。随后删除无快照、retention=0的supportportal-production-redis及无消费者SSM参数/supportportal/production/redis-url；两者删除后readback为空，API/Route/Worker保持1/1/0且公网live/ready为200，最终Terraform 1.9.8 plan仍为No changes、exit 0。删除无AWS快照恢复点，预计节省约$9.34/月。"
+        },
+        {
+          "type": "deployment",
+          "label": "Latest-main ECS Production release r20260905-19d30d3",
+          "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh --bootstrap-account-schema --hermes-case-workflow-mode mock; independent post-release readback",
+          "details": "从clean main@19d30d341308f3e0d905d885f4fe7bb5ade93b7e构建并部署。API/Route/Worker revision 32/27/30均为1/1/0且COMPLETED；运行digest分别为sha256:f94d0d5c99d668a6c2bd06046508dc7f3fcd194a61e63e8ceba346b172d35141、sha256:eadc43d519094293157e461baffe8bfab6d593e2c568fc3372e3a867ba29c74e、sha256:ec3b010890aed6471138e5d56d5a65ed97b78a27cd292bfdd6cb75e213e2b2e7，与Manifest/ECR/Promotion Record一致。Prompt Release pr-c9b3a291ecf1 active，Hermes mode=mock且九张表齐全；当前Route/Worker heartbeat age\u003c1秒、provenance_mismatches为空。revision 30一次性只读探针通过三组精确收件人To=1/Cc=1、无Pilot、Archer GET、Graph /me、Zendesk identity；CloudWatch自build窗口错误0、EC2 backup健康、Terraform 1.9.8远程锁定plan为No changes/exit 0。ECR按当前加两套回滚策略保留9个manifest，删除12个旧或未部署tag且零失败。全过程未发送邮件、未创建/修改/重放工单。"
         }
       ],
       "source_refs": [
@@ -7158,6 +7180,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "ecs_production_admin_accepted",
           "summary": "p2-145完成共享Session、10栏视觉/响应式、严格只读API与控件、Production SQL对账、无写入及schema/namespace trap验收并关闭；总体迁移任务继续等待三类全新业务工单、Preproduction与EC2 Staging。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "latest_main_and_hermes_mock_release_deployed",
+          "summary": "r20260905-19d30d3已部署到API/Route/Worker revision 32/27/30；Hermes PostgreSQL schema和mock模式、Persona v26/review-v1、Admin及全部既有Account修复均包含在当前运行镜像。正式门禁、独立依赖探针、CloudWatch、EC2 backup、ECR保留集和Terraform零漂移均通过，等待用户创建全新工单验收。"
         }
       ],
       "legacy_refs": [
@@ -10329,7 +10356,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
       "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句。按用户决策升级 automation-persona-v26 并新增 automation-persona-review-v1：Persona 生成 greeting 后的全部语义正文，独立 LLM Reviewer 检查事实完整性、冲突、重复和 intent 合同；首轮失败只提供结构化 feedback 给同一 pinned Persona 整段重写，第二轮仍失败即 Human Review。Worker 禁止补写、裁剪或改写正文，只持久化通过稿和安全审计元数据；应用仅保留 greeting、RAG 引用、附件和 transport formatting 外壳。代码安全地板只拒绝危险输出，并在 validation copy 中统一常见 apostrophe，不改变客户正文。",
-      "next_action": "PR #1065 与 ECS Production v26/review-v1 release 已完成；保持 active，等待用户提供下一张全新 Account Suspension 工单，验收正文只含一次 24h 承诺、persona_review metadata、assign 与未 solved。不得创建、重放或回复历史工单。",
+      "next_action": "PR #1065 与最新 ECS Production r20260905-19d30d3 均已完成并验证继续包含v26/review-v1；保持 active，等待用户提供下一张全新 Account Suspension 工单，验收正文只含一次24h承诺、persona_review metadata、assign与未solved。不得创建、重放或回复历史工单。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
@@ -10351,6 +10378,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Production v26/review-v1 immutable release",
           "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; post-release readback",
           "details": "PR #1065 squash commit ec887c9 已合并；按用户确认从随后包含 PR #1066 的最新 main 8216f763427f 构建 r20260905-8216f76。API/Route/Worker revision 31/26/29 均 1/1/0、COMPLETED，运行 digest 与 Manifest/ECR/Promotion Record 一致。公网 live/release/ready、最新 heartbeat、Prompt Release pr-c9b3a291ecf1 active、CloudWatch 错误 0、EC2 backup、Terraform 1.9.8 发布后 No changes 均通过。Worker OCI 与 task definition 证明 v26/review-v1 生效、三类 deterministic prose repair 与 greeting strip 不存在、无 Pilot；一次性同 revision 只读探针通过 Archer GET、Graph /me 与 Zendesk identity，未创建或修改工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Latest-main carry-forward verification",
+          "details": "后继main@19d30d341308随r20260905-19d30d3部署到API/Route/Worker revision 32/27/30，三服务1/1/0且COMPLETED，运行digest与Manifest一致。公网release/ready、当前heartbeat、CloudWatch、EC2 backup和Terraform No changes通过；revision 30只读探针再次确认无Pilot且Archer/Graph/Zendesk依赖正常。当前release继续包含automation-persona-v26与automation-persona-review-v1，真实正文验收仍仅等待用户创建的新Suspension工单。"
         }
       ],
       "history": [
@@ -10363,6 +10395,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "ecs_release_verified",
           "summary": "r20260905-8216f76 已通过正式门禁部署到 ECS Production；任务保持 active，等待用户全新真实工单业务验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "latest_main_release_verified",
+          "summary": "后继最新main随r20260905-19d30d3部署并通过独立运行readback；v26/review-v1仍为当前Production实现，任务继续等待全新Suspension工单验收。"
         }
       ],
       "legacy_ids": [],
@@ -10492,8 +10529,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "account-production-environment",
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
-      "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。",
-      "next_action": "用户已授权发布最新 main 并测试全部当前能力。先 finalize 正式 schema/bootstrap + mock activation 门禁，再从合并后的最新 main 构建并部署 ECS Production release；发布后等待用户新建 technical Case，核对唯一 Engineer Case/Slack thread、mock output、Summary/Persona/Approve 与 Zendesk readback。真实 Hermes/AgentRelay 接入和 promotion sink 仍待单独实现与授权。",
+      "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。ECS Production r20260905-19d30d3 已完成九表bootstrap并在API/Worker显式启用mock。",
+      "next_action": "保持 active，等待用户新建全新 technical Case，核对唯一 Engineer Case/Slack thread、精确mock output、Summarize、Summary Guardrail、Persona/Approve与Zendesk readback；不得创建、重放或回复历史工单。真实 Hermes/AgentRelay 接入和promotion sink仍待单独实现与授权。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -10534,6 +10571,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Hermes schema and activation release gates",
           "details": "正式deploy新增显式bootstrap+mock组合门禁：API镜像一次性task仅引用既有migration SecureString ARN，服务更新前完成幂等DDL；API/Worker注入mock、Route不注入，公网release marker必须readback一致。Hermes九张表加入runtime schema preflight；中断后resume会先验证并清理旧bootstrap task再幂等重跑。deploy/admin/bootstrap定向测试30 passed；Hermes/Persona/Account/ECS整合回归293 passed + 65 subtests；隔离PostgreSQL回归7 passed且临时schema已清理。"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Production Hermes mock release and independent readback",
+          "details": "PR #1069/#1070随clean main@19d30d341308的r20260905-19d30d3正式发布。schema bootstrap成功，API/Worker的HERMES_CASE_WORKFLOW_MODE=mock且公网release marker一致；API/Route/Worker revision 32/27/30均1/1/0、COMPLETED并匹配Manifest digest。revision 30只读探针在READ ONLY事务确认九张support_hermes_*表全部存在；Archer GET、Graph /me、Zendesk identity、CloudWatch零错误、EC2 backup与Terraform 1.9.8 No changes均通过。未创建/修改/回复工单，真实technical Case验收仍待用户执行。"
         }
       ],
       "history": [
@@ -10551,6 +10593,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "production_release_authorized",
           "summary": "用户授权发布最新main并测试当前全部能力；开始补齐唯一正式ECS deploy的schema bootstrap和mock activation门禁，完成后将发布Production并停在用户创建新technical Case之前。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "production_mock_release_deployed",
+          "summary": "r20260905-19d30d3已完成schema bootstrap并在ECS Production启用Hermes mock；九表、三服务provenance、依赖探针、CloudWatch、backup与Terraform零漂移均通过，任务保持active等待用户全新technical Case验收。"
         }
       ],
       "legacy_ids": [],
@@ -15925,7 +15972,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。",
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
-        "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过默认关闭的 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期。",
+        "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。",
         "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ v26 Persona 首封只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复，经 review-v1 语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
