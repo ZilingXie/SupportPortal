@@ -22,7 +22,7 @@ PROVENANCE_ENV_NAMES = {
     "APP_BUILD_TIME",
     "PROMPT_RELEASE_ID",
 }
-HERMES_CASE_WORKFLOW_MODES = {"disabled", "mock"}
+HERMES_CASE_WORKFLOW_MODES = {"disabled", "mock", "real"}
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -170,7 +170,7 @@ def render_task_definition(
         hermes_case_workflow_mode is not None
         and hermes_case_workflow_mode not in HERMES_CASE_WORKFLOW_MODES
     ):
-        raise ValueError("Hermes Case Workflow mode must be disabled or mock")
+        raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
     manifest = read_manifest(Path(manifest_path))
     component = manifest.components[role]
     rendered = {

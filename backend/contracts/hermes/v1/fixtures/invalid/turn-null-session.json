@@ -1,0 +1,25 @@
+{
+  "client_ticket_id": "ticket-1",
+  "conversation_version": 0,
+  "created_at": "2026-09-05T08:00:00Z",
+  "data_boundary": "curated_case_context",
+  "engineer_case_id": "case-1",
+  "episode": 1,
+  "hermes_conversation_key": "supportportal:engineer-case:case-1",
+  "hermes_session_id": null,
+  "human_authority": null,
+  "input": {
+    "completion_criteria": [
+      "Produce an evidence-backed conclusion."
+    ],
+    "investigation_scope": "Investigate the synthetic issue.",
+    "problem_description": "A synthetic technical issue."
+  },
+  "investigation_id": "investigation-1",
+  "request_id": "hermes-request:case-1:1:0:opening",
+  "schema_version": "v1",
+  "session_binding_version": 1,
+  "slack_channel_id": "C-SYNTHETIC",
+  "slack_thread_ts": "1757060000.000001",
+  "turn_kind": "opening"
+}

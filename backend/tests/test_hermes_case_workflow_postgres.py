@@ -71,6 +71,8 @@ def repository() -> PostgresTicketRepository:
         client_ticket_id="123",
         investigation_id="INV-123-1",
         problem_description="Customer cannot join.",
+        investigation_scope="Investigate the reported join failure.",
+        completion_criteria=("Identify an evidence-backed conclusion.",),
         now_value="2026-09-05T08:00:00Z",
     )
     start_hermes_case(repo, request=request)
@@ -310,29 +312,38 @@ def test_solved_reopen_closed_promotion_lifecycle(repository: PostgresTicketRepo
     first = close_hermes_case(
         repository, engineer_case_id="123-1",
         sanitized_payload={
-            "summary": "safe",
-            "safety_label": "sanitized",
-            "sanitization_report": {
-                "decision": "passed",
-                "reason": "reviewed_close_packet",
-            },
+            "sanitized_knowledge": {"summary": "safe"},
+            "evidence_categories": ["reviewed_case_evidence"],
+            "applicability": ["this closed case"],
+            "limitations": [], "corrections": [],
+            "sanitization": {"verdict": "pass", "reason": "reviewed_close_packet"},
         },
         now_value="2026-09-05T08:07:00Z",
     )
     second = close_hermes_case(
         repository, engineer_case_id="123-1",
         sanitized_payload={
-            "summary": "safe",
-            "safety_label": "sanitized",
-            "sanitization_report": {
-                "decision": "passed",
-                "reason": "reviewed_close_packet",
-            },
+            "sanitized_knowledge": {"summary": "safe"},
+            "evidence_categories": ["reviewed_case_evidence"],
+            "applicability": ["this closed case"],
+            "limitations": [], "corrections": [],
+            "sanitization": {"verdict": "pass", "reason": "reviewed_close_packet"},
         },
         now_value="2026-09-05T08:07:01Z",
     )
     assert first.promotion_id == second.promotion_id
     assert first.status == "awaiting_transport"
+    claimed_promotion = repository.claim_hermes_promotion(
+        first.promotion_id, owner_token="promotion-worker",
+        claimed_at="2026-09-05T08:08:00Z", lease_expires_at="2026-09-05T08:09:00Z",
+    )
+    assert claimed_promotion["status"] == "active"
+    repository.complete_hermes_promotion_delivery(
+        first.promotion_id, owner_token="promotion-worker", status="accepted",
+        receipt={"ok": True, "promotion": {"promotion_id": first.promotion_id}},
+        failure_code=None, completed_at="2026-09-05T08:08:01Z",
+    )
+    assert repository.list_hermes_promotions()[0]["status"] == "accepted"
     assert not any(
         row["status"] in {"queued", "active"}
         for row in repository.list_hermes_turn_requests("123-1")

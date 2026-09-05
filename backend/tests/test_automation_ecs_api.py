@@ -265,6 +265,16 @@ def test_release_reports_mock_hermes_producer_contract(monkeypatch) -> None:
     assert release.json()["hermes_case_workflow"]["producer_contract_version"] == "v1"
 
 
+def test_release_reports_real_hermes_producer_contract(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    client, _ = _client()
+    with client:
+        release = client.get("/automation/production/health/release")
+    assert release.status_code == 200
+    assert release.json()["hermes_case_workflow"]["mode"] == "real"
+    assert release.json()["hermes_case_workflow"]["producer_contract_version"] == "v1"
+
+
 def test_readiness_fails_without_both_fresh_worker_roles() -> None:
     client, store = _client()
     store.heartbeat(worker_id="route-1", provenance=_settings("route").provenance())

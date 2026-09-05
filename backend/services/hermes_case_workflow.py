@@ -35,47 +35,76 @@ class HermesLedgerDelta(_StrictModel):
     references: str | None = None
 
 
+class HermesTurnInput(_StrictModel):
+    problem_description: str | None = None
+    investigation_scope: str | None = None
+    completion_criteria: tuple[str, ...] = ()
+    message: str | None = None
+
+
+class HermesHumanAuthority(_StrictModel):
+    authority_event_id: str = Field(min_length=1)
+    actor_id: str = Field(min_length=1)
+    action: Literal[
+        "authorize_round", "accept_and_finish", "start_suggested_round", "stop_investigation"
+    ]
+    target_round_id: str = Field(min_length=1)
+    target_version: int = Field(ge=1)
+    target_digest: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+
+
 class HermesOutputAction(_StrictModel):
     action: Literal[
         "authorize_round", "accept_and_finish", "start_suggested_round", "stop_investigation"
     ]
+    target_round_id: str = Field(min_length=1)
     target_version: int = Field(ge=1)
     target_digest: str = Field(min_length=1)
 
 
-class HermesTurnRequest(_StrictModel):
+class HermesTurnRequestDraft(_StrictModel):
     schema_version: Literal["v1"]
     request_id: str = Field(min_length=1)
     engineer_case_id: str = Field(min_length=1)
     client_ticket_id: str = Field(min_length=1)
     investigation_id: str = Field(min_length=1)
     hermes_conversation_key: str = Field(min_length=1)
-    hermes_session_id: str | None
+    hermes_session_id: str = Field(min_length=1)
     episode: int = Field(ge=1)
     conversation_version: int = Field(ge=0)
     turn_kind: Literal["opening", "engineer_feedback", "round_authority", "reopen", "stop"]
-    input_text: str = Field(min_length=1)
+    input: HermesTurnInput
     slack_channel_id: str | None
     slack_thread_ts: str | None
-    session_binding_version: int = Field(ge=0)
+    session_binding_version: int = Field(ge=1)
     data_boundary: Literal["curated_case_context"]
-    human_authority_event_ref: str | None
-    approved_round_plan_digest: str | None
+    human_authority: HermesHumanAuthority | None
     created_at: str = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_authority(self) -> "HermesTurnRequest":
-        authority_fields = (
-            self.human_authority_event_ref,
-            self.approved_round_plan_digest,
-        )
-        if self.turn_kind == "round_authority" and not all(authority_fields):
-            raise ValueError(
-                "round_authority requires human authority reference and approved plan digest"
-            )
-        if self.turn_kind != "round_authority" and any(authority_fields):
-            raise ValueError("human authority fields are only valid for round_authority")
+    def validate_authority(self) -> "HermesTurnRequestDraft":
+        if self.turn_kind == "round_authority" and self.human_authority is None:
+            raise ValueError("round_authority requires human_authority")
+        if self.turn_kind != "round_authority" and self.human_authority is not None:
+            raise ValueError("human_authority is only valid for round_authority")
+        if self.turn_kind == "opening":
+            if (
+                not str(self.input.problem_description or "").strip()
+                or not str(self.input.investigation_scope or "").strip()
+                or not self.input.completion_criteria
+                or any(not str(item).strip() for item in self.input.completion_criteria)
+                or self.input.message is not None
+            ):
+                raise ValueError("opening requires problem, scope, and completion criteria only")
+        elif not str(self.input.message or "").strip():
+            raise ValueError(f"{self.turn_kind} requires input.message")
         return self
+
+
+class HermesTurnRequest(HermesTurnRequestDraft):
+    slack_channel_id: str = Field(min_length=1)
+    slack_thread_ts: str = Field(min_length=1)
 
 
 class HermesInvestigationOutput(_StrictModel):
@@ -133,16 +162,30 @@ class HumanAuthorityEvent(_StrictModel):
     created_at: str = Field(min_length=1)
 
 
-class SanitizationReport(_StrictModel):
-    decision: Literal["passed"]
+class PromotionVerdict(_StrictModel):
+    verdict: Literal["pass"]
     reason: str = Field(min_length=1)
 
 
 class SanitizedCaseKnowledge(_StrictModel):
     summary: str = Field(min_length=1)
-    references: str = ""
-    safety_label: Literal["sanitized"]
-    sanitization_report: SanitizationReport
+    problem_pattern: str = ""
+    root_cause: str = ""
+    resolution: str = ""
+    verification: str = ""
+    references: tuple[str, ...] = ()
+
+
+class CorrectionRecord(_StrictModel):
+    incorrect_direction: str = Field(min_length=1)
+    correction: str = Field(min_length=1)
+
+
+class ClosedRevisionProof(_StrictModel):
+    status: Literal["closed"]
+    episode: int = Field(ge=1)
+    ledger_revision: int = Field(ge=1)
+    closed_at: str = Field(min_length=1)
 
 
 class CaseKnowledgePromotion(_StrictModel):
@@ -150,11 +193,52 @@ class CaseKnowledgePromotion(_StrictModel):
     promotion_id: str = Field(min_length=1)
     engineer_case_id: str = Field(min_length=1)
     client_ticket_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
     episode: int = Field(ge=1)
     ledger_revision: int = Field(ge=1)
     status: Literal["awaiting_transport"]
-    sanitized_payload: SanitizedCaseKnowledge
+    sanitized_knowledge: SanitizedCaseKnowledge
+    evidence_categories: tuple[str, ...]
+    applicability: tuple[str, ...]
+    limitations: tuple[str, ...]
+    corrections: tuple[CorrectionRecord, ...]
+    review: PromotionVerdict
+    guardrail: PromotionVerdict
+    sanitization: PromotionVerdict
+    closed_revision_proof: ClosedRevisionProof
+    content_hash: str = Field(min_length=64, max_length=64)
+    targets: tuple[Literal["tencentdb_knowledge", "skill_evolution"], ...]
     created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_promotion(self) -> "CaseKnowledgePromotion":
+        if tuple(self.targets) != ("tencentdb_knowledge", "skill_evolution"):
+            raise ValueError("promotion targets must be fixed and ordered")
+        if (
+            self.closed_revision_proof.episode != self.episode
+            or self.closed_revision_proof.ledger_revision != self.ledger_revision
+        ):
+            raise ValueError("closed revision proof does not match promotion lineage")
+        promotable = {
+            "sanitized_knowledge": self.sanitized_knowledge.model_dump(mode="json"),
+            "evidence_categories": list(self.evidence_categories),
+            "applicability": list(self.applicability),
+            "limitations": list(self.limitations),
+            "corrections": [item.model_dump(mode="json") for item in self.corrections],
+        }
+        actual = hashlib.sha256(
+            json.dumps(promotable, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if not hmac.compare_digest(self.content_hash, actual):
+            raise ValueError("content_hash does not match promotable knowledge")
+        restricted = (
+            "<restricted>", "authorization:", "x-hermes-callback-token",
+            "slack.com/archives/", "zendesk.com/agent/tickets/",
+        )
+        serialized = json.dumps(promotable, sort_keys=True).lower()
+        if any(marker in serialized for marker in restricted):
+            raise ValueError("promotion contains a restricted identifier")
+        return self
 
 
 HermesWorkflowConflict = HermesRepositoryConflict
@@ -164,9 +248,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def hermes_workflow_mode() -> Literal["disabled", "mock"]:
+def hermes_workflow_mode() -> Literal["disabled", "mock", "real"]:
     mode = str(os.getenv("HERMES_CASE_WORKFLOW_MODE") or "disabled").strip().lower()
-    if mode not in {"disabled", "mock"}:
+    if mode not in {"disabled", "mock", "real"}:
         raise RuntimeError("invalid HERMES_CASE_WORKFLOW_MODE")
     return mode  # type: ignore[return-value]
 
@@ -194,42 +278,79 @@ def _request_id(case_id: str, episode: int, version: int, turn_kind: str) -> str
     return f"hermes-request:{case_id}:{episode}:{version}:{turn_kind}"
 
 
+def _session_id(case_id: str) -> str:
+    return f"hermes-session:{uuid5(NAMESPACE_URL, _conversation_key(case_id))}"
+
+
 def create_opening_turn(
     *, engineer_case_id: str, client_ticket_id: str, investigation_id: str,
-    problem_description: str, now_value: str | None = None,
-) -> HermesTurnRequest:
+    problem_description: str, investigation_scope: str,
+    completion_criteria: tuple[str, ...], now_value: str | None = None,
+) -> HermesTurnRequestDraft:
     now = now_value or _now_iso()
-    return HermesTurnRequest(
+    return HermesTurnRequestDraft(
         schema_version="v1",
         request_id=_request_id(engineer_case_id, 1, 0, "opening"),
         engineer_case_id=engineer_case_id,
         client_ticket_id=client_ticket_id,
         investigation_id=investigation_id,
         hermes_conversation_key=_conversation_key(engineer_case_id),
-        hermes_session_id=None,
+        hermes_session_id=_session_id(engineer_case_id),
         episode=1,
         conversation_version=0,
         turn_kind="opening",
-        input_text=problem_description,
+        input=HermesTurnInput(
+            problem_description=problem_description,
+            investigation_scope=investigation_scope,
+            completion_criteria=completion_criteria,
+        ),
         slack_channel_id=None,
         slack_thread_ts=None,
         session_binding_version=1,
         data_boundary="curated_case_context",
-        human_authority_event_ref=None,
-        approved_round_plan_digest=None,
+        human_authority=None,
         created_at=now,
     )
 
 
-def start_hermes_case(repository: Any, *, request: HermesTurnRequest) -> dict[str, Any]:
+def start_hermes_case(repository: Any, *, request: HermesTurnRequestDraft) -> dict[str, Any]:
     return repository.start_hermes_case(request.model_dump(mode="json"))
 
 
-def build_mock_output(request: dict[str, Any], *, now_value: str | None = None) -> HermesInvestigationOutput:
-    request_model = HermesTurnRequest.model_validate(
-        {key: request[key] for key in HermesTurnRequest.model_fields}
+def freeze_turn_request_for_delivery(
+    repository: Any,
+    request: dict[str, Any],
+    *,
+    slack_channel_id: str,
+    slack_thread_ts: str,
+) -> HermesTurnRequest:
+    payload = {
+        key: request[key]
+        for key in HermesTurnRequestDraft.model_fields
+        if key in request
+    }
+    payload.update(
+        slack_channel_id=str(slack_channel_id or "").strip(),
+        slack_thread_ts=str(slack_thread_ts or "").strip(),
     )
-    session_id = request_model.hermes_session_id or f"mock-session:{request_model.hermes_conversation_key}"
+    frozen = HermesTurnRequest.model_validate(payload)
+    persisted = repository.freeze_hermes_turn_request(
+        frozen.request_id,
+        payload=frozen.model_dump(mode="json"),
+    )
+    persisted_payload = {
+        key: persisted[key]
+        for key in HermesTurnRequest.model_fields
+        if key in persisted
+    }
+    return HermesTurnRequest.model_validate(persisted_payload)
+
+
+def build_mock_output(request: dict[str, Any], *, now_value: str | None = None) -> HermesInvestigationOutput:
+    request_model = HermesTurnRequestDraft.model_validate(
+        {key: request[key] for key in HermesTurnRequestDraft.model_fields}
+    )
+    session_id = request_model.hermes_session_id
     output_id = f"hermes-output:{uuid5(NAMESPACE_URL, request_model.request_id)}"
     return HermesInvestigationOutput(
         schema_version="v1",
@@ -294,12 +415,12 @@ def freeze_summary(repository: Any, *, engineer_case_id: str, now_value: str | N
 
 def queue_feedback_turn(
     repository: Any, *, engineer_case_id: str, input_text: str, now_value: str | None = None
-) -> HermesTurnRequest:
+) -> HermesTurnRequestDraft:
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not binding:
         raise HermesWorkflowConflict("unknown Hermes Case")
     version = int(binding["conversation_version"]) + 1
-    request = HermesTurnRequest(
+    request = HermesTurnRequestDraft(
         schema_version="v1",
         request_id=_request_id(
             engineer_case_id, int(binding["episode"]), version, "engineer_feedback"
@@ -312,13 +433,12 @@ def queue_feedback_turn(
         episode=int(binding["episode"]),
         conversation_version=version,
         turn_kind="engineer_feedback",
-        input_text=input_text,
+        input=HermesTurnInput(message=input_text),
         slack_channel_id=None,
         slack_thread_ts=None,
         session_binding_version=int(binding["binding_version"]) + 1,
         data_boundary="curated_case_context",
-        human_authority_event_ref=None,
-        approved_round_plan_digest=None,
+        human_authority=None,
         created_at=now_value or _now_iso(),
     )
     repository.queue_hermes_feedback_turn(request.model_dump(mode="json"))
@@ -337,6 +457,7 @@ def record_human_authority(
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not binding:
         raise HermesWorkflowConflict("unknown Hermes Case")
+    target_round_id = target_output_id
     if target_output_id.startswith("hermes-close-review:"):
         review = repository.get_hermes_close_review(target_output_id)
         actual_digest = hashlib.sha256(
@@ -357,6 +478,7 @@ def record_human_authority(
             raise HermesWorkflowConflict("stale Hermes close review")
     else:
         target_output = repository.get_hermes_output(target_output_id)
+        target_round_id = str((target_output or {}).get("round_id") or "")
         matching_action = next(
             (
                 item
@@ -391,7 +513,7 @@ def record_human_authority(
         action=action, target_output_id=target_output_id, target_version=target_version,
         target_digest=target_digest, actor_id=actor_id, created_at=now,
     )
-    request = HermesTurnRequest(
+    request = HermesTurnRequestDraft(
         schema_version="v1",
         request_id=(
             _request_id(engineer_case_id, event.episode, event.conversation_version, "round_authority")
@@ -400,13 +522,20 @@ def record_human_authority(
         engineer_case_id=engineer_case_id, client_ticket_id=str(binding["client_ticket_id"]),
         investigation_id=str(binding["investigation_id"]),
         hermes_conversation_key=str(binding["hermes_conversation_key"]),
-        hermes_session_id=binding.get("hermes_session_id"), episode=event.episode,
+        hermes_session_id=str(binding.get("hermes_session_id") or ""), episode=event.episode,
         conversation_version=event.conversation_version, turn_kind="round_authority",
-        input_text=action, slack_channel_id=None, slack_thread_ts=None,
+        input=HermesTurnInput(message=action), slack_channel_id=None, slack_thread_ts=None,
         session_binding_version=int(binding["binding_version"]),
         data_boundary="curated_case_context",
-        human_authority_event_ref=event.authority_event_id,
-        approved_round_plan_digest=event.target_digest,
+        human_authority=HermesHumanAuthority(
+            authority_event_id=event.authority_event_id,
+            actor_id=event.actor_id,
+            action=event.action,
+            target_round_id=target_round_id,
+            target_version=event.target_version,
+            target_digest=event.target_digest,
+            created_at=event.created_at,
+        ),
         created_at=now,
     )
     repository.record_hermes_authority_event(
@@ -421,14 +550,33 @@ def build_mock_sanitized_case_knowledge(ledger: dict[str, Any]) -> dict[str, Any
     if summary != CANONICAL_TEST_INVESTIGATION_RESULT or references:
         raise HermesWorkflowConflict("mock close payload failed sanitization")
     return {
-        "summary": summary,
-        "references": "",
-        "safety_label": "sanitized",
-        "sanitization_report": {
-            "decision": "passed",
-            "reason": "canonical_mock_test",
-        },
+        "sanitized_knowledge": {"summary": summary},
+        "evidence_categories": ("synthetic_test",),
+        "applicability": ("workflow contract test",),
+        "limitations": ("Synthetic mock result only.",),
+        "corrections": (),
+        "sanitization": {"verdict": "pass", "reason": "canonical_mock_test"},
     }
+
+
+def _promotion_content_hash(payload: dict[str, Any]) -> str:
+    knowledge = SanitizedCaseKnowledge.model_validate(
+        payload["sanitized_knowledge"]
+    ).model_dump(mode="json")
+    corrections = [
+        CorrectionRecord.model_validate(item).model_dump(mode="json")
+        for item in (payload.get("corrections") or [])
+    ]
+    promotable = {
+        "sanitized_knowledge": knowledge,
+        "evidence_categories": list(payload.get("evidence_categories") or []),
+        "applicability": list(payload.get("applicability") or []),
+        "limitations": list(payload.get("limitations") or []),
+        "corrections": corrections,
+    }
+    return hashlib.sha256(
+        json.dumps(promotable, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def record_case_solved(
@@ -461,30 +609,29 @@ def approve_close_review(
 def reopen_hermes_case(
     repository: Any, *, engineer_case_id: str, input_text: str,
     now_value: str | None = None,
-) -> HermesTurnRequest:
+) -> HermesTurnRequestDraft:
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not binding:
         raise HermesWorkflowConflict("unknown Hermes Case")
     episode = int(binding["episode"]) + 1
     version = int(binding["conversation_version"]) + 1
-    request = HermesTurnRequest(
+    request = HermesTurnRequestDraft(
         schema_version="v1",
         request_id=_request_id(engineer_case_id, episode, version, "reopen"),
         engineer_case_id=engineer_case_id,
         client_ticket_id=str(binding["client_ticket_id"]),
         investigation_id=str(binding["investigation_id"]),
         hermes_conversation_key=str(binding["hermes_conversation_key"]),
-        hermes_session_id=binding.get("hermes_session_id"),
+        hermes_session_id=str(binding.get("hermes_session_id") or ""),
         episode=episode,
         conversation_version=version,
         turn_kind="reopen",
-        input_text=input_text,
+        input=HermesTurnInput(message=input_text),
         slack_channel_id=None,
         slack_thread_ts=None,
         session_binding_version=int(binding["binding_version"]) + 1,
         data_boundary="curated_case_context",
-        human_authority_event_ref=None,
-        approved_round_plan_digest=None,
+        human_authority=None,
         created_at=now_value or _now_iso(),
     )
     repository.reopen_hermes_case(request.model_dump(mode="json"))
@@ -508,10 +655,26 @@ def close_hermes_case(
             ),
             engineer_case_id=engineer_case_id,
             client_ticket_id=str(binding["client_ticket_id"]),
+            investigation_id=str(binding["investigation_id"]),
             episode=int(binding["episode"]),
             ledger_revision=int(binding["current_ledger_revision"]),
             status="awaiting_transport",
-            sanitized_payload=sanitized_payload,
+            sanitized_knowledge=sanitized_payload["sanitized_knowledge"],
+            evidence_categories=tuple(sanitized_payload.get("evidence_categories") or ()),
+            applicability=tuple(sanitized_payload.get("applicability") or ()),
+            limitations=tuple(sanitized_payload.get("limitations") or ()),
+            corrections=tuple(sanitized_payload.get("corrections") or ()),
+            review={"verdict": "pass", "reason": "approved_close_review"},
+            guardrail={"verdict": "pass", "reason": "passed_summary_guardrail"},
+            sanitization=sanitized_payload["sanitization"],
+            closed_revision_proof={
+                "status": "closed",
+                "episode": int(binding["episode"]),
+                "ledger_revision": int(binding["current_ledger_revision"]),
+                "closed_at": now,
+            },
+            content_hash=_promotion_content_hash(sanitized_payload),
+            targets=("tencentdb_knowledge", "skill_evolution"),
             created_at=now,
         )
     except ValueError as exc:

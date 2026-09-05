@@ -68,7 +68,7 @@ class InMemoryHermesCaseRepositoryMixin:
             self._hermes_case_bindings[case_id] = binding
             self._hermes_case_ledgers[case_id] = {
                 "engineer_case_id": case_id,
-                "problem_description": str(request["input_text"]),
+                "problem_description": str((request.get("input") or {}).get("problem_description") or ""),
                 "investigation_process": "",
                 "misjudgment_corrections": "",
                 "current_conclusion_next_steps": "",
@@ -85,6 +85,8 @@ class InMemoryHermesCaseRepositoryMixin:
                 "owner_token": None,
                 "claimed_at": None,
                 "lease_expires_at": None,
+                "runtime_receipt": None,
+                "failure_code": None,
                 "updated_at": now,
             }
             return copy.deepcopy(binding)
@@ -177,6 +179,55 @@ class InMemoryHermesCaseRepositoryMixin:
         )
         return copy.deepcopy(row)
 
+    def freeze_hermes_turn_request(
+        self, request_id: str, *, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_turn_requests.get(str(request_id))
+            if row is None:
+                raise HermesRepositoryConflict("unknown Hermes turn")
+            existing_channel = str(row.get("slack_channel_id") or "")
+            existing_thread = str(row.get("slack_thread_ts") or "")
+            if existing_channel or existing_thread:
+                if (
+                    row.get("slack_channel_id") != payload.get("slack_channel_id")
+                    or row.get("slack_thread_ts") != payload.get("slack_thread_ts")
+                ):
+                    raise HermesRepositoryConflict("Hermes turn payload is already frozen")
+                return copy.deepcopy(row)
+            if row.get("status") not in {"queued", "active"}:
+                raise HermesRepositoryConflict("Hermes turn cannot be frozen in its current state")
+            row.update(copy.deepcopy(payload))
+            return copy.deepcopy(row)
+
+    def mark_hermes_turn_awaiting_result(
+        self, request_id: str, *, owner_token: str, receipt: dict[str, Any], accepted_at: str
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_turn_requests.get(str(request_id))
+            if row is None or row.get("status") != "active" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes turn delivery")
+            row.update(
+                status="awaiting_result", runtime_receipt=copy.deepcopy(receipt),
+                failure_code=None, lease_expires_at=None, updated_at=accepted_at,
+            )
+            return copy.deepcopy(row)
+
+    def record_hermes_turn_delivery_failure(
+        self, request_id: str, *, owner_token: str, failure_code: str,
+        retryable: bool, failed_at: str,
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_turn_requests.get(str(request_id))
+            if row is None or row.get("status") != "active" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes turn delivery")
+            row.update(
+                status="queued" if retryable else "failed", owner_token=None,
+                claimed_at=None, lease_expires_at=None, failure_code=str(failure_code),
+                updated_at=failed_at,
+            )
+            return copy.deepcopy(row)
+
     def apply_hermes_output(self, output: dict[str, Any], slack_event: dict[str, Any]) -> dict[str, Any]:
         output_id = str(output["output_id"])
         request_id = str(output["request_id"])
@@ -199,7 +250,7 @@ class InMemoryHermesCaseRepositoryMixin:
                 or int(request["conversation_version"]) != int(output["conversation_version"])
                 or request.get("hermes_session_id") != binding.get("hermes_session_id")
                 or int(request["session_binding_version"]) != int(binding["binding_version"])
-                or str(request.get("status") or "") != "active"
+                or str(request.get("status") or "") not in {"active", "awaiting_result"}
             )
             if mismatch:
                 return self._reject_hermes_output_unlocked(output, "stale_lineage")
@@ -599,17 +650,50 @@ class InMemoryHermesCaseRepositoryMixin:
                     or promotion["ledger_revision"] != binding["current_ledger_revision"]):
                 raise HermesRepositoryConflict("close review is stale")
             self._hermes_promotions.setdefault(promotion["promotion_id"], {
-                **copy.deepcopy(promotion), "updated_at": now_value,
+                **copy.deepcopy(promotion), "owner_token": None, "claimed_at": None,
+                "lease_expires_at": None, "runtime_receipt": None, "failure_code": None,
+                "updated_at": now_value,
             })
             binding.update(status="closed", updated_at=now_value)
             self._hermes_case_ledgers[case_id].update(status="closed", updated_at=now_value)
             for request in self._hermes_turn_requests.values():
                 if (
                     request["engineer_case_id"] == case_id
-                    and request["status"] in {"queued", "active"}
+                    and request["status"] in {"queued", "active", "awaiting_result"}
                 ):
                     request.update(status="cancelled", updated_at=now_value)
             return copy.deepcopy(self._hermes_promotions[promotion["promotion_id"]])
+
+    def list_hermes_promotions(self) -> list[dict[str, Any]]:
+        with self._assignment_lock:
+            return [copy.deepcopy(row) for row in self._hermes_promotions.values()]
+
+    def claim_hermes_promotion(
+        self, promotion_id: str, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            row = self._hermes_promotions.get(str(promotion_id))
+            if row is None or row["status"] not in {"awaiting_transport", "active"}:
+                return None
+            if row["status"] == "active" and str(row.get("lease_expires_at") or "") > claimed_at:
+                return None
+            row.update(status="active", owner_token=owner_token, claimed_at=claimed_at,
+                       lease_expires_at=lease_expires_at, updated_at=claimed_at)
+            return copy.deepcopy(row)
+
+    def complete_hermes_promotion_delivery(
+        self, promotion_id: str, *, owner_token: str, status: str,
+        receipt: dict[str, Any] | None, failure_code: str | None, completed_at: str,
+    ) -> dict[str, Any]:
+        if status not in {"accepted", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Hermes promotion delivery status")
+        with self._assignment_lock:
+            row = self._hermes_promotions.get(str(promotion_id))
+            if row is None or row["status"] != "active" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes promotion delivery")
+            row.update(status=status, runtime_receipt=copy.deepcopy(receipt),
+                       failure_code=failure_code, lease_expires_at=None, updated_at=completed_at)
+            return copy.deepcopy(row)
 
 
 class PostgresHermesCaseRepositoryMixin:
@@ -650,9 +734,12 @@ class PostgresHermesCaseRepositoryMixin:
             ("support_hermes_turn_requests", """
                 request_id TEXT PRIMARY KEY, engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
                 request_payload JSONB NOT NULL, turn_type TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('queued','active','completed','cancelled')),
+                status TEXT NOT NULL CHECK (status IN (
+                    'queued','active','awaiting_result','completed','cancelled','failed'
+                )),
                 episode INTEGER NOT NULL, conversation_version INTEGER NOT NULL, hermes_session_id TEXT,
                 owner_token TEXT, claimed_at TIMESTAMPTZ, lease_expires_at TIMESTAMPTZ,
+                runtime_receipt JSONB, failure_code TEXT,
                 created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
             """, (self._table("support_engineer_cases"),)),
             ("support_hermes_outputs", """
@@ -686,7 +773,9 @@ class PostgresHermesCaseRepositoryMixin:
             ("support_hermes_case_promotions", """
                 promotion_id TEXT PRIMARY KEY, engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
                 episode INTEGER NOT NULL, ledger_revision INTEGER NOT NULL, promotion_payload JSONB NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('awaiting_transport','invalidated')),
+                status TEXT NOT NULL CHECK (status IN ('awaiting_transport','active','accepted','failed','outcome_unknown','invalidated')),
+                owner_token TEXT, claimed_at TIMESTAMPTZ, lease_expires_at TIMESTAMPTZ,
+                runtime_receipt JSONB, failure_code TEXT,
                 created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
             """, (self._table("support_engineer_cases"),)),
         )
@@ -700,6 +789,40 @@ class PostgresHermesCaseRepositoryMixin:
             sql.Identifier("idx_support_hermes_turn_requests_claim"), self._table("support_hermes_turn_requests")))
         cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id) WHERE status='active'").format(
             sql.Identifier("idx_support_hermes_turn_requests_one_active"), self._table("support_hermes_turn_requests")))
+        turn_table = self._table("support_hermes_turn_requests")
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS runtime_receipt JSONB").format(turn_table))
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_code TEXT").format(turn_table))
+        cur.execute(
+            sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                turn_table, sql.Identifier("support_hermes_turn_requests_status_check")
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+                "(status IN ('queued','active','awaiting_result','completed','cancelled','failed'))"
+            ).format(
+                turn_table, sql.Identifier("support_hermes_turn_requests_status_check")
+            )
+        )
+        promotion_table = self._table("support_hermes_case_promotions")
+        for column, definition in (
+            ("owner_token", "TEXT"), ("claimed_at", "TIMESTAMPTZ"),
+            ("lease_expires_at", "TIMESTAMPTZ"), ("runtime_receipt", "JSONB"),
+            ("failure_code", "TEXT"),
+        ):
+            cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} " + definition).format(
+                promotion_table, sql.Identifier(column)
+            ))
+        cur.execute(sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+            promotion_table, sql.Identifier("support_hermes_case_promotions_status_check")
+        ))
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+            "(status IN ('awaiting_transport','active','accepted','failed','outcome_unknown','invalidated'))"
+        ).format(
+            promotion_table, sql.Identifier("support_hermes_case_promotions_status_check")
+        ))
 
     def start_hermes_case(self, request: dict[str, Any]) -> dict[str, Any]:
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
@@ -735,7 +858,11 @@ class PostgresHermesCaseRepositoryMixin:
                             status, created_at, updated_at) VALUES (%s,%s,%s,0,'active',%s,%s)
                         ON CONFLICT (engineer_case_id) DO NOTHING
             """).format(self._table("support_hermes_case_ledgers")),
-            (request["engineer_case_id"], request["input_text"], request["episode"], now, now),
+            (
+                request["engineer_case_id"],
+                str((request.get("input") or {}).get("problem_description") or ""),
+                request["episode"], now, now,
+            ),
         )
         self._insert_hermes_turn(cur, request)
 
@@ -824,15 +951,96 @@ class PostgresHermesCaseRepositoryMixin:
             with conn.cursor() as cur:
                 where = sql.SQL("WHERE engineer_case_id=%s") if engineer_case_id else sql.SQL("")
                 params = (engineer_case_id,) if engineer_case_id else ()
-                cur.execute(sql.SQL("SELECT request_payload, status, owner_token, claimed_at, lease_expires_at FROM {} {} ORDER BY created_at, request_id").format(
+                cur.execute(sql.SQL("SELECT request_payload, status, owner_token, claimed_at, lease_expires_at, runtime_receipt, failure_code FROM {} {} ORDER BY created_at, request_id").format(
                     self._table("support_hermes_turn_requests"), where), params)
                 return [
                     {**dict(row[0]), "status": row[1], "owner_token": row[2],
                      "claimed_at": _iso(row[3]) if row[3] else None,
-                     "lease_expires_at": _iso(row[4]) if row[4] else None}
+                     "lease_expires_at": _iso(row[4]) if row[4] else None,
+                     "runtime_receipt": dict(row[5]) if row[5] else None,
+                     "failure_code": row[6]}
                     for row in cur.fetchall()
                 ]
         return self._run_with_connection_retry("list_hermes_turn_requests", operation)
+
+    def freeze_hermes_turn_request(
+        self, request_id: str, *, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT request_payload,status FROM {} WHERE request_id=%s FOR UPDATE").format(
+                        self._table("support_hermes_turn_requests")
+                    ),
+                    (request_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise HermesRepositoryConflict("unknown Hermes turn")
+                current = dict(row[0])
+                existing_channel = str(current.get("slack_channel_id") or "")
+                existing_thread = str(current.get("slack_thread_ts") or "")
+                if existing_channel or existing_thread:
+                    if (
+                        current.get("slack_channel_id") != payload.get("slack_channel_id")
+                        or current.get("slack_thread_ts") != payload.get("slack_thread_ts")
+                    ):
+                        raise HermesRepositoryConflict("Hermes turn payload is already frozen")
+                    return {**current, "status": row[1]}
+                if str(row[1]) not in {"queued", "active"}:
+                    raise HermesRepositoryConflict("Hermes turn cannot be frozen in its current state")
+                cur.execute(
+                    sql.SQL("UPDATE {} SET request_payload=%s WHERE request_id=%s").format(
+                        self._table("support_hermes_turn_requests")
+                    ),
+                    (Json(payload), request_id),
+                )
+                return {**payload, "status": str(row[1])}
+
+        return self._run_with_connection_retry("freeze_hermes_turn_request", operation)
+
+    def mark_hermes_turn_awaiting_result(
+        self, request_id: str, *, owner_token: str, receipt: dict[str, Any], accepted_at: str
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='awaiting_result',runtime_receipt=%s,failure_code=NULL,"
+                        "lease_expires_at=NULL,updated_at=%s WHERE request_id=%s AND status='active' "
+                        "AND owner_token=%s RETURNING request_payload"
+                    ).format(self._table("support_hermes_turn_requests")),
+                    (Json(receipt), accepted_at, request_id, owner_token),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes turn delivery")
+                return {**dict(row[0]), "status": "awaiting_result", "runtime_receipt": receipt}
+
+        return self._run_with_connection_retry("mark_hermes_turn_awaiting_result", operation)
+
+    def record_hermes_turn_delivery_failure(
+        self, request_id: str, *, owner_token: str, failure_code: str,
+        retryable: bool, failed_at: str,
+    ) -> dict[str, Any]:
+        target_status = "queued" if retryable else "failed"
+
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,owner_token=NULL,claimed_at=NULL,lease_expires_at=NULL,"
+                        "failure_code=%s,updated_at=%s WHERE request_id=%s AND status='active' "
+                        "AND owner_token=%s RETURNING request_payload"
+                    ).format(self._table("support_hermes_turn_requests")),
+                    (target_status, failure_code, failed_at, request_id, owner_token),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes turn delivery")
+                return {**dict(row[0]), "status": target_status, "failure_code": failure_code}
+
+        return self._run_with_connection_retry("record_hermes_turn_delivery_failure", operation)
 
     def claim_next_hermes_turn(self, *, owner_token: str, claimed_at: str, lease_expires_at: str) -> dict[str, Any] | None:
         return self._claim_hermes_turn(None, owner_token, claimed_at, lease_expires_at)
@@ -900,7 +1108,7 @@ class PostgresHermesCaseRepositoryMixin:
                     or int(request["conversation_version"]) != int(output["conversation_version"])
                     or request.get("hermes_session_id") != binding.get("hermes_session_id")
                     or int(request["session_binding_version"]) != int(binding["binding_version"])
-                    or request_status != "active"
+                    or request_status not in {"active", "awaiting_result"}
                 ):
                     reason = "stale_lineage"
                 if reason:
@@ -1179,6 +1387,66 @@ class PostgresHermesCaseRepositoryMixin:
                 cur.execute(sql.SQL("INSERT INTO {} (promotion_id, engineer_case_id, episode, ledger_revision, promotion_payload, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,'awaiting_transport',%s,%s) ON CONFLICT (promotion_id) DO NOTHING").format(self._table("support_hermes_case_promotions")), (promotion["promotion_id"], promotion["engineer_case_id"], promotion["episode"], promotion["ledger_revision"], Json(promotion), now_value, now_value))
                 cur.execute(sql.SQL("UPDATE {} SET status='closed', updated_at=%s WHERE engineer_case_id=%s").format(self._table("support_hermes_case_bindings")), (now_value, promotion["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='closed', updated_at=%s WHERE engineer_case_id=%s").format(self._table("support_hermes_case_ledgers")), (now_value, promotion["engineer_case_id"]))
-                cur.execute(sql.SQL("UPDATE {} SET status='cancelled', updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active')").format(self._table("support_hermes_turn_requests")), (now_value, promotion["engineer_case_id"]))
+                cur.execute(sql.SQL("UPDATE {} SET status='cancelled', updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active','awaiting_result')").format(self._table("support_hermes_turn_requests")), (now_value, promotion["engineer_case_id"]))
                 return {**copy.deepcopy(promotion), "updated_at": now_value}
         return self._run_with_connection_retry("close_hermes_case", operation)
+
+    def list_hermes_promotions(self) -> list[dict[str, Any]]:
+        def operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL(
+                    "SELECT promotion_payload,status,owner_token,claimed_at,lease_expires_at,"
+                    "runtime_receipt,failure_code FROM {} ORDER BY created_at,promotion_id"
+                ).format(self._table("support_hermes_case_promotions")))
+                return [{
+                    **dict(row[0]), "status": row[1], "owner_token": row[2],
+                    "claimed_at": _iso(row[3]) if row[3] else None,
+                    "lease_expires_at": _iso(row[4]) if row[4] else None,
+                    "runtime_receipt": dict(row[5]) if row[5] else None,
+                    "failure_code": row[6],
+                } for row in cur.fetchall()]
+        return self._run_with_connection_retry("list_hermes_promotions", operation)
+
+    def claim_hermes_promotion(
+        self, promotion_id: str, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL(
+                    """UPDATE {} SET status='active',owner_token=%s,claimed_at=%s,
+                    lease_expires_at=%s,updated_at=%s WHERE promotion_id=%s AND
+                    (status='awaiting_transport' OR (status='active' AND lease_expires_at<=%s))
+                    RETURNING promotion_payload"""
+                ).format(self._table("support_hermes_case_promotions")), (
+                    owner_token, claimed_at, lease_expires_at, claimed_at, promotion_id, claimed_at,
+                ))
+                row = cur.fetchone()
+                return None if row is None else {
+                    **dict(row[0]), "status": "active", "owner_token": owner_token,
+                    "claimed_at": claimed_at, "lease_expires_at": lease_expires_at,
+                }
+        return self._run_with_connection_retry("claim_hermes_promotion", operation)
+
+    def complete_hermes_promotion_delivery(
+        self, promotion_id: str, *, owner_token: str, status: str,
+        receipt: dict[str, Any] | None, failure_code: str | None, completed_at: str,
+    ) -> dict[str, Any]:
+        if status not in {"accepted", "failed", "outcome_unknown"}:
+            raise ValueError("invalid Hermes promotion delivery status")
+
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL(
+                    """UPDATE {} SET status=%s,runtime_receipt=%s,failure_code=%s,
+                    lease_expires_at=NULL,updated_at=%s WHERE promotion_id=%s AND status='active'
+                    AND owner_token=%s RETURNING promotion_payload"""
+                ).format(self._table("support_hermes_case_promotions")), (
+                    status, Json(receipt) if receipt is not None else None, failure_code,
+                    completed_at, promotion_id, owner_token,
+                ))
+                row = cur.fetchone()
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes promotion delivery")
+                return {**dict(row[0]), "status": status,
+                        "runtime_receipt": receipt, "failure_code": failure_code}
+        return self._run_with_connection_retry("complete_hermes_promotion_delivery", operation)

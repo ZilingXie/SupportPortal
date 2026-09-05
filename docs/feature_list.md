@@ -91,7 +91,7 @@
 - revise 不再自动跑 Plan/Execute/Review replan，也不再强制 max 2 retries，只保留可编辑/重新走 guardrail 的行为。
 - Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。
 - Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。
-- Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。
+- Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 或受控 real Runtime 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。
 - Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ pinned Persona 首封只称 "this request"、说明内部审核中并承诺我们 24 小时内回复，经仅含当前 intent 合同的语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。
 - Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。
 

@@ -1,0 +1,230 @@
+{
+  "$defs": {
+    "HermesHumanAuthority": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "authorize_round",
+            "accept_and_finish",
+            "start_suggested_round",
+            "stop_investigation"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "actor_id": {
+          "minLength": 1,
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "authority_event_id": {
+          "minLength": 1,
+          "title": "Authority Event Id",
+          "type": "string"
+        },
+        "created_at": {
+          "minLength": 1,
+          "title": "Created At",
+          "type": "string"
+        },
+        "target_digest": {
+          "minLength": 1,
+          "title": "Target Digest",
+          "type": "string"
+        },
+        "target_round_id": {
+          "minLength": 1,
+          "title": "Target Round Id",
+          "type": "string"
+        },
+        "target_version": {
+          "minimum": 1,
+          "title": "Target Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "authority_event_id",
+        "actor_id",
+        "action",
+        "target_round_id",
+        "target_version",
+        "target_digest",
+        "created_at"
+      ],
+      "title": "HermesHumanAuthority",
+      "type": "object"
+    },
+    "HermesTurnInput": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_criteria": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Completion Criteria",
+          "type": "array"
+        },
+        "investigation_scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Investigation Scope"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "problem_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Problem Description"
+        }
+      },
+      "title": "HermesTurnInput",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "client_ticket_id": {
+      "minLength": 1,
+      "title": "Client Ticket Id",
+      "type": "string"
+    },
+    "conversation_version": {
+      "minimum": 0,
+      "title": "Conversation Version",
+      "type": "integer"
+    },
+    "created_at": {
+      "minLength": 1,
+      "title": "Created At",
+      "type": "string"
+    },
+    "data_boundary": {
+      "const": "curated_case_context",
+      "title": "Data Boundary",
+      "type": "string"
+    },
+    "engineer_case_id": {
+      "minLength": 1,
+      "title": "Engineer Case Id",
+      "type": "string"
+    },
+    "episode": {
+      "minimum": 1,
+      "title": "Episode",
+      "type": "integer"
+    },
+    "hermes_conversation_key": {
+      "minLength": 1,
+      "title": "Hermes Conversation Key",
+      "type": "string"
+    },
+    "hermes_session_id": {
+      "minLength": 1,
+      "title": "Hermes Session Id",
+      "type": "string"
+    },
+    "human_authority": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HermesHumanAuthority"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "input": {
+      "$ref": "#/$defs/HermesTurnInput"
+    },
+    "investigation_id": {
+      "minLength": 1,
+      "title": "Investigation Id",
+      "type": "string"
+    },
+    "request_id": {
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_binding_version": {
+      "minimum": 1,
+      "title": "Session Binding Version",
+      "type": "integer"
+    },
+    "slack_channel_id": {
+      "minLength": 1,
+      "title": "Slack Channel Id",
+      "type": "string"
+    },
+    "slack_thread_ts": {
+      "minLength": 1,
+      "title": "Slack Thread Ts",
+      "type": "string"
+    },
+    "turn_kind": {
+      "enum": [
+        "opening",
+        "engineer_feedback",
+        "round_authority",
+        "reopen",
+        "stop"
+      ],
+      "title": "Turn Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "engineer_case_id",
+    "client_ticket_id",
+    "investigation_id",
+    "hermes_conversation_key",
+    "hermes_session_id",
+    "episode",
+    "conversation_version",
+    "turn_kind",
+    "input",
+    "slack_channel_id",
+    "slack_thread_ts",
+    "session_binding_version",
+    "data_boundary",
+    "human_authority",
+    "created_at"
+  ],
+  "title": "HermesTurnRequest",
+  "type": "object"
+}

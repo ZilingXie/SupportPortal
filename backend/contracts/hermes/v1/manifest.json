@@ -1,0 +1,21 @@
+{
+  "bundle": "HermesCaseContracts.v1",
+  "bundle_hash": "24ca5687392935dc35ace46421f50d84b2b63f8e2867a16a3b7b793e9819a209",
+  "files": {
+    "fixtures/invalid/output-model-route-field.json": "9176922b7cfda4eb4cac960fc0f4aba24c2614c2d6169c70a41330efecf622c9",
+    "fixtures/invalid/output-result-with-action.json": "6aaa3dbb047dd52b6713a36c21ff995e0b524fdba6b3ae72a700b0f89944b232",
+    "fixtures/invalid/promotion-bad-hash.json": "c1268ef0549bbd3ec0dbf7cbb13f60d8f51445d2336fde9db06728c23fd2fed4",
+    "fixtures/invalid/promotion-guardrail-failed.json": "90350871589a4112f3c348ab9e769c28ad4ca717bc8c94a7dd67d3ae9ad44130",
+    "fixtures/invalid/promotion-restricted-identifier.json": "ea555b92bdbfe191d2e24436e39de0f10edd0a5e3a5da1195d5de6aa4af407a1",
+    "fixtures/invalid/promotion-stale-revision.json": "7628913abfab5e11e3fbcfac497631b8f1940d70ccc06cc62c8ff264d74f0261",
+    "fixtures/invalid/turn-legacy-route-fields.json": "b2b3bfee9ee608c5dade8863543222fd87f92de6e0eea9f99cf71fac0e5a55de",
+    "fixtures/invalid/turn-null-session.json": "be6c8f638c3d97781287b465c3d750f7a6870d637441a12c90838ff25a05d1ef",
+    "fixtures/invalid/turn-wake-kind.json": "a5a9106cfe81bb8eb18d913e162994596e96065e2be026d86c7f967d67c0cdb8",
+    "fixtures/valid/output-investigation-result.json": "4f40ccf02821f3e7be24785caf4a5b32f2e88234ef7d8fbfd83e85d12ab0cf8e",
+    "fixtures/valid/promotion-closed.json": "3397691c826447f722f7ee381bd6a33208ad94af8fd0617c7697e2bccdc273cc",
+    "fixtures/valid/turn-opening.json": "b89cf13946ecdee1e64e0ab8413291aceeaa3f46b7ccd2e9f88948ef15c2dba9",
+    "schemas/CaseKnowledgePromotion.v1.schema.json": "d448d4c98054c50173b278bbf6f3b9888a48db44f47caa8d3688f3dfc8505864",
+    "schemas/HermesInvestigationOutput.v1.schema.json": "1e18e7308f322ec2f04c357d194867e6750d547dd214e3b8dabc49b4e710e30f",
+    "schemas/HermesTurnRequest.v1.schema.json": "b3ee6c162ba7f5b75657a9107f7da0cfd8279e548ed196593c7934fec9462c86"
+  }
+}
