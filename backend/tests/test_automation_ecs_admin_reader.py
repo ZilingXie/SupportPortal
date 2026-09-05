@@ -250,3 +250,17 @@ def test_account_runtime_preflight_includes_every_admin_source_table() -> None:
         "support_prompt_versions",
         "support_prompt_releases",
     } <= ACCOUNT_RUNTIME_TABLES
+
+
+def test_hermes_tables_are_part_of_ecs_runtime_schema_contract() -> None:
+    assert {
+        "support_hermes_case_bindings",
+        "support_hermes_case_ledgers",
+        "support_hermes_turn_requests",
+        "support_hermes_outputs",
+        "support_hermes_rejection_receipts",
+        "support_hermes_summary_snapshots",
+        "support_hermes_human_authority_events",
+        "support_hermes_close_reviews",
+        "support_hermes_case_promotions",
+    } <= ACCOUNT_RUNTIME_TABLES

@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from backend.scripts.automation_ecs_deploy import (
+    render_schema_bootstrap_task_definition,
     render_task_definition,
     validate_suspension_recipients,
     validate_promotion,
@@ -145,6 +146,137 @@ def test_render_task_definition_only_changes_image_and_provenance(tmp_path: Path
     assert rendered["volumes"][0]["name"] == "graph-token-cache"
     assert "taskDefinitionArn" not in rendered
     assert "revision" not in rendered
+
+
+def test_render_task_definition_explicitly_sets_hermes_mode_on_api_and_worker(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    for role in ("api", "worker"):
+        rendered = render_task_definition(
+            role=role,
+            current_path=_task_definition(tmp_path, role),
+            manifest_path=manifest,
+            registry_id="123456789012",
+            region="us-east-1",
+            hermes_case_workflow_mode="mock",
+        )
+        environment = {
+            item["name"]: item["value"]
+            for item in rendered["containerDefinitions"][0]["environment"]
+        }
+        assert environment["HERMES_CASE_WORKFLOW_MODE"] == "mock"
+
+    route = render_task_definition(
+        role="route",
+        current_path=_task_definition(tmp_path, "route"),
+        manifest_path=manifest,
+        registry_id="123456789012",
+        region="us-east-1",
+        hermes_case_workflow_mode="mock",
+    )
+    route_environment = {
+        item["name"]: item["value"]
+        for item in route["containerDefinitions"][0]["environment"]
+    }
+    assert "HERMES_CASE_WORKFLOW_MODE" not in route_environment
+
+
+def test_render_schema_bootstrap_uses_api_image_and_secret_references(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    payload["taskDefinition"]["containerDefinitions"][0]["healthCheck"] = {
+        "command": ["CMD-SHELL", "curl -f http://localhost/health"]
+    }
+    current.write_text(json.dumps(payload), encoding="utf-8")
+    reference = (
+        "arn:aws:ssm:us-east-1:123456789012:"
+        "parameter/supportportal/production/automation-db-migration-dsn"
+    )
+
+    rendered = render_schema_bootstrap_task_definition(
+        current_path=current,
+        manifest_path=manifest,
+        registry_id="123456789012",
+        region="us-east-1",
+        migration_secret_reference=reference,
+    )
+
+    assert rendered["family"] == "supportportal-production-schema-bootstrap"
+    container = rendered["containerDefinitions"][0]
+    assert container["image"].endswith("@sha256:" + "1" * 64)
+    assert container["command"] == [
+        "python",
+        "-m",
+        "backend.scripts.automation_ecs_bootstrap",
+        "bootstrap",
+    ]
+    assert container["portMappings"] == []
+    assert "healthCheck" not in container
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    assert secrets["AUTOMATION_DB_MIGRATION_DSN"] == reference
+    assert secrets["TICKET_DB_MIGRATION_DSN"] == reference
+
+    with pytest.raises(ValueError, match="SSM parameter ARN"):
+        render_schema_bootstrap_task_definition(
+            current_path=current,
+            manifest_path=manifest,
+            registry_id="123456789012",
+            region="us-east-1",
+            migration_secret_reference="postgresql://must-not-enter-task-definition",
+        )
+
+
+def test_render_schema_bootstrap_rejects_duplicate_migration_secret(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    duplicate = {
+        "name": "AUTOMATION_DB_MIGRATION_DSN",
+        "valueFrom": "arn:aws:ssm:us-east-1:123456789012:parameter/old",
+    }
+    container["secrets"] = [duplicate, dict(duplicate)]
+    current.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate secret"):
+        render_schema_bootstrap_task_definition(
+            current_path=current,
+            manifest_path=manifest,
+            registry_id="123456789012",
+            region="us-east-1",
+            migration_secret_reference=(
+                "arn:aws:ssm:us-east-1:123456789012:"
+                "parameter/supportportal/production/automation-db-migration-dsn"
+            ),
+        )
+
+
+def test_render_task_definition_rejects_duplicate_hermes_mode(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    duplicate = {"name": "HERMES_CASE_WORKFLOW_MODE", "value": "disabled"}
+    container["environment"].extend([duplicate, dict(duplicate)])
+    current.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate environment"):
+        render_task_definition(
+            role="api",
+            current_path=current,
+            manifest_path=manifest,
+            registry_id="123456789012",
+            region="us-east-1",
+            hermes_case_workflow_mode="mock",
+        )
 
 
 def test_render_worker_rejects_pilot_and_missing_suspension_secret(tmp_path: Path) -> None:
@@ -316,6 +448,12 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "--check-only" in script
     assert "run_terraform_zero_plan" in script
     assert "--defer-activation" in script
+    assert "--bootstrap-account-schema" in script
+    assert "--hermes-case-workflow-mode" in script
+    assert "Hermes mock activation requires --bootstrap-account-schema" in script
+    assert "render-schema-bootstrap-task-definition" in script
+    assert "AUTOMATION_DB_MIGRATION_DSN" not in script
+    assert "TICKET_DB_MIGRATION_DSN" not in script
     assert "--target-dsn" not in script
     assert "PROMPT_RELEASE_TARGET_DSN=" in script
     assert '[[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"' in script
@@ -347,12 +485,22 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     ) in script
     check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = main_script.index("backend.scripts.prompt_release sync")
+    schema_bootstrap = main_script.index("run_schema_bootstrap")
+    service_registration = main_script.index("for role in api route worker", schema_bootstrap)
+    reconcile_bootstrap = script.index("reconcile_schema_bootstrap_checkpoint")
+    run_bootstrap = script.index("run_schema_bootstrap()")
     register = script.index("aws ecs register-task-definition")
     optional_tags = script.index("register_args+=(--tags")
     assert 'jq \'length\' "${tags_path}"' in script
     assert optional_tags < register
     update_service = main_script.index("update_role_if_needed")
     assert check_only < prompt_sync
+    assert prompt_sync < schema_bootstrap
+    assert schema_bootstrap < service_registration
+    assert reconcile_bootstrap < run_bootstrap < register
+    assert "Schema bootstrap checkpoint task definition family mismatch" in script
+    assert "Schema bootstrap checkpoint task definition mismatch" in script
+    assert "schema bootstrap superseded by validated deploy resume" in script
     assert check_only < register
     assert check_only < update_service
     assert '"${ACTIVATION_STARTED}" = "0"' in script
@@ -362,12 +510,47 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "run_parallel_post_deploy_checks" in script
     assert "automation-ecs-deploy-checkpoint-v1" in script
     assert "automation-ecs-deploy-evidence-v1" in script
+    assert 'schema-bootstrap.task-arn' in script
+    assert 'schema-bootstrap.task-definition-arn' in script
+    assert 'schema_bootstrap_task_arn:$schema_task_arn' in script
+    assert 'schema_bootstrap_task_definition:$schema_task_definition' in script
     assert "taskDefinition.status" in script
     assert "--resume" in script
     assert "Release evidence:" in script
     assert 'ROLLBACK_STATUS="succeeded"' in script
     assert 'ROLLBACK_STATUS="failed"' in script
     assert 'write_evidence "rollback_incomplete"' in script
+
+
+def test_hermes_mock_cli_requires_explicit_schema_bootstrap() -> None:
+    rejected = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; parse_args --hermes-case-workflow-mode mock',
+            "bash",
+            str(DEPLOY_SCRIPT),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert rejected.returncode != 0
+    assert "requires --bootstrap-account-schema" in rejected.stderr
+
+    accepted = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; parse_args --bootstrap-account-schema --hermes-case-workflow-mode mock',
+            "bash",
+            str(DEPLOY_SCRIPT),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert accepted.returncode == 0, accepted.stderr
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -514,3 +697,93 @@ prepare_deploy_workspace
     mismatch = subprocess.run([*args, "1"], cwd=ROOT, env=env, text=True, capture_output=True)
     assert mismatch.returncode != 0
     assert "checkpoint identity does not match" in mismatch.stderr
+
+
+def test_resume_reconciles_only_matching_schema_bootstrap_checkpoint(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    call_log = tmp_path / "aws-calls.log"
+    definition_arn = (
+        "arn:aws:ecs:us-east-1:123456789012:task-definition/"
+        "supportportal-production-schema-bootstrap:1"
+    )
+    task_arn = (
+        "arn:aws:ecs:us-east-1:123456789012:task/"
+        "supportportal-production/bootstrap-task"
+    )
+    _write_executable(
+        fake_bin / "aws",
+        """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["AWS_CALL_LOG"], "a", encoding="utf-8") as handle:
+    handle.write(" ".join(args) + "\\n")
+if args[:2] == ["ecs", "describe-task-definition"]:
+    print(os.environ["TEST_BOOTSTRAP_FAMILY"])
+elif args[:2] == ["ecs", "describe-tasks"]:
+    print(json.dumps({"tasks": [{"lastStatus": "RUNNING", "taskDefinitionArn": os.environ["TEST_BOOTSTRAP_DEFINITION"]}]}))
+elif args[:2] == ["sts", "get-caller-identity"]:
+    print("{}")
+elif args[:3] == ["configure", "export-credentials", "--format"]:
+    print("{}")
+else:
+    print("{}")
+""",
+    )
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    task_path = state_dir / "schema-bootstrap.task-arn"
+    definition_path = state_dir / "schema-bootstrap.task-definition-arn"
+    task_path.write_text(task_arn + "\n", encoding="utf-8")
+    definition_path.write_text(definition_arn + "\n", encoding="utf-8")
+    shell = """
+source "$1"
+RESUME=1
+TEMP_DIR="$2"
+REGION=us-east-1
+CLUSTER=supportportal-production
+PYTHON_BIN="$3"
+AWS_MIN_CREDENTIAL_TTL_SECONDS=0
+reconcile_schema_bootstrap_checkpoint
+"""
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "AWS_CALL_LOG": str(call_log),
+        "TEST_BOOTSTRAP_FAMILY": "supportportal-production-schema-bootstrap",
+        "TEST_BOOTSTRAP_DEFINITION": definition_arn,
+    }
+    env.pop("AWS_SESSION_TOKEN", None)
+    result = subprocess.run(
+        ["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(state_dir), sys.executable],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not task_path.exists()
+    assert not definition_path.exists()
+    calls = call_log.read_text(encoding="utf-8")
+    assert "ecs stop-task" in calls
+    assert "ecs wait tasks-stopped" in calls
+    assert "ecs deregister-task-definition" in calls
+
+    task_path.write_text(task_arn + "\n", encoding="utf-8")
+    definition_path.write_text(definition_arn + "\n", encoding="utf-8")
+    call_log.write_text("", encoding="utf-8")
+    rejected = subprocess.run(
+        ["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(state_dir), sys.executable],
+        cwd=ROOT,
+        env={**env, "TEST_BOOTSTRAP_FAMILY": "unrelated-family"},
+        text=True,
+        capture_output=True,
+    )
+    assert rejected.returncode != 0
+    assert "family mismatch" in rejected.stderr
+    rejected_calls = call_log.read_text(encoding="utf-8")
+    assert "ecs stop-task" not in rejected_calls
+    assert "ecs deregister-task-definition" not in rejected_calls

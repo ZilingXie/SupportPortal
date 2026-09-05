@@ -18,6 +18,9 @@ TERRAFORM_DIR="${AUTOMATION_TERRAFORM_DIR:-${PROJECT_ROOT}/infra/terraform/produ
 TERRAFORM_BIN="${AUTOMATION_TERRAFORM_BIN:-terraform}"
 CHECK_ONLY=0
 RESUME=0
+BOOTSTRAP_ACCOUNT_SCHEMA=0
+HERMES_CASE_WORKFLOW_MODE=""
+SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-/supportportal/production/automation-db-migration-dsn}"
 TEMP_DIR=""
 STATE_DIR=""
 REMOVE_TEMP_DIR=0
@@ -45,6 +48,9 @@ PUBLIC_HEALTH_STATUS="not_started"
 CLOUDWATCH_STATUS="not_started"
 EC2_BACKUP_STATUS="not_started"
 ROLLBACK_STATUS="not_started"
+SCHEMA_BOOTSTRAP_STATUS="not_requested"
+SCHEMA_BOOTSTRAP_TASK_DEFINITION=""
+SCHEMA_BOOTSTRAP_TASK_ARN=""
 
 log() { printf '[ecs-deploy] %s\n' "$*"; }
 fail() { printf '[ecs-deploy] ERROR: %s\n' "$*" >&2; return 1; }
@@ -56,6 +62,10 @@ Usage:
     --manifest <release-manifest.json> \
     --promotion-record <promotion-record.json> [--check-only | --resume]
 
+Optional activation gates:
+  --bootstrap-account-schema
+  --hermes-case-workflow-mode <disabled|mock>
+
 Both modes require the read-only source TICKET_DB_DSN. Deploy mode additionally
 requires DEPLOY_PRODUCTION_APPROVED=1 and PROMPT_RELEASE_TARGET_DSN. DSN values
 are never passed in argv, logged, or written to the Release Manifest or
@@ -66,6 +76,10 @@ registers task definitions, or updates ECS services.
 
 --resume reuses a release-scoped checkpoint only after revalidating its input
 fingerprints, registered task definitions, running revisions, and image digests.
+
+Hermes mock activation requires --bootstrap-account-schema. The one-off
+bootstrap uses the release API image and the existing migration SecureString;
+the DSN is never read into this process or stored in deployment evidence.
 EOF
 }
 
@@ -82,6 +96,8 @@ parse_args() {
       --base-url) [[ $# -ge 2 ]] || fail "--base-url requires a value"; BASE_URL="${2%/}"; shift 2 ;;
       --ec2-backup-url) [[ $# -ge 2 ]] || fail "--ec2-backup-url requires a value"; EC2_BACKUP_URL="$2"; shift 2 ;;
       --terraform-dir) [[ $# -ge 2 ]] || fail "--terraform-dir requires a value"; TERRAFORM_DIR="$2"; shift 2 ;;
+      --bootstrap-account-schema) BOOTSTRAP_ACCOUNT_SCHEMA=1; shift ;;
+      --hermes-case-workflow-mode) [[ $# -ge 2 ]] || fail "--hermes-case-workflow-mode requires a value"; HERMES_CASE_WORKFLOW_MODE="$2"; shift 2 ;;
       --check-only) CHECK_ONLY=1; shift ;;
       --resume) RESUME=1; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -89,6 +105,10 @@ parse_args() {
     esac
   done
   [[ "${CHECK_ONLY}" = "0" || "${RESUME}" = "0" ]] || fail "--check-only and --resume are mutually exclusive"
+  [[ -z "${HERMES_CASE_WORKFLOW_MODE}" || "${HERMES_CASE_WORKFLOW_MODE}" = "disabled" || "${HERMES_CASE_WORKFLOW_MODE}" = "mock" ]] \
+    || fail "--hermes-case-workflow-mode must be disabled or mock"
+  [[ "${HERMES_CASE_WORKFLOW_MODE}" != "mock" || "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] \
+    || fail "Hermes mock activation requires --bootstrap-account-schema"
 }
 
 file_sha256() {
@@ -138,7 +158,9 @@ checkpoint_identity() {
     --arg api_service "${API_SERVICE}" \
     --arg route_service "${ROUTE_SERVICE}" \
     --arg worker_service "${WORKER_SERVICE}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,promotion_sha256:$promotion_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service}}'
+    --arg schema_bootstrap "${BOOTSTRAP_ACCOUNT_SCHEMA}" \
+    --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,promotion_sha256:$promotion_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode}'
 }
 
 prepare_deploy_workspace() {
@@ -189,7 +211,7 @@ read_optional_file() {
 }
 
 write_evidence() {
-  local status="$1" role old_arn new_arn verified expected_digest components prompt_build_ref prompt_fingerprint generated_at
+  local status="$1" role old_arn new_arn verified expected_digest components prompt_build_ref prompt_fingerprint generated_at schema_task_arn schema_task_definition
   [[ -n "${STATE_DIR}" && -d "${STATE_DIR}" ]] || return 0
   components='{}'
   for role in api route worker; do
@@ -205,6 +227,8 @@ write_evidence() {
   done
   prompt_build_ref="$(jq -r '.identity.build_ref // ""' "${STATE_DIR}/prompt-sync.json" 2>/dev/null || true)"
   prompt_fingerprint="$(jq -r '.identity.content_fingerprint // ""' "${STATE_DIR}/prompt-sync.json" 2>/dev/null || true)"
+  schema_task_arn="$(read_optional_file "${STATE_DIR}/schema-bootstrap.task-arn")"
+  schema_task_definition="$(read_optional_file "${STATE_DIR}/schema-bootstrap.task-definition-arn")"
   generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   jq -n -S \
     --arg schema_version "automation-ecs-deploy-evidence-v1" \
@@ -230,8 +254,12 @@ write_evidence() {
     --arg cloudwatch "${CLOUDWATCH_STATUS}" \
     --arg ec2_backup "${EC2_BACKUP_STATUS}" \
     --arg rollback "${ROLLBACK_STATUS}" \
+    --arg schema_bootstrap "${SCHEMA_BOOTSTRAP_STATUS}" \
+    --arg schema_task_arn "${schema_task_arn}" \
+    --arg schema_task_definition "${schema_task_definition}" \
+    --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
 }
@@ -249,6 +277,11 @@ prune_success_artifacts() {
       "${STATE_DIR}/${role}.tags.json"
   done
   rm -f -- "${STATE_DIR}/public-health.log" "${STATE_DIR}/cloudwatch.log" "${STATE_DIR}/ec2-backup.log"
+  rm -f -- \
+    "${STATE_DIR}/schema-bootstrap.register.json" \
+    "${STATE_DIR}/schema-bootstrap.network.json" \
+    "${STATE_DIR}/schema-bootstrap.tags.json" \
+    "${STATE_DIR}/schema-bootstrap.task.json"
 }
 
 rollback_services() {
@@ -277,9 +310,23 @@ rollback_services() {
   return 1
 }
 
+cleanup_schema_bootstrap() {
+  if [[ -n "${SCHEMA_BOOTSTRAP_TASK_ARN}" && "${SCHEMA_BOOTSTRAP_STATUS}" != "passed" ]]; then
+    aws ecs stop-task --region "${REGION}" --cluster "${CLUSTER}" \
+      --task "${SCHEMA_BOOTSTRAP_TASK_ARN}" \
+      --reason "schema bootstrap deploy command ended before success" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" ]]; then
+    aws ecs deregister-task-definition --region "${REGION}" \
+      --task-definition "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" >/dev/null 2>&1 || true
+    SCHEMA_BOOTSTRAP_TASK_DEFINITION=""
+  fi
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
+  cleanup_schema_bootstrap
   if [[ ${status} -ne 0 ]]; then
     if [[ "${ACTIVATION_STARTED}" = "1" ]]; then
       ROLLBACK_STATUS="not_applicable"
@@ -323,6 +370,135 @@ read_secret_value() {
   fi
 }
 
+render_role_task_definition() {
+  local role="$1" current_path="$2" output_path="$3"
+  local -a args
+  args=(
+    --role "${role}"
+    --current "${current_path}"
+    --manifest "${MANIFEST_PATH}"
+    --registry-id "${REGISTRY_ID}"
+    --region "${REGION}"
+    --output "${output_path}"
+  )
+  if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
+    args+=(--hermes-case-workflow-mode "${HERMES_CASE_WORKFLOW_MODE}")
+  fi
+  "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
+    render-task-definition "${args[@]}" >/dev/null
+}
+
+prepare_schema_bootstrap() {
+  [[ "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] || return 0
+  local migration_reference
+  migration_reference="$(aws ssm get-parameter --region "${REGION}" \
+    --name "${SCHEMA_MIGRATION_PARAMETER}" \
+    --query 'Parameter.ARN' --output text)"
+  [[ -n "${migration_reference}" && "${migration_reference}" != "None" ]] \
+    || fail "Production schema migration parameter is missing"
+  "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
+    render-schema-bootstrap-task-definition \
+    --current "${TEMP_DIR}/api.current.json" \
+    --manifest "${MANIFEST_PATH}" \
+    --registry-id "${REGISTRY_ID}" \
+    --region "${REGION}" \
+    --migration-secret-reference "${migration_reference}" \
+    --output "${TEMP_DIR}/schema-bootstrap.register.json" >/dev/null
+  aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
+    --services "${API_SERVICE}" \
+    --query 'services[0].networkConfiguration' \
+    --output json >"${TEMP_DIR}/schema-bootstrap.network.json"
+  [[ "$(jq -r '.awsvpcConfiguration.subnets | length' "${TEMP_DIR}/schema-bootstrap.network.json")" -gt 0 ]] \
+    || fail "API service network configuration is unavailable for schema bootstrap"
+  SCHEMA_BOOTSTRAP_STATUS="validated"
+}
+
+reconcile_schema_bootstrap_checkpoint() {
+  [[ "${RESUME}" = "1" ]] || return 0
+  local task_path definition_path previous_task previous_definition definition_family
+  local task_json task_status task_definition
+  task_path="${TEMP_DIR}/schema-bootstrap.task-arn"
+  definition_path="${TEMP_DIR}/schema-bootstrap.task-definition-arn"
+  previous_task="$(read_optional_file "${task_path}")"
+  previous_definition="$(read_optional_file "${definition_path}")"
+  [[ -n "${previous_task}" || -n "${previous_definition}" ]] || return 0
+  [[ -n "${previous_definition}" ]] \
+    || fail "Schema bootstrap checkpoint has a task without its task definition"
+  definition_family="$(aws ecs describe-task-definition --region "${REGION}" \
+    --task-definition "${previous_definition}" \
+    --query 'taskDefinition.family' --output text)"
+  [[ "${definition_family}" = "supportportal-production-schema-bootstrap" ]] \
+    || fail "Schema bootstrap checkpoint task definition family mismatch"
+  if [[ -n "${previous_task}" ]]; then
+    task_json="$(aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
+      --tasks "${previous_task}")"
+    task_status="$(jq -r '.tasks[0].lastStatus // ""' <<<"${task_json}")"
+    task_definition="$(jq -r '.tasks[0].taskDefinitionArn // ""' <<<"${task_json}")"
+    [[ -z "${task_definition}" || "${task_definition}" = "${previous_definition}" ]] \
+      || fail "Schema bootstrap checkpoint task definition mismatch"
+    if [[ "${task_status}" = "PENDING" || "${task_status}" = "RUNNING" ]]; then
+      verify_aws_credential_lifetime
+      aws ecs stop-task --region "${REGION}" --cluster "${CLUSTER}" \
+        --task "${previous_task}" \
+        --reason "schema bootstrap superseded by validated deploy resume" >/dev/null
+      aws ecs wait tasks-stopped --region "${REGION}" --cluster "${CLUSTER}" \
+        --tasks "${previous_task}"
+    fi
+  fi
+  aws ecs deregister-task-definition --region "${REGION}" \
+    --task-definition "${previous_definition}" >/dev/null
+  rm -f -- "${task_path}" "${definition_path}" "${TEMP_DIR}/schema-bootstrap.task.json"
+  log "Reconciled previous schema bootstrap checkpoint before retry"
+}
+
+run_schema_bootstrap() {
+  [[ "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] || return 0
+  local tags_path task_result_path exit_code reason
+  local -a register_args
+  reconcile_schema_bootstrap_checkpoint
+  tags_path="${TEMP_DIR}/schema-bootstrap.tags.json"
+  jq '.tags // []' "${TEMP_DIR}/api.current.json" >"${tags_path}"
+  register_args=(
+    --region "${REGION}"
+    --cli-input-json "file://${TEMP_DIR}/schema-bootstrap.register.json"
+    --query 'taskDefinition.taskDefinitionArn'
+    --output text
+  )
+  if [[ "$(jq 'length' "${tags_path}")" -gt 0 ]]; then
+    register_args+=(--tags "file://${tags_path}")
+  fi
+  verify_aws_credential_lifetime
+  SCHEMA_BOOTSTRAP_TASK_DEFINITION="$(aws ecs register-task-definition "${register_args[@]}")"
+  [[ -n "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" && "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" != "None" ]] \
+    || fail "Schema bootstrap task definition registration failed"
+  printf '%s\n' "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" >"${TEMP_DIR}/schema-bootstrap.task-definition-arn"
+  SCHEMA_BOOTSTRAP_TASK_ARN="$(aws ecs run-task --region "${REGION}" \
+    --cluster "${CLUSTER}" --launch-type FARGATE \
+    --task-definition "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" \
+    --network-configuration "file://${TEMP_DIR}/schema-bootstrap.network.json" \
+    --count 1 --query 'tasks[0].taskArn' --output text)"
+  [[ -n "${SCHEMA_BOOTSTRAP_TASK_ARN}" && "${SCHEMA_BOOTSTRAP_TASK_ARN}" != "None" ]] \
+    || fail "Schema bootstrap task did not start"
+  printf '%s\n' "${SCHEMA_BOOTSTRAP_TASK_ARN}" >"${TEMP_DIR}/schema-bootstrap.task-arn"
+  aws ecs wait tasks-stopped --region "${REGION}" --cluster "${CLUSTER}" \
+    --tasks "${SCHEMA_BOOTSTRAP_TASK_ARN}"
+  task_result_path="${TEMP_DIR}/schema-bootstrap.task.json"
+  aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
+    --tasks "${SCHEMA_BOOTSTRAP_TASK_ARN}" >"${task_result_path}"
+  exit_code="$(jq -r '.tasks[0].containers[] | select(.name == "api") | .exitCode // empty' "${task_result_path}")"
+  if [[ "${exit_code}" != "0" ]]; then
+    reason="$(jq -r '.tasks[0].stoppedReason // .tasks[0].containers[0].reason // "unknown"' "${task_result_path}")"
+    fail "Schema bootstrap task failed (exit=${exit_code:-unknown}, reason=${reason})"
+    return 1
+  fi
+  SCHEMA_BOOTSTRAP_STATUS="passed"
+  SCHEMA_BOOTSTRAP_TASK_ARN=""
+  aws ecs deregister-task-definition --region "${REGION}" \
+    --task-definition "${SCHEMA_BOOTSTRAP_TASK_DEFINITION}" >/dev/null
+  SCHEMA_BOOTSTRAP_TASK_DEFINITION=""
+  log "Production Account schema bootstrap passed"
+}
+
 verify_running_task() {
   local role="$1" service="$2" task_definition_arn="$3" expected_digest="$4"
   local task_arn observed_definition observed_digest
@@ -348,10 +524,7 @@ reuse_registered_task_definition() {
   aws ecs describe-task-definition --region "${REGION}" --task-definition "${arn}" \
     --include TAGS >"${registered_path}" || return 1
   [[ "$(jq -r '.taskDefinition.status // ""' "${registered_path}")" = "ACTIVE" ]] || return 1
-  "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy render-task-definition \
-    --role "${role}" --current "${registered_path}" \
-    --manifest "${MANIFEST_PATH}" --registry-id "${REGISTRY_ID}" --region "${REGION}" \
-    --output "${rendered_path}" >/dev/null || return 1
+  render_role_task_definition "${role}" "${registered_path}" "${rendered_path}" || return 1
   jq -S . "${TEMP_DIR}/${role}.register.json" >"${expected_path}"
   jq -S . "${rendered_path}" >"${actual_path}"
   cmp -s "${expected_path}" "${actual_path}" || return 1
@@ -431,6 +604,10 @@ verify_public_runtime() {
   [[ "$(jq -r '.provenance.git_commit' <<<"${release_json}")" = "${GIT_COMMIT}" ]] || fail "ECS Git commit mismatch"
   [[ "$(jq -r '.provenance.prompt_release_id' <<<"${release_json}")" = "${PROMPT_RELEASE_ID}" ]] || fail "ECS Prompt Release mismatch"
   [[ "$(jq -r '.provenance.build_time' <<<"${release_json}")" = "${BUILD_TIME}" ]] || fail "ECS build time mismatch"
+  if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
+    [[ "$(jq -r '.hermes_case_workflow.mode // ""' <<<"${release_json}")" = "${HERMES_CASE_WORKFLOW_MODE}" ]] \
+      || fail "ECS Hermes Case Workflow mode mismatch"
+  fi
 }
 
 run_parallel_post_deploy_checks() {
@@ -543,12 +720,11 @@ main() {
     fi
     aws ecs describe-task-definition --region "${REGION}" --task-definition "${baseline_arn}" \
       --include TAGS >"${TEMP_DIR}/${role}.current.json"
-    "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy render-task-definition \
-      --role "${role}" --current "${TEMP_DIR}/${role}.current.json" \
-      --manifest "${MANIFEST_PATH}" --registry-id "${REGISTRY_ID}" --region "${REGION}" \
-      --output "${TEMP_DIR}/${role}.register.json" >/dev/null
+    render_role_task_definition \
+      "${role}" "${TEMP_DIR}/${role}.current.json" "${TEMP_DIR}/${role}.register.json"
   done
   ECR_STATUS="passed"
+  prepare_schema_bootstrap
 
   local suspension_reference suspension_recipients_json
   suspension_reference="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .secrets[] | select(.name == "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON") | .valueFrom' "${TEMP_DIR}/worker.current.json")"
@@ -562,7 +738,7 @@ main() {
   curl -fsS "${EC2_BACKUP_URL}" >/dev/null || fail "EC2 /production backup health check failed"
   EC2_BACKUP_STATUS="passed"
   if [[ "${CHECK_ONLY}" = "1" ]]; then
-    log "Check-only passed; no Prompt Release, task definition, or ECS service was changed"
+    log "Check-only passed; no schema, Prompt Release, task definition, or ECS service was changed"
     return 0
   fi
 
@@ -583,6 +759,8 @@ main() {
     PROMPT_ACTIVATION_STATUS="active"
     log "Target Prompt Release is already active; failures require reconciliation rather than blind rollback"
   fi
+
+  run_schema_bootstrap
 
   for role in api route worker; do
     register_task_definition "${role}"

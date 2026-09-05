@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-05 - ECS release gate owns Hermes schema bootstrap and mock activation (p2-146)
+
+- Area or subsystem: ECS Production release tooling, Account runtime schema preflight, and Hermes Case Workflow activation.
+- Prompt or model version: No prompt, model, provider, or reasoning-effort change; Hermes contracts remain v1 and the only runnable producer remains `mock`.
+- Reason: PR #1069 added an opt-in PostgreSQL-only workflow, but the sole Production deploy command neither provisioned its tables nor had an approved way to set `HERMES_CASE_WORKFLOW_MODE`. Publishing the image alone would leave the feature disabled, while a manual task-definition edit would bypass immutable-release and rollback gates.
+- Tooling and behavior change: Explicit `--bootstrap-account-schema --hermes-case-workflow-mode mock` now renders a one-off API-image bootstrap task using the existing migration SecureString reference, runs it before any Service update, injects mock mode only into API/Worker, and verifies the public release marker. Default deploy behavior stays disabled; mock without bootstrap fails before AWS writes.
+- Security and rollback: Migration DSN values never enter argv, logs, Manifest, Promotion Record, checkpoint, or evidence. The additive schema remains after a later Service rollback; old images ignore the new tables. A failed bootstrap updates no Service and its temporary task definition is deregistered. Resume validates the prior bootstrap family/task pair, stops any still-running task, deregisters its revision, clears stale markers, and then retries the idempotent migration.
+- Verification: renderer, secret-reference, explicit-mode, schema-table and deploy-order tests pass; shell syntax and the broader ECS/Account regression suite are required before finalization.
+
 ## 2026-09-05 - Hermes Case Workflow uses typed mock output before Persona (p2-146)
 
 - Area or subsystem: Production technical Engineer Case investigation, Summary Guardrail, Persona assembly, and Slack human actions.

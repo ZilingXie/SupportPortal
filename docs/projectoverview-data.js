@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-04T20:29:20Z",
-  "source_base_commit": "1b6ed8839795d62fe56d94b417a1d4749564bb0e",
-  "registry_digest": "7efff94737b254a5c9014f333393244a1d93214da142f4a03a9cb281b363038a",
+  "generated_at": "2026-09-05T05:21:36Z",
+  "source_base_commit": "90ea7446af2fa525ebdbabffda3a36d04661904c",
+  "registry_digest": "a30c9d1f63838a6d6d739afefc58d2701d068978a4e9a73341a6ee87fe83f9c2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2776,6 +2776,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "External acceptance intentionally not run",
           "details": "未部署 Production，未运行 preproduction mock canary，未发送真实 Slack/Zendesk/客户消息，未执行真实 Hermes/AgentRelay 调查、历史回填、L0 capture 或真实知识晋升。"
+        },
+        {
+          "type": "decision",
+          "label": "Owner approved latest-main Production mock release",
+          "details": "2026-09-05 用户明确要求发布最新main并测试全部当前能力，授权本轮执行Production schema migration、正式三角色release与HERMES_CASE_WORKFLOW_MODE=mock activation；工单创建仍由用户执行，真实Hermes/AgentRelay与知识promotion sink不在本次能力范围。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes schema and activation release gates",
+          "details": "正式deploy新增显式bootstrap+mock组合门禁：API镜像一次性task仅引用既有migration SecureString ARN，服务更新前完成幂等DDL；API/Worker注入mock、Route不注入，公网release marker必须readback一致。Hermes九张表加入runtime schema preflight；中断后resume会先验证并清理旧bootstrap task再幂等重跑。deploy/admin/bootstrap定向测试30 passed；Hermes/Persona/Account/ECS整合回归293 passed + 65 subtests；隔离PostgreSQL回归7 passed且临时schema已清理。"
         },
         {
           "type": "test",
@@ -10483,7 +10493,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
       "summary": "为 technical Account Case 复用既有 Engineer Case，按 Slack 根消息后异步 mock Hermes 的顺序建立持久 conversation/session、typed output/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed 生命周期；Case 调查账本仅存 PostgreSQL 字段并按需渲染 Markdown，不使用 EFS 或 Git 文件。",
-      "next_action": "代码与本地 PostgreSQL 验证完成后保持 workflow 默认 disabled；等待单独授权执行 preproduction mock canary、Production schema migration/activation、真实 Slack/Zendesk readback、真实 Hermes/AgentRelay 接入和 promotion sink 验收。",
+      "next_action": "用户已授权发布最新 main 并测试全部当前能力。先 finalize 正式 schema/bootstrap + mock activation 门禁，再从合并后的最新 main 构建并部署 ECS Production release；发布后等待用户新建 technical Case，核对唯一 Engineer Case/Slack thread、mock output、Summary/Persona/Approve 与 Zendesk readback。真实 Hermes/AgentRelay 接入和 promotion sink 仍待单独实现与授权。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -10491,7 +10501,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "当前 frozen summary 仅在规范化完整值精确等于 Investigation result: test 时 Summary Guardrail pass 且 reason=test；Persona、确定性客户回复检查、人工 Approve、Zendesk revision/readback 和幂等 outbox 均不能绕过。",
         "Case 账本只保存 PostgreSQL 五段语义字段和 revision；读取时渲染 Markdown，不存在文件名、artifact path、EFS 或 Git Markdown。误判方向保留并标记纠正证据。",
         "solved 仅保存 close review draft，reopen 复用同 Case/Slack thread/Markdown renderer/session 并递增 episode，closed 仅在 review/guardrail/sanitization 有效时创建 awaiting_transport promotion；调查期间不产生 L0。",
-        "真实 preproduction/production、Hermes、AgentRelay、Slack/Zendesk 和知识 sink 未经单独授权不执行，未运行项与风险在最终报告中明确列出。"
+        "Production schema migration、mock activation和新 Case验收仅在用户明确授权后执行；真实 Hermes、AgentRelay 和知识 sink仍需单独实现与授权，未运行项与风险在最终报告中明确列出。"
       ],
       "blockers": [],
       "evidence": [
@@ -10514,6 +10524,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "External acceptance intentionally not run",
           "details": "未部署 Production，未运行 preproduction mock canary，未发送真实 Slack/Zendesk/客户消息，未执行真实 Hermes/AgentRelay 调查、历史回填、L0 capture 或真实知识晋升。"
+        },
+        {
+          "type": "decision",
+          "label": "Owner approved latest-main Production mock release",
+          "details": "2026-09-05 用户明确要求发布最新main并测试全部当前能力，授权本轮执行Production schema migration、正式三角色release与HERMES_CASE_WORKFLOW_MODE=mock activation；工单创建仍由用户执行，真实Hermes/AgentRelay与知识promotion sink不在本次能力范围。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes schema and activation release gates",
+          "details": "正式deploy新增显式bootstrap+mock组合门禁：API镜像一次性task仅引用既有migration SecureString ARN，服务更新前完成幂等DDL；API/Worker注入mock、Route不注入，公网release marker必须readback一致。Hermes九张表加入runtime schema preflight；中断后resume会先验证并清理旧bootstrap task再幂等重跑。deploy/admin/bootstrap定向测试30 passed；Hermes/Persona/Account/ECS整合回归293 passed + 65 subtests；隔离PostgreSQL回归7 passed且临时schema已清理。"
         }
       ],
       "history": [
@@ -10526,6 +10546,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "implementation_verified",
           "summary": "完成默认 disabled 的 PostgreSQL-only workflow、typed callback/authority transport、版本围栏与生命周期本地验证；Task 因外部验收未授权继续保持 active。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "production_release_authorized",
+          "summary": "用户授权发布最新main并测试当前全部能力；开始补齐唯一正式ECS deploy的schema bootstrap和mock activation门禁，完成后将发布Production并停在用户创建新technical Case之前。"
         }
       ],
       "legacy_ids": [],
@@ -10539,7 +10564,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/repositories/hermes_case_repository.py",
         "backend/repositories/ticket_repository.py",
         "backend/worker.py",
-        "backend/automation_ecs_api.py"
+        "backend/automation_ecs_api.py",
+        "backend/scripts/automation_ecs_deploy.py",
+        "backend/services/automation_ecs_schema.py",
+        "deployment/deploy_automation_ecs_release.sh",
+        "docs/deploy_automation_ecs_release.md"
       ]
     },
     {

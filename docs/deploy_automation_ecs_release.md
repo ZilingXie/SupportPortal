@@ -258,6 +258,36 @@ Release，不会 register task definition，也不会 update ECS service。它�
 Manifest 或 Promotion Record。获得单独生产授权后执行同一命令但移除
 `--check-only`。
 
+包含 PostgreSQL-only Hermes Case Workflow 的 release 在明确批准 mock 验收时还必须
+使用同一正式命令的两个显式门禁：
+
+```bash
+./deployment/deploy_automation_ecs_release.sh \
+  --manifest .deployments/releases/<release_id>/release-manifest.json \
+  --promotion-record .deployments/releases/<release_id>/promotion-record.json \
+  --bootstrap-account-schema \
+  --hermes-case-workflow-mode mock \
+  --check-only
+```
+
+`mock` 必须与 `--bootstrap-account-schema` 同时出现，否则发布在任何 AWS 写入前
+fail closed。check-only 只验证 migration SecureString 元数据、API Service 网络配置和
+一次性 task definition 渲染，不读取 migration DSN 值、不注册 task、不改 schema。
+正式模式在更新三个 Service 前，以本 release 的 API OCI digest运行一次
+`backend.scripts.automation_ecs_bootstrap bootstrap`；一次性 task复用当前 API 的
+IAM、网络和日志配置，仅通过 ECS secret reference注入
+`AUTOMATION_DB_MIGRATION_DSN`与`TICKET_DB_MIGRATION_DSN`。成功后注销临时 task
+definition；失败则不更新 Service。Hermes mode仅注入 API和Worker，Route不接收；
+API发布后必须从 `/health/release.hermes_case_workflow.mode` 回读相同值。
+
+若 deploy 进程在一次性 task 运行期间被中断，`--resume` 会先验证 checkpoint 中的
+task definition family 和 task 归属，停止仍在运行的旧 task、注销旧 revision 并清除
+旧 marker，然后重新执行幂等 bootstrap；归属不一致时 fail closed，不操作该资源。
+
+该 bootstrap 的 DDL是幂等加法，完成后不会因后续 ECS revision回滚而删除；旧镜像
+不读取新增表，因此服务回滚仍安全。默认不传这两个参数时，原有发布行为和
+`HERMES_CASE_WORKFLOW_MODE=disabled` 合同保持不变。
+
 部署开始前会执行 AWS identity 与凭据寿命预检。可读取 expiration 时默认要求至少
 剩余 2700 秒，并在每次 register/update/wait 边界前重新检查；可通过
 `AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS` 提高门槛。若当前 shell 导出了
@@ -313,12 +343,14 @@ DynamoDB backend lock，并在 60 秒内无法取得锁时阻断发布。
 1. 要求真实 production Terraform refresh plan 为 exit `0`；exit `1/2` 都阻断发布。
 2. 校验源 Prompt Release，将目标同步为 candidate，并在状态切换前比较 build ref
    与完整 `prompt_key + content_sha256` 指纹；目标本地 version remap 允许存在。
-3. 从三个 service 当前 revision 克隆 task definition，只替换 image 和五个 provenance
-   字段；逐角色注册新 revision。
-4. 先更新 Route、Worker，共同等待 stable、核对运行 digest 和最新 heartbeat provenance；
+3. 若显式请求 schema bootstrap，使用目标 API digest运行一次受控 migration task；
+   只有 exit 0才继续。
+4. 从三个 service 当前 revision 克隆 task definition，只替换 image、五个 provenance
+   字段和显式批准的 Hermes mode；逐角色注册新 revision。
+5. 先更新 Route、Worker，共同等待 stable、核对运行 digest 和最新 heartbeat provenance；
    再更新 API。
-5. 核对公网 live/release/ready、三个运行 digest、CloudWatch 和 EC2 backup。
-6. 全部健康后才激活目标 Prompt Release，并立即 validate/readback active 状态。
+6. 核对公网 live/release/ready、Hermes mode、三个运行 digest、CloudWatch 和 EC2 backup。
+7. 全部健康后才激活目标 Prompt Release，并立即 validate/readback active 状态。
 
 Prompt 激活前任一步失败，命令按 API/Worker/Route 反序恢复已更新 service 的旧
 revision。激活命令一旦开始但结果不确定，不盲目回滚健康新栈或重复激活；命令返回
