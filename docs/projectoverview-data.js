@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T14:31:39Z",
-  "source_base_commit": "82c74dd871725d40070e654d5c7d5dc109a7c1a3",
-  "registry_digest": "57e2ad51b6f0b726dc9b91a7bfbe956d186e18cf125efa6f55f3a4a46bb10370",
+  "generated_at": "2026-09-05T14:38:05Z",
+  "source_base_commit": "560d30b6dcbcc719ab3cd8c242bc5f8f572772c4",
+  "registry_digest": "bfd3d54c56398fc0f4ab7d6ea06acc96ae850ce64530665e8d637a93336d01fe",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -10584,7 +10584,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-05",
       "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。代码默认 disabled，现网仍为此前批准的 mock 配置，本次联合修复未部署。",
-      "next_action": "保持 active；先完成四个内部 PR 的联合 Review，再按 Server、MCP、hermes-deploy、SupportPortal 顺序另行授权合并。Production schema activation、真实 zac-agent、Slack/Zendesk、TencentDB 和 Hermes 部署及新 technical Case验收均需单独授权。",
+      "next_action": "保持 active；联合修复按 Server、MCP、MemoryCore、hermes-deploy、SupportPortal 顺序完成合并后，Production schema activation、真实 zac-agent、Slack/Zendesk、TencentDB 和 Hermes 部署及新 technical Case 验收仍需单独授权。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
