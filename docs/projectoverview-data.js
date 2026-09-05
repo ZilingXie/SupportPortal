@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-05T13:08:17Z",
-  "source_base_commit": "5c1dd571c51ca827b510eef150050bc0c7d5e5b1",
-  "registry_digest": "b279cc10fb8a9055fa7038a8a5bb4e1e44799ab21b631c73c8638a463bf45029",
+  "generated_at": "2026-09-05T14:20:52Z",
+  "source_base_commit": "d2fe9223f55402d27f8b22cca0b74f016f25b805",
+  "registry_digest": "34512f3ecc07d53199caefc9347e190aa5064f4bb6d9edbb5a24069f199cd635",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2508,6 +2508,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS-only UI contract verified",
           "details": "2026-09-05：`node --check ui/workspace-ui/admin/app.js` 通过；`backend/tests/test_workspace_admin_ui_contract.py` 30 passed，验证 ECS pathname 即使收到 model_pricing 也不渲染 strip，同时既有 Workspace Admin pricing 与 token/cost 详情契约继续通过；Project Overview 与 Feature List 校验通过。"
+        },
+        {
+          "type": "test",
+          "label": "Public cache diagnosis",
+          "details": "2026-09-05：ECS Production 已运行包含 PR #1075 的 r20260905-d2fe922，公网 app.js 已包含 ECS-only 短路，但 index.html 仍使用旧 asset version，已打开标签页可继续复用旧脚本；提升共享 Admin asset version 以强制刷新。"
         }
       ],
       "source_refs": [
@@ -10675,6 +10680,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ECS-only UI contract verified",
           "details": "2026-09-05：`node --check ui/workspace-ui/admin/app.js` 通过；`backend/tests/test_workspace_admin_ui_contract.py` 30 passed，验证 ECS pathname 即使收到 model_pricing 也不渲染 strip，同时既有 Workspace Admin pricing 与 token/cost 详情契约继续通过；Project Overview 与 Feature List 校验通过。"
+        },
+        {
+          "type": "test",
+          "label": "Public cache diagnosis",
+          "details": "2026-09-05：ECS Production 已运行包含 PR #1075 的 r20260905-d2fe922，公网 app.js 已包含 ECS-only 短路，但 index.html 仍使用旧 asset version，已打开标签页可继续复用旧脚本；提升共享 Admin asset version 以强制刷新。"
         }
       ],
       "history": [
@@ -10687,6 +10697,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-05",
           "event": "implementation_verified",
           "summary": "ECS-only 条件渲染与双路径 UI 契约验证完成；任务保持 active，等待合并、本地官方栈和公网 Production 验收。"
+        },
+        {
+          "at": "2026-09-05",
+          "event": "public_cache_followup",
+          "summary": "公网新 JS 已上线但旧 asset version 导致已打开标签页继续显示 pricing strip；增加 cache-busting 版本更新。"
         }
       ],
       "legacy_ids": [],
