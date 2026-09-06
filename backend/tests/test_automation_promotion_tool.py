@@ -278,6 +278,7 @@ def _run_codebuild_direct(
             "AUTOMATION_RELEASE_PYTHON": sys.executable,
             "PROMOTION_TEST_STATE": str(state),
             "PROMOTION_TEST_SOURCE_MISMATCH": source_mismatch,
+            "DEPLOY_PRODUCTION_APPROVED": "1",
         }
     )
     args = [
@@ -414,6 +415,7 @@ def test_codebuild_direct_production_validates_publish_record_before_registry_co
             "PATH": f"{fake_bin}:{environment['PATH']}",
             "AUTOMATION_RELEASE_PYTHON": sys.executable,
             "PROMOTION_TEST_STATE": str(state),
+            "DEPLOY_PRODUCTION_APPROVED": "1",
         }
     )
     result = subprocess.run(
