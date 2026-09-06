@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-06 - Persona publishes directly after deterministic safety checks (p2-144)
+
+- Area or subsystem: Account Automation Persona generation, reply-job audit metadata, and Worker publication.
+- Prompt or model version: `automation-persona-v27` -> `automation-persona-v28`; independent `automation-persona-review-v2` removed; model profile unchanged (`automation_persona`, currently `gpt-5.6-luna/low`).
+- Reason: Production Case 13314 produced a usable Fraud missing-information reply plan but the independent semantic Reviewer rejected both bounded rounds with `intent_policy_violation`. The Reviewer was enforcing soft completeness and wording preferences as a publication gate, creating false Human Review transitions after the Persona had already received authoritative structured facts.
+- Behavior change: Route and handlers continue to build `reply_facts`; one pinned Persona writes the complete body with a single provider attempt. Missing-information labels, Enablement timing, Fraud/Suspension commitments, redundancy, and phrasing remain prompt guidance and no longer block publication. Only a deterministic hard safety or format failure can return enumerated feedback to the same Persona for one complete rewrite; a second safety failure or any model failure transitions to Human Review before public delivery.
+- Publication boundary: Worker persists generation attempts and safety status/issue codes, removes stale `persona_review_*` metadata on rerender, rechecks account contracts plus source-external identifiers at publication, and never changes the persisted content. Greeting, RAG references, attachments, and transport formatting remain application-owned envelopes.
+- Historical boundary: published v27 jobs are unchanged; unpublished stale jobs use the existing prompt-version fence; manual-attention Case 13314 is not replayed or modified.
+
 ## 2026-09-06 - ECS deploy waits for the requested task revision (p1-53)
 
 - Area or subsystem: ECS release deployment and rollback convergence gate.

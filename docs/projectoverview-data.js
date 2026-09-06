@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T06:16:26Z",
-  "source_base_commit": "0591a71a72ee000b7a801de37ad31f262c0b2125",
-  "registry_digest": "f14daf4d6e7c4e3b0efb6647dba60989fe9b29fabefde0e03d5e437916764294",
+  "generated_at": "2026-09-06T07:22:08Z",
+  "source_base_commit": "b22a3c900c9ac2fffafd37c3857a17187409a3a8",
+  "registry_digest": "1501403957b07db3c3955a3b396e5d0922a288176fc27098bf8d1de869eb3977",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1006,6 +1006,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "v25 release deployed to ECS Production",
           "command": "formal deploy for r20260904-1f13334 and ECS/public health/Prompt Release readback",
           "details": "main@1f13334ea2dc的三角色digest已部署到API/Route/Worker revision 28/23/26，均1/1/0且COMPLETED；Prompt Release pr-c9b3a291ecf1 active，公网live/release/ready与heartbeat provenance通过。运行镜像已含v25和移除reviewer通知实现；真实Suspension邮件数、客户文案、assign与未solved合同待全新工单readback。"
+        },
+        {
+          "type": "test",
+          "label": "Persona v28 direct-publication regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_ai_execution.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_test_scenarios.py",
+          "details": "458 passed + 127 subtests。覆盖正常一次 Persona 调用且 max_attempts=1、软性 missing-information/SLA/24h/冗余不阻断、硬安全首稿失败后二稿整段重写、二稿失败与模型异常转 Human Review、Unicode apostrophe、安全值与来源值、Worker generation/safety metadata、发布前重复安全检查、正文原样持久化与发布、RAG/Engineer/Suspension/version-fence 回归；runtime 已无 automation_persona_review 调用。Feature List、Project Overview write/check 与 git diff --check 同步通过。"
         },
         {
           "type": "test",
@@ -10178,13 +10184,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
-      "updated_at": "2026-09-03",
+      "updated_at": "2026-09-06",
       "summary": "按用户 2026-09-03 决策将 production suspension 链路改为一段式：legacy /production 与 ECS /automation/production 的新单均严格校验工单邮箱，intake 发内部 handoff 邮件，确认 sent 后才建唯一 account_suspension_handoff_and_close job，首封公开回复确认收到并承诺24h，发布后assign复审人且不关单。共享 helper 持久化 intake_mode=direct_handoff、confirmed_email_source=ticket_email、delivery key和job id；缺失/非法邮箱、邮件failed/outcome_unknown或job创建失败均在客户回复前进入Human Review。Preproduction与存量 awaiting_contact_confirmation 继续旧两段式续跑。persona语义已由p2-141的v23安全地板融合取代v22，问候逗号与不solved合同保持；原确定性24h补句和assign后reviewer通知后来分别由p2-144和p2-143取代。EC2 /production 已通过全新工单 AC-13254 完成业务和外部readback并关闭本task；ECS运行面继续由p2-141/p2-143/p2-144跟踪。",
       "next_action": "",
       "acceptance_criteria": [
         "production suspension 新单一封到位：邮箱 gate→内部邮件（先于 reply job）→唯一 handoff job→公开回复'已收到+24h'（Hi {name},）→assign 复审人+human_review_required+不关单。",
         "无邮箱/邮件失败/outcome_unknown/job 创建失败均 fail-closed 掉人工（workflow+case 同步 human_review_required），无客户面输出。",
-        "p2-140 当时以确定性补句恢复缺失承诺；该机制已由 p2-144 的独立语义 Reviewer + 同一 Persona 整段重写取代，Worker 不再写 persona_contract_repair。",
+        "p2-140 当时以确定性补句恢复缺失承诺；该机制已由 p2-144 的 Persona 正文所有权取代。24h 是 reply_facts/prompt 指导，不再由 Reviewer 或代码业务正则阻断；Worker 不再写 persona_contract_repair。",
         "direct rerun/reroute 按 intake_mode 分流不问邮箱；存量 awaiting/已确认两条旧路径测试仍绿；direct 四状态后续客户回复 no-op。",
         "runbook/ECS status/feature_list 描述与行为一致（限定 Production 新单）；prompt_change_log v21→v22 条目在案。"
       ],
@@ -10244,12 +10250,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
-      "updated_at": "2026-09-05",
-      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除句式级 blocking 正则，保留合同归一化/空响应/签名/禁值/engineer 源值/将来时误导/appid overclaim与suspension肯定close/archive/reopen禁令；当时保留的missing-info、enablement与suspension三类确定性拼装已由p2-144的v26正文不可变+LLM Reviewer整体取代。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
-      "next_action": "保持 active。delivery-key preclaim 与 p2-144 v26/review-v1 已上线；等待用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 Persona/Reviewer 通过稿→assign→未 solved。13289/13291/13292 保留审计，不重放、不补发、不修改。",
+      "updated_at": "2026-09-06",
+      "summary": "按用户 2026-09-03 决策四线并进（与同日另一线程的 p2-140 suspension 一段式重构融合，persona v22→v23 取代其 suspension 范围放宽）：①persona prompt v22→v23，生产阻断降为安全地板——删除句式级 blocking 正则，保留合同归一化/空响应/签名/禁值/engineer 源值/将来时误导/appid overclaim与suspension肯定close/archive/reopen禁令；当时保留的missing-info、enablement与suspension三类确定性拼装已由p2-144的Persona正文不可变取代，v28进一步删除独立语义Reviewer，仅在硬安全失败时由同一Persona整段重写一次。②共享称呼投影 resolve_customer_greeting_name（最新客户评论作者→case 名→requester→Customer 逐候选验证），应用 API/ECS 双实现全部出稿口，消息 meta 落 author_name/author_kind。③persona 一次分配：route pin 后随 ProcessingJobPayload.persona 由 ECS worker 原样透传（resolver 零调用），旧栈入口 resolve 一次复用。④本任务曾加入的 suspension assign 后 reviewer 通知邮件已由用户在 p2-143 明确移除；direct handoff 内部邮件仍保留且必须 sent 后才创建 closing job。顺带：route_preparation 首轮草稿删 close/reopen；剧本验收与生产 validator 解耦（wait_event 支持 state、acceptance-only 正文检查、S1 适配 p2-140 一段式并修复过期 solved 断言）。",
+      "next_action": "保持 active。delivery-key preclaim 已上线；等待 p2-144 v28 发布后由用户创建全新 Suspension 工单，验收持久化 delivery key→内部邮件 sent→唯一 Persona 安全通过稿→assign→未 solved。13289/13291/13292 保留审计，不重放、不补发、不修改。",
       "acceptance_criteria": [
-        "自然语言样本由语义 Reviewer 审稿；缺失或重复要点只触发同一 pinned Persona 一次整段重写，Worker 不再确定性补句。",
-        "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）；missing-info 的字段完整性与时长语义由 p2-144 Reviewer 判断。",
+        "自然语言要点由 reply_facts 与当前 intent prompt 指导，独立语义 Reviewer 已移除；只有硬安全失败可触发同一 pinned Persona 一次整段重写，Worker 不再确定性补句。",
+        "安全地板逐项 fail-closed：禁值、签名、appid overclaim、将来时误导、suspension 肯定 close/archive/reopen（否定句与 close the loop 类措辞不误杀）；missing-info 字段完整性与时长语义不再由代码或 Reviewer 阻断。",
         "多客户工单称呼取当条客户消息作者名（双实现），无效逐级回退；消息 meta 带 author_name/author_kind。",
         "ECS 评论路径 payload.persona 逐字段进入四个 reply job 出口且 resolver 零调用；旧栈入口 resolve 一次复用。",
         "suspension 收尾链：内部 handoff 邮件 sent→唯一公开回复→assign reviewer（事件 assigned）且无 zendesk_reviewer_notify_email 事件、不写 workflow.reviewer_notify_email；工单未 solved。",
@@ -10391,14 +10397,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-03",
-      "updated_at": "2026-09-05",
-      "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；该语义由p2-144的v26 Persona+review-v1继续保留。②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用收件人且 assign 结构上必然晚于 handoff 邮件 sent，故永远冗余。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
-      "next_action": "保持 active；p2-144 v26/review-v1 已发布，等待用户提供全新 ECS Account Suspension 工单号；核对首封只称 'this request' 且无重复24h、owner 仅收分类通知与handoff两封邮件、assign后无reviewer通知、工单未solved，通过后置done。",
+      "updated_at": "2026-09-06",
+      "summary": "AC-13258 复测后用户两项修正：①首封回复指代定死为 'this request'——合同加明确规则（不得在回复中点名 account suspension 类别）、closing_reply_facts.performed_actions 中性化为 'Submitted the request for internal review.'（根因：LLM 从 facts 复述类别词渲染出 'this account suspension request'）、prompt v24→v25；该语义由p2-144的Persona正文所有权继续保留，v28已移除独立语义Reviewer。②整体移除 p2-141 的 suspension assign 后 reviewer 通知邮件（_notify_suspension_reviewer_by_email 函数+唯一调用点+zendesk_reviewer_notify_email 事件+死 import）——它与 p2-140 内部 handoff 邮件共用收件人且 assign 结构上必然晚于 handoff 邮件 sent，故永远冗余。存量 case 的 reviewer_notify_email 字段保留不清理（仅不再写入）；S1 剧本删 notify 等待步骤。",
+      "next_action": "保持 active；等待 p2-144 v28 发布后由用户提供全新 ECS Account Suspension 工单号；核对首封只称 'this request' 且无重复24h、owner 仅收分类通知与handoff两封邮件、assign后无reviewer通知、工单未solved，通过后置done。",
       "acceptance_criteria": [
         "首封回复三要素保持（感谢提交/内部审核/we 24h），指代 'this request'，全文无 suspension 类别词。",
         "assign 后无 reviewer 通知邮件、无 zendesk_reviewer_notify_email 事件、workflow 不再写 reviewer_notify_email；assign/pending 不关单链路不变。",
         "owner 邮件数=2（分类通知+handoff 邮件）。",
-        "p2-144 发布后 v26/review-v1 生效并保留本任务的去类别词合同；prompt_change_log 条目在案。"
+        "p2-144 v28 单次 Persona 链路生效并保留本任务的去类别词合同；prompt_change_log 条目在案。"
       ],
       "blockers": [],
       "evidence": [
@@ -10445,26 +10451,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-144",
-      "title": "Persona 正文不可变 + LLM 语义审稿 + Unicode apostrophe 安全地板",
+      "title": "Persona 正文不可变 + 移除语义 Reviewer + Unicode apostrophe 安全地板",
       "status": "active",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-05",
-      "updated_at": "2026-09-05",
-      "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句；v26/review-v1 已完成正文不可变与有界语义审稿。随后 Case 13302 暴露第二个 prompt 根因：RAG 当前 intent 被无条件拼入 Submission Confirmation 与 Missing-information 合同，两轮都因 intent_policy_violation 拒绝。v27/review-v2 将共享约束与 current-intent policy 隔离，Persona 和 Reviewer 只按当前 intent 合同工作；调用预算、Human Review、安全地板、Worker 原样发布和应用外壳保持不变。",
-      "next_action": "ECS Production 已运行 v27/review-v2；等待用户提供全新 RAG follow-up 与 Account Suspension 工单号后进行业务验收追踪。不得代替用户创建工单，不重放或回复历史工单。",
+      "updated_at": "2026-09-06",
+      "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona 并加入有界 Reviewer。Case 13302 推动 v27 隔离 current-intent policy，但 Production Case 13314 仍被独立 Reviewer 以 intent_policy_violation 连续误拒，虽然 Handler 已提供结构化 Fraud missing-information facts。v28 因此删除所有 render_automation_reply 路径的 LLM Reviewer：Handler 提供 reply_facts，pinned Persona 一次生成最终正文，代码只执行硬安全/格式拒绝，Worker 原样发布；仅首稿硬安全失败时允许同一 Persona 整段重写一次。",
+      "next_action": "完成 v28 合并、本地 official stack marker 和 ECS Production immutable release；随后等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收。不得代替用户创建工单，不重放或回复 13314。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
-        "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
-        "Reviewer 使用现有 Automation Persona model profile 和固定 review-v2 prompt，只接收当前 intent policy，并严格输出 pass/revise、枚举 issue codes 与 feedback；拒稿和自由文本 feedback 不持久化。",
+        "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
+        "只有硬安全或格式错误允许把枚举 issue code 和固定修改要求交回同一 Persona 整段重写一次；第二稿仍失败或模型异常时在发布前原子转 Human Review。",
         "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
-        "Worker payload 停止写 persona_contract_repair，改写 passed/rounds/reviewer model/review prompt version/issue codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
-        "ECS Production 发布 v27/review-v2 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；真实业务验收只使用用户后续创建的新工单。"
+        "Worker payload 停止写 persona_contract_repair 与 persona_review_*，改写 generation_attempts/safety_status/safety_issue_codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
+        "ECS Production 发布 v28 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；新任务不再产生 automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Persona v28 direct-publication regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_ai_execution.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_test_scenarios.py",
+          "details": "458 passed + 127 subtests。覆盖正常一次 Persona 调用且 max_attempts=1、软性 missing-information/SLA/24h/冗余不阻断、硬安全首稿失败后二稿整段重写、二稿失败与模型异常转 Human Review、Unicode apostrophe、安全值与来源值、Worker generation/safety metadata、发布前重复安全检查、正文原样持久化与发布、RAG/Engineer/Suspension/version-fence 回归；runtime 已无 automation_persona_review 调用。Feature List、Project Overview write/check 与 git diff --check 同步通过。"
+        },
         {
           "type": "test",
           "label": "Persona immutable-body and Worker review metadata regression",
@@ -10502,6 +10514,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "reviewer_removed_for_direct_persona_publication",
+          "summary": "v28 删除独立 LLM Reviewer；正常一次 Persona，只有硬安全失败允许一次整段重写，Worker 记录 generation/safety metadata 并在发布前只读复检。等待 finalize、本地栈与 ECS Production 发布。"
+        },
         {
           "at": "2026-09-05",
           "event": "implementation_finalized",
@@ -16140,7 +16157,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。",
         "production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
-        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；Persona 只接收共享约束与当前 intent 的合同，独立 LLM Reviewer 只按同一 current-intent policy 审稿，最多提供一轮结构化 feedback 让同一 Persona 整段重写。Worker 不补写、裁剪或改写通过稿；应用只添加 greeting、RAG 引用、附件与传输格式，生成或审稿失败时在客户发布前转 Human Review。",
+        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 一次性完整生成；缺字段、SLA、24h 与措辞要求由当前 intent 的结构化 facts 和 prompt 指导，不再经过独立 LLM Reviewer。代码只对硬安全或格式错误拒绝并允许同一 Persona 整段重写一次；Worker 不补写、裁剪或改写正文，应用只添加 greeting、RAG 引用、附件与传输格式。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",
@@ -16197,7 +16214,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 通过两段 approve 机制避免直接自动回复客户：第一次 approve 触发 deterministic guardrail 校验，第二次 final approve 才发送客户回复并关闭工单。final approve 后会写入 closure audit event（`engineer_case_closed_after_customer_reply`），并把处理结果记录为 Case Memory candidate；candidate 默认不可检索（`retrieval_enabled=False`）且不会自动晋升 active memory（`active_memory_status=inactive`）。",
         "Engineer AI 会在 final approve 后生成 replay eval dataset candidate，包含 summary packet、review decision、replan/revise 轨迹和 approved reply。",
         "Production technical Case 复用唯一 Engineer Case 和 Slack thread，通过 PostgreSQL-only Hermes Case Workflow 支持异步 mock 或受控 real Runtime 调查、同 session 反馈、Summary Guardrail/Persona/确定性 Guardrail/Approve 版本门禁及 solved/reopen/closed 生命周期；代码默认 disabled，ECS Production 当前显式启用 mock。",
-        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ pinned Persona 首封只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复，经仅含当前 intent 合同的语义审稿后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
+        "Production Fraud Account 的最终 handoff 在 Zendesk 客户回复确认后通过 n8n 通知 Slack；Production Account Suspension（p2-140 起的新单）不再问联系邮箱，一段式 direct handoff：intake 发内部 handoff 邮件（联系邮箱=工单邮箱）→ pinned Persona 根据当前 intent facts 生成首封，只称 \"this request\"、说明内部审核中并承诺我们 24 小时内回复 → 代码硬安全检查通过后由 Worker 原样发布 → 指派复审人但不再发送冗余 reviewer 通知（不关单），客户后续回复由人工处理。",
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
@@ -16229,7 +16246,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。",
         "Fraud Account 自动化通过公司 Outlook reply 接收内部处理结果。",
         "Detailed Invoice 仅保留 Account & Billing 分类，不进入 Automation 执行；既有自动化实现保留供未来启用。",
-        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；Reviewer 只返回 pass 或结构化 feedback，Worker 不修改正文，失败时转 Human Review。",
+        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 完整生成；代码硬安全检查只拒绝、不改写，Worker 原样发布，安全失败最多整段重写一次后转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",

@@ -1,26 +1,32 @@
 {
   "schema_version": 2,
   "task_id": "p2-144",
-  "title": "Persona 正文不可变 + LLM 语义审稿 + Unicode apostrophe 安全地板",
+  "title": "Persona 正文不可变 + 移除语义 Reviewer + Unicode apostrophe 安全地板",
   "status": "active",
   "owner": "zac",
   "phase_id": "phase-1",
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "created_at": "2026-09-05",
-  "updated_at": "2026-09-05",
-  "summary": "Case 13292 根因是 Persona 已用 Unicode 弯引号生成一次 24h 承诺，但 Worker 的 ASCII 正则误判缺失并确定性补写第二句；v26/review-v1 已完成正文不可变与有界语义审稿。随后 Case 13302 暴露第二个 prompt 根因：RAG 当前 intent 被无条件拼入 Submission Confirmation 与 Missing-information 合同，两轮都因 intent_policy_violation 拒绝。v27/review-v2 将共享约束与 current-intent policy 隔离，Persona 和 Reviewer 只按当前 intent 合同工作；调用预算、Human Review、安全地板、Worker 原样发布和应用外壳保持不变。",
-  "next_action": "ECS Production 已运行 v27/review-v2；等待用户提供全新 RAG follow-up 与 Account Suspension 工单号后进行业务验收追踪。不得代替用户创建工单，不重放或回复历史工单。",
+  "updated_at": "2026-09-06",
+  "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona 并加入有界 Reviewer。Case 13302 推动 v27 隔离 current-intent policy，但 Production Case 13314 仍被独立 Reviewer 以 intent_policy_violation 连续误拒，虽然 Handler 已提供结构化 Fraud missing-information facts。v28 因此删除所有 render_automation_reply 路径的 LLM Reviewer：Handler 提供 reply_facts，pinned Persona 一次生成最终正文，代码只执行硬安全/格式拒绝，Worker 原样发布；仅首稿硬安全失败时允许同一 Persona 整段重写一次。",
+  "next_action": "完成 v28 合并、本地 official stack marker 和 ECS Production immutable release；随后等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收。不得代替用户创建工单，不重放或回复 13314。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
-    "每轮一次 Persona 生成和一次 Reviewer 审稿；正常最多 2 次 LLM 调用，首轮 revise 后最多 4 次，第二轮失败或 Reviewer 异常均在发布前转 Human Review。",
-    "Reviewer 使用现有 Automation Persona model profile 和固定 review-v2 prompt，只接收当前 intent policy，并严格输出 pass/revise、枚举 issue codes 与 feedback；拒稿和自由文本 feedback 不持久化。",
+    "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
+    "只有硬安全或格式错误允许把枚举 issue code 和固定修改要求交回同一 Persona 整段重写一次；第二稿仍失败或模型异常时在发布前原子转 Human Review。",
     "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
-    "Worker payload 停止写 persona_contract_repair，改写 passed/rounds/reviewer model/review prompt version/issue codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
-    "ECS Production 发布 v27/review-v2 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；真实业务验收只使用用户后续创建的新工单。"
+    "Worker payload 停止写 persona_contract_repair 与 persona_review_*，改写 generation_attempts/safety_status/safety_issue_codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
+    "ECS Production 发布 v28 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；新任务不再产生 automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Persona v28 direct-publication regression",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_persona.py backend/tests/test_worker.py backend/tests/test_account_ai_execution.py backend/tests/test_account_intake.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_worker.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_test_scenarios.py",
+      "details": "458 passed + 127 subtests。覆盖正常一次 Persona 调用且 max_attempts=1、软性 missing-information/SLA/24h/冗余不阻断、硬安全首稿失败后二稿整段重写、二稿失败与模型异常转 Human Review、Unicode apostrophe、安全值与来源值、Worker generation/safety metadata、发布前重复安全检查、正文原样持久化与发布、RAG/Engineer/Suspension/version-fence 回归；runtime 已无 automation_persona_review 调用。Feature List、Project Overview write/check 与 git diff --check 同步通过。"
+    },
     {
       "type": "test",
       "label": "Persona immutable-body and Worker review metadata regression",
@@ -58,6 +64,11 @@
     }
   ],
   "history": [
+    {
+      "at": "2026-09-06",
+      "event": "reviewer_removed_for_direct_persona_publication",
+      "summary": "v28 删除独立 LLM Reviewer；正常一次 Persona，只有硬安全失败允许一次整段重写，Worker 记录 generation/safety metadata 并在发布前只读复检。等待 finalize、本地栈与 ECS Production 发布。"
+    },
     {
       "at": "2026-09-05",
       "event": "implementation_finalized",
