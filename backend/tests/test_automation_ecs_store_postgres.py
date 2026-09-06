@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg
@@ -12,6 +13,7 @@ from psycopg import sql
 from backend.automation_ecs_route_worker import RouteWorker
 from backend.repositories.ticket_repository import PostgresTicketRepository
 from backend.services.automation_ecs_contracts import DeliveryStatus, JobKind
+from backend.services.automation_ecs_contracts import SCHEMA_REVISION
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_store import PostgresAutomationEcsStore
 from backend.tests.test_automation_ecs_route_worker import _decision
@@ -51,6 +53,118 @@ def store() -> PostgresAutomationEcsStore:
     finally:
         with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
             cursor.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _migration_store(schema: str) -> PostgresAutomationEcsStore:
+    return PostgresAutomationEcsStore(
+        AutomationEcsSettings(
+            environment="production",
+            service_role="api",
+            base_path="/automation/production",
+            intake_shared_token="secret",
+            db_dsn=DSN,
+            migration_dsn=DSN,
+            db_resource_id="local-postgres",
+            db_schema=schema,
+            job_namespace="automation.production.test",
+            runtime_identity="api-test",
+            release_id="r-test",
+            git_commit="abcdef1",
+            image_digest="sha256:" + "a" * 64,
+            build_time="2026-08-27T10:00:00Z",
+            prompt_release_id="prompt-test",
+            allow_memory=False,
+        )
+    )
+
+
+def _seed_schema_revision(schema: str, revision: str) -> None:
+    with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
+        cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        cursor.execute(
+            sql.SQL(
+                "CREATE TABLE {}.automation_runtime_schema ("
+                "singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton), "
+                "revision TEXT NOT NULL, migrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+            ).format(sql.Identifier(schema))
+        )
+        cursor.execute(
+            sql.SQL("INSERT INTO {}.automation_runtime_schema (singleton, revision) VALUES (TRUE, %s)").format(
+                sql.Identifier(schema)
+            ),
+            (revision,),
+        )
+
+
+def _drop_schema(schema: str) -> None:
+    with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
+        cursor.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+def test_postgres_migrate_upgrades_legacy_revision_after_creating_contract() -> None:
+    schema = f"supportportal_production_ecs_test_{uuid4().hex[:10]}"
+    _seed_schema_revision(schema, "automation-ecs-001")
+    value = _migration_store(schema)
+    try:
+        value.migrate()
+        with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SELECT revision FROM {}.automation_runtime_schema WHERE singleton=TRUE").format(
+                    sql.Identifier(schema)
+                )
+            )
+            assert cursor.fetchone()[0] == SCHEMA_REVISION
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=%s AND table_name LIKE %s",
+                (schema, "automation_%"),
+            )
+            assert cursor.fetchone()[0] == 10
+    finally:
+        _drop_schema(schema)
+
+
+def test_postgres_migrate_rejects_unknown_revision_without_changing_marker() -> None:
+    schema = f"supportportal_production_ecs_test_{uuid4().hex[:10]}"
+    _seed_schema_revision(schema, "automation-ecs-000")
+    value = _migration_store(schema)
+    try:
+        with pytest.raises(RuntimeError, match="unsupported automation schema revision"):
+            value.migrate()
+        with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SELECT revision FROM {}.automation_runtime_schema WHERE singleton=TRUE").format(
+                    sql.Identifier(schema)
+                )
+            )
+            assert cursor.fetchone()[0] == "automation-ecs-000"
+    finally:
+        _drop_schema(schema)
+
+
+def test_postgres_migrate_rolls_back_legacy_upgrade_when_contract_creation_fails() -> None:
+    schema = f"supportportal_production_ecs_test_{uuid4().hex[:10]}"
+    _seed_schema_revision(schema, "automation-ecs-001")
+    value = _migration_store(schema)
+
+    def fail_after_ddl(cursor: psycopg.Cursor[object]) -> None:
+        cursor.execute(sql.SQL("CREATE TABLE {}.migration_probe (id INTEGER)").format(sql.Identifier(schema)))
+        raise RuntimeError("contract creation failed")
+
+    try:
+        with patch.object(value, "_create_tables", side_effect=fail_after_ddl):
+            with pytest.raises(RuntimeError, match="contract creation failed"):
+                value.migrate()
+        with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SELECT revision FROM {}.automation_runtime_schema WHERE singleton=TRUE").format(
+                    sql.Identifier(schema)
+                )
+            )
+            assert cursor.fetchone()[0] == "automation-ecs-001"
+            cursor.execute("SELECT to_regclass(%s)", (f"{schema}.migration_probe",))
+            assert cursor.fetchone()[0] is None
+    finally:
+        _drop_schema(schema)
 
 
 def test_postgres_intake_is_concurrently_idempotent(store: PostgresAutomationEcsStore) -> None:

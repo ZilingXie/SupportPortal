@@ -650,6 +650,8 @@ class InMemoryAutomationEcsStore:
 
 
 class PostgresAutomationEcsStore:
+    _UPGRADABLE_SCHEMA_REVISIONS = frozenset({"automation-ecs-001"})
+
     def __init__(self, settings: AutomationEcsSettings) -> None:
         self.settings = settings
         self._schema = sql.Identifier(settings.db_schema)
@@ -682,9 +684,14 @@ class PostgresAutomationEcsStore:
                     )
                 )
                 row = cursor.fetchone()
-                if row is not None and row["revision"] != SCHEMA_REVISION:
+                revision = row["revision"] if row is not None else None
+                if (
+                    revision is not None
+                    and revision != SCHEMA_REVISION
+                    and revision not in self._UPGRADABLE_SCHEMA_REVISIONS
+                ):
                     raise RuntimeError(
-                        f"unsupported automation schema revision: {row['revision']}"
+                        f"unsupported automation schema revision: {revision}"
                     )
                 if row is None:
                     cursor.execute(
@@ -694,6 +701,16 @@ class PostgresAutomationEcsStore:
                         (SCHEMA_REVISION,),
                     )
                 self._create_tables(cursor)
+                if revision in self._UPGRADABLE_SCHEMA_REVISIONS:
+                    cursor.execute(
+                        sql.SQL(
+                            "UPDATE {} SET revision=%s, migrated_at=NOW() "
+                            "WHERE singleton=TRUE AND revision=%s"
+                        ).format(self._table("automation_runtime_schema")),
+                        (SCHEMA_REVISION, revision),
+                    )
+                    if cursor.rowcount != 1:
+                        raise RuntimeError("automation schema revision changed during migration")
 
     def _create_tables(self, cursor: psycopg.Cursor[Any]) -> None:
         statements = [

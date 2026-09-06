@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T10:27:15Z",
-  "source_base_commit": "eb17106783cf0089ba1e0bb95dd65ae654d230ff",
-  "registry_digest": "f8b40e8641db16692ec15d2eca4281790caa32b5cd80117ffad216750c9810a8",
+  "generated_at": "2026-09-06T11:21:12Z",
+  "source_base_commit": "f75fd05935c47a0d768e37916bb88d18cfc06386",
+  "registry_digest": "c8fc7d2e12bd8b32e748ed1a3cc6a15a04a8609d4343152af06984a9d0af8e0d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2096,6 +2096,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "Production Automation schema 001 to 002 transactional upgrade",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cSSM migration DSN> .venv/bin/python -m pytest -q backend/tests/test_automation_ecs_store_postgres.py::\u003cthree migration tests>; .venv/bin/python -m pytest -q backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py",
+          "details": "Production只读结构核验确认automation-ecs-001与当前002的10张表、90个字段及两个关键索引一致；3项随机隔离PostgreSQL schema事务回归通过，覆盖001补齐合同后CAS升级、未知revision拒绝和DDL失败时marker/DDL共同回滚；14项内存store/contracts回归通过。未直接修改Production marker或业务数据，正式升级仍仅由获批deploy的schema bootstrap task执行。"
         },
         {
           "type": "test",
@@ -6826,7 +6832,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
+      "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。Automation schema现支持显式、事务性的automation-ecs-001到automation-ecs-002升级，未知revision继续fail closed。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
       "next_action": "保持 active。正式pipeline的无业务流量Preproduction计时演练已以20分27.6秒完成；仍等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后仅在单独授权下按同digest promotion流程升级ECS Production并再次回归。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
@@ -6844,6 +6850,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Production Automation schema 001 to 002 transactional upgrade",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cSSM migration DSN> .venv/bin/python -m pytest -q backend/tests/test_automation_ecs_store_postgres.py::\u003cthree migration tests>; .venv/bin/python -m pytest -q backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py",
+          "details": "Production只读结构核验确认automation-ecs-001与当前002的10张表、90个字段及两个关键索引一致；3项随机隔离PostgreSQL schema事务回归通过，覆盖001补齐合同后CAS升级、未知revision拒绝和DDL失败时marker/DDL共同回滚；14项内存store/contracts回归通过。未直接修改Production marker或业务数据，正式升级仍仅由获批deploy的schema bootstrap task执行。"
+        },
         {
           "type": "test",
           "label": "CodeBuild direct Production promotion fail-closed contract",
