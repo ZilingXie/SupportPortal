@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T11:21:12Z",
-  "source_base_commit": "f75fd05935c47a0d768e37916bb88d18cfc06386",
-  "registry_digest": "c8fc7d2e12bd8b32e748ed1a3cc6a15a04a8609d4343152af06984a9d0af8e0d",
+  "generated_at": "2026-09-06T12:11:17Z",
+  "source_base_commit": "a2693a5ea19d19ceed5051ae95890a61895d8b5d",
+  "registry_digest": "7f6da3231196e97b34a0d6fc3cc229aae06eda0fbd17ee24b3db9257f1e89fe3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1006,6 +1006,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "v25 release deployed to ECS Production",
           "command": "formal deploy for r20260904-1f13334 and ECS/public health/Prompt Release readback",
           "details": "main@1f13334ea2dc的三角色digest已部署到API/Route/Worker revision 28/23/26，均1/1/0且COMPLETED；Prompt Release pr-c9b3a291ecf1 active，公网live/release/ready与heartbeat provenance通过。运行镜像已含v25和移除reviewer通知实现；真实Suspension邮件数、客户文案、assign与未solved合同待全新工单readback。"
+        },
+        {
+          "type": "deployment",
+          "label": "Persona v28 ECS Production immutable release",
+          "command": "CodeBuild r20260906-a2693a5; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy with --bootstrap-account-schema --hermes-case-workflow-mode disabled; post-release readback",
+          "details": "PR #1103修复automation-ecs-001到002事务升级后，clean main@a2693a5ea19d以CodeBuild release r20260906-a2693a5发布。API/Route/Worker revision 37/31/35均1/1/0、COMPLETED，运行digest分别为sha256:326fa289.../sha256:9a27ffc2.../sha256:cb26c59d...并与Manifest、ECR和Promotion Record一致。schema bootstrap与002 readback、公网live/release/ready、当前heartbeat无provenance mismatch、Prompt pr-c9b3a291ecf1 active、CloudWatch零错误、EC2 backup及部署后Terraform zero-drift均通过；Production Hermes disabled。相同Worker revision一次性只读marker确认automation-persona-v28、无Reviewer stage及无Pilot；Archer合成不存在App ID GET、Graph /me、Zendesk identity探针均为true。未创建、修改、回复或重放工单，未发送邮件。"
         },
         {
           "type": "test",
@@ -2096,6 +2102,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "deployment",
+          "label": "CodeBuild direct Production release with schema 002",
+          "command": "start_automation_codebuild_release.sh; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh check-only/deploy/post-check-only; independent ECS/schema/provider readback",
+          "details": "release r20260906-a2693a5基于main@a2693a5ea19d，CodeBuild向Preproduction ECR发布三角色linux/amd64 digest后按获批直晋模式复制同digest到Production ECR，未更新Preproduction ECS。Production bootstrap将schema从automation-ecs-001事务升级为002；API/Route/Worker revision 37/31/35均1/1/0、COMPLETED且digest匹配。正式证据status=complete：Terraform zero-drift、Prompt active、heartbeats、public health、CloudWatch error_count=0、EC2 backup、Suspension recipients全部passed；部署后第二次check-only仍通过且schema已匹配。Worker保持Hermes disabled、无Pilot，Archer/Graph/Zendesk只读探针通过。EC2、n8n和工单均未修改。"
         },
         {
           "type": "test",
@@ -6833,7 +6845,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。Automation schema现支持显式、事务性的automation-ecs-001到automation-ecs-002升级，未知revision继续fail closed。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
-      "next_action": "保持 active。正式pipeline的无业务流量Preproduction计时演练已以20分27.6秒完成；仍等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后仅在单独授权下按同digest promotion流程升级ECS Production并再次回归。",
+      "next_action": "保持 active。ECS Production已部署r20260906-a2693a5并通过技术门禁，等待用户通过n8n向 https://supportcenter.stellarix.space/automation/production 投递全新Enablement、Fraud与Suspension工单完成业务验收；Preproduction Hermes继续由用户另行测试。不得修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6850,6 +6862,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "CodeBuild direct Production release with schema 002",
+          "command": "start_automation_codebuild_release.sh; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh check-only/deploy/post-check-only; independent ECS/schema/provider readback",
+          "details": "release r20260906-a2693a5基于main@a2693a5ea19d，CodeBuild向Preproduction ECR发布三角色linux/amd64 digest后按获批直晋模式复制同digest到Production ECR，未更新Preproduction ECS。Production bootstrap将schema从automation-ecs-001事务升级为002；API/Route/Worker revision 37/31/35均1/1/0、COMPLETED且digest匹配。正式证据status=complete：Terraform zero-drift、Prompt active、heartbeats、public health、CloudWatch error_count=0、EC2 backup、Suspension recipients全部passed；部署后第二次check-only仍通过且schema已匹配。Worker保持Hermes disabled、无Pilot，Archer/Graph/Zendesk只读探针通过。EC2、n8n和工单均未修改。"
+        },
         {
           "type": "test",
           "label": "Production Automation schema 001 to 002 transactional upgrade",
@@ -10523,7 +10541,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-06",
       "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona 并加入有界 Reviewer。Case 13302 推动 v27 隔离 current-intent policy，但 Production Case 13314 仍被独立 Reviewer 以 intent_policy_violation 连续误拒，虽然 Handler 已提供结构化 Fraud missing-information facts。v28 因此删除所有 render_automation_reply 路径的 LLM Reviewer：Handler 提供 reply_facts，pinned Persona 一次生成最终正文，代码只执行硬安全/格式拒绝，Worker 原样发布；仅首稿硬安全失败时允许同一 Persona 整段重写一次。",
-      "next_action": "完成 v28 合并、本地 official stack marker 和 ECS Production immutable release；随后等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收。不得代替用户创建工单，不重放或回复 13314。",
+      "next_action": "保持 active，等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收；追踪新任务是否单次 Persona 生成、无 Reviewer stage、硬安全地板通过且正文原样发布。不得代替用户创建工单，不重放或回复 13314。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
@@ -10534,6 +10552,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Persona v28 ECS Production immutable release",
+          "command": "CodeBuild r20260906-a2693a5; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy with --bootstrap-account-schema --hermes-case-workflow-mode disabled; post-release readback",
+          "details": "PR #1103修复automation-ecs-001到002事务升级后，clean main@a2693a5ea19d以CodeBuild release r20260906-a2693a5发布。API/Route/Worker revision 37/31/35均1/1/0、COMPLETED，运行digest分别为sha256:326fa289.../sha256:9a27ffc2.../sha256:cb26c59d...并与Manifest、ECR和Promotion Record一致。schema bootstrap与002 readback、公网live/release/ready、当前heartbeat无provenance mismatch、Prompt pr-c9b3a291ecf1 active、CloudWatch零错误、EC2 backup及部署后Terraform zero-drift均通过；Production Hermes disabled。相同Worker revision一次性只读marker确认automation-persona-v28、无Reviewer stage及无Pilot；Archer合成不存在App ID GET、Graph /me、Zendesk identity探针均为true。未创建、修改、回复或重放工单，未发送邮件。"
+        },
         {
           "type": "test",
           "label": "Persona v28 direct-publication regression",
