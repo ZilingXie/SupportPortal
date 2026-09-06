@@ -37,7 +37,7 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v28"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v29"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -65,6 +65,10 @@ _SAFETY_FEEDBACK = {
     "automation_persona_completion_contract_failed_enabled_state": "Do not describe an already-completed enablement as future work.",
     "automation_persona_completion_contract_failed_archive": "Do not describe an already-completed case closure as future work.",
     "automation_persona_archer_error_overclaim": "Do not claim enablement, handoff, an SLA, or closure for this recoverable App ID error.",
+    "automation_persona_missing_information_format_invalid": (
+        "When three or more missing-information fields are supplied, rewrite the complete body with exactly one "
+        "Markdown bullet line starting with '- ' for each supplied field."
+    ),
 }
 
 
@@ -527,6 +531,28 @@ def _assert_enablement_appid_not_found_contract(reply: str) -> None:
     _assert_no_enablement_error_overclaim(reply)
 
 
+def _assert_missing_information_format(reply: str, facts: dict[str, Any]) -> None:
+    missing = facts.get("missing_information")
+    if not isinstance(missing, list) or len(missing) < 3:
+        return
+    labels = _humanize_missing_fields([str(item) for item in missing])
+    bullet_lines = [
+        match.group(1).strip()
+        for line in str(reply or "").splitlines()
+        if (match := re.match(r"^\s*-\s+(\S.*)$", line))
+    ]
+    label_matches = [
+        [label for label in labels if label.casefold() in line.casefold()]
+        for line in bullet_lines
+    ]
+    if (
+        len(bullet_lines) != len(labels)
+        or any(len(matches) != 1 for matches in label_matches)
+        or {matches[0].casefold() for matches in label_matches} != {label.casefold() for label in labels}
+    ):
+        raise AutomationPersonaError("automation_persona_missing_information_format_invalid")
+
+
 def validate_account_reply_contract(
     reply: str,
     reply_facts: dict[str, Any],
@@ -550,6 +576,8 @@ def validate_account_reply_contract(
     if not normalized_reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     assert_no_trailing_automation_signature(normalized_reply)
+    if intent == "request_missing_information":
+        _assert_missing_information_format(normalized_reply, facts)
     if intent in {
         ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
         ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,

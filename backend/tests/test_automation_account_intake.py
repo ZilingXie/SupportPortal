@@ -563,7 +563,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         }
         classification = {
             "automation_handler": "billing",
-            "pipeline_version": "account-layered-router-v10",
+            "pipeline_version": "account-layered-router-v11",
             "route_target": "fraud_account",
             "route_reason_code": "matched",
             "stage_confidences": {"intent_classifier": 0.9},

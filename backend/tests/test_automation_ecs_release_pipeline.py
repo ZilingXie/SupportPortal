@@ -16,6 +16,7 @@ from backend.scripts.automation_ecs_release_pipeline import (
     assert_secret_free_argv,
     assert_evidence_secret_free,
     make_preflight_evidence,
+    _pipeline_summary,
     sanitized_aws_environment,
     database_identity_sha256,
     collect_prompt_target_state,
@@ -356,6 +357,10 @@ def test_formal_pipeline_keeps_production_approval_before_promotion() -> None:
     assert "start_automation_codebuild_release.sh" in text
     assert "--release-worktree" in text
     assert "--through" in text
+    assert 'promotion_args.append("--codebuild-direct-production")' in text
+    assert '"production_preflight"' in text
+    assert '"--preflight-evidence"' in text
+    assert '_write_json_atomic(state.path / "timings.json", _pipeline_summary(state))' in text
     assert text.index("validate_release_worktree(repo=release_worktree") < text.index(
         '"codebuild"'
     )
@@ -371,6 +376,44 @@ def test_formal_pipeline_wrapper_uses_repository_runtime() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "--release-commit" in result.stdout
+    assert "--codebuild-direct-production" in result.stdout
+
+
+def test_direct_production_mode_rejects_preproduction_and_hermes_combinations() -> None:
+    parser = __import__(
+        "backend.scripts.automation_ecs_release_pipeline",
+        fromlist=["build_parser"],
+    ).build_parser()
+    args = parser.parse_args(
+        ["run", "--prompt-release-id", "prompt-1", "--codebuild-direct-production"]
+    )
+    assert args.through == "preproduction"
+    assert args.codebuild_direct_production is True
+
+
+def test_direct_production_branch_skips_preproduction_ecs_and_reuses_production_preflight() -> None:
+    source = Path(__file__).resolve().parents[1] / "scripts" / "automation_ecs_release_pipeline.py"
+    text = source.read_text(encoding="utf-8")
+    preproduction_branch = text[
+        text.index("if not direct_production:") : text.index('if args.through == "production":')
+    ]
+    production_branch = text[text.index('if args.through == "production":') :]
+    assert '"preproduction_preflight"' in preproduction_branch
+    assert '"preproduction_deploy"' in preproduction_branch
+    assert 'promotion_args.append("--codebuild-direct-production")' in production_branch
+    assert '"production_preflight"' in production_branch
+    assert 'production_deploy.extend(["--preflight-evidence", str(production_preflight)])' in production_branch
+
+
+def test_pipeline_summary_records_release_slo_and_breach(tmp_path: Path) -> None:
+    state = PipelineState(tmp_path / "state")
+    state.bind_identity({"release_commit": "a" * 40, "prompt_release_id": "prompt-1"})
+    state.append({"stage": "codebuild", "status": "passed", "duration_seconds": 600})
+    state.append({"stage": "production_deploy", "status": "passed", "duration_seconds": 301})
+    summary = _pipeline_summary(state)
+    assert summary["normal_release_slo_seconds"] == 900
+    assert summary["target_range_seconds"] == {"min": 600, "max": 900}
+    assert summary["slo_breach"] is True
 
 
 def test_pipeline_uses_identical_mode_arguments_for_preflight_and_deploy() -> None:

@@ -50,6 +50,8 @@ PROMPT_SYNC_STATUS="not_started"
 PROMPT_ACTIVATION_STATUS="not_started"
 SOURCE_PROMPT_STATUS="not_started"
 TERRAFORM_STATUS="not_started"
+TERRAFORM_POST_DEPLOY_STATUS="not_started"
+PROVIDER_PROBE_STATUS="not_started"
 ECR_STATUS="not_started"
 SUSPENSION_RECIPIENTS_STATUS="not_started"
 HEARTBEAT_STATUS="not_started"
@@ -472,7 +474,7 @@ read_optional_file() {
 }
 
 write_evidence() {
-  local status="$1" role old_arn new_arn verified expected_digest observed_digest components prompt_build_ref prompt_fingerprint generated_at schema_task_arn schema_task_definition phase_timings timing_summary terraform_identity heartbeat_summary target_health cloudwatch_summary
+  local status="$1" role old_arn new_arn verified expected_digest observed_digest components prompt_build_ref prompt_fingerprint generated_at schema_task_arn schema_task_definition phase_timings timing_summary terraform_identity heartbeat_summary target_health cloudwatch_summary provider_probe
   local -a cloudwatch_files
   [[ -n "${STATE_DIR}" && -d "${STATE_DIR}" ]] || return 0
   components='{}'
@@ -500,10 +502,14 @@ write_evidence() {
   timing_summary="$(jq -cn --argjson phases "${phase_timings}" '
     {total_seconds:([$phases[].duration_seconds] | add // 0),
      ecs_wait_seconds:([$phases[] | select(.phase == "route_worker_rollout" or .phase == "api_rollout") | .duration_seconds] | add // 0)}
-    | . + {controllable_seconds:(.total_seconds - .ecs_wait_seconds)}')"
+    | . + {controllable_seconds:(.total_seconds - .ecs_wait_seconds),
+           normal_release_slo_seconds:900,
+           target_range_seconds:{min:600,max:900},
+           slo_breach:(.total_seconds > 900)}')"
   terraform_identity="$(jq -c '.' "${STATE_DIR}/terraform-identity.json" 2>/dev/null || printf '{}')"
   heartbeat_summary="$(jq -c '.' "${STATE_DIR}/heartbeat.json" 2>/dev/null || printf '{}')"
   target_health="$(jq -c '.' "${STATE_DIR}/target-health.json" 2>/dev/null || printf '{}')"
+  provider_probe="$(jq -c '.' "${STATE_DIR}/provider-probe.json" 2>/dev/null || printf '{}')"
   shopt -s nullglob
   cloudwatch_files=("${STATE_DIR}"/*.cloudwatch-count.json)
   shopt -u nullglob
@@ -531,6 +537,8 @@ write_evidence() {
     --arg prompt_activation "${PROMPT_ACTIVATION_STATUS}" \
     --arg source_prompt "${SOURCE_PROMPT_STATUS}" \
     --arg terraform "${TERRAFORM_STATUS}" \
+    --arg terraform_post_deploy "${TERRAFORM_POST_DEPLOY_STATUS}" \
+    --arg provider_probe_status "${PROVIDER_PROBE_STATUS}" \
     --arg ecr "${ECR_STATUS}" \
     --arg suspension_recipients "${SUSPENSION_RECIPIENTS_STATUS}" \
     --arg heartbeats "${HEARTBEAT_STATUS}" \
@@ -549,9 +557,10 @@ write_evidence() {
     --argjson terraform_identity "${terraform_identity}" \
     --argjson heartbeat_summary "${heartbeat_summary}" \
     --argjson target_health "${target_health}" \
+    --argjson provider_probe "${provider_probe}" \
     --argjson cloudwatch_summary "${cloudwatch_summary}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_summary,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_summary,provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
   mkdir -p -- "${STATE_DIR}/evidence-attempts"
@@ -576,6 +585,9 @@ prune_success_artifacts() {
   rm -f -- \
     "${STATE_DIR}/public-health.log" "${STATE_DIR}/cloudwatch.log" \
     "${STATE_DIR}/ec2-backup.log" "${STATE_DIR}/target-health.log" \
+    "${STATE_DIR}/provider-probe.log" "${STATE_DIR}/provider-probe.events.json" \
+    "${STATE_DIR}/provider-probe.network.json" "${STATE_DIR}/provider-probe.overrides.json" \
+    "${STATE_DIR}/provider-probe.task.json" \
     "${STATE_DIR}/route-rollout.log" "${STATE_DIR}/worker-rollout.log" \
     "${STATE_DIR}/terraform-preflight.log" "${STATE_DIR}/preflight-context.json" \
     "${STATE_DIR}/secret-metadata.json" "${STATE_DIR}/secret-metadata.jsonl" \
@@ -903,14 +915,14 @@ run_schema_bootstrap() {
 
 verify_running_task() {
   local role="$1" service="$2" task_definition_arn="$3" expected_digest="$4"
-  local task_arn observed_definition observed_digest
+  local task_arn task_json observed_definition observed_digest target_id
   task_arn="$(aws ecs list-tasks --region "${REGION}" --cluster "${CLUSTER}" \
     --service-name "${service}" --desired-status RUNNING --query 'taskArns[0]' --output text)"
   [[ -n "${task_arn}" && "${task_arn}" != "None" ]] || fail "${role} has no running task"
-  observed_definition="$(aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
-    --tasks "${task_arn}" --query 'tasks[0].taskDefinitionArn' --output text)"
-  observed_digest="$(aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
-    --tasks "${task_arn}" --query "tasks[0].containers[?name=='${role}'].imageDigest | [0]" --output text)"
+  task_json="$(aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
+    --tasks "${task_arn}" --output json)"
+  observed_definition="$(jq -r '.tasks[0].taskDefinitionArn // ""' <<<"${task_json}")"
+  observed_digest="$(jq -r --arg role "${role}" '.tasks[0].containers[] | select(.name == $role) | .imageDigest // ""' <<<"${task_json}")"
   if [[ "${observed_definition}" != "${task_definition_arn}" ]]; then
     fail "${role} is not running the registered revision"
     return 1
@@ -920,6 +932,11 @@ verify_running_task() {
     return 1
   fi
   [[ -z "${STATE_DIR}" ]] || printf '%s\n' "${observed_digest}" >"${STATE_DIR}/${role}.runtime-digest"
+  if [[ "${role}" = "api" && -n "${STATE_DIR}" ]]; then
+    target_id="$(jq -r '.tasks[0].attachments[].details[]? | select(.name == "privateIPv4Address") | .value' <<<"${task_json}" | sed -n '1p')"
+    [[ -n "${target_id}" ]] || fail "api running task private target address is missing"
+    printf '%s\n' "${target_id}" >"${STATE_DIR}/api.target-id"
+  fi
 }
 
 reuse_registered_task_definition() {
@@ -1041,18 +1058,26 @@ verify_cloudwatch() {
 }
 
 verify_target_health() {
-  local target_group health deadline
+  local target_group health deadline target_id
+  target_id="$(read_optional_file "${TEMP_DIR}/api.target-id")"
+  [[ -n "${target_id}" ]] || fail "API target identity is missing"
   target_group="$(aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
     --services "${API_SERVICE}" --query 'services[0].loadBalancers[0].targetGroupArn' --output text)"
   [[ -n "${target_group}" && "${target_group}" != "None" ]] || fail "API Target Group is missing"
   deadline=$((SECONDS + TARGET_HEALTH_WAIT_TIMEOUT_SECONDS))
   while true; do
     health="$(aws elbv2 describe-target-health --region "${REGION}" --target-group-arn "${target_group}" \
-      --query 'TargetHealthDescriptions[].TargetHealth.State' --output json)"
-    jq -n --argjson states "${health}" \
-      '{total:($states|length),healthy:([$states[]|select(.=="healthy")]|length),unhealthy:([$states[]|select(.!="healthy")]|length)}' \
+      --output json)"
+    jq -n --arg target_id "${target_id}" --argjson health "${health}" '
+      [$health.TargetHealthDescriptions[] | {id:.Target.Id,state:.TargetHealth.State}] as $targets
+      | {target_id:$target_id,
+         target_state:([$targets[] | select(.id == $target_id) | .state][0] // "missing"),
+         total:($targets|length),
+         healthy:([$targets[]|select(.state=="healthy")]|length),
+         draining:([$targets[]|select(.state=="draining")]|length),
+         blocking:([$targets[]|select(.id != $target_id and (.state != "healthy" and .state != "draining"))]|length)}' \
       >"${TEMP_DIR}/target-health.json"
-    if [[ "$(jq -r '.total > 0 and .unhealthy == 0' "${TEMP_DIR}/target-health.json")" = "true" ]]; then
+    if [[ "$(jq -r '.target_state == "healthy" and .blocking == 0' "${TEMP_DIR}/target-health.json")" = "true" ]]; then
       return 0
     fi
     if ((SECONDS >= deadline)); then
@@ -1079,8 +1104,67 @@ verify_public_runtime() {
   fi
 }
 
+run_provider_probe() {
+  local task_arn task_json exit_code reason log_group log_stream deadline probe_line
+  aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
+    --services "${WORKER_SERVICE}" --query 'services[0].networkConfiguration' \
+    --output json >"${TEMP_DIR}/provider-probe.network.json"
+  jq -n '{containerOverrides:[{name:"worker",command:["python","-m","backend.services.automation_provider_probe"]}]}' \
+    >"${TEMP_DIR}/provider-probe.overrides.json"
+  verify_aws_mutation_ready
+  task_arn="$(aws ecs run-task --region "${REGION}" --cluster "${CLUSTER}" \
+    --launch-type FARGATE --task-definition "$(<"${TEMP_DIR}/worker.new-arn")" \
+    --network-configuration "file://${TEMP_DIR}/provider-probe.network.json" \
+    --overrides "file://${TEMP_DIR}/provider-probe.overrides.json" \
+    --count 1 --query 'tasks[0].taskArn' --output text)"
+  [[ -n "${task_arn}" && "${task_arn}" != "None" ]] || fail "Provider probe task did not start"
+  aws ecs wait tasks-stopped --region "${REGION}" --cluster "${CLUSTER}" --tasks "${task_arn}"
+  aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
+    --tasks "${task_arn}" >"${TEMP_DIR}/provider-probe.task.json"
+  task_json="$(<"${TEMP_DIR}/provider-probe.task.json")"
+  exit_code="$(jq -r '.tasks[0].containers[] | select(.name == "worker") | .exitCode // empty' <<<"${task_json}")"
+  if [[ "${exit_code}" != "0" ]]; then
+    reason="$(jq -r '.tasks[0].stoppedReason // .tasks[0].containers[0].reason // "unknown"' <<<"${task_json}")"
+    fail "Provider probe task failed (exit=${exit_code:-unknown}, reason=${reason})"
+    return 1
+  fi
+  log_stream="$(jq -r '.tasks[0].containers[] | select(.name == "worker") | .logStreamName // empty' <<<"${task_json}")"
+  log_group="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/worker.current.json")"
+  [[ -n "${log_stream}" && -n "${log_group}" && "${log_group}" != "null" ]] \
+    || fail "Provider probe CloudWatch identity is missing"
+  deadline=$((SECONDS + 60))
+  while true; do
+    aws logs get-log-events --region "${REGION}" --log-group-name "${log_group}" \
+      --log-stream-name "${log_stream}" --start-from-head \
+      --output json >"${TEMP_DIR}/provider-probe.events.json"
+    probe_line="$(jq -r '.events[].message | select(startswith("{") and contains("automation-provider-probe-v1"))' \
+      "${TEMP_DIR}/provider-probe.events.json" | tail -n 1)"
+    if [[ -n "${probe_line}" ]]; then
+      if ! printf '%s\n' "${probe_line}" | jq -e '
+        .schema_version == "automation-provider-probe-v1"
+        and .rag_health_ok == true
+        and .archer_read_get_ok == true
+        and .graph_me_ok == true
+        and .zendesk_identity_ok == true
+        and ([.recipients.enablement,.recipients.fraud_account,.recipients.account_suspension]
+          | all(.valid == true and .to_count > 0 and .cc_count > 0))
+      ' >/dev/null; then
+        fail "Provider probe result failed validation"
+        return 1
+      fi
+      printf '%s\n' "${probe_line}" | jq -S . >"${TEMP_DIR}/provider-probe.json"
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      fail "Provider probe result did not appear in CloudWatch before timeout"
+      return 1
+    fi
+    sleep 3
+  done
+}
+
 run_parallel_post_deploy_checks() {
-  local deployment_start_ms="$1" failed=0 public_pid cloudwatch_pid backup_pid target_pid
+  local deployment_start_ms="$1" failed=0 public_pid cloudwatch_pid backup_pid target_pid terraform_pid provider_pid
   (verify_public_runtime) >"${TEMP_DIR}/public-health.log" 2>&1 &
   public_pid=$!
   (verify_cloudwatch "${deployment_start_ms}") >"${TEMP_DIR}/cloudwatch.log" 2>&1 &
@@ -1089,6 +1173,10 @@ run_parallel_post_deploy_checks() {
   backup_pid=$!
   (verify_target_health) >"${TEMP_DIR}/target-health.log" 2>&1 &
   target_pid=$!
+  (run_terraform_zero_plan) >"${TEMP_DIR}/terraform-post-deploy.log" 2>&1 &
+  terraform_pid=$!
+  (run_provider_probe) >"${TEMP_DIR}/provider-probe.log" 2>&1 &
+  provider_pid=$!
 
   if wait "${public_pid}"; then
     PUBLIC_HEALTH_STATUS="passed"
@@ -1113,6 +1201,20 @@ run_parallel_post_deploy_checks() {
   fi
   if ! wait "${target_pid}"; then
     sed -n '1,80p' "${TEMP_DIR}/target-health.log" >&2
+    failed=1
+  fi
+  if wait "${terraform_pid}"; then
+    TERRAFORM_POST_DEPLOY_STATUS="passed"
+  else
+    TERRAFORM_POST_DEPLOY_STATUS="failed"
+    sed -n '1,80p' "${TEMP_DIR}/terraform-post-deploy.log" >&2
+    failed=1
+  fi
+  if wait "${provider_pid}"; then
+    PROVIDER_PROBE_STATUS="passed"
+  else
+    PROVIDER_PROBE_STATUS="failed"
+    sed -n '1,80p' "${TEMP_DIR}/provider-probe.log" >&2
     failed=1
   fi
   [[ "${failed}" = "0" ]] || fail "One or more post-deploy read-only checks failed"

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T12:11:17Z",
-  "source_base_commit": "a2693a5ea19d19ceed5051ae95890a61895d8b5d",
-  "registry_digest": "7f6da3231196e97b34a0d6fc3cc229aae06eda0fbd17ee24b3db9257f1e89fe3",
+  "generated_at": "2026-09-06T13:31:14Z",
+  "source_base_commit": "a619db65a699708530ef13254ba67b2129058262",
+  "registry_digest": "0b24038bf72734562509e1296f8eb70dd76acd1e7e6e157071da01f3b2ad02e4",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1006,6 +1006,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "v25 release deployed to ECS Production",
           "command": "formal deploy for r20260904-1f13334 and ECS/public health/Prompt Release readback",
           "details": "main@1f13334ea2dc的三角色digest已部署到API/Route/Worker revision 28/23/26，均1/1/0且COMPLETED；Prompt Release pr-c9b3a291ecf1 active，公网live/release/ready与heartbeat provenance通过。运行镜像已含v25和移除reviewer通知实现；真实Suspension邮件数、客户文案、assign与未solved合同待全新工单readback。"
+        },
+        {
+          "type": "test",
+          "label": "Persona v29 missing-information format regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAccount Route/Comment Sync/Persona/Worker/Intake/ECS/Release targeted suites>",
+          "details": "608 passed + 132 subtests。覆盖三项missing-information逐项bullet、首稿格式失败后同一Persona整段重写、Worker正文不可变、无Reviewer、13316当前轮字段优先、13318新工单follow_up禁令及完整ECS发布工具回归；既有工单未重放或修改。"
         },
         {
           "type": "deployment",
@@ -2104,6 +2110,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
         },
         {
+          "type": "test",
+          "label": "CodeBuild direct Production fast path and consolidated evidence",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation ECS deploy/pipeline/promotion/release and business targeted suites>; bash -n deployment/deploy_automation_ecs_release.sh",
+          "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针仅GET且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
+        },
+        {
           "type": "deployment",
           "label": "CodeBuild direct Production release with schema 002",
           "command": "start_automation_codebuild_release.sh; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh check-only/deploy/post-check-only; independent ECS/schema/provider readback",
@@ -2764,6 +2776,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Parity intake and runtime contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_account_intake backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 backend.tests.test_build_automation_release",
           "details": "111 项全部通过：intake 六分支单测（fraud 缺/齐字段、suspension contact、抽取失败→#916 升级、not_automated→Engineer Case+派单、ownership fail-closed）；production runtime 契约（无 visibility 也进管线、pipeline 异常→failed+409 重放、legacy 五字段免 visibility、intake_outcome 落库）；契约矩阵（production visibility 可选，preprod forced internal 不变）；route_payload decision 字段；bundle/镜像清单（依赖模块留在 production 镜像）；compose/deploy/蓝绿假命令回归。"
+        },
+        {
+          "type": "test",
+          "label": "Case 13316 current-turn Handler/RAG precedence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_comment_sync.py backend/tests/test_account_route_pipeline.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py",
+          "details": "纳入本轮608 passed + 132 subtests定向合集。覆盖历史internal_email_to_send不算本轮进展、invalid历史App ID不复用、客户询问App ID时authoritative Route进入RAG、当前评论提供新有效App ID时Handler可续跑；13316未重放或修改。"
         },
         {
           "type": "test",
@@ -6844,8 +6862,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。Automation schema现支持显式、事务性的automation-ecs-001到automation-ecs-002升级，未知revision继续fail closed。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
-      "next_action": "保持 active。ECS Production已部署r20260906-a2693a5并通过技术门禁，等待用户通过n8n向 https://supportcenter.stellarix.space/automation/production 投递全新Enablement、Fraud与Suspension工单完成业务验收；Preproduction Hermes继续由用户另行测试。不得修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown。",
+      "summary": "AWS CodeBuild固定完整main SHA的三角色linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造或更新Preproduction ECS验收。Production deploy复用一次preflight evidence，Route/Worker并行rollout，ALB只等待新API target健康，并把公网health、CloudWatch、发布后Terraform zero-drift、EC2 backup及单个Worker只读Provider probe合并为并行collector；无schema变更目标为10-15分钟并记录slo_breach。ECS Preproduction Account与Hermes保持独立运行；ECS Production Account保持Hermes disabled；EC2、n8n由用户独立控制。",
+      "next_action": "保持 active。合并本轮业务修复与快速发布工具后，以CodeBuild direct-Production发布最新main并验证10-15分钟SLO、单次preflight复用、并行collector与只读Provider probe；随后等待用户投递全新Enablement、Fraud与Suspension工单。不得修改Preproduction ECS/Hermes、EC2、n8n或既有工单，也不重试outcome_unknown。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6858,10 +6876,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
         "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
         "正式Production发布只能使用要求Manifest、Promotion Record、零漂移plan和显式授权的deploy_automation_ecs_release.sh；Prompt先同步candidate，Route/Worker与heartbeat通过后再部署API，所有健康门禁通过后才activate；激活前失败回滚旧revision，激活结果不确定时要求readback reconciliation。",
+        "CodeBuild direct-Production完全跳过Preproduction ECS preflight/deploy，但仍由Preproduction ECR promotion同一digest；Production check-only evidence由正式deploy复用，部署后Provider探针只做RAG/Archer/Graph/Zendesk GET及收件人布尔/数量readback，和Terraform/health/CloudWatch/backup并行，任一失败阻断激活。",
+        "无schema变更的正常发布目标为10-15分钟；pipeline和deploy evidence记录总耗时、ECS wait、可控耗时、900秒SLO与slo_breach，超时不绕过任何门禁。",
         "常规release由无ECS/RDS/Production ECR写权限的CodeBuild从固定完整main commit一次构建三角色linux/amd64镜像，输出registry-backed Manifest v2和Preproduction Publish Record；首次Preproduction使用canonical definitions分阶段add-only bootstrap，不复制Production task definition。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "CodeBuild direct Production fast path and consolidated evidence",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation ECS deploy/pipeline/promotion/release and business targeted suites>; bash -n deployment/deploy_automation_ecs_release.sh",
+          "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针仅GET且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
+        },
         {
           "type": "deployment",
           "label": "CodeBuild direct Production release with schema 002",
@@ -7181,6 +7207,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-25",
       "updated_at": "2026-09-06",
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "direct_production_fast_path_and_provider_probe_implemented",
+          "summary": "正式pipeline增加CodeBuild direct-Production路径，跳过Preproduction ECS但保留同digest promotion和完整Production门禁；Production复用preflight evidence、按新API target判断ALB健康、并行执行一次性只读Provider probe与其余collector，并记录10-15分钟SLO。等待验证、合并与获批发布。"
+        },
         {
           "at": "2026-08-25",
           "event": "planned",
@@ -8240,15 +8271,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。2026-09-01 两次修复 ECS Fraud parity：先恢复 precomputed Route 下 active handler 的字段进展检查，使部分字段回复继续 handoff；再修正共享 Fraud builder 的模型场景为 ACCOUNT_EXTRACTOR，并把 uncertain/sensitive extraction failure 按旧 /production 合同 reconciliation 为 Human Review，从而阻止错误进入 RAG。真正无字段进展的 Agora 产品问题仍保留 RAG fallback。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
-      "next_action": "完成 finalizer、本地官方栈与 immutable ECS release 部署后，由用户创建一个全新 Fraud 工单验证：追问恰好一次、partial reply 后内部邮件 sent、fraud_handoff_confirmation 公开投递、Suhrid assignment 和 Human Review；不重放或修改 13190。随后继续 Phase D 状态同步验收。",
+      "next_action": "合并并发布Route v11/Intent v3后，由用户创建全新Enablement工单验证：询问App ID的后续客户问题由本轮authoritative Route进入RAG，历史invalid App ID与internal_email_to_send不得伪装成本轮字段进展；不得重放或修改13316。",
       "acceptance_criteria": [
         "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
         "触发链：幂等 per comment id、agent/initial/private/empty/前置评论忽略、非 production case 忽略、Engineer Case 分支记录客户评论事件。",
-        "回复链：ownership gate fail-closed 停自动化、suspension 两阶段状态机（确认→handoff→closing）、handler 进展判定与重路由、RAG fallback answer/escalation、追问与确认 reply job。",
+        "回复链：ownership gate fail-closed停自动化、Suspension direct handoff、handler进展判定与重路由、RAG fallback answer/escalation、追问与确认reply job；绑定Handler只有本轮新增或改变字段时才可覆盖authoritative Route，invalid历史App ID不得复用。",
         "旧栈 /production 与 /account 零行为变化；preproduction/staging 契约不变。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Case 13316 current-turn Handler/RAG precedence regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_comment_sync.py backend/tests/test_account_route_pipeline.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py",
+          "details": "纳入本轮608 passed + 132 subtests定向合集。覆盖历史internal_email_to_send不算本轮进展、invalid历史App ID不复用、客户询问App ID时authoritative Route进入RAG、当前评论提供新有效App ID时Handler可续跑；13316未重放或修改。"
+        },
         {
           "type": "test",
           "label": "Comment ingestion and reply chain regression",
@@ -8278,8 +8315,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-09-01",
+      "updated_at": "2026-09-06",
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "bound_handler_current_turn_precedence_fixed",
+          "summary": "Case 13316显示绑定Enablement Handler把历史internal_email_to_send和invalid App ID误判为本轮进展，覆盖了客户询问App ID的authoritative RAG Route。修复为仅当前评论新增或改变字段时Handler才可续跑，invalid App ID只从当前评论重提取；不修改或重放13316。"
+        },
         {
           "at": "2026-08-24",
           "event": "created",
@@ -10540,18 +10582,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-09-05",
       "updated_at": "2026-09-06",
-      "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona 并加入有界 Reviewer。Case 13302 推动 v27 隔离 current-intent policy，但 Production Case 13314 仍被独立 Reviewer 以 intent_policy_violation 连续误拒，虽然 Handler 已提供结构化 Fraud missing-information facts。v28 因此删除所有 render_automation_reply 路径的 LLM Reviewer：Handler 提供 reply_facts，pinned Persona 一次生成最终正文，代码只执行硬安全/格式拒绝，Worker 原样发布；仅首稿硬安全失败时允许同一 Persona 整段重写一次。",
-      "next_action": "保持 active，等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收；追踪新任务是否单次 Persona 生成、无 Reviewer stage、硬安全地板通过且正文原样发布。不得代替用户创建工单，不重放或回复 13314。",
+      "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona并加入有界Reviewer。Case 13302/13314证明语义Reviewer会误拒，v28因此删除所有render_automation_reply路径的LLM Reviewer：Handler提供reply_facts，pinned Persona一次生成最终正文，代码只执行硬安全/格式拒绝，Worker原样发布。Production Case 13317进一步证明三项missing-information仅靠prompt不能稳定得到可扫读格式；v29新增三项及以上逐项bullet的格式拒绝，首稿失败仅允许同一Persona整段重写一次，不恢复语义Reviewer或代码补写。",
+      "next_action": "保持 active。合并并发布Persona v29后，等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
         "只有硬安全或格式错误允许把枚举 issue code 和固定修改要求交回同一 Persona 整段重写一次；第二稿仍失败或模型异常时在发布前原子转 Human Review。",
         "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
         "Worker payload 停止写 persona_contract_repair 与 persona_review_*，改写 generation_attempts/safety_status/safety_issue_codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
-        "ECS Production 发布 v28 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；新任务不再产生 automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
+        "三项及以上 missing-information 必须由Persona正文按每项独立 `- ` bullet输出；检查只拒绝，首稿失败由同一pinned Persona整段重写，Worker不得组装bullet。",
+        "ECS Production 发布 v29 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform、Provider probe和backup门禁；新任务不再产生automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Persona v29 missing-information format regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAccount Route/Comment Sync/Persona/Worker/Intake/ECS/Release targeted suites>",
+          "details": "608 passed + 132 subtests。覆盖三项missing-information逐项bullet、首稿格式失败后同一Persona整段重写、Worker正文不可变、无Reviewer、13316当前轮字段优先、13318新工单follow_up禁令及完整ECS发布工具回归；既有工单未重放或修改。"
+        },
         {
           "type": "deployment",
           "label": "Persona v28 ECS Production immutable release",
@@ -10601,6 +10650,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "missing_information_bullet_contract_added",
+          "summary": "Case 13317显示三项缺失字段虽在reply_facts中完整存在，但v28仅靠prompt未形成逐项bullet。v29增加格式拒绝和一次整段重写，不恢复语义Reviewer，Worker继续保持正文不可变。"
+        },
         {
           "at": "2026-09-06",
           "event": "reviewer_removed_for_direct_persona_publication",
@@ -16244,7 +16298,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。",
         "production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。",
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
-        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 一次性完整生成；缺字段、SLA、24h 与措辞要求由当前 intent 的结构化 facts 和 prompt 指导，不再经过独立 LLM Reviewer。代码只对硬安全或格式错误拒绝并允许同一 Persona 整段重写一次；Worker 不补写、裁剪或改写正文，应用只添加 greeting、RAG 引用、附件与传输格式。",
+        "Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 一次性完整生成；缺字段、SLA、24h 与措辞要求由当前 intent 的结构化 facts 和 prompt 指导，不再经过独立 LLM Reviewer。三项及以上缺失字段要求逐项 bullet，代码只对硬安全或该格式错误拒绝并允许同一 Persona 整段重写一次；Worker 不补写、裁剪或改写正文，应用只添加 greeting、RAG 引用、附件与传输格式。",
         "Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。",
         "Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。",
         "Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。",
@@ -16252,7 +16306,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Case 读取受 Workspace Admin 保护；n8n 可通过独立 Zendesk comment snapshot integration 将 Account Case 的 public/internal comments 幂等同步到独立 projection，并可用 trigger_comment_id 将新的客户公开评论触发进自动化处理（agent 评论与重放不触发），详情按不同标签和气泡展示，Rerun 不删除这些 Zendesk comments。",
         "n8n 可将 Zendesk 工单状态幂等同步到 Account Case：/account 与 /production 的列表和详情显示 Zendesk 状态，solved/closed 联动关闭本地工单并停止 AI 自动回复，重开后自动恢复。",
         "Account Rerun 先冻结目标 Case，再以无网络副作用的 Account-only preflight 校验数据库、Prompt runtime 和 Luna profile；首个 Case 的只读 Prepare 执行首次模型请求，任何错误立即停止并展示准确的失败阶段与未处理数量，支持从冻结 checkpoint Resume。",
-        "Account 入口强制使用当前 layered route 并记录 pipeline 版本；Agora Router 将安全、隐私、信任、审计和合规请求归入 Security & Compliance classification-only 路由，Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。每次新建异步全量 Rerun 都会重新执行路由、字段提取和 handler reconciliation，并允许 Automation 重新发送内部邮件，同时保留单个 job 内的幂等和审计历史。",
+        "Account 入口强制使用当前 layered route 并记录 pipeline 版本；Agora Router 将安全、隐私、信任、审计和合规请求归入 Security & Compliance classification-only 路由，Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。新工单在没有历史 assistant reply 时禁止以 `follow_up -> none` 静默结束；评论续跑中 Route 只在本轮新增或改变 handler 字段时才允许被绑定 Handler 覆盖。每次新建异步全量 Rerun 都会重新执行路由、字段提取和 handler reconciliation，并允许 Automation 重新发送内部邮件，同时保留单个 job 内的幂等和审计历史。",
         "Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。",
         "Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。",
         "Account 自动化遇到 AI/API、结构化输出、字段处理、Persona 或内部处理链路故障时最多重试 3 次且不使用 fallback；失败会停止客户回复、取消待处理 reply job、转为 human review，并向指定负责人发送脱敏的幂等故障告警。",
@@ -16260,7 +16314,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "/production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。",
         "/account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。",
-        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 由 AWS CodeBuild 固定完整 main commit，一次构建并发布三角色 linux/amd64 digest 到 Preproduction；Preproduction 使用独立 schema、roles、namespace、Prompt target、Secrets 和日志但执行与 Production 相同的 Account 业务合同，验收后只按相同 digest 晋升 Production、禁止 rebuild。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime；n8n workflow 保持由用户独立控制。",
+        "新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 由 AWS CodeBuild 固定完整 main commit，一次构建并发布三角色 linux/amd64 digest 到 Preproduction；Preproduction 使用独立 schema、roles、namespace、Prompt target、Secrets 和日志但执行与 Production 相同的 Account 业务合同，验收后只按相同 digest 晋升 Production、禁止 rebuild。显式批准的紧急路径可由CodeBuild直接发布Production：仍经Preproduction ECR和同digest promotion，但完全不更新Preproduction ECS。Production deploy复用单次preflight evidence，并行执行健康、CloudWatch、Terraform、EC2 backup和只读Provider probe；无schema变更目标为10-15分钟并记录SLO breach。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime；n8n workflow 保持由用户独立控制。",
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [

@@ -1043,6 +1043,15 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "verify_aws_credential_lifetime" in script
     assert "aws configure export-credentials --format process" in script
     assert "run_parallel_post_deploy_checks" in script
+    assert "backend.services.automation_provider_probe" in script
+    assert "Provider probe task failed" in script
+    assert script.index("verify_aws_mutation_ready", script.index("run_provider_probe()")) < script.index(
+        "task_arn=", script.index("run_provider_probe()")
+    )
+    assert 'PROVIDER_PROBE_STATUS="passed"' in script
+    assert "automation-provider-probe-v1" in script
+    assert "normal_release_slo_seconds:900" in script
+    assert "slo_breach:(.total_seconds > 900)" in script
     assert "automation-ecs-deploy-checkpoint-v1" in script
     assert "automation-ecs-deploy-evidence-v1" in script
     assert 'schema-bootstrap.task-arn' in script
@@ -1131,10 +1140,9 @@ source "$1"
 aws() {
   if [[ "$*" == *"list-tasks"* ]]; then
     printf '%s\n' 'arn:aws:ecs:us-east-1:123456789012:task/task-1'
-  elif [[ "$*" == *"taskDefinitionArn"* ]]; then
-    printf '%s\n' "$OBSERVED_TASK_DEFINITION"
   else
-    printf '%s\n' 'sha256:expected'
+    jq -cn --arg task_definition "$OBSERVED_TASK_DEFINITION" \
+      '{tasks:[{taskDefinitionArn:$task_definition,containers:[{name:"route",imageDigest:"sha256:expected"}],attachments:[]}]}'
   fi
 }
 STATE_DIR="$2"
@@ -1206,9 +1214,10 @@ write_evidence failed_before_activation
     assert json.loads(attempts[0].read_text(encoding="utf-8")) == evidence
 
 
-def test_target_health_waits_for_draining_target_to_clear(tmp_path: Path) -> None:
+def test_target_health_accepts_new_healthy_target_while_old_target_drains(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+    (state_dir / "api.target-id").write_text("10.0.0.2\n", encoding="utf-8")
     counter = tmp_path / "target-health-calls"
     counter.write_text("0", encoding="utf-8")
     shell = """
@@ -1221,11 +1230,7 @@ aws() {
   count=$(cat "$TARGET_HEALTH_COUNTER")
   count=$((count + 1))
   printf '%s\n' "$count" >"$TARGET_HEALTH_COUNTER"
-  if ((count == 1)); then
-    printf '%s\n' '["healthy","draining"]'
-  else
-    printf '%s\n' '["healthy"]'
-  fi
+  printf '%s\n' '{"TargetHealthDescriptions":[{"Target":{"Id":"10.0.0.1"},"TargetHealth":{"State":"draining"}},{"Target":{"Id":"10.0.0.2"},"TargetHealth":{"State":"healthy"}}]}'
 }
 TEMP_DIR="$2"
 REGION=us-east-1
@@ -1244,24 +1249,28 @@ verify_target_health
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert counter.read_text(encoding="utf-8").strip() == "2"
+    assert counter.read_text(encoding="utf-8").strip() == "1"
     assert json.loads((state_dir / "target-health.json").read_text(encoding="utf-8")) == {
-        "total": 1,
+        "target_id": "10.0.0.2",
+        "target_state": "healthy",
+        "total": 2,
         "healthy": 1,
-        "unhealthy": 0,
+        "draining": 1,
+        "blocking": 0,
     }
 
 
 def test_target_health_timeout_preserves_last_summary(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+    (state_dir / "api.target-id").write_text("10.0.0.2\n", encoding="utf-8")
     shell = """
 source "$1"
 aws() {
   if [[ "$*" == *"ecs describe-services"* ]]; then
     printf '%s\n' 'arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/1'
   else
-    printf '%s\n' '["healthy","draining"]'
+    printf '%s\n' '{"TargetHealthDescriptions":[{"Target":{"Id":"10.0.0.1"},"TargetHealth":{"State":"draining"}},{"Target":{"Id":"10.0.0.2"},"TargetHealth":{"State":"initial"}}]}'
   fi
 }
 TEMP_DIR="$2"
@@ -1281,9 +1290,12 @@ verify_target_health
     assert result.returncode != 0
     assert "Target Health did not converge before timeout" in result.stderr
     assert json.loads((state_dir / "target-health.json").read_text(encoding="utf-8")) == {
+        "target_id": "10.0.0.2",
+        "target_state": "initial",
         "total": 2,
-        "healthy": 1,
-        "unhealthy": 1,
+        "healthy": 0,
+        "draining": 1,
+        "blocking": 0,
     }
 
 

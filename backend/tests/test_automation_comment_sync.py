@@ -791,6 +791,119 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         run_archer.assert_awaited_once()
         self.assertEqual(outcome["ai_reply_status"], "persona_v8_scheduled")
 
+    def test_enablement_appid_question_obeys_authoritative_rag_route_without_retrying_old_appid(self):
+        import asyncio
+
+        old_app_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        account_case = {
+            **_FakeRepository.DEFAULT_CASE,
+            "route": "enablement",
+            "execution_action": "enablement",
+            "automation_handler": "enablement",
+            "route_classification": {"handler_binding_status": "active"},
+            "collected_fields": {
+                "app_id": old_app_id,
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "missing_fields": [],
+            "internal_email_send_status": "archer_failed",
+            "automation_context": {
+                "enablement_archer": {
+                    "outcome": "appid_invalid",
+                    "reason_code": "archer_appid_invalid",
+                }
+            },
+        }
+        ticket = {
+            "ticket_id": "123",
+            "status": "open",
+            "subject": "Enable Media Relay",
+            "customer_id": "customer@example.com",
+            "messages": [
+                {"role": "customer", "content": f"Please enable Media Relay for {old_app_id}."},
+                {"role": "assistant", "content": "Please send a valid App ID."},
+            ],
+        }
+        repository = _FakeRepository()
+        repository.get_account_case = lambda _case_id: dict(account_case)
+        repository.get_account_case_by_ticket_id = lambda _ticket_id: dict(account_case)
+        repository.get_ticket = lambda _ticket_id: ticket
+        repository.save_ticket = lambda saved, new_messages=None: None
+        repository.save_account_case = lambda saved: None
+        repository.save_account_route_execution = lambda execution: None
+        repository.cancel_pending_account_reply_jobs = lambda *args, **kwargs: None
+        stale_attempt = {
+            "customer_reply": "",
+            "missing_fields": [],
+            "collected_fields": dict(account_case["collected_fields"]),
+            "internal_email_payload": {"delivery_key": "enablement:old:v1"},
+            "internal_email_to_send": {"delivery_key": "enablement:old:v1"},
+            "internal_email_send_status": "pending",
+            "internal_email_send_reason": "",
+            "requires_human_review": False,
+            "field_extraction": NS(status="complete", source_message_ids={}),
+        }
+        precomputed_route = {
+            "route_family": "rag_product_support",
+            "execution_action": "rag",
+            "route": "rag",
+            "scope_label": "support",
+            "reason": "product question",
+            "confidence": 0.99,
+            "matched_signals": [],
+            "semantic_intent": "product.question",
+            "automation_eligibility": "not_eligible",
+            "policy_decision": "rag",
+            "not_automated_reason": "product question",
+            "risk_flags": [],
+            "evidence_spans": ["what is appid"],
+            "router_source": "layered",
+            "classification": {"intent_class": "agora"},
+        }
+        created_jobs: list[dict] = []
+
+        def create_reply_job(*args, **kwargs):
+            created_jobs.append(dict(kwargs))
+            return {"job_id": "job-rag", "status": "queued", "payload": {}}
+
+        with patch.object(reply_module, "_apply_ownership_gate", return_value=True), patch(
+            "backend.services.account_admin.route_execution_from_decision",
+            return_value={"ticket_id": "123"},
+        ), patch.object(
+            reply_module, "_build_enablement_attempt", return_value=stale_attempt
+        ) as build_attempt, patch.object(
+            reply_module, "should_run_reply_rag_fallback", return_value=True
+        ), patch.object(
+            reply_module,
+            "try_rag_fallback_answer",
+            return_value=NS(kind="answer", answer="An App ID identifies your Agora project.", references=()),
+        ) as rag_fallback, patch.object(
+            reply_module, "_create_reply_job", side_effect=create_reply_job
+        ), patch.object(
+            reply_module, "_run_enablement_archer_workflow", new_callable=AsyncMock
+        ) as run_archer, patch.object(
+            reply_module,
+            "decide_account_route",
+            side_effect=AssertionError("precomputed Route must remain authoritative"),
+        ):
+            outcome = asyncio.run(
+                reply_module._process_account_customer_reply_impl(
+                    repository=repository,
+                    billing_ticket_id="AC-123",
+                    message="What is App ID?",
+                    source="zendesk-comment",
+                    message_source_id="comment-appid-question",
+                    precomputed_route=precomputed_route,
+                )
+            )
+
+        self.assertNotIn("app_id", build_attempt.call_args.kwargs["existing_fields"])
+        rag_fallback.assert_called_once()
+        run_archer.assert_not_awaited()
+        self.assertEqual(outcome["execution_action"], "rag")
+        self.assertEqual(created_jobs[0]["reply_intent"], "rag_fallback_answer")
+
     def test_runtime_requests_route_without_preparation(self):
         from backend.services.automation_contracts import AutomationEnvironment, RouteResult
 

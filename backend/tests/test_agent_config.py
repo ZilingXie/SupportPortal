@@ -80,7 +80,7 @@ class AgentConfigTests(unittest.TestCase):
         agents = {agent["key"]: agent for agent in payload["agents"]}
 
         route_prompts = {item["key"]: item for item in agents["route-agent"]["prompts"]}
-        self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v2")
+        self.assertEqual(route_prompts["account-intent-classifier-system"]["version"], "account-intent-v3")
         self.assertEqual(route_prompts["account-agora-router-system"]["version"], "account-agora-v10")
         self.assertEqual(route_prompts["account-automation-router-system"]["version"], "account-automation-v7")
         self.assertEqual(route_prompts["account-backend-operation-router-system"]["version"], "account-backend-operation-v1")

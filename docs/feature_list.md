@@ -36,7 +36,7 @@
 - staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。
 - production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
-- Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 一次性完整生成；缺字段、SLA、24h 与措辞要求由当前 intent 的结构化 facts 和 prompt 指导，不再经过独立 LLM Reviewer。代码只对硬安全或格式错误拒绝并允许同一 Persona 整段重写一次；Worker 不补写、裁剪或改写正文，应用只添加 greeting、RAG 引用、附件与传输格式。
+- Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 一次性完整生成；缺字段、SLA、24h 与措辞要求由当前 intent 的结构化 facts 和 prompt 指导，不再经过独立 LLM Reviewer。三项及以上缺失字段要求逐项 bullet，代码只对硬安全或该格式错误拒绝并允许同一 Persona 整段重写一次；Worker 不补写、裁剪或改写正文，应用只添加 greeting、RAG 引用、附件与传输格式。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。
@@ -44,7 +44,7 @@
 - Account Case 读取受 Workspace Admin 保护；n8n 可通过独立 Zendesk comment snapshot integration 将 Account Case 的 public/internal comments 幂等同步到独立 projection，并可用 trigger_comment_id 将新的客户公开评论触发进自动化处理（agent 评论与重放不触发），详情按不同标签和气泡展示，Rerun 不删除这些 Zendesk comments。
 - n8n 可将 Zendesk 工单状态幂等同步到 Account Case：/account 与 /production 的列表和详情显示 Zendesk 状态，solved/closed 联动关闭本地工单并停止 AI 自动回复，重开后自动恢复。
 - Account Rerun 先冻结目标 Case，再以无网络副作用的 Account-only preflight 校验数据库、Prompt runtime 和 Luna profile；首个 Case 的只读 Prepare 执行首次模型请求，任何错误立即停止并展示准确的失败阶段与未处理数量，支持从冻结 checkpoint Resume。
-- Account 入口强制使用当前 layered route 并记录 pipeline 版本；Agora Router 将安全、隐私、信任、审计和合规请求归入 Security & Compliance classification-only 路由，Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。每次新建异步全量 Rerun 都会重新执行路由、字段提取和 handler reconciliation，并允许 Automation 重新发送内部邮件，同时保留单个 job 内的幂等和审计历史。
+- Account 入口强制使用当前 layered route 并记录 pipeline 版本；Agora Router 将安全、隐私、信任、审计和合规请求归入 Security & Compliance classification-only 路由，Account & Billing 子 Router 将请求细分为 Account Suspension、Fraud Account、Detailed Invoice 或 Other，Backend Operation/Automation Router 将明确后台操作细分为 Enablement、Quota 或 Unregistered。新工单在没有历史 assistant reply 时禁止以 `follow_up -> none` 静默结束；评论续跑中 Route 只在本轮新增或改变 handler 字段时才允许被绑定 Handler 覆盖。每次新建异步全量 Rerun 都会重新执行路由、字段提取和 handler reconciliation，并允许 Automation 重新发送内部邮件，同时保留单个 job 内的幂等和审计历史。
 - Account 入口通过 external ID 或来源 ticket ID 幂等处理重复请求，避免重复建单和重复发送内部邮件。
 - Account Case 仅在命中已注册 Automation 时执行 handler 和延迟客户回复；其他路由只记录标签并进入对应人工或后续处理目标。
 - Account 自动化遇到 AI/API、结构化输出、字段处理、Persona 或内部处理链路故障时最多重试 3 次且不使用 fallback；失败会停止客户回复、取消待处理 reply job、转为 human review，并向指定负责人发送脱敏的幂等故障告警。
@@ -52,7 +52,7 @@
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - /production 独立环境提供与 /account 相同的 Account 处理能力（无 Run in Production），经独立数据库、独立 worker 和同域名路径路由运行；n8n 可将工单直接转发到 production，AI 回复自动以真实 Zendesk 公开评论发送，closing 类回复同次写入并置工单为 solved，确认后才关闭本地工单。
 - /account 的 Run in Production 按钮将 Case 以 n8n 同款 intake 转发到 production 环境，由 production 侧完成完整路由与 Zendesk 公开评论投递；staging 库内晋级（PRD Case）逻辑已移除。
-- 新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 由 AWS CodeBuild 固定完整 main commit，一次构建并发布三角色 linux/amd64 digest 到 Preproduction；Preproduction 使用独立 schema、roles、namespace、Prompt target、Secrets 和日志但执行与 Production 相同的 Account 业务合同，验收后只按相同 digest 晋升 Production、禁止 rebuild。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime；n8n workflow 保持由用户独立控制。
+- 新 ECS release 为 `/automation/preproduction` 与 `/automation/production` 提供独立 API、Route/Persona Worker、Automation Worker 三角色 runtime：n8n Bearer 鉴权先于 body 解析，Zendesk Ticket ID 作为 Case 身份，RDS durable Job 串联持久化、路由和处理，并记录 Execution/Step/Event/Delivery/Heartbeat、失败阶段与不可自动重试的 `outcome_unknown`。常规 release 由 AWS CodeBuild 固定完整 main commit，一次构建并发布三角色 linux/amd64 digest 到 Preproduction；Preproduction 使用独立 schema、roles、namespace、Prompt target、Secrets 和日志但执行与 Production 相同的 Account 业务合同，验收后只按相同 digest 晋升 Production、禁止 rebuild。显式批准的紧急路径可由CodeBuild直接发布Production：仍经Preproduction ECR和同digest promotion，但完全不更新Preproduction ECS。Production deploy复用单次preflight evidence，并行执行健康、CloudWatch、Terraform、EC2 backup和只读Provider probe；无schema变更目标为10-15分钟并记录SLO breach。最终镜像层物理排除 `backend.main`、rerun/reset、测试代码和项目内 RAG runtime；n8n workflow 保持由用户独立控制。
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成

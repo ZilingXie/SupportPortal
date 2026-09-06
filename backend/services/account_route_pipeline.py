@@ -75,7 +75,7 @@ profile_has_invocation_credentials = account_profile_has_primary_credentials
 
 LOGGER = logging.getLogger(__name__)
 
-ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v10"
+ACCOUNT_ROUTE_PIPELINE_VERSION = "account-layered-router-v11"
 ACCOUNT_INTENT_PROMPT_KEY = "account-intent-classifier-system"
 ACCOUNT_AGORA_PROMPT_KEY = "account-agora-router-system"
 ACCOUNT_BILLING_PROMPT_KEY = "account-account-billing-router-system"
@@ -1441,6 +1441,15 @@ def decide_account_route(
         action = str(intent_payload.get("conversation_action") or "").strip().lower()
         action_confidence = _safe_confidence(intent_payload.get("action_confidence"))
         classification["stage_confidences"]["conversation_action"] = action_confidence
+        if action == "follow_up" and latest_assistant_message is None:
+            return finish(_human_review_result(
+                intent_class="conversation",
+                reason="new_ticket_conversation_follow_up_forbidden",
+                response_language=response_language,
+                confidence=min(intent_confidence, action_confidence),
+                attempts=attempts,
+                conversation_action="human_review",
+            ))
         if action not in _CONVERSATION_ACTIONS or action_confidence < threshold:
             action = "human_review"
             classification["human_review_reason"] = "low_conversation_action_confidence"
