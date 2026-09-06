@@ -41,6 +41,7 @@ GENERATED_TOKEN_SUFFIXES = (
     "n8n-request-token",
     "hermes-api-server-key",
     "hermes-callback-token",
+    "hermes-tdai-admin-key",
 )
 
 
@@ -312,7 +313,11 @@ def bootstrap(config: BootstrapConfig, *, check_only: bool = False) -> dict[str,
         }
         values.update(
             {
-                _parameter_name(config.target_prefix, suffix): secrets.token_urlsafe(48)
+                _parameter_name(config.target_prefix, suffix): (
+                    f"sk-mem-{secrets.token_urlsafe(48)}"
+                    if suffix == "hermes-tdai-admin-key"
+                    else secrets.token_urlsafe(48)
+                )
                 for suffix in GENERATED_TOKEN_SUFFIXES
             }
         )
