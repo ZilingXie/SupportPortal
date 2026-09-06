@@ -1,5 +1,12 @@
 # Prompt Change Log
 
+## 2026-09-06 - Route continuation and missing-information format repair (p2-110, p2-144)
+
+- Prompt or model version: `account-layered-router-v10` -> `account-layered-router-v11`, `account-intent-v2` -> `account-intent-v3`, `automation-persona-v28` -> `automation-persona-v29`; model profiles unchanged.
+- Trigger: Production Cases 13316/13317/13318 showed three independent gaps: a bound Enablement handler could override an authoritative RAG route using historical state, three missing fields were not consistently rendered as bullets, and a new substantive ticket could be classified as `follow_up -> none` without any prior assistant reply.
+- Change: Handler continuation may override Route only when the current customer message adds or changes a handler field; invalid historical App IDs are not reused. New tickets without an assistant reply cannot silently terminate as follow-up. Persona v29 requires three or more missing fields to use one `- ` bullet per field; the format gate only rejects and the same pinned Persona may rewrite the whole body once.
+- Boundary: no semantic Reviewer was restored. Persona remains the only body author, Worker does not modify accepted bytes, and existing Cases 13316/13317/13318 are not replayed or changed.
+
 ## 2026-09-06 - ECS release pipeline evidence and resume contract (p1-53)
 
 - Area or subsystem:

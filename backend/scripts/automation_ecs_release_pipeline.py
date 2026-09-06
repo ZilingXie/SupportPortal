@@ -502,6 +502,9 @@ def _pipeline_summary(state: PipelineState) -> dict[str, Any]:
         "total_seconds": total,
         "ecs_wait_seconds": ecs_wait,
         "controllable_seconds": round(max(0.0, total - ecs_wait), 3),
+        "normal_release_slo_seconds": 900,
+        "target_range_seconds": {"min": 600, "max": 900},
+        "slo_breach": total > 900,
     }
 
 
@@ -556,6 +559,14 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     env = sanitized_aws_environment()
     env["AUTOMATION_RELEASE_PYTHON"] = sys.executable
     verify_aws_identity(env)
+    direct_production = bool(args.codebuild_direct_production)
+    if direct_production and args.through != "production":
+        raise ValueError("--codebuild-direct-production requires --through production")
+    if direct_production and (
+        args.hermes_persona_enabled
+        or args.hermes_case_workflow_mode not in {None, "disabled"}
+    ):
+        raise ValueError("CodeBuild direct Production keeps Production Hermes disabled")
     release_commit = args.release_commit or _git(project_root, "rev-parse", "origin/main")
     release_commit = _git(project_root, "rev-parse", f"{release_commit}^{{commit}}")
     release_id = f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"
@@ -580,6 +591,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "schema_bootstrap": bool(args.bootstrap_account_schema),
                 "hermes_case_workflow": args.hermes_case_workflow_mode or "",
                 "hermes_persona_enabled": bool(args.hermes_persona_enabled),
+                "codebuild_direct_production": direct_production,
             },
         }
     )
@@ -594,8 +606,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = release_dir / "release-manifest.json"
     record_path = release_dir / "publish-record.json"
     mode_args = deploy_mode_args(args)
-    preproduction_env = dict(env)
-    preproduction_env["PROMPT_RELEASE_TARGET_DSN"] = prompt_target_dsn(env, "preproduction")
     common_deploy = [
         str(project_root / "deployment" / "deploy_automation_ecs_release.sh"),
         "--environment",
@@ -653,52 +663,62 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             release_commit=release_commit,
             manifest_path=manifest_path,
         )
-        preflight_path = state.path / "preflight.json"
-        _run_stage(
-            state,
-            "preflight",
-            [*common_deploy, "--check-only", "--preflight-evidence-out", str(preflight_path)],
-            cwd=project_root,
-            env=preproduction_env,
-            resume=args.resume,
-            skip_if_complete=False,
-        )
-        deploy_env = dict(preproduction_env)
-        deploy_env["AUTOMATION_ECS_DEPLOY_STATE_DIR"] = str(state.path / "preproduction-deploy")
-        deploy_args = [*common_deploy, "--preflight-evidence", str(preflight_path)]
-        if args.resume and (state.path / "preproduction-deploy" / "checkpoint.json").exists():
-            deploy_args.append("--resume")
-        _run_stage(
-            state,
-            "preproduction_deploy",
-            deploy_args,
-            cwd=project_root,
-            env=deploy_env,
-            resume=args.resume,
-            skip_if_complete=False,
-        )
+        if not direct_production:
+            preproduction_env = dict(env)
+            preproduction_env["PROMPT_RELEASE_TARGET_DSN"] = prompt_target_dsn(env, "preproduction")
+            preflight_path = state.path / "preproduction-preflight.json"
+            _run_stage(
+                state,
+                "preproduction_preflight",
+                [*common_deploy, "--check-only", "--preflight-evidence-out", str(preflight_path)],
+                cwd=project_root,
+                env=preproduction_env,
+                resume=args.resume,
+                skip_if_complete=False,
+            )
+            deploy_env = dict(preproduction_env)
+            deploy_env["AUTOMATION_ECS_DEPLOY_STATE_DIR"] = str(state.path / "preproduction-deploy")
+            deploy_args = [*common_deploy, "--preflight-evidence", str(preflight_path)]
+            if args.resume and (state.path / "preproduction-deploy" / "checkpoint.json").exists():
+                deploy_args.append("--resume")
+            _run_stage(
+                state,
+                "preproduction_deploy",
+                deploy_args,
+                cwd=project_root,
+                env=deploy_env,
+                resume=args.resume,
+                skip_if_complete=False,
+            )
         if args.through == "production":
             if env.get("DEPLOY_PRODUCTION_APPROVED") != "1":
                 raise ValueError("DEPLOY_PRODUCTION_APPROVED=1 is required before Production promotion")
             production_target_dsn = prompt_target_dsn(env, "production")
             promotion = state.path / "promotion-record.json"
-            preproduction_evidence = state.path / "preproduction-deploy" / "evidence.json"
+            promotion_args = [
+                str(project_root / "deployment" / "promote_automation_release.sh"),
+                "--manifest",
+                str(manifest_path),
+                "--publish-record",
+                str(record_path),
+                "--promotion-record",
+                str(promotion),
+                "--region",
+                AWS_REGION,
+            ]
+            if direct_production:
+                promotion_args.append("--codebuild-direct-production")
+            else:
+                promotion_args.extend(
+                    [
+                        "--preproduction-evidence",
+                        str(state.path / "preproduction-deploy" / "evidence.json"),
+                    ]
+                )
             _run_stage(
                 state,
                 "production_promotion",
-                [
-                    str(project_root / "deployment" / "promote_automation_release.sh"),
-                    "--manifest",
-                    str(manifest_path),
-                    "--publish-record",
-                    str(record_path),
-                    "--preproduction-evidence",
-                    str(preproduction_evidence),
-                    "--promotion-record",
-                    str(promotion),
-                    "--region",
-                    AWS_REGION,
-                ],
+                promotion_args,
                 cwd=project_root,
                 env=env,
                 resume=args.resume,
@@ -706,30 +726,48 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             production_env = dict(env)
             production_env["PROMPT_RELEASE_TARGET_DSN"] = production_target_dsn
             production_env["AUTOMATION_ECS_DEPLOY_STATE_DIR"] = str(state.path / "production-deploy")
+            production_deploy = [
+                str(project_root / "deployment" / "deploy_automation_ecs_release.sh"),
+                "--environment",
+                "production",
+                "--release-worktree",
+                str(release_worktree),
+                "--manifest",
+                str(manifest_path),
+                "--promotion-record",
+                str(promotion),
+                *mode_args,
+            ]
+            production_preflight = state.path / "production-preflight.json"
             _run_stage(
                 state,
-                "production_deploy",
+                "production_preflight",
                 [
-                    str(project_root / "deployment" / "deploy_automation_ecs_release.sh"),
-                    "--environment",
-                    "production",
-                    "--release-worktree",
-                    str(release_worktree),
-                    "--manifest",
-                    str(manifest_path),
-                    "--promotion-record",
-                    str(promotion),
-                    *mode_args,
+                    *production_deploy,
+                    "--check-only",
+                    "--preflight-evidence-out",
+                    str(production_preflight),
                 ],
                 cwd=project_root,
                 env=production_env,
                 resume=args.resume,
                 skip_if_complete=False,
             )
-        summary = _pipeline_summary(state)
-        _write_json_atomic(state.path / "timings.json", summary)
-        return summary
+            production_deploy.extend(["--preflight-evidence", str(production_preflight)])
+            if args.resume and (state.path / "production-deploy" / "checkpoint.json").exists():
+                production_deploy.append("--resume")
+            _run_stage(
+                state,
+                "production_deploy",
+                production_deploy,
+                cwd=project_root,
+                env=production_env,
+                resume=args.resume,
+                skip_if_complete=False,
+            )
+        return _pipeline_summary(state)
     finally:
+        _write_json_atomic(state.path / "timings.json", _pipeline_summary(state))
         if release_worktree.exists() and not args.keep_release_worktree:
             subprocess.run(
                 ["git", "-C", str(project_root), "worktree", "remove", "--force", str(release_worktree)],
@@ -779,6 +817,11 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--release-commit")
     pipeline.add_argument("--prompt-release-id", required=True)
     pipeline.add_argument("--through", choices=("preproduction", "production"), default="preproduction")
+    pipeline.add_argument(
+        "--codebuild-direct-production",
+        action="store_true",
+        help="publish CodeBuild digests to Production without updating Preproduction ECS",
+    )
     pipeline.add_argument("--bootstrap-account-schema", action="store_true")
     pipeline.add_argument("--hermes-case-workflow-mode", choices=("disabled", "mock", "real"))
     pipeline.add_argument("--hermes-persona-enabled", action="store_true")

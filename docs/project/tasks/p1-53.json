@@ -4,8 +4,8 @@
   "title": "Production 优先的 Automation 三环境部署重构",
   "status": "active",
   "owner": "zac",
-  "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。Automation schema现支持显式、事务性的automation-ecs-001到automation-ecs-002升级，未知revision继续fail closed。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
-  "next_action": "保持 active。ECS Production已部署r20260906-a2693a5并通过技术门禁，等待用户通过n8n向 https://supportcenter.stellarix.space/automation/production 投递全新Enablement、Fraud与Suspension工单完成业务验收；Preproduction Hermes继续由用户另行测试。不得修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown。",
+  "summary": "AWS CodeBuild固定完整main SHA的三角色linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造或更新Preproduction ECS验收。Production deploy复用一次preflight evidence，Route/Worker并行rollout，ALB只等待新API target健康，并把公网health、CloudWatch、发布后Terraform zero-drift、EC2 backup及单个Worker只读Provider probe合并为并行collector；无schema变更目标为10-15分钟并记录slo_breach。ECS Preproduction Account与Hermes保持独立运行；ECS Production Account保持Hermes disabled；EC2、n8n由用户独立控制。",
+  "next_action": "保持 active。合并本轮业务修复与快速发布工具后，以CodeBuild direct-Production发布最新main并验证10-15分钟SLO、单次preflight复用、并行collector与只读Provider probe；随后等待用户投递全新Enablement、Fraud与Suspension工单。不得修改Preproduction ECS/Hermes、EC2、n8n或既有工单，也不重试outcome_unknown。",
   "acceptance_criteria": [
     "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -18,10 +18,18 @@
     "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
     "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
     "正式Production发布只能使用要求Manifest、Promotion Record、零漂移plan和显式授权的deploy_automation_ecs_release.sh；Prompt先同步candidate，Route/Worker与heartbeat通过后再部署API，所有健康门禁通过后才activate；激活前失败回滚旧revision，激活结果不确定时要求readback reconciliation。",
+    "CodeBuild direct-Production完全跳过Preproduction ECS preflight/deploy，但仍由Preproduction ECR promotion同一digest；Production check-only evidence由正式deploy复用，部署后Provider探针只做RAG/Archer/Graph/Zendesk GET及收件人布尔/数量readback，和Terraform/health/CloudWatch/backup并行，任一失败阻断激活。",
+    "无schema变更的正常发布目标为10-15分钟；pipeline和deploy evidence记录总耗时、ECS wait、可控耗时、900秒SLO与slo_breach，超时不绕过任何门禁。",
     "常规release由无ECS/RDS/Production ECR写权限的CodeBuild从固定完整main commit一次构建三角色linux/amd64镜像，输出registry-backed Manifest v2和Preproduction Publish Record；首次Preproduction使用canonical definitions分阶段add-only bootstrap，不复制Production task definition。"
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "CodeBuild direct Production fast path and consolidated evidence",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q <Automation ECS deploy/pipeline/promotion/release and business targeted suites>; bash -n deployment/deploy_automation_ecs_release.sh",
+      "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针仅GET且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
+    },
     {
       "type": "deployment",
       "label": "CodeBuild direct Production release with schema 002",
@@ -341,6 +349,11 @@
   "created_at": "2026-08-25",
   "updated_at": "2026-09-06",
   "history": [
+    {
+      "at": "2026-09-06",
+      "event": "direct_production_fast_path_and_provider_probe_implemented",
+      "summary": "正式pipeline增加CodeBuild direct-Production路径，跳过Preproduction ECS但保留同digest promotion和完整Production门禁；Production复用preflight evidence、按新API target判断ALB健康、并行执行一次性只读Provider probe与其余collector，并记录10-15分钟SLO。等待验证、合并与获批发布。"
+    },
     {
       "at": "2026-08-25",
       "event": "planned",

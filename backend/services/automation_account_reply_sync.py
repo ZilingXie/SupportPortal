@@ -497,11 +497,17 @@ async def _process_account_customer_reply_impl(
         if isinstance(billing_ticket.get("collected_fields"), dict)
         else {}
     )
-    prior_missing_fields = list(billing_ticket.get("missing_fields") or [])
     prior_automation_context = (
         dict(billing_ticket.get("automation_context"))
         if isinstance(billing_ticket.get("automation_context"), dict)
         else {}
+    )
+    prior_archer = prior_automation_context.get("enablement_archer")
+    enablement_archer_recoverable = (
+        prior_handler == "enablement"
+        and isinstance(prior_archer, dict)
+        and str(prior_archer.get("outcome") or "").strip()
+        in {"appid_invalid", "project_not_found"}
     )
 
     if not await _sync(
@@ -730,21 +736,30 @@ async def _process_account_customer_reply_impl(
                 already_requested_fields=sorted(already_requested_fields),
             )
         if registration.implementation == "enablement":
+            enablement_existing_fields = dict(prior_collected_fields)
+            enablement_customer_messages = customer_messages
+            if enablement_archer_recoverable:
+                # A rejected App ID is not a trusted current value. Re-extract
+                # only from this comment so an unrelated question cannot
+                # revive the old Archer attempt from accumulated history.
+                enablement_existing_fields.pop("app_id", None)
+                enablement_customer_messages = [customer_msg]
             return _build_enablement_attempt(
                 message=conversation_text,
                 ticket_subject=ticket_subject,
-                customer_messages=customer_messages,
+                customer_messages=enablement_customer_messages,
                 ticket_id=client_ticket_id,
                 account_case_id=account_case_id_value,
                 customer_email=customer_email,
                 zendesk_ticket_url=url,
-                existing_fields=prior_collected_fields,
+                existing_fields=enablement_existing_fields,
                 already_requested_fields=sorted(already_requested_fields),
             )
         raise ReplySyncError(409, "account case has no registered automation handler")
 
     automation_attempt: dict[str, Any] | None = None
     handler_continued = False
+    current_handler_progress_fields: set[str] = set()
     route_result = None
     if precomputed_route is not None:
         route_payload = dict(precomputed_route)
@@ -758,7 +773,23 @@ async def _process_account_customer_reply_impl(
     if prior_classification.get("handler_binding_status") == "active" and prior_handler:
         candidate_attempt = build_automation_attempt(prior_handler, prior_action)
         candidate_collected = dict(candidate_attempt["collected_fields"])
-        candidate_missing = list(candidate_attempt["missing_fields"])
+        changed_fields = {
+            key
+            for key, value in candidate_collected.items()
+            if value and value != prior_collected_fields.get(key)
+        }
+        extraction = candidate_attempt.get("field_extraction")
+        source_message_ids = getattr(extraction, "source_message_ids", None)
+        if isinstance(source_message_ids, dict) and source_message_ids:
+            current_message_ids = {timestamp}
+            if normalized_source_id:
+                current_message_ids.add(normalized_source_id)
+            changed_fields = {
+                key
+                for key in changed_fields
+                if str(source_message_ids.get(key) or "").strip() in current_message_ids
+            }
+        current_handler_progress_fields = changed_fields
         registration = account_automation_handler(prior_action)
         if registration and registration.implementation == "account_verification":
             ticket_context = [
@@ -783,26 +814,14 @@ async def _process_account_customer_reply_impl(
                     current_ticket_status=str(canonical_ticket.get("status") or ""),
                     require_latest=True,
                 )
-            probe_classification = route_result.classification
-            probe_action = str(route_result.decision.execution_action or route_result.decision.route or "").strip()
-            field_progress = any(
-                value and value != prior_collected_fields.get(key)
-                for key, value in candidate_collected.items()
-            )
             handler_continued = (
                 bool(candidate_attempt.get("requires_human_review"))
-                or field_progress
-                or probe_classification.get("intent_class") == "conversation"
-                or (probe_classification.get("intent_class") == "agora" and probe_action == prior_action)
+                or bool(current_handler_progress_fields)
             )
         else:
-            handler_continued = bool(candidate_attempt.get("requires_human_review")) or (
-                any(
-                    value and value != prior_collected_fields.get(key)
-                    for key, value in candidate_collected.items()
-                )
-                or len(candidate_missing) < len(prior_missing_fields)
-                or bool(candidate_attempt.get("internal_email_to_send"))
+            handler_continued = (
+                bool(candidate_attempt.get("requires_human_review"))
+                or bool(current_handler_progress_fields)
             )
         if handler_continued:
             automation_attempt = candidate_attempt
@@ -842,6 +861,7 @@ async def _process_account_customer_reply_impl(
         if prior_classification.get("handler_binding_status") == "active":
             route_classification["superseded_automation_handler"] = prior_handler or None
             route_classification["previous_handler_binding_status"] = "superseded"
+            route_classification["handler_continuation_reason"] = "no_current_message_field_progress"
         billing_ticket.update(
             {
                 "route": route or None,
@@ -970,12 +990,9 @@ async def _process_account_customer_reply_impl(
             and prior_handler == str(billing_ticket.get("automation_handler") or "").strip()
         )
         prior_send_status = str(billing_ticket.get("internal_email_send_status") or "").strip()
-        prior_archer = prior_automation_context.get("enablement_archer")
         archer_recoverable = (
-            active_handler == "enablement"
-            and isinstance(prior_archer, dict)
-            and str(prior_archer.get("outcome") or "").strip()
-            in {"appid_invalid", "project_not_found"}
+            enablement_archer_recoverable
+            and "app_id" in current_handler_progress_fields
         )
         should_send_internal_email = not same_automation or prior_send_status in {
             "",

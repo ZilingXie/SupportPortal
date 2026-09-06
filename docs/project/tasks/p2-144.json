@@ -9,18 +9,25 @@
   "function_id": "automation-execution-loop",
   "created_at": "2026-09-05",
   "updated_at": "2026-09-06",
-  "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona 并加入有界 Reviewer。Case 13302 推动 v27 隔离 current-intent policy，但 Production Case 13314 仍被独立 Reviewer 以 intent_policy_violation 连续误拒，虽然 Handler 已提供结构化 Fraud missing-information facts。v28 因此删除所有 render_automation_reply 路径的 LLM Reviewer：Handler 提供 reply_facts，pinned Persona 一次生成最终正文，代码只执行硬安全/格式拒绝，Worker 原样发布；仅首稿硬安全失败时允许同一 Persona 整段重写一次。",
-  "next_action": "保持 active，等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收；追踪新任务是否单次 Persona 生成、无 Reviewer stage、硬安全地板通过且正文原样发布。不得代替用户创建工单，不重放或回复 13314。",
+  "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona并加入有界Reviewer。Case 13302/13314证明语义Reviewer会误拒，v28因此删除所有render_automation_reply路径的LLM Reviewer：Handler提供reply_facts，pinned Persona一次生成最终正文，代码只执行硬安全/格式拒绝，Worker原样发布。Production Case 13317进一步证明三项missing-information仅靠prompt不能稳定得到可扫读格式；v29新增三项及以上逐项bullet的格式拒绝，首稿失败仅允许同一Persona整段重写一次，不恢复语义Reviewer或代码补写。",
+  "next_action": "保持 active。合并并发布Persona v29后，等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
     "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
     "只有硬安全或格式错误允许把枚举 issue code 和固定修改要求交回同一 Persona 整段重写一次；第二稿仍失败或模型异常时在发布前原子转 Human Review。",
     "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
     "Worker payload 停止写 persona_contract_repair 与 persona_review_*，改写 generation_attempts/safety_status/safety_issue_codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
-    "ECS Production 发布 v28 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform 和 backup 门禁；新任务不再产生 automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
+    "三项及以上 missing-information 必须由Persona正文按每项独立 `- ` bullet输出；检查只拒绝，首稿失败由同一pinned Persona整段重写，Worker不得组装bullet。",
+    "ECS Production 发布 v29 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform、Provider probe和backup门禁；新任务不再产生automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Persona v29 missing-information format regression",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q <Account Route/Comment Sync/Persona/Worker/Intake/ECS/Release targeted suites>",
+      "details": "608 passed + 132 subtests。覆盖三项missing-information逐项bullet、首稿格式失败后同一Persona整段重写、Worker正文不可变、无Reviewer、13316当前轮字段优先、13318新工单follow_up禁令及完整ECS发布工具回归；既有工单未重放或修改。"
+    },
     {
       "type": "deployment",
       "label": "Persona v28 ECS Production immutable release",
@@ -70,6 +77,11 @@
     }
   ],
   "history": [
+    {
+      "at": "2026-09-06",
+      "event": "missing_information_bullet_contract_added",
+      "summary": "Case 13317显示三项缺失字段虽在reply_facts中完整存在，但v28仅靠prompt未形成逐项bullet。v29增加格式拒绝和一次整段重写，不恢复语义Reviewer，Worker继续保持正文不可变。"
+    },
     {
       "at": "2026-09-06",
       "event": "reviewer_removed_for_direct_persona_publication",

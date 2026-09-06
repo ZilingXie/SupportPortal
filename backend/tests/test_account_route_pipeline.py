@@ -23,6 +23,7 @@ from backend.services.prompts.account_routing import (
     build_account_agora_system_prompt,
     build_account_automation_system_prompt,
     build_account_billing_system_prompt,
+    build_account_intent_system_prompt,
 )
 from backend.services.support_router import SupportRouteDecision
 
@@ -584,12 +585,12 @@ class AccountRoutePipelineTests(unittest.TestCase):
         fixture_path = Path(__file__).parent / "fixtures" / "account_route_golden_cases.json"
         cases = json.loads(fixture_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(len(cases), 24)
+        self.assertEqual(len(cases), 25)
         self.assertEqual({item["case_id"] for item in cases}, {
             "12515", "12512", "12511", "12506", "12505", "12502", "12500",
             "12497", "12496", "12486", "12484", "12480", "12479", "12476",
             "12460", "12458", "12456", "12572", "12584", "12622", "12585",
-            "12724", "12708", "10075",
+            "12724", "12708", "10075", "13318",
         })
         self.assertTrue(all(item["primary_label"] == "Agora" for item in cases))
         self.assertNotIn("Support Request", {item["primary_label"] for item in cases})
@@ -609,6 +610,8 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(by_case_id["10075"]["secondary_label"], "Account & Billing / Detailed Invoice")
         self.assertEqual(by_case_id["10075"]["route_status"], "not_automated")
         self.assertIsNone(by_case_id["10075"]["automation_handler"])
+        self.assertEqual(by_case_id["13318"]["secondary_label"], "Account & Billing / Account Suspension")
+        self.assertEqual(by_case_id["13318"]["reason_code"], "registered_account_suspension")
 
     def test_route_correction_uses_layered_labels_without_activating_handler(self) -> None:
         conversation = classification_for_corrected_route(
@@ -673,6 +676,7 @@ class AccountRoutePipelineTests(unittest.TestCase):
         ):
             result = decide_account_route(
                 "Thanks",
+                latest_assistant_message={"role": "assistant", "content": "Here is the requested guidance."},
                 legacy_router=legacy_router,
                 require_latest=True,
             )
@@ -680,6 +684,38 @@ class AccountRoutePipelineTests(unittest.TestCase):
         self.assertEqual(result.secondary_label, "Follow-up")
         self.assertEqual(result.classification["pipeline_version"], ACCOUNT_ROUTE_PIPELINE_VERSION)
         legacy_router.assert_not_called()
+
+    def test_new_ticket_follow_up_is_forced_to_human_review(self) -> None:
+        with patch(
+            "backend.services.account_route_pipeline._invoke_stage",
+            return_value=_attempt(
+                {
+                    "intent_class": "conversation",
+                    "conversation_action": "follow_up",
+                    "intent_confidence": 0.97,
+                    "action_confidence": 0.94,
+                    "reason_code": "conversation_follow_up",
+                }
+            ),
+        ):
+            result = decide_account_route(
+                "Please help with my suspended Agora account.",
+                ticket_context=[{"role": "customer", "content": "Please help with my suspended Agora account."}],
+                latest_assistant_message=None,
+                require_latest=True,
+            )
+
+        self.assertEqual(result.decision.execution_action, "human_review_required")
+        self.assertEqual(result.classification["route_target"], "human_review")
+        self.assertEqual(
+            result.classification["route_reason_code"],
+            "new_ticket_conversation_follow_up_forbidden",
+        )
+
+    def test_intent_prompt_forbids_new_ticket_follow_up_for_substantive_account_requests(self) -> None:
+        prompt = build_account_intent_system_prompt()
+        self.assertIn("no prior assistant reply, conversation follow_up is invalid", prompt)
+        self.assertIn("Account Suspension request is substantive", prompt)
 
     def test_latest_account_route_missing_credentials_fails_closed(self) -> None:
         legacy_router = unittest.mock.Mock(

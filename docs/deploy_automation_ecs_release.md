@@ -44,6 +44,38 @@ pipeline使用当前main上的部署工具，同时创建clean detached release 
 `docs/**`、`AGENTS.md`、`CLAUDE.md`、`REASONIX.md`变化；backend、ui、deployment、
 infra、依赖或其他路径任一变化都要求新CodeBuild release。
 
+### CodeBuild Direct Production
+
+紧急修复可在单独Production授权下跳过Preproduction ECS，但不跳过不可变镜像和Production门禁：
+
+```bash
+DEPLOY_PRODUCTION_APPROVED=1 \
+TICKET_DB_DSN=<source-prompt-dsn> \
+PRODUCTION_PROMPT_RELEASE_TARGET_DSN=<production-migration-dsn> \
+./deployment/release_automation_ecs_pipeline.sh \
+  --release-commit <full-origin-main-sha> \
+  --prompt-release-id <active-prompt-release-id> \
+  --through production \
+  --codebuild-direct-production \
+  --hermes-case-workflow-mode disabled
+```
+
+该模式仍由CodeBuild把三个`linux/amd64` digest写入Preproduction ECR，再把完全相同的digest
+promotion到Production ECR；不会运行Preproduction `check-only`、deploy、schema、Prompt同步或
+service update。Production先生成可复用preflight evidence，正式deploy只复核绑定身份并复用其中
+唯一一次Terraform zero-drift结果。Production Hermes必须保持disabled，Preproduction ECS与Hermes
+不发生变化。
+
+部署后的单个Worker one-off task只执行只读Provider probe：RAG health、合成不存在App ID的Archer
+GET、Graph `/me`、Zendesk `users/me`，并验证Enablement/Fraud/Suspension三类收件人配置。探针不发送
+邮件、不创建或修改Zendesk工单，不执行Archer enablement；evidence只保存布尔值和收件人数，不保存
+身份、地址、token或响应正文。该探针与公网health、CloudWatch、EC2 backup、ALB target和发布后
+Terraform zero-drift并行执行，任一失败仍阻断Prompt激活。
+
+无schema变更的常规发布目标为10-15分钟。pipeline `timings.json`和deploy `evidence.json`均记录
+`normal_release_slo_seconds=900`、目标范围以及`slo_breach`；超时只产生明确证据，不放宽任何健康、
+provenance或回滚门禁。schema migration、AWS异常或回滚不受该正常路径SLO约束，但必须保留实际耗时。
+
 ### 2026-09-06 Preproduction计时基线
 
 首次完整成功演练使用 `main@eb17106783cf` 和 release

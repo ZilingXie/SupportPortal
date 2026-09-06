@@ -222,7 +222,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v28")
+        self.assertEqual(result.prompt_version, "automation-persona-v29")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -956,7 +956,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v28")
+        self.assertEqual(result.prompt_version, "automation-persona-v29")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1010,16 +1010,27 @@ class AutomationPersonaTests(unittest.TestCase):
                 result.content,
             )
 
-    def test_missing_information_soft_omission_publishes_without_rewrite(self) -> None:
+    def test_three_missing_fields_rewrite_once_when_bullets_are_missing(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        response = SimpleNamespace(
-            text="Thank you for sharing the information you have so far.",
-            model_name="persona-model",
-        )
+        responses = [
+            SimpleNamespace(
+                text="Please send your office address, official contact number, and last known console configuration.",
+                model_name="persona-model",
+            ),
+            SimpleNamespace(
+                text=(
+                    "Please send the following details:\n"
+                    "- Office address\n"
+                    "- Official contact number\n"
+                    "- Last known console configuration"
+                ),
+                model_name="persona-model",
+            ),
+        ]
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
-            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
         ) as invoke:
             result = render_automation_reply(
                 reply_facts=build_account_automation_reply_facts(
@@ -1032,10 +1043,42 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(invoke.call_count, 1)
-        self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.generation_attempts, 1)
-        self.assertEqual(result.safety_issue_codes, ())
+        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(result.content, f"Hi Customer,\n\n{responses[1].text}")
+        self.assertEqual(result.generation_attempts, 2)
+        self.assertEqual(
+            result.safety_issue_codes,
+            ("automation_persona_missing_information_format_invalid",),
+        )
+        revision = json.loads(invoke.call_args_list[1].kwargs["user_prompt"])["revision"]
+        self.assertEqual(
+            revision["issue_codes"],
+            ["automation_persona_missing_information_format_invalid"],
+        )
+
+    def test_three_missing_fields_fail_closed_after_second_invalid_format(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(text="Please send all missing details.", model_name="persona-model")
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
+        ) as invoke:
+            with self.assertRaises(AutomationPersonaError) as raised:
+                render_automation_reply(
+                    reply_facts=build_account_automation_reply_facts(
+                        handler="fraud_account",
+                        action="fraud_account",
+                        missing_fields=["office_address", "contact_number", "console_configuration"],
+                        collected_fields={},
+                    ),
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+
+        self.assertEqual(raised.exception.code, "automation_persona_missing_information_format_invalid")
+        self.assertEqual(raised.exception.attempt_count, 2)
+        self.assertEqual(invoke.call_count, 2)
 
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
@@ -1395,7 +1438,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.prompt_version, "automation-persona-v28")
+        self.assertEqual(result.prompt_version, "automation-persona-v29")
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.generation_attempts, 1)
 
@@ -1714,7 +1757,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v28")
+        self.assertEqual(result.prompt_version, "automation-persona-v29")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
