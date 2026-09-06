@@ -66,6 +66,9 @@ service update。Production先生成可复用preflight evidence，正式deploy�
 唯一一次Terraform zero-drift结果。Production Hermes必须保持disabled，Preproduction ECS与Hermes
 不发生变化。
 
+Promotion为`crane`/`skopeo`创建私有临时`DOCKER_CONFIG`并在退出时删除，避免读取用户全局
+Docker credential helper；ECR短期登录凭据不写入用户配置或release evidence。
+
 部署后的单个Worker one-off task只执行只读Provider probe：RAG health、合成不存在App ID的Archer
 GET、Graph `/me`、Zendesk `users/me`，并验证Enablement/Fraud/Suspension三类收件人配置。探针不发送
 邮件、不创建或修改Zendesk工单，不执行Archer enablement；evidence只保存布尔值和收件人数，不保存

@@ -328,6 +328,15 @@ def test_promotion_copies_manifests_and_layers_and_verifies_identical_digests_wi
     assert "--accepted-media-types" not in script
 
 
+def test_promotion_uses_private_ephemeral_registry_auth() -> None:
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert 'mktemp -d "${TMPDIR:-/tmp}/supportportal-promotion-auth.XXXXXX"' in script
+    assert 'chmod 700 "${REGISTRY_AUTH_DIR}"' in script
+    assert 'export DOCKER_CONFIG="${REGISTRY_AUTH_DIR}"' in script
+    assert 'rm -rf -- "${REGISTRY_AUTH_DIR}"' in script
+    assert "trap cleanup EXIT" in script
+
+
 def test_registry_promotion_requires_and_records_preproduction_evidence(tmp_path: Path) -> None:
     manifest, publish, evidence = _registry_release_bundle(tmp_path)
     fake_bin, state = _fake_tools(tmp_path)

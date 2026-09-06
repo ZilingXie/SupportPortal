@@ -16,8 +16,15 @@ PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
 DIRECT_PRODUCTION=0
 CODEBUILD_DIRECT_PRODUCTION=0
 SOURCE_REPOSITORY_EXPLICIT=0
+REGISTRY_AUTH_DIR=""
+RECORDS_FILE=""
 
 fail() { printf '[promotion] ERROR: %s\n' "$*" >&2; exit 1; }
+
+cleanup() {
+  [[ -z "${RECORDS_FILE}" ]] || rm -f -- "${RECORDS_FILE}"
+  [[ -z "${REGISTRY_AUTH_DIR}" ]] || rm -rf -- "${REGISTRY_AUTH_DIR}"
+}
 
 usage() {
   cat <<'EOF'
@@ -72,6 +79,7 @@ aws_ecr() {
 }
 
 main() {
+  trap cleanup EXIT
   parse_args "$@"
   [[ -n "${MANIFEST_PATH}" && -f "${MANIFEST_PATH}" ]] || fail "Release Manifest is required"
   [[ -n "${REGION}" ]] || fail "AWS region is required"
@@ -81,6 +89,9 @@ main() {
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
   [[ "$((DIRECT_PRODUCTION + CODEBUILD_DIRECT_PRODUCTION))" -le 1 ]] \
     || fail "--direct-production and --codebuild-direct-production are mutually exclusive"
+  REGISTRY_AUTH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/supportportal-promotion-auth.XXXXXX")"
+  chmod 700 "${REGISTRY_AUTH_DIR}"
+  export DOCKER_CONFIG="${REGISTRY_AUTH_DIR}"
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
     [[ "${SOURCE_REPOSITORY_EXPLICIT}" = "0" ]] || fail "--direct-production cannot be combined with --source-repository"
     [[ -z "${PUBLISH_RECORD}" && -z "${PREPRODUCTION_EVIDENCE}" ]] \
@@ -194,9 +205,7 @@ main() {
     aws ecr get-login-password --region "${REGION}" \
       | crane auth login "${registry}" --username AWS --password-stdin >/dev/null
   fi
-  local records_file
-  records_file="$(mktemp "${manifest_dir}/promotion.XXXXXX")"
-  trap 'rm -f -- "${records_file}"' EXIT
+  RECORDS_FILE="$(mktemp "${manifest_dir}/promotion.XXXXXX")"
 
   local layout_path target_digest existing
   for role in api route worker; do
@@ -236,10 +245,10 @@ main() {
         --query 'images[0].imageId.imageDigest' --output text)"
     fi
     [[ "${target_digest}" = "${expected}" ]] || fail "${role} promoted digest mismatch: ${target_digest}"
-    printf '%s\t%s\t%s\n' "${role}" "${tag}" "${expected}" >> "${records_file}"
+    printf '%s\t%s\t%s\n' "${role}" "${tag}" "${expected}" >> "${RECORDS_FILE}"
   done
 
-  "${PYTHON_BIN}" - "${PROMOTION_RECORD}" "${release_id}" "${SOURCE_REPOSITORY}" "${TARGET_REPOSITORY}" "${REGION}" "${REGISTRY_ID}" "${records_file}" "${promotion_mode}" "${publish_record_sha256:-}" "${deploy_evidence_sha256:-}" <<'PY'
+  "${PYTHON_BIN}" - "${PROMOTION_RECORD}" "${release_id}" "${SOURCE_REPOSITORY}" "${TARGET_REPOSITORY}" "${REGION}" "${REGISTRY_ID}" "${RECORDS_FILE}" "${promotion_mode}" "${publish_record_sha256:-}" "${deploy_evidence_sha256:-}" <<'PY'
 import datetime
 import json
 import pathlib
@@ -270,8 +279,6 @@ temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 temporary.replace(path)
 PY
-  trap - EXIT
-  rm -f -- "${records_file}"
   printf '[promotion] Verified Promotion Record: %s\n' "${PROMOTION_RECORD}"
 }
 

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T13:31:14Z",
-  "source_base_commit": "a619db65a699708530ef13254ba67b2129058262",
-  "registry_digest": "0b24038bf72734562509e1296f8eb70dd76acd1e7e6e157071da01f3b2ad02e4",
+  "generated_at": "2026-09-06T13:53:08Z",
+  "source_base_commit": "9c92be53f068361524d340c1180aa34e776cd345",
+  "registry_digest": "216d8c59f4b6ce5759908c692bf07ad9786b352e790efdd39323c82cfb6f3aed",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2108,6 +2108,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "Ephemeral ECR promotion auth isolation",
+          "command": "bash -n deployment/promote_automation_release.sh; /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_promotion_tool.py",
+          "details": "首次r20260906-9c92be5 promotion在ECS mutation前因用户Docker config引用缺失的docker-credential-desktop而fail closed。修复让promotion创建0700任务级DOCKER_CONFIG并由EXIT trap删除，crane/skopeo不再读取或修改全局配置；digest、授权和Promotion Record门禁不变。"
         },
         {
           "type": "test",
@@ -6884,6 +6890,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
+          "label": "Ephemeral ECR promotion auth isolation",
+          "command": "bash -n deployment/promote_automation_release.sh; /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_promotion_tool.py",
+          "details": "首次r20260906-9c92be5 promotion在ECS mutation前因用户Docker config引用缺失的docker-credential-desktop而fail closed。修复让promotion创建0700任务级DOCKER_CONFIG并由EXIT trap删除，crane/skopeo不再读取或修改全局配置；digest、授权和Promotion Record门禁不变。"
+        },
+        {
+          "type": "test",
           "label": "CodeBuild direct Production fast path and consolidated evidence",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation ECS deploy/pipeline/promotion/release and business targeted suites>; bash -n deployment/deploy_automation_ecs_release.sh",
           "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针仅GET且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
@@ -7207,6 +7219,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-25",
       "updated_at": "2026-09-06",
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "promotion_registry_auth_isolated",
+          "summary": "CodeBuild direct-Production首次promotion暴露本机Docker credential helper不可用；promotion改用私有临时DOCKER_CONFIG并保证退出清理，不触碰全局配置或持久化ECR凭据。"
+        },
         {
           "at": "2026-09-06",
           "event": "direct_production_fast_path_and_provider_probe_implemented",
