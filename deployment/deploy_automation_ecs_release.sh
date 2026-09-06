@@ -23,6 +23,7 @@ CHECK_ONLY=0
 RESUME=0
 BOOTSTRAP_ACCOUNT_SCHEMA=0
 HERMES_CASE_WORKFLOW_MODE=""
+HERMES_PERSONA_ENABLED=0
 SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-}"
 PROMPT_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-}"
 TEMP_DIR=""
@@ -75,6 +76,7 @@ Usage:
 Optional activation gates:
   --bootstrap-account-schema
   --hermes-case-workflow-mode <disabled|mock|real>
+  --hermes-persona-enabled
 
 Both modes require the read-only source TICKET_DB_DSN. Deploy mode additionally
 requires the environment-specific approval variable and PROMPT_RELEASE_TARGET_DSN.
@@ -136,6 +138,7 @@ parse_args() {
       --terraform-dir) [[ $# -ge 2 ]] || fail "--terraform-dir requires a value"; TERRAFORM_DIR="$2"; shift 2 ;;
       --bootstrap-account-schema) BOOTSTRAP_ACCOUNT_SCHEMA=1; shift ;;
       --hermes-case-workflow-mode) [[ $# -ge 2 ]] || fail "--hermes-case-workflow-mode requires a value"; HERMES_CASE_WORKFLOW_MODE="$2"; shift 2 ;;
+      --hermes-persona-enabled) HERMES_PERSONA_ENABLED=1; shift ;;
       --check-only) CHECK_ONLY=1; shift ;;
       --resume) RESUME=1; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -215,7 +218,8 @@ checkpoint_identity() {
     --arg worker_service "${WORKER_SERVICE}" \
     --arg schema_bootstrap "${BOOTSTRAP_ACCOUNT_SCHEMA}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode}'
+    --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")}'
 }
 
 prepare_deploy_workspace() {
@@ -228,6 +232,9 @@ prepare_deploy_workspace() {
   local operation_suffix=""
   if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
     operation_suffix="-${HERMES_CASE_WORKFLOW_MODE}"
+  fi
+  if [[ "${HERMES_PERSONA_ENABLED}" = "1" ]]; then
+    operation_suffix="${operation_suffix}-persona"
   fi
   STATE_DIR="${AUTOMATION_ECS_DEPLOY_STATE_DIR:-${PROJECT_ROOT}/.deployments/ecs-deploy-${ENVIRONMENT}-${RELEASE_ID}${operation_suffix}}"
   if [[ "${RESUME}" = "1" ]]; then
@@ -318,8 +325,9 @@ write_evidence() {
     --arg schema_task_arn "${schema_task_arn}" \
     --arg schema_task_definition "${schema_task_definition}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
+    --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,hermes:{persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
 }
@@ -480,6 +488,9 @@ render_role_task_definition() {
   )
   if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
     args+=(--hermes-case-workflow-mode "${HERMES_CASE_WORKFLOW_MODE}")
+  fi
+  if [[ "${HERMES_PERSONA_ENABLED}" = "1" ]]; then
+    args+=(--hermes-persona-enabled)
   fi
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
     render-task-definition "${args[@]}" >/dev/null

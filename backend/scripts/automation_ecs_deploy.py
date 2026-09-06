@@ -349,6 +349,7 @@ def render_initial_task_definition(
     log_group_name: str,
     parameter_prefix_arn: str,
     hermes_case_workflow_mode: str = "disabled",
+    hermes_persona_enabled: bool = False,
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
 ) -> dict[str, Any]:
@@ -413,7 +414,9 @@ def render_initial_task_definition(
             "ARCHER_OAUTH_COOKIE": "archer-oauth-cookie",
         },
     }
-    if role in {"api", "worker"} and hermes_case_workflow_mode != "disabled":
+    if role in {"api", "worker"} and (
+        hermes_persona_enabled or hermes_case_workflow_mode != "disabled"
+    ):
         secret_names[role].update(
             {
                 "ENGINEER_INVESTIGATION_REPLY_BASE_URL": "hermes-base-url",
@@ -541,6 +544,7 @@ def render_task_definition(
     environment: str = "production",
     repository: str = "supportportal/production",
     hermes_case_workflow_mode: str | None = None,
+    hermes_persona_enabled: bool | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -591,21 +595,29 @@ def render_task_definition(
         name = str(item.get("name") or "")
         if name in replacements:
             item["value"] = replacements[name]
-    if hermes_case_workflow_mode is not None and role in {"api", "worker"}:
-        _set_environment_value(
-            container,
-            "HERMES_CASE_WORKFLOW_MODE",
-            hermes_case_workflow_mode,
+    if role in {"api", "worker"} and (
+        hermes_case_workflow_mode is not None or hermes_persona_enabled is not None
+    ):
+        effective_mode = (
+            hermes_case_workflow_mode
+            if hermes_case_workflow_mode is not None
+            else environment_values.get("HERMES_CASE_WORKFLOW_MODE", "disabled")
         )
-        if hermes_case_workflow_mode == "disabled":
-            _remove_environment_values(container, HERMES_SECRET_NAMES)
-            _remove_secret_references(container, HERMES_SECRET_NAMES)
-        else:
+        if hermes_case_workflow_mode is not None:
+            _set_environment_value(
+                container,
+                "HERMES_CASE_WORKFLOW_MODE",
+                hermes_case_workflow_mode,
+            )
+        required_names: set[str] = set()
+        if hermes_persona_enabled is True or effective_mode != "disabled":
+            required_names.update(HERMES_OUTBOUND_SECRET_NAMES)
+        if role == "api" and effective_mode != "disabled":
+            required_names.add("HERMES_CALLBACK_TOKEN")
+        _remove_environment_values(container, HERMES_SECRET_NAMES)
+        _remove_secret_references(container, HERMES_SECRET_NAMES)
+        if required_names:
             prefix_arn = _parameter_prefix_arn(container, environment=environment)
-            required_names = set(HERMES_OUTBOUND_SECRET_NAMES)
-            if role == "api":
-                required_names.add("HERMES_CALLBACK_TOKEN")
-            _remove_environment_values(container, required_names)
             for name in sorted(required_names):
                 _set_secret_reference(
                     container,
@@ -787,6 +799,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--hermes-case-workflow-mode",
         choices=sorted(HERMES_CASE_WORKFLOW_MODES),
     )
+    render.add_argument(
+        "--hermes-persona-enabled",
+        action="store_const",
+        const=True,
+        default=None,
+    )
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -810,6 +828,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(HERMES_CASE_WORKFLOW_MODES),
         default="disabled",
     )
+    initial.add_argument("--hermes-persona-enabled", action="store_true")
     initial.add_argument("--graph-efs-file-system-id")
     initial.add_argument("--graph-efs-access-point-id")
     initial.add_argument("--output", required=True)
@@ -853,6 +872,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             environment=args.environment,
             repository=args.repository,
             hermes_case_workflow_mode=args.hermes_case_workflow_mode,
+            hermes_persona_enabled=args.hermes_persona_enabled,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -882,6 +902,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             log_group_name=args.log_group_name,
             parameter_prefix_arn=args.parameter_prefix_arn,
             hermes_case_workflow_mode=args.hermes_case_workflow_mode,
+            hermes_persona_enabled=args.hermes_persona_enabled,
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
         )

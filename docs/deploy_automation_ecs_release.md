@@ -284,6 +284,26 @@ Preproduction ECS task definition使用：
 
 禁止使用 tag作为 task definition image引用。
 
+Preproduction Hermes Persona/Responses 验收与 typed Case Workflow 是两个独立门禁。
+当前 A 方案使用真实 Persona endpoint，但不启用尚未纳入本次部署范围的 AgentRelay
+Investigation Runtime：
+
+```bash
+./deployment/deploy_automation_ecs_release.sh \
+  --environment preproduction \
+  --manifest .deployments/releases/<release_id>/release-manifest.json \
+  --publish-record .deployments/releases/<release_id>/publish-record.json \
+  --hermes-case-workflow-mode disabled \
+  --hermes-persona-enabled \
+  --check-only
+```
+
+`--hermes-persona-enabled` 只给 API/Worker注入环境对应的
+`ENGINEER_INVESTIGATION_REPLY_BASE_URL`与`ENGINEER_INVESTIGATION_REPLY_API_KEY`；
+它不会注入 callback token，也不会启用 `/v1/turns`。正式执行使用同一组参数并提供
+Preproduction approval和Prompt target DSN。ECS Production在本阶段不传该参数，
+保持 Persona和Case Workflow均 disabled；EC2 `/production`不属于此命令的修改范围。
+
 ## Promote To Production
 
 Preproduction真实验收与外部 readback完成后，由用户执行：

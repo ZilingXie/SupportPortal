@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from backend.scripts.automation_ecs_deploy import (
+    HERMES_OUTBOUND_SECRET_NAMES,
     render_initial_task_definition,
     render_production_hermes_disabled_task_definition,
     render_schema_bootstrap_task_definition,
@@ -240,6 +241,46 @@ def test_render_task_definition_disabled_removes_hermes_secret_references(
 
 
 @pytest.mark.parametrize("role", ["api", "worker"])
+def test_disabled_case_workflow_can_keep_persona_endpoint(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    current = _task_definition(tmp_path, role)
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    environment = {item["name"]: item for item in container["environment"]}
+    environment["AUTOMATION_ENVIRONMENT"]["value"] = "preproduction"
+    environment["AUTOMATION_DB_SCHEMA"]["value"] = "supportportal_preproduction"
+    environment["AUTOMATION_JOB_NAMESPACE"]["value"] = "supportportal-preproduction"
+    next(
+        item for item in container["secrets"] if item["name"] == "AUTOMATION_DB_DSN"
+    )["valueFrom"] = (
+        "arn:aws:ssm:us-east-1:123456789012:"
+        "parameter/supportportal/preproduction/automation-db-dsn"
+    )
+    current.write_text(json.dumps(payload), encoding="utf-8")
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        hermes_case_workflow_mode="disabled",
+        hermes_persona_enabled=True,
+    )
+    rendered_container = rendered["containerDefinitions"][0]
+    secret_names = {item["name"] for item in rendered_container["secrets"]}
+    assert HERMES_OUTBOUND_SECRET_NAMES <= secret_names
+    assert "HERMES_CALLBACK_TOKEN" not in secret_names
+    assert {
+        item["name"]: item["value"] for item in rendered_container["environment"]
+    }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
 def test_render_task_definition_can_activate_hermes_from_disabled_preproduction(
     tmp_path: Path,
     role: str,
@@ -445,6 +486,33 @@ def test_render_initial_preproduction_worker_is_environment_isolated(
     assert "urllib.request.urlopen" in health_command
     assert "curl" not in health_command
     assert health_check["startPeriod"] == 60
+
+
+def test_initial_disabled_case_workflow_can_enable_persona_endpoint(tmp_path: Path) -> None:
+    rendered = render_initial_task_definition(
+        role="api",
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        execution_role_arn="arn:aws:iam::123456789012:role/preproduction-execution",
+        task_role_arn="arn:aws:iam::123456789012:role/preproduction-task",
+        log_group_name="/ecs/supportportal/preproduction",
+        parameter_prefix_arn=(
+            "arn:aws:ssm:us-east-1:123456789012:"
+            "parameter/supportportal/preproduction"
+        ),
+        hermes_case_workflow_mode="disabled",
+        hermes_persona_enabled=True,
+    )
+    container = rendered["containerDefinitions"][0]
+    secret_names = {item["name"] for item in container["secrets"]}
+    assert HERMES_OUTBOUND_SECRET_NAMES <= secret_names
+    assert "HERMES_CALLBACK_TOKEN" not in secret_names
+    assert {
+        item["name"]: item["value"] for item in container["environment"]
+    }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
 
 
 def test_render_schema_bootstrap_uses_api_image_and_secret_references(
@@ -1087,6 +1155,25 @@ def test_hermes_mock_cli_requires_explicit_schema_bootstrap() -> None:
         capture_output=True,
     )
     assert accepted.returncode == 0, accepted.stderr
+
+
+def test_hermes_persona_cli_is_independent_of_case_workflow_mode() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; parse_args --hermes-case-workflow-mode disabled '
+            '--hermes-persona-enabled; printf "%s|%s" "$HERMES_CASE_WORKFLOW_MODE" '
+            '"$HERMES_PERSONA_ENABLED"',
+            "bash",
+            str(DEPLOY_SCRIPT),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "disabled|1"
 
 
 def _write_executable(path: Path, content: str) -> None:
