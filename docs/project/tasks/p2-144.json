@@ -10,7 +10,7 @@
   "created_at": "2026-09-05",
   "updated_at": "2026-09-06",
   "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona并加入有界Reviewer。Case 13302/13314证明语义Reviewer会误拒，v28因此删除所有render_automation_reply路径的LLM Reviewer：Handler提供reply_facts，pinned Persona一次生成最终正文，代码只执行硬安全/格式拒绝，Worker原样发布。Production Case 13317进一步证明三项missing-information仅靠prompt不能稳定得到可扫读格式；v29新增三项及以上逐项bullet的格式拒绝，首稿失败仅允许同一Persona整段重写一次，不恢复语义Reviewer或代码补写。",
-  "next_action": "保持 active。合并并发布Persona v29后，等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
+  "next_action": "保持 active。Persona v29已随r20260906-734fb77发布到ECS Production；等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
     "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
@@ -74,9 +74,20 @@
       "label": "Current-main ECS Production release",
       "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
       "details": "clean main@21f29419ad52 以 linux/amd64 Release r20260905-21f2941 发布到 API/Route/Worker revision 34/29/32，运行 digest 分别为 sha256:c11ec3d2.../sha256:6beb3f45.../sha256:64c7181e...，与 Manifest、不可变 ECR tag 和 local-oci Promotion Record 精确一致。正式 check-only 与部署门禁通过；独立 readback 确认三服务 1/1/0、COMPLETED，公网 live/release/ready、Route/Worker heartbeat、CloudWatch 30 分钟错误 0、EC2 backup、Terraform 1.9.8 No changes，以及源端/目标端 Prompt Release pr-c9b3a291ecf1 active、build ref 76d22d5ae1a3、28 个 Prompt 全部一致。精确 Worker OCI 实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 和 Hermes v1 manifest，且无 Pilot；revision 32 一次性只读探针 exit 0，确认 Hermes 九表、三类收件人、Archer GET、Graph /me 与 Zendesk identity。未创建、修改、回复或重放工单，未发送邮件。"
+    },
+    {
+      "type": "deployment",
+      "label": "Persona v29 ECS Production immutable release",
+      "command": "CodeBuild r20260906-734fb77; authorized direct-Production deploy; provider/runtime/heartbeat/Prompt/Terraform readback",
+      "details": "Persona v29、Route v11和Intent v3随clean main@734fb7726353发布到Production API/Route/Worker revision 40/34/38，运行digest分别为sha256:7175206de8bb9a029cc50141c173361c285dbb0dbb8835a1f919c2baf03bcf42、sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e、sha256:0c60b7d7f8f2e437dcfa9e9dc2121aa4299b9a24eb03b54e70bb909f0dadb51f。三服务1/1/0、唯一PRIMARY COMPLETED；公网live/release/ready、Route/Worker heartbeat、Prompt pr-c9b3a291ecf1 active、CloudWatch错误0、Terraform发布前后zero drift、EC2 backup及RAGFlow/Archer/Graph/Zendesk只读探针全部通过，Production Hermes workflow disabled。未创建、修改、回复或重放工单，未发送邮件；等待全新Fraud工单验证Persona v29客户可见格式。"
     }
   ],
   "history": [
+    {
+      "at": "2026-09-06",
+      "event": "persona_v29_ecs_release_verified",
+      "summary": "Persona v29已随r20260906-734fb77部署到ECS Production并通过正式门禁与独立readback；任务保持active，等待用户全新Fraud工单验证bullet、单次Persona和无Reviewer。"
+    },
     {
       "at": "2026-09-06",
       "event": "missing_information_bullet_contract_added",
