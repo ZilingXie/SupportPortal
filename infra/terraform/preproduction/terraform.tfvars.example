@@ -1,5 +1,6 @@
 vpc_id                       = "vpc-REPLACE"
 public_subnet_ids             = ["subnet-REPLACE-A", "subnet-REPLACE-B"]
+efs_subnet_id                = "subnet-REPLACE-A"
 shared_https_listener_arn     = "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT:listener/app/REPLACE"
 shared_alb_security_group_id  = "sg-REPLACE"
 shared_graph_efs_file_system_id = "fs-REPLACE"

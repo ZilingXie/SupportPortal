@@ -7,6 +7,9 @@ execution role, isolated Graph EFS access point, private Hermes service discover
 the API/Route/Worker services, plus the exact Preproduction-to-RDS/EFS ingress
 rules. Shared VPC, ALB, RDS, ACM, security groups, and EFS are inputs.
 SecureString values are never Terraform resources or variables.
+API and Route may span the configured public subnets. Worker and Hermes use the
+explicit EFS subnet because the protected shared file system currently has one
+mount target.
 
 Bootstrap is intentionally staged without `terraform -target`:
 

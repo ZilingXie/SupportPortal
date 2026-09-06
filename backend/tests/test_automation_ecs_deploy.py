@@ -892,6 +892,7 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
         "'.taskDefinition.containerDefinitions[] | select(.name == $role) "
         '| .logConfiguration.options["awslogs-group"]\''
     ) in script
+    assert '--log-stream-name-prefix "${role}/${role}/"' in script
     check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = main_script.index("backend.scripts.prompt_release sync")
     schema_bootstrap = main_script.index("run_schema_bootstrap")
