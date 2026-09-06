@@ -241,6 +241,16 @@ def test_aws_environment_rotates_without_static_credentials_or_secret_argv() -> 
     with pytest.raises(ValueError, match="forbidden in evidence"):
         assert_evidence_secret_free({"target_dsn": source["PROMPT_RELEASE_TARGET_DSN"]})
 
+    assert_secret_free_argv(
+        ["deploy", "r20260906-32"],
+        {"CLIENT_ACK_MAX_OUTPUT_TOKENS": "32"},
+    )
+    with pytest.raises(ValueError, match="must not enter argv"):
+        assert_secret_free_argv(
+            ["deploy", "not-a-number"],
+            {"CLIENT_ACK_MAX_OUTPUT_TOKENS": "not-a-number"},
+        )
+
 
 def test_checkpoint_attempts_are_append_only_and_resume_keeps_failures(tmp_path: Path) -> None:
     state = PipelineState(tmp_path / "state")
@@ -288,6 +298,22 @@ def test_task_definition_hash_ignores_revision_metadata_but_not_configuration() 
     safe_cache_path["containerDefinitions"][0]["environment"][0]["value"] = "token-value"
     with pytest.raises(ValueError, match="plaintext secret"):
         task_definition_sha256(safe_cache_path)
+
+    safe_token_limit = {
+        "family": "api",
+        "containerDefinitions": [
+            {
+                "name": "api",
+                "environment": [
+                    {"name": "CLIENT_ACK_MAX_OUTPUT_TOKENS", "value": "32"},
+                ],
+            }
+        ],
+    }
+    assert task_definition_sha256(safe_token_limit).startswith("sha256:")
+    safe_token_limit["containerDefinitions"][0]["environment"][0]["value"] = "secret-value"
+    with pytest.raises(ValueError, match="plaintext secret"):
+        task_definition_sha256(safe_token_limit)
 
 
 def test_terraform_credential_process_is_private_absolute_and_secret_free(tmp_path: Path) -> None:

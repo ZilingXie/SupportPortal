@@ -43,6 +43,7 @@ SECRET_NAME_PATTERN = re.compile(r"(?:SECRET|TOKEN|PASSWORD|DSN|CREDENTIAL|API_K
 SAFE_SECRET_NAMED_TASK_ENV = {
     "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
 }
+SAFE_NUMERIC_TOKEN_CONFIG_SUFFIX = "_MAX_OUTPUT_TOKENS"
 
 
 def _utc_now() -> datetime:
@@ -63,6 +64,14 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _is_secret_bearing_environment_value(name: str, value: str) -> bool:
+    if not SECRET_NAME_PATTERN.search(name):
+        return False
+    if name.endswith(SAFE_NUMERIC_TOKEN_CONFIG_SUFFIX) and value.isdecimal():
+        return False
+    return SAFE_SECRET_NAMED_TASK_ENV.get(name) != value
 
 
 def file_sha256(path: str | Path) -> str:
@@ -211,11 +220,7 @@ def task_definition_sha256(value: Mapping[str, Any]) -> str:
         for item in container.get("environment") or []:
             name = str(item.get("name") or "")
             item_value = str(item.get("value") or "")
-            if (
-                SECRET_NAME_PATTERN.search(name)
-                and item_value
-                and SAFE_SECRET_NAMED_TASK_ENV.get(name) != item_value
-            ):
+            if item_value and _is_secret_bearing_environment_value(name, item_value):
                 raise ValueError(f"task definition contains plaintext secret environment: {name}")
     return canonical_sha256(_registrable_task_definition(task_definition))
 
@@ -352,7 +357,7 @@ def sanitized_aws_environment(source: Mapping[str, str] | None = None) -> dict[s
 def assert_secret_free_argv(argv: Sequence[str], env: Mapping[str, str]) -> None:
     rendered = "\0".join(argv)
     for name, value in env.items():
-        if value and SECRET_NAME_PATTERN.search(name) and value in rendered:
+        if value and _is_secret_bearing_environment_value(name, value) and value in rendered:
             raise ValueError(f"secret-bearing environment value from {name} must not enter argv")
 
 
