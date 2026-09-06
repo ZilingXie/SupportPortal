@@ -1045,6 +1045,10 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "run_parallel_post_deploy_checks" in script
     assert "backend.services.automation_provider_probe" in script
     assert "Provider probe task failed" in script
+    assert 'task_id="${task_arn##*/}"' in script
+    assert 'options["awslogs-stream-prefix"]' in script
+    assert 'log_stream="${log_prefix}/worker/${task_id}"' in script
+    assert '.containers[] | select(.name == "worker") | .logStreamName' not in script
     assert script.index("verify_aws_mutation_ready", script.index("run_provider_probe()")) < script.index(
         "task_arn=", script.index("run_provider_probe()")
     )
