@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T13:53:08Z",
-  "source_base_commit": "9c92be53f068361524d340c1180aa34e776cd345",
-  "registry_digest": "216d8c59f4b6ce5759908c692bf07ad9786b352e790efdd39323c82cfb6f3aed",
+  "generated_at": "2026-09-06T16:00:40Z",
+  "source_base_commit": "734fb772635357df78cb2d0c141824ab71231db2",
+  "registry_digest": "03deeac8bf873e41c1f436dcf62a310db3d0e3ef285c10d329cfc829fa4ed283",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1059,6 +1059,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Current-main ECS Production release",
           "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
           "details": "clean main@21f29419ad52 以 linux/amd64 Release r20260905-21f2941 发布到 API/Route/Worker revision 34/29/32，运行 digest 分别为 sha256:c11ec3d2.../sha256:6beb3f45.../sha256:64c7181e...，与 Manifest、不可变 ECR tag 和 local-oci Promotion Record 精确一致。正式 check-only 与部署门禁通过；独立 readback 确认三服务 1/1/0、COMPLETED，公网 live/release/ready、Route/Worker heartbeat、CloudWatch 30 分钟错误 0、EC2 backup、Terraform 1.9.8 No changes，以及源端/目标端 Prompt Release pr-c9b3a291ecf1 active、build ref 76d22d5ae1a3、28 个 Prompt 全部一致。精确 Worker OCI 实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 和 Hermes v1 manifest，且无 Pilot；revision 32 一次性只读探针 exit 0，确认 Hermes 九表、三类收件人、Archer GET、Graph /me 与 Zendesk identity。未创建、修改、回复或重放工单，未发送邮件。"
+        },
+        {
+          "type": "deployment",
+          "label": "Persona v29 ECS Production immutable release",
+          "command": "CodeBuild r20260906-734fb77; authorized direct-Production deploy; provider/runtime/heartbeat/Prompt/Terraform readback",
+          "details": "Persona v29、Route v11和Intent v3随clean main@734fb7726353发布到Production API/Route/Worker revision 40/34/38，运行digest分别为sha256:7175206de8bb9a029cc50141c173361c285dbb0dbb8835a1f919c2baf03bcf42、sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e、sha256:0c60b7d7f8f2e437dcfa9e9dc2121aa4299b9a24eb03b54e70bb909f0dadb51f。三服务1/1/0、唯一PRIMARY COMPLETED；公网live/release/ready、Route/Worker heartbeat、Prompt pr-c9b3a291ecf1 active、CloudWatch错误0、Terraform发布前后zero drift、EC2 backup及RAGFlow/Archer/Graph/Zendesk只读探针全部通过，Production Hermes workflow disabled。未创建、修改、回复或重放工单，未发送邮件；等待全新Fraud工单验证Persona v29客户可见格式。"
         },
         {
           "type": "test",
@@ -2119,7 +2125,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "CodeBuild direct Production fast path and consolidated evidence",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation ECS deploy/pipeline/promotion/release and business targeted suites>; bash -n deployment/deploy_automation_ecs_release.sh",
-          "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针仅GET且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
+          "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针不写外部系统且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
         },
         {
           "type": "deployment",
@@ -2416,6 +2422,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Release pipeline live Preflight fail-closed repair",
           "command": "release_automation_ecs_pipeline.sh --through preproduction; focused pipeline/deploy pytest; bash -n; py_compile; diff checks",
           "details": "首次main@ca5ce84c演练的CodeBuild在129.498秒完成；Preflight在99.028秒时因把固定Graph token cache文件路径误判为明文token而安全停止，未执行Prompt或ECS mutation。修复仅允许既有精确变量和值`/app/.msgraph/billing-automation-token.json`，其他token-like明文继续拒绝，并让fingerprint/JSON组装在主错误处fail-fast。"
+        },
+        {
+          "type": "deployment",
+          "label": "CodeBuild direct Production v29 release and fail-closed probe repairs",
+          "command": "release_automation_ecs_pipeline.sh --through production --codebuild-direct-production --hermes-case-workflow-mode disabled; independent ECS/public health/evidence readback",
+          "details": "PR #1105/#1106/#1107/#1108合入后，clean main@734fb7726353以r20260906-734fb77发布到Production API/Route/Worker revision 40/34/38；运行digest分别为sha256:7175206de8bb9a029cc50141c173361c285dbb0dbb8835a1f919c2baf03bcf42、sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e、sha256:0c60b7d7f8f2e437dcfa9e9dc2121aa4299b9a24eb03b54e70bb909f0dadb51f，均与Manifest/ECR/Promotion Record一致且服务1/1/0、唯一PRIMARY COMPLETED。前两次尝试分别因Provider probe误用旧RAG client、错误依赖ECS不存在的container logStreamName而在Prompt激活前fail closed并完整恢复37/31/35；修复后真实Worker探针通过RAGFlow retrieval、Archer GET、Graph /me、Zendesk identity与三类收件人To=1/Cc=1。最终公网live/release/ready、当前heartbeat、Prompt pr-c9b3a291ecf1 active、CloudWatch三角色错误0、Terraform发布前后zero drift、EC2 backup与Production Hermes workflow disabled全部通过；Preproduction ECS、EC2、n8n和既有工单未修改。Production deploy evidence为709.267秒且slo_breach=false，但含CodeBuild/promotion/check-only的pipeline总计1151.4秒、slo_breach=true。"
         },
         {
           "type": "test",
@@ -2806,6 +2818,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Fraud extractor profile and failure reconciliation",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_llm_profiles.py backend/tests/test_route_service_contract.py",
           "details": "430 passed + 91 subtests；覆盖共享 Fraud builder 默认 ACCOUNT_EXTRACTOR 场景、13190 同款 Shanghai 部分字段提取、uncertain/sensitive extraction failure 稳定转 Human Review 并取消 pending reply jobs/禁止 RAG、partial handoff 与真正 off-topic RAG 边界。未重放或修改 13190。"
+        },
+        {
+          "type": "deployment",
+          "label": "Route v11 and Intent v3 ECS Production release",
+          "command": "CodeBuild r20260906-734fb77; authorized direct-Production deploy; public release/ready and heartbeat readback",
+          "details": "main@734fb7726353已发布到Production API/Route/Worker revision 40/34/38，三服务1/1/0、唯一PRIMARY COMPLETED；Route运行digest sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e与Manifest一致，最新Route heartbeat匹配release/commit/digest且provenance_mismatches为空。未重放或修改13316，等待全新Enablement工单业务验收。"
         },
         {
           "type": "test",
@@ -6869,7 +6887,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "AWS CodeBuild固定完整main SHA的三角色linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造或更新Preproduction ECS验收。Production deploy复用一次preflight evidence，Route/Worker并行rollout，ALB只等待新API target健康，并把公网health、CloudWatch、发布后Terraform zero-drift、EC2 backup及单个Worker只读Provider probe合并为并行collector；无schema变更目标为10-15分钟并记录slo_breach。ECS Preproduction Account与Hermes保持独立运行；ECS Production Account保持Hermes disabled；EC2、n8n由用户独立控制。",
-      "next_action": "保持 active。合并本轮业务修复与快速发布工具后，以CodeBuild direct-Production发布最新main并验证10-15分钟SLO、单次preflight复用、并行collector与只读Provider probe；随后等待用户投递全新Enablement、Fraud与Suspension工单。不得修改Preproduction ECS/Hermes、EC2、n8n或既有工单，也不重试outcome_unknown。",
+      "next_action": "保持 active。ECS Production已发布main@734fb772并等待用户投递全新Enablement、Fraud与Suspension工单验收；不得修改Preproduction ECS/Hermes、EC2、n8n或既有工单，也不重试outcome_unknown。部署性能后续继续收敛：当前Production deploy本体709.267秒达标，但CodeBuild到最终激活总计1151.4秒、slo_breach=true，需将端到端时间压到900秒以内。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -6882,7 +6900,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "迁移阶段 3 在现有 EC2 上建立独立 Staging并接收 n8n测试 Case；Staging使用独立部署入口、运行资源、数据库身份、Redis、凭据、日志和 staging-only镜像，部署或重启不得影响 EC2主栈；该镜像可包含 rerun/reset并关闭 Zendesk副作用，但不得晋升到 ECS Preproduction或 Production。",
         "EC2 的三套 split runtime、split网络与公网路径已完成下线，当前常规和每日 EC2部署只管理主栈；第三阶段只新增独立 Staging部署路径，不恢复已退役的三环境 split orchestration。该次下线保留历史数据库与 Docker volumes，且未切换或重启现有 EC2 /production。",
         "正式Production发布只能使用要求Manifest、Promotion Record、零漂移plan和显式授权的deploy_automation_ecs_release.sh；Prompt先同步candidate，Route/Worker与heartbeat通过后再部署API，所有健康门禁通过后才activate；激活前失败回滚旧revision，激活结果不确定时要求readback reconciliation。",
-        "CodeBuild direct-Production完全跳过Preproduction ECS preflight/deploy，但仍由Preproduction ECR promotion同一digest；Production check-only evidence由正式deploy复用，部署后Provider探针只做RAG/Archer/Graph/Zendesk GET及收件人布尔/数量readback，和Terraform/health/CloudWatch/backup并行，任一失败阻断激活。",
+        "CodeBuild direct-Production完全跳过Preproduction ECS preflight/deploy，但仍由Preproduction ECR promotion同一digest；Production check-only evidence由正式deploy复用，部署后Provider探针只做无客户数据的RAGFlow retrieval、Archer/Graph/Zendesk GET及收件人布尔/数量readback，不调用LLM或写入外部系统，并和Terraform/health/CloudWatch/backup并行，任一失败阻断激活。",
         "无schema变更的正常发布目标为10-15分钟；pipeline和deploy evidence记录总耗时、ECS wait、可控耗时、900秒SLO与slo_breach，超时不绕过任何门禁。",
         "常规release由无ECS/RDS/Production ECR写权限的CodeBuild从固定完整main commit一次构建三角色linux/amd64镜像，输出registry-backed Manifest v2和Preproduction Publish Record；首次Preproduction使用canonical definitions分阶段add-only bootstrap，不复制Production task definition。"
       ],
@@ -6898,7 +6916,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "CodeBuild direct Production fast path and consolidated evidence",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation ECS deploy/pipeline/promotion/release and business targeted suites>; bash -n deployment/deploy_automation_ecs_release.sh",
-          "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针仅GET且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
+          "details": "纳入本轮608 passed + 132 subtests定向合集。验证direct-Production不执行Preproduction preflight/deploy、Production正式deploy复用check-only evidence、新API target健康时允许旧target draining、发布后Terraform与单次只读Provider probe并行、探针不写外部系统且输出无身份/地址/token、失败timings保留900秒SLO与slo_breach。尚未据此声称Production已发布。"
         },
         {
           "type": "deployment",
@@ -7195,6 +7213,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Release pipeline live Preflight fail-closed repair",
           "command": "release_automation_ecs_pipeline.sh --through preproduction; focused pipeline/deploy pytest; bash -n; py_compile; diff checks",
           "details": "首次main@ca5ce84c演练的CodeBuild在129.498秒完成；Preflight在99.028秒时因把固定Graph token cache文件路径误判为明文token而安全停止，未执行Prompt或ECS mutation。修复仅允许既有精确变量和值`/app/.msgraph/billing-automation-token.json`，其他token-like明文继续拒绝，并让fingerprint/JSON组装在主错误处fail-fast。"
+        },
+        {
+          "type": "deployment",
+          "label": "CodeBuild direct Production v29 release and fail-closed probe repairs",
+          "command": "release_automation_ecs_pipeline.sh --through production --codebuild-direct-production --hermes-case-workflow-mode disabled; independent ECS/public health/evidence readback",
+          "details": "PR #1105/#1106/#1107/#1108合入后，clean main@734fb7726353以r20260906-734fb77发布到Production API/Route/Worker revision 40/34/38；运行digest分别为sha256:7175206de8bb9a029cc50141c173361c285dbb0dbb8835a1f919c2baf03bcf42、sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e、sha256:0c60b7d7f8f2e437dcfa9e9dc2121aa4299b9a24eb03b54e70bb909f0dadb51f，均与Manifest/ECR/Promotion Record一致且服务1/1/0、唯一PRIMARY COMPLETED。前两次尝试分别因Provider probe误用旧RAG client、错误依赖ECS不存在的container logStreamName而在Prompt激活前fail closed并完整恢复37/31/35；修复后真实Worker探针通过RAGFlow retrieval、Archer GET、Graph /me、Zendesk identity与三类收件人To=1/Cc=1。最终公网live/release/ready、当前heartbeat、Prompt pr-c9b3a291ecf1 active、CloudWatch三角色错误0、Terraform发布前后zero drift、EC2 backup与Production Hermes workflow disabled全部通过；Preproduction ECS、EC2、n8n和既有工单未修改。Production deploy evidence为709.267秒且slo_breach=false，但含CodeBuild/promotion/check-only的pipeline总计1151.4秒、slo_breach=true。"
         }
       ],
       "source_refs": [
@@ -7219,6 +7243,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-25",
       "updated_at": "2026-09-06",
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "ecs_production_v29_release_verified",
+          "summary": "r20260906-734fb77已将main@734fb772部署到Production API/Route/Worker 40/34/38并通过全部运行、Prompt、依赖、零漂移和backup门禁；两次Provider probe集成缺陷均在激活前自动回滚并修复。业务验收等待用户新工单，端到端1151.4秒仍超过900秒SLO。"
+        },
         {
           "at": "2026-09-06",
           "event": "promotion_registry_auth_isolated",
@@ -8288,7 +8317,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。2026-09-01 两次修复 ECS Fraud parity：先恢复 precomputed Route 下 active handler 的字段进展检查，使部分字段回复继续 handoff；再修正共享 Fraud builder 的模型场景为 ACCOUNT_EXTRACTOR，并把 uncertain/sensitive extraction failure 按旧 /production 合同 reconciliation 为 Human Review，从而阻止错误进入 RAG。真正无字段进展的 Agora 产品问题仍保留 RAG fallback。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
-      "next_action": "合并并发布Route v11/Intent v3后，由用户创建全新Enablement工单验证：询问App ID的后续客户问题由本轮authoritative Route进入RAG，历史invalid App ID与internal_email_to_send不得伪装成本轮字段进展；不得重放或修改13316。",
+      "next_action": "保持 active。Route v11/Intent v3已随r20260906-734fb77发布到ECS Production；等待用户创建全新Enablement工单验证询问App ID的后续客户问题进入RAG，历史invalid App ID与internal_email_to_send不得伪装成本轮字段进展；不得重放或修改13316。",
       "acceptance_criteria": [
         "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
         "触发链：幂等 per comment id、agent/initial/private/empty/前置评论忽略、非 production case 忽略、Engineer Case 分支记录客户评论事件。",
@@ -8320,6 +8349,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ECS Fraud extractor profile and failure reconciliation",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_llm_profiles.py backend/tests/test_route_service_contract.py",
           "details": "430 passed + 91 subtests；覆盖共享 Fraud builder 默认 ACCOUNT_EXTRACTOR 场景、13190 同款 Shanghai 部分字段提取、uncertain/sensitive extraction failure 稳定转 Human Review 并取消 pending reply jobs/禁止 RAG、partial handoff 与真正 off-topic RAG 边界。未重放或修改 13190。"
+        },
+        {
+          "type": "deployment",
+          "label": "Route v11 and Intent v3 ECS Production release",
+          "command": "CodeBuild r20260906-734fb77; authorized direct-Production deploy; public release/ready and heartbeat readback",
+          "details": "main@734fb7726353已发布到Production API/Route/Worker revision 40/34/38，三服务1/1/0、唯一PRIMARY COMPLETED；Route运行digest sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e与Manifest一致，最新Route heartbeat匹配release/commit/digest且provenance_mismatches为空。未重放或修改13316，等待全新Enablement工单业务验收。"
         }
       ],
       "source_refs": [
@@ -8334,6 +8369,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-24",
       "updated_at": "2026-09-06",
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "route_v11_intent_v3_ecs_release_verified",
+          "summary": "Route v11与Intent v3已随r20260906-734fb77部署到ECS Production并通过runtime与heartbeat门禁；任务继续等待用户全新Enablement工单验收。"
+        },
         {
           "at": "2026-09-06",
           "event": "bound_handler_current_turn_precedence_fixed",
@@ -10600,7 +10640,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-06",
       "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona并加入有界Reviewer。Case 13302/13314证明语义Reviewer会误拒，v28因此删除所有render_automation_reply路径的LLM Reviewer：Handler提供reply_facts，pinned Persona一次生成最终正文，代码只执行硬安全/格式拒绝，Worker原样发布。Production Case 13317进一步证明三项missing-information仅靠prompt不能稳定得到可扫读格式；v29新增三项及以上逐项bullet的格式拒绝，首稿失败仅允许同一Persona整段重写一次，不恢复语义Reviewer或代码补写。",
-      "next_action": "保持 active。合并并发布Persona v29后，等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
+      "next_action": "保持 active。Persona v29已随r20260906-734fb77发布到ECS Production；等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
       "acceptance_criteria": [
         "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
         "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
@@ -10664,9 +10704,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Current-main ECS Production release",
           "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh; independent post-release readback",
           "details": "clean main@21f29419ad52 以 linux/amd64 Release r20260905-21f2941 发布到 API/Route/Worker revision 34/29/32，运行 digest 分别为 sha256:c11ec3d2.../sha256:6beb3f45.../sha256:64c7181e...，与 Manifest、不可变 ECR tag 和 local-oci Promotion Record 精确一致。正式 check-only 与部署门禁通过；独立 readback 确认三服务 1/1/0、COMPLETED，公网 live/release/ready、Route/Worker heartbeat、CloudWatch 30 分钟错误 0、EC2 backup、Terraform 1.9.8 No changes，以及源端/目标端 Prompt Release pr-c9b3a291ecf1 active、build ref 76d22d5ae1a3、28 个 Prompt 全部一致。精确 Worker OCI 实读 automation-persona-v27、automation-persona-review-v2、current_intent_policy 和 Hermes v1 manifest，且无 Pilot；revision 32 一次性只读探针 exit 0，确认 Hermes 九表、三类收件人、Archer GET、Graph /me 与 Zendesk identity。未创建、修改、回复或重放工单，未发送邮件。"
+        },
+        {
+          "type": "deployment",
+          "label": "Persona v29 ECS Production immutable release",
+          "command": "CodeBuild r20260906-734fb77; authorized direct-Production deploy; provider/runtime/heartbeat/Prompt/Terraform readback",
+          "details": "Persona v29、Route v11和Intent v3随clean main@734fb7726353发布到Production API/Route/Worker revision 40/34/38，运行digest分别为sha256:7175206de8bb9a029cc50141c173361c285dbb0dbb8835a1f919c2baf03bcf42、sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e、sha256:0c60b7d7f8f2e437dcfa9e9dc2121aa4299b9a24eb03b54e70bb909f0dadb51f。三服务1/1/0、唯一PRIMARY COMPLETED；公网live/release/ready、Route/Worker heartbeat、Prompt pr-c9b3a291ecf1 active、CloudWatch错误0、Terraform发布前后zero drift、EC2 backup及RAGFlow/Archer/Graph/Zendesk只读探针全部通过，Production Hermes workflow disabled。未创建、修改、回复或重放工单，未发送邮件；等待全新Fraud工单验证Persona v29客户可见格式。"
         }
       ],
       "history": [
+        {
+          "at": "2026-09-06",
+          "event": "persona_v29_ecs_release_verified",
+          "summary": "Persona v29已随r20260906-734fb77部署到ECS Production并通过正式门禁与独立readback；任务保持active，等待用户全新Fraud工单验证bullet、单次Persona和无Reviewer。"
+        },
         {
           "at": "2026-09-06",
           "event": "missing_information_bullet_contract_added",

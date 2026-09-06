@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。2026-09-01 两次修复 ECS Fraud parity：先恢复 precomputed Route 下 active handler 的字段进展检查，使部分字段回复继续 handoff；再修正共享 Fraud builder 的模型场景为 ACCOUNT_EXTRACTOR，并把 uncertain/sensitive extraction failure 按旧 /production 合同 reconciliation 为 Human Review，从而阻止错误进入 RAG。真正无字段进展的 Agora 产品问题仍保留 RAG fallback。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
-  "next_action": "合并并发布Route v11/Intent v3后，由用户创建全新Enablement工单验证：询问App ID的后续客户问题由本轮authoritative Route进入RAG，历史invalid App ID与internal_email_to_send不得伪装成本轮字段进展；不得重放或修改13316。",
+  "next_action": "保持 active。Route v11/Intent v3已随r20260906-734fb77发布到ECS Production；等待用户创建全新Enablement工单验证询问App ID的后续客户问题进入RAG，历史invalid App ID与internal_email_to_send不得伪装成本轮字段进展；不得重放或修改13316。",
   "acceptance_criteria": [
     "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
     "触发链：幂等 per comment id、agent/initial/private/empty/前置评论忽略、非 production case 忽略、Engineer Case 分支记录客户评论事件。",
@@ -37,6 +37,12 @@
       "label": "ECS Fraud extractor profile and failure reconciliation",
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_intake.py backend/tests/test_worker.py backend/tests/test_automation_persona.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_llm_profiles.py backend/tests/test_route_service_contract.py",
       "details": "430 passed + 91 subtests；覆盖共享 Fraud builder 默认 ACCOUNT_EXTRACTOR 场景、13190 同款 Shanghai 部分字段提取、uncertain/sensitive extraction failure 稳定转 Human Review 并取消 pending reply jobs/禁止 RAG、partial handoff 与真正 off-topic RAG 边界。未重放或修改 13190。"
+    },
+    {
+      "type": "deployment",
+      "label": "Route v11 and Intent v3 ECS Production release",
+      "command": "CodeBuild r20260906-734fb77; authorized direct-Production deploy; public release/ready and heartbeat readback",
+      "details": "main@734fb7726353已发布到Production API/Route/Worker revision 40/34/38，三服务1/1/0、唯一PRIMARY COMPLETED；Route运行digest sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e与Manifest一致，最新Route heartbeat匹配release/commit/digest且provenance_mismatches为空。未重放或修改13316，等待全新Enablement工单业务验收。"
     }
   ],
   "source_refs": [
@@ -51,6 +57,11 @@
   "created_at": "2026-08-24",
   "updated_at": "2026-09-06",
   "history": [
+    {
+      "at": "2026-09-06",
+      "event": "route_v11_intent_v3_ecs_release_verified",
+      "summary": "Route v11与Intent v3已随r20260906-734fb77部署到ECS Production并通过runtime与heartbeat门禁；任务继续等待用户全新Enablement工单验收。"
+    },
     {
       "at": "2026-09-06",
       "event": "bound_handler_current_turn_precedence_fixed",
