@@ -1119,6 +1119,91 @@ def test_formal_deploy_waits_for_the_registered_ecs_revision() -> None:
     assert "revision did not converge before timeout" in stale.stderr
 
 
+def test_running_task_mismatch_cannot_succeed_inside_shell_condition(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    expected = "arn:aws:ecs:us-east-1:123456789012:task-definition/service:7"
+    old = "arn:aws:ecs:us-east-1:123456789012:task-definition/service:6"
+    shell = """
+source "$1"
+aws() {
+  if [[ "$*" == *"list-tasks"* ]]; then
+    printf '%s\n' 'arn:aws:ecs:us-east-1:123456789012:task/task-1'
+  elif [[ "$*" == *"taskDefinitionArn"* ]]; then
+    printf '%s\n' "$OBSERVED_TASK_DEFINITION"
+  else
+    printf '%s\n' 'sha256:expected'
+  fi
+}
+STATE_DIR="$2"
+if verify_running_task route service "$EXPECTED_TASK_DEFINITION" sha256:expected; then
+  exit 0
+fi
+exit 42
+"""
+    result = subprocess.run(
+        ["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(state_dir)],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "EXPECTED_TASK_DEFINITION": expected,
+            "OBSERVED_TASK_DEFINITION": old,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 42
+    assert "not running the registered revision" in result.stderr
+    assert not (state_dir / "route.runtime-digest").exists()
+
+
+def test_failure_evidence_is_valid_without_collector_files(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "components": {
+                    role: {"digest": f"sha256:{digit * 64}"}
+                    for role, digit in (("api", "1"), ("route", "2"), ("worker", "3"))
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    shell = """
+source "$1"
+STATE_DIR="$2"
+MANIFEST_PATH="$3"
+RELEASE_ID=release-42
+GIT_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+PROMPT_RELEASE_ID=prompt-42
+REGION=us-east-1
+ENVIRONMENT=preproduction
+CLUSTER=cluster
+REGISTRY_ID=123456789012
+PROMOTION_REPOSITORY=supportportal/preproduction
+write_evidence failed_before_activation
+"""
+    result = subprocess.run(
+        ["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(state_dir), str(manifest)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    evidence = json.loads((state_dir / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "failed_before_activation"
+    assert evidence["phase_timings"] == []
+    assert evidence["cloudwatch"] == {"error_count": 0, "roles": []}
+    attempts = list((state_dir / "evidence-attempts").glob("*-failed_before_activation.json"))
+    assert len(attempts) == 1
+    assert json.loads(attempts[0].read_text(encoding="utf-8")) == evidence
+
+
 def test_formal_deploy_script_has_strict_preproduction_record_and_approval_boundary() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "--environment" in script

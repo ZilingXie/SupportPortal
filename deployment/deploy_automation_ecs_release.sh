@@ -471,6 +471,7 @@ read_optional_file() {
 
 write_evidence() {
   local status="$1" role old_arn new_arn verified expected_digest observed_digest components prompt_build_ref prompt_fingerprint generated_at schema_task_arn schema_task_definition phase_timings timing_summary terraform_identity heartbeat_summary target_health cloudwatch_summary
+  local -a cloudwatch_files
   [[ -n "${STATE_DIR}" && -d "${STATE_DIR}" ]] || return 0
   components='{}'
   for role in api route worker; do
@@ -489,7 +490,11 @@ write_evidence() {
   prompt_fingerprint="$(jq -r '.identity.content_fingerprint // ""' "${STATE_DIR}/prompt-sync.json" 2>/dev/null || true)"
   schema_task_arn="$(read_optional_file "${STATE_DIR}/schema-bootstrap.task-arn")"
   schema_task_definition="$(read_optional_file "${STATE_DIR}/schema-bootstrap.task-definition-arn")"
-  phase_timings="$(jq -s '.' "${STATE_DIR}/phase-attempts.jsonl" 2>/dev/null || printf '[]')"
+  if [[ -f "${STATE_DIR}/phase-attempts.jsonl" ]]; then
+    phase_timings="$(jq -s '.' "${STATE_DIR}/phase-attempts.jsonl")"
+  else
+    phase_timings='[]'
+  fi
   timing_summary="$(jq -cn --argjson phases "${phase_timings}" '
     {total_seconds:([$phases[].duration_seconds] | add // 0),
      ecs_wait_seconds:([$phases[] | select(.phase == "route_worker_rollout" or .phase == "api_rollout") | .duration_seconds] | add // 0)}
@@ -497,7 +502,14 @@ write_evidence() {
   terraform_identity="$(jq -c '.' "${STATE_DIR}/terraform-identity.json" 2>/dev/null || printf '{}')"
   heartbeat_summary="$(jq -c '.' "${STATE_DIR}/heartbeat.json" 2>/dev/null || printf '{}')"
   target_health="$(jq -c '.' "${STATE_DIR}/target-health.json" 2>/dev/null || printf '{}')"
-  cloudwatch_summary="$(jq -s '{error_count:(map(.error_count) | add // 0),roles:map({role,error_count})}' "${STATE_DIR}"/*.cloudwatch-count.json 2>/dev/null || printf '{"error_count":0,"roles":[]}')"
+  shopt -s nullglob
+  cloudwatch_files=("${STATE_DIR}"/*.cloudwatch-count.json)
+  shopt -u nullglob
+  if (( ${#cloudwatch_files[@]} > 0 )); then
+    cloudwatch_summary="$(jq -s '{error_count:(map(.error_count) | add // 0),roles:map({role,error_count})}' "${cloudwatch_files[@]}")"
+  else
+    cloudwatch_summary='{"error_count":0,"roles":[]}'
+  fi
   generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   jq -n -S \
     --arg schema_version "automation-ecs-deploy-evidence-v1" \
@@ -897,8 +909,14 @@ verify_running_task() {
     --tasks "${task_arn}" --query 'tasks[0].taskDefinitionArn' --output text)"
   observed_digest="$(aws ecs describe-tasks --region "${REGION}" --cluster "${CLUSTER}" \
     --tasks "${task_arn}" --query "tasks[0].containers[?name=='${role}'].imageDigest | [0]" --output text)"
-  [[ "${observed_definition}" = "${task_definition_arn}" ]] || fail "${role} is not running the registered revision"
-  [[ "${observed_digest}" = "${expected_digest}" ]] || fail "${role} running digest mismatch"
+  if [[ "${observed_definition}" != "${task_definition_arn}" ]]; then
+    fail "${role} is not running the registered revision"
+    return 1
+  fi
+  if [[ "${observed_digest}" != "${expected_digest}" ]]; then
+    fail "${role} running digest mismatch"
+    return 1
+  fi
   [[ -z "${STATE_DIR}" ]] || printf '%s\n' "${observed_digest}" >"${STATE_DIR}/${role}.runtime-digest"
 }
 
