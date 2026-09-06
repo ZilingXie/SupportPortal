@@ -1105,7 +1105,7 @@ verify_public_runtime() {
 }
 
 run_provider_probe() {
-  local task_arn task_json exit_code reason log_group log_stream deadline probe_line
+  local task_arn task_id task_json exit_code reason log_group log_prefix log_stream deadline probe_line
   aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
     --services "${WORKER_SERVICE}" --query 'services[0].networkConfiguration' \
     --output json >"${TEMP_DIR}/provider-probe.network.json"
@@ -1128,9 +1128,12 @@ run_provider_probe() {
     fail "Provider probe task failed (exit=${exit_code:-unknown}, reason=${reason})"
     return 1
   fi
-  log_stream="$(jq -r '.tasks[0].containers[] | select(.name == "worker") | .logStreamName // empty' <<<"${task_json}")"
-  log_group="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/worker.current.json")"
-  [[ -n "${log_stream}" && -n "${log_group}" && "${log_group}" != "null" ]] \
+  task_id="${task_arn##*/}"
+  log_group="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/worker.observed.json")"
+  log_prefix="$(jq -r '.taskDefinition.containerDefinitions[] | select(.name == "worker") | .logConfiguration.options["awslogs-stream-prefix"]' "${TEMP_DIR}/worker.observed.json")"
+  log_stream="${log_prefix}/worker/${task_id}"
+  [[ -n "${task_id}" && -n "${log_prefix}" && "${log_prefix}" != "null" \
+    && -n "${log_group}" && "${log_group}" != "null" ]] \
     || fail "Provider probe CloudWatch identity is missing"
   deadline=$((SECONDS + 60))
   while true; do
