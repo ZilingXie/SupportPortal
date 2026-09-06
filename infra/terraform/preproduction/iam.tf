@@ -92,7 +92,7 @@ resource "aws_iam_role_policy" "hermes_task" {
         Resource = "arn:${data.aws_partition.current.partition}:elasticfilesystem:${var.aws_region}:${data.aws_caller_identity.current.account_id}:file-system/${var.shared_graph_efs_file_system_id}"
         Condition = {
           StringEquals = {
-            "elasticfilesystem:AccessPointArn" = var.hermes_efs_access_point_arns
+            "elasticfilesystem:AccessPointArn" = [for access_point in aws_efs_access_point.hermes : access_point.arn]
           }
         }
       },

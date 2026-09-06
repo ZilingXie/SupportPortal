@@ -248,15 +248,30 @@ def test_preproduction_retains_three_releases_per_role() -> None:
 def test_preproduction_account_and_hermes_state_roles_are_isolated() -> None:
     iam = (PREPRODUCTION_TERRAFORM / "iam.tf").read_text(encoding="utf-8")
     outputs = (PREPRODUCTION_TERRAFORM / "outputs.tf").read_text(encoding="utf-8")
+    storage = (PREPRODUCTION_TERRAFORM / "storage.tf").read_text(encoding="utf-8")
+    variables = (PREPRODUCTION_TERRAFORM / "variables.tf").read_text(encoding="utf-8")
     assert 'resource "aws_iam_role" "hermes_task"' in iam
+    assert 'resource "aws_efs_access_point" "hermes"' in storage
+    assert 'for_each       = local.hermes_efs_roots' in storage
+    for root in (
+        "/supportportal-preproduction-hermes-home",
+        "/supportportal-preproduction-tdai-data",
+        "/supportportal-preproduction-pilot-creds",
+    ):
+        assert root in storage
+    assert "/hermes-home\"" not in storage
+    assert "/tdai-data\"" not in storage
+    assert "/pilot-creds\"" not in storage
     account_policy = iam.split('resource "aws_iam_role_policy" "task_efs"', 1)[1].split(
         'resource "aws_iam_role" "hermes_task"', 1
     )[0]
-    assert "var.hermes_efs_access_point_arns" not in account_policy
+    assert "aws_efs_access_point.hermes" not in account_policy
     hermes_policy = iam.split('resource "aws_iam_role_policy" "hermes_task"', 1)[1]
-    assert "var.hermes_efs_access_point_arns" in hermes_policy
+    assert "aws_efs_access_point.hermes" in hermes_policy
+    assert "hermes_efs_access_point_arns" not in variables
     assert 'Resource = "${aws_s3_bucket.hermes_backup.arn}/migration/*"' in hermes_policy
     assert "hermes_task_role_arn" in outputs
+    assert "hermes_efs_access_point_ids" in outputs
 
 
 def test_preproduction_default_backup_bucket_name_fits_s3_limit() -> None:
