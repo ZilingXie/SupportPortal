@@ -8,9 +8,9 @@
   "module_id": "account-automation",
   "function_id": "account-production-environment",
   "created_at": "2026-09-05",
-  "updated_at": "2026-09-05",
-  "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。canonical SupportPortal Runtime 已随当前 main 部署，Production schema 已激活但 HERMES_CASE_WORKFLOW_MODE 仍为 mock；真实 Hermes/AgentRelay 未启用。",
-  "next_action": "保持 active；等待用户用全新 technical Case 验收 Production mock 链路。真实 zac-agent、Slack/Zendesk 外部闭环、TencentDB、Hermes/AgentRelay 部署和知识 promotion sink 仍需单独授权。",
+  "updated_at": "2026-09-06",
+  "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。canonical SupportPortal Runtime已进入镜像，但当前ECS Production与Preproduction的typed Case Workflow均为disabled；Preproduction仅启用Hermes Persona/Responses endpoint，真实Hermes/AgentRelay调查链尚未激活。",
+  "next_action": "保持 active。先由用户验收Preproduction的Hermes Persona Account回复；typed Case Workflow当前在Preproduction和Production均disabled。后续启用真实technical Case调查前，需另行确认zac-agent/AgentRelay、Slack/Zendesk外部闭环、知识promotion sink与环境晋升边界。",
   "acceptance_criteria": [
     "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
     "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -66,6 +66,11 @@
       "type": "deployment",
       "label": "Canonical SupportPortal Runtime deployed in mock mode",
       "details": "clean main@21f29419ad52 以 r20260905-21f2941 发布到 ECS Production API/Route/Worker revision 34/29/32；schema bootstrap幂等通过，公网release与Worker task definition均确认HERMES_CASE_WORKFLOW_MODE=mock。三服务1/1/0、COMPLETED且运行digest匹配Manifest；revision 32只读探针确认canonical Hermes九表全部存在。CloudWatch错误0、EC2 backup健康、Terraform 1.9.8 No changes。真实Hermes/AgentRelay、外部消息与知识promotion未启用。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction Hermes Persona isolated while typed workflow remains disabled",
+      "details": "main@0591a71a72ee的r20260906-0591a71已部署到ECS Preproduction API/Route/Worker :6，三服务1/1/0且PRIMARY COMPLETED。API/Worker保留真实Hermes Persona endpoint凭据但HERMES_CASE_WORKFLOW_MODE=disabled，Route无Hermes配置；复用API :6网络与SSM注入的一次性authenticated GET /v1/models返回200且exit 0。Preproduction Hermes :10双容器HEALTHY并使用三组全新EFS access point；Production Hermes :3双容器仍HEALTHY并继续服务EC2。未调用Responses、未创建或修改工单、未发送邮件/Slack，typed Case Workflow业务验收未开始。"
     }
   ],
   "history": [
@@ -98,6 +103,11 @@
       "at": "2026-09-05",
       "event": "canonical_runtime_mock_release_deployed",
       "summary": "canonical SupportPortal Runtime 已随 r20260905-21f2941 部署到 ECS Production，schema与九表readback通过且继续使用mock；真实Hermes/AgentRelay仍未启用。"
+    },
+    {
+      "at": "2026-09-06",
+      "event": "preproduction_persona_only_runtime_ready",
+      "summary": "隔离Preproduction Hermes与Account Persona endpoint鉴权已通过，但typed Case Workflow在Preproduction和Production均保持disabled；任务继续active，等待后续真实调查链授权与验收。"
     }
   ],
   "legacy_ids": [],
