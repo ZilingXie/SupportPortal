@@ -981,9 +981,11 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     api_update = main_script.index("update_role_if_needed api")
     activation = main_script.rindex("ACTIVATION_STARTED=1")
     assert route_worker < heartbeat < api_update < activation
-    route_worker_wait = main_script.index("wait_for_service_revision", route_worker)
+    route_worker_wait = main_script.index("(wait_and_verify_role route)")
     api_wait = main_script.index("wait_for_service_revision api", api_update)
-    assert route_worker < route_worker_wait < heartbeat
+    assert route_worker_wait < heartbeat
+    assert 'route_wait_pid=$!' in main_script
+    assert 'worker_wait_pid=$!' in main_script
     assert api_update < api_wait < activation
     assert "HEARTBEAT_WAIT_TIMEOUT_SECONDS=90" in script
     assert "HEARTBEAT_RETRY_INTERVAL_SECONDS=5" in script
@@ -1414,9 +1416,11 @@ if args[:2] == ["ecs", "describe-task-definition"]:
 elif args[:2] == ["ecs", "describe-tasks"]:
     print(json.dumps({"tasks": [{"lastStatus": "RUNNING", "taskDefinitionArn": os.environ["TEST_BOOTSTRAP_DEFINITION"]}]}))
 elif args[:2] == ["sts", "get-caller-identity"]:
-    print("{}")
+    print(json.dumps({"Account":"891612554546","Arn":"arn:aws:iam::891612554546:user/Zac"}))
 elif args[:3] == ["configure", "export-credentials", "--format"]:
     print("{}")
+elif args[:2] == ["configure", "list"]:
+    print("access_key : ****************TEST : login :")
 else:
     print("{}")
 """,

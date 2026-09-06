@@ -4,6 +4,7 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/release_aws_provider.sh"
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 PROJECT_NAME="${AUTOMATION_CODEBUILD_PROJECT_NAME:-supportportal-automation-release}"
@@ -55,6 +56,7 @@ main() {
   RELEASE_ID="${RELEASE_ID:-r$(date -u +%Y%m%d)-${GIT_COMMIT:0:7}}"
   [[ "${RELEASE_ID}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || fail "Invalid release id"
   [[ -n "${EVIDENCE_BUCKET}" ]] || fail "AUTOMATION_RELEASE_EVIDENCE_BUCKET is required"
+  [[ "${REGION}" = "us-east-1" ]] || fail "AWS region must be us-east-1"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=all)" ]] || fail "Working tree must be clean"
   git -C "${PROJECT_ROOT}" fetch origin main --quiet
   git -C "${PROJECT_ROOT}" cat-file -e "${GIT_COMMIT}^{commit}" || fail "Requested Git commit does not exist locally"
@@ -84,6 +86,7 @@ main() {
     '{schema_version:$schema_version,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,prompt_build_ref:$prompt_build_ref,prompt_content_fingerprint:$prompt_content_fingerprint,created_at:$created_at}' \
     >"${request_path}"
   request_key="requests/${RELEASE_ID}/request.json"
+  verify_release_aws_mutation_ready 600 || fail "AWS identity/provider preflight failed before S3 request write"
   request_version="$(aws s3api put-object --region "${REGION}" --bucket "${EVIDENCE_BUCKET}" \
     --key "${request_key}" --body "${request_path}" --query VersionId --output text)"
   [[ -n "${request_version}" && "${request_version}" != "None" ]] || fail "Release request bucket must have versioning enabled"
@@ -104,6 +107,7 @@ main() {
       {name:"AUTOMATION_RELEASE_REQUEST_KEY",value:$key,type:"PLAINTEXT"},
       {name:"AUTOMATION_RELEASE_REQUEST_VERSION",value:$version,type:"PLAINTEXT"}
     ]')"
+  verify_release_aws_mutation_ready 600 || fail "AWS identity/provider preflight failed before CodeBuild start"
   build_id="$(aws codebuild start-build --region "${REGION}" --project-name "${PROJECT_NAME}" \
     --environment-variables-override "${overrides}" --query 'build.id' --output text)"
   [[ -n "${build_id}" && "${build_id}" != "None" ]] || fail "CodeBuild did not return a build id"

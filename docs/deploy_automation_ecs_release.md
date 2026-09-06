@@ -11,6 +11,39 @@
 Record 写入加密、版本化的 release evidence bucket。CodeBuild 无 ECS、RDS 或
 Production ECR 写权限，不能自行部署。
 
+常规发布统一从正式 pipeline 入口执行。`--release-commit` 省略时在启动时冻结当前
+`origin/main`；默认只到 Preproduction。DSN只通过环境提供：
+
+```bash
+AUTOMATION_RELEASE_EVIDENCE_BUCKET=<versioned-bucket> \
+DEPLOY_PREPRODUCTION_APPROVED=1 \
+TICKET_DB_DSN=<source-prompt-dsn> \
+PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
+./deployment/release_automation_ecs_pipeline.sh \
+  --release-commit <full-origin-main-sha> \
+  --prompt-release-id <active-prompt-release-id> \
+  --through preproduction \
+  --hermes-case-workflow-mode disabled
+```
+
+pipeline依次执行冻结commit、CodeBuild、Preproduction preflight、deploy、统一collector；
+每个阶段的attempt与耗时追加到绑定commit、Prompt Release和模式参数的release-scoped checkpoint，最终 `timings.json` 分开报告
+可控耗时与Route/Worker/API ECS等待耗时。`--through production`仍要求调用者单独设置
+`DEPLOY_PRODUCTION_APPROVED=1`，并在任何Production ECR写入前再次检查；Production只
+promotion同一OCI digest，禁止rebuild。本runbook的底层build/promote/deploy命令保留
+用于故障诊断，不应重新拼接成另一条常规发布路径。
+
+Preproduction-only运行兼容现有`PROMPT_RELEASE_TARGET_DSN`；正式入口优先使用
+`PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN`。`--through production`还必须提供独立的
+`PRODUCTION_PROMPT_RELEASE_TARGET_DSN`，不允许把通用变量跨环境复用。两个DSN都只经
+环境传递，不进入argv、checkpoint或evidence。
+
+pipeline使用当前main上的部署工具，同时创建clean detached release worktree证明构建
+来源。release commit必须可从`origin/main`到达，worktree HEAD与Manifest commit完全
+相等，Manifest/tag/digest/Publish Record必须一致。release commit之后只允许
+`docs/**`、`AGENTS.md`、`CLAUDE.md`、`REASONIX.md`变化；backend、ui、deployment、
+infra、依赖或其他路径任一变化都要求新CodeBuild release。
+
 先通过独立 Terraform root 创建 release tooling：
 
 ```bash
@@ -73,8 +106,12 @@ PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
   --hermes-case-workflow-mode disabled
 ```
 
-独立 `--check-only` 始终只读。正式 deploy 自带同一套 preflight，不要求紧邻执行一次
-重复 check-only。schema bootstrap 只有在健康 runtime 的 `schema_revision` 与
+独立 `--check-only` 始终只读，并原子生成默认15分钟TTL、内容寻址的
+`automation-ecs-preflight-evidence-v1`。提供目标Prompt DSN时evidence可供正式deploy
+复用；未提供时保持只读兼容但标记为不可复用。正式deploy重新读取便宜的当前身份，
+只有Manifest/record、环境/service、Terraform lineage/serial/config hash、ECR、Prompt、
+task definition、secret metadata和EC2 health全部相同时才复用唯一一次zero-drift plan；
+任一变化或过期都要求重新check-only。schema bootstrap 只有在健康 runtime 的 `schema_revision` 与
 Manifest一致且目标数据库直接 schema check成功时才跳过。
 
 ## Hermes Drain Evidence
@@ -309,6 +346,7 @@ Preproduction approval和Prompt target DSN。ECS Production在本阶段不传该
 Preproduction真实验收与外部 readback完成后，由用户执行：
 
 ```bash
+DEPLOY_PRODUCTION_APPROVED=1 \
 ./deployment/promote_automation_release.sh \
   --manifest .deployments/releases/<release_id>/release-manifest.json \
   --publish-record .deployments/releases/<release_id>/publish-record.json \
@@ -361,6 +399,7 @@ Production task definition使用：
 Release Manifest 的本地 OCI archive 直接写入 Production：
 
 ```bash
+DEPLOY_PRODUCTION_APPROVED=1 \
 ./deployment/promote_automation_release.sh \
   --manifest .deployments/releases/<release_id>/release-manifest.json \
   --region us-east-1 \
@@ -392,7 +431,7 @@ Production 只能使用以下命令；不得另写临时 task-definition/ECS 更
   --check-only
 ```
 
-`--check-only` 完全只读：它校验 Manifest、Promotion Record、当前 Git commit、
+`--check-only` 完全只读：它校验 Manifest、Promotion Record、clean release worktree、
 三角色 ECR digest、Terraform 零漂移、源 Prompt Release、现有 task definition
 合同、Suspension 收件人 secret 内容与 EC2 backup health；不会同步或激活 Prompt
 Release，不会 register task definition，也不会 update ECS service。它仍要求通过环境
@@ -434,8 +473,12 @@ task definition family 和 task 归属，停止仍在运行的旧 task、注销�
 不读取新增表，因此服务回滚仍安全。默认不传这两个参数时，原有发布行为和
 `HERMES_CASE_WORKFLOW_MODE=disabled` 合同保持不变。
 
-部署开始前会执行 AWS identity 与凭据寿命预检。可读取 expiration 时默认要求至少
-剩余 2700 秒，并在每次 register/update/wait 边界前重新检查；可通过
+部署开始前会清除继承的静态/临时AWS credential环境变量，显式使用
+`AUTOMATION_AWS_PROFILE`（默认`default`）指向的refreshable login provider，并核对
+account `891612554546`、ARN `arn:aws:iam::891612554546:user/Zac`和`us-east-1`。
+Terraform使用release私有、绝对路径的`credential_process`，每次请求重新导出当前
+provider凭据；不会为整个deploy固定导出一次性凭据。可读取 expiration 时默认要求至少
+剩余 2700 秒，并在每次Prompt/ECS mutation与rollback边界前重新检查；可通过
 `AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS` 提高门槛。若当前 shell 导出了
 `AWS_SESSION_TOKEN`，但 provider 无法返回 expiration，命令会拒绝开始，避免临时
 凭据在 rollout 或 rollback 中途失效；此时应恢复使用可刷新的 AWS login/provider，
@@ -453,15 +496,17 @@ task definition family 和 task 归属，停止仍在运行的旧 task、注销�
 ```
 
 首次执行若该目录已存在会 fail closed。确认它属于同一次 release 后，使用相同命令
-追加 `--resume`。恢复会重新验证 Manifest 与 Promotion Record SHA-256、Git commit、
+追加 `--resume`。恢复先读取实际ECS revision/digest和目标Prompt active状态，再重新验证
+Manifest 与 Promotion Record SHA-256、Git commit、
 region/cluster/service identity、已注册 task definition 内容、ECR digest 和当前运行
 task；只有 ECS readback 与目标 revision/digest 完全相同的角色才跳过 update。不得仅凭
-本地 `<role>.verified` marker 判断完成。checkpoint 与 evidence 不保存 DSN、AWS
+本地 `<role>.verified` marker 判断完成。当前revision既非checkpoint old也非new时停止
+并要求人工reconciliation；目标Prompt已active时不重复sync/activate。checkpoint 与 evidence 不保存 DSN、AWS
 credentials、收件人地址或 secret value。状态目录以 `0700`、文件以 `0600` 创建；成功
 后会删除完整 task definition副本和检查日志，只保留恢复/审计所需的 ARN、digest、
 Prompt identity与检查结论。失败时这些中间文件以私有权限保留，供同一次 release恢复。
 
-Route 与 Worker 会先完成 update，然后分别等待 service 指针和唯一 PRIMARY deployment
+Route 与 Worker 会先完成 update，然后并行等待 service 指针和唯一 PRIMARY deployment
 都收敛到已注册 revision、`rolloutState=COMPLETED` 及 `1/1/0`；两者 digest 和 heartbeat
 通过后才更新 API，API 使用相同 revision 门禁。公网 health/provenance、CloudWatch错误窗口
 和 EC2 backup health作为只读检查并行执行。目标 Prompt sync 后还会从目标数据库执行
@@ -473,9 +518,10 @@ Route 与 Worker 会先完成 update，然后分别等待 service 指针和唯�
 .deployments/ecs-deploy-<environment>-<release_id>[-<hermes_mode>]/evidence.json
 ```
 
-其中包括 commit、Prompt Release build ref/content fingerprint、三个角色的旧/新 task
-definition ARN、期望 digest，以及 Terraform、ECR、收件人合同、heartbeat、public
-health、CloudWatch、EC2 backup和 Prompt activation 状态。失败时保留 checkpoint 和
+其中包括 commit、Preflight hash、Prompt Release build ref/content fingerprint、三个角色的旧/新 task
+definition ARN、实际/期望 digest，以及 Terraform serial/plan、最新heartbeat、public
+health、CloudWatch错误计数、Target Health、EC2 backup、Prompt activation和分阶段耗时。
+只存汇总，不存日志正文、target IP、Prompt内容或secret派生值。失败evidence按attempt追加保留，checkpoint 和
 失败证据；若激活尚未开始仍按原顺序回滚，若激活已开始或目标已 active，则保持新栈并
 报告 `reconciliation_required`。
 回滚命令或 revision 收敛门禁任一失败时，evidence明确记录 `rollback_incomplete` 和
@@ -494,7 +540,8 @@ DynamoDB backend lock，并在 60 秒内无法取得锁时阻断发布。
 3. 校验源 Prompt Release，将目标同步为 candidate，并在状态切换前比较 build ref
    与完整 `prompt_key + content_sha256` 指纹；目标本地 version remap 允许存在。
 4. 从目标环境三个 service 当前 revision 克隆 task definition，只替换 image、五个
-   provenance字段和显式批准的Hermes mode；逐角色注册新revision。`disabled`会同时
+   provenance字段和显式批准的Hermes mode；规范化定义完全相同时跳过注册/update，
+   否则先复用已有完全相同ACTIVE revision，再注册新revision。`disabled`会同时
    删除Hermes endpoint、API key和callback token引用；active mode缺任一必需secret
    时fail closed。
 5. 先更新 Route、Worker，共同等待 stable、核对运行 digest 和最新 heartbeat provenance；
