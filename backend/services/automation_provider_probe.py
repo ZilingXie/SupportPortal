@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 from typing import Any
 
@@ -11,12 +12,16 @@ from backend.services.account_internal_email_recipients import (
 )
 from backend.services.archer_direct_client import DirectArcherClient
 from backend.services.graph_mail import acquire_graph_access_token, load_graph_mail_config
-from backend.services.rag_service_client import RagServiceClient
+from backend.services.ragflow_docs_search_skill import DEFAULT_RAGFLOW_BASE_URL
 from backend.services.zendesk_comments import zendesk_basic_auth_header
 
 
 PROBE_SCHEMA_VERSION = "automation-provider-probe-v1"
 _SYNTHETIC_MISSING_APP_ID = "00000000000000000000000000000000"
+_RAGFLOW_DATASET_IDS = (
+    "c2eaf30463e511f18586e7085c4194fc",
+    "d3d8e64e63ea11f18586e7085c4194fc",
+)
 
 
 def _read_json(url: str, *, headers: dict[str, str], timeout: float = 15.0) -> dict[str, Any]:
@@ -28,10 +33,54 @@ def _read_json(url: str, *, headers: dict[str, str], timeout: float = 15.0) -> d
     return payload
 
 
+def _post_json(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        response_payload = json.loads(response.read().decode("utf-8") or "{}")
+    if not isinstance(response_payload, dict):
+        raise RuntimeError("provider response was not an object")
+    return response_payload
+
+
+def _probe_ragflow() -> None:
+    api_key = str(os.getenv("RAGFLOW_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("RAGFlow API key is not configured")
+    base_url = str(os.getenv("RAGFLOW_BASE_URL") or DEFAULT_RAGFLOW_BASE_URL).strip().rstrip("/")
+    payload = _post_json(
+        f"{base_url}/api/v1/retrieval",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "curl/8.4.0",
+        },
+        payload={
+            "question": "Agora documentation connectivity probe",
+            "dataset_ids": list(_RAGFLOW_DATASET_IDS),
+            "page": 1,
+            "page_size": 1,
+            "similarity_threshold": 1.0,
+        },
+        timeout=10.0,
+    )
+    if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
+        raise RuntimeError("RAGFlow read probe failed")
+
+
 def run_probe() -> dict[str, Any]:
-    rag_payload = RagServiceClient().health(timeout_seconds=10.0)
-    if str(rag_payload.get("status") or "").strip().lower() not in {"ok", "healthy"}:
-        raise RuntimeError("RAG health probe failed")
+    _probe_ragflow()
 
     archer_payload = DirectArcherClient().call(
         "GET",
