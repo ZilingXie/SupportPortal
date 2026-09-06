@@ -6,9 +6,6 @@ shared_alb_security_group_id  = "sg-REPLACE"
 shared_graph_efs_file_system_id = "fs-REPLACE"
 shared_efs_security_group_id  = "sg-REPLACE"
 shared_rds_security_group_id  = "sg-REPLACE"
-hermes_efs_access_point_arns  = [
-  "arn:aws:elasticfilesystem:us-east-1:ACCOUNT:access-point/fsap-REPLACE",
-]
 
 # Set only after the canonical initial task definitions are registered.
 create_account_services = false

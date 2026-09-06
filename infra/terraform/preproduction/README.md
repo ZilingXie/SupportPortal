@@ -3,13 +3,17 @@
 This root owns the stable Preproduction Automation infrastructure: cluster,
 immutable ECR repository, target group and `/automation/preproduction` listener
 rule, security group, log group, isolated Account and Hermes task roles, shared
-execution role, isolated Graph EFS access point, private Hermes service discovery, migration-backup bucket, and
+execution role, isolated Graph and Hermes EFS access points, private Hermes service discovery, migration-backup bucket, and
 the API/Route/Worker services, plus the exact Preproduction-to-RDS/EFS ingress
 rules. Shared VPC, ALB, RDS, ACM, security groups, and EFS are inputs.
 SecureString values are never Terraform resources or variables.
 API and Route may span the configured public subnets. Worker and Hermes use the
 explicit EFS subnet because the protected shared file system currently has one
 mount target.
+
+The three Hermes access points use Preproduction-only root directories. They
+must never reference the legacy Production Hermes roots; a fresh environment is
+initialized in these roots before its Hermes service starts.
 
 Bootstrap is intentionally staged without `terraform -target`:
 

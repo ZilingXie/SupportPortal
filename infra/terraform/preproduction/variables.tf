@@ -43,17 +43,6 @@ variable "shared_rds_security_group_id" {
   type        = string
 }
 
-variable "hermes_efs_access_point_arns" {
-  description = "Existing Hermes access point ARNs authorized only for the migrated Preproduction writer."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = length(var.hermes_efs_access_point_arns) == 3
-    error_message = "Hermes migration requires the three existing state access point ARNs."
-  }
-}
-
 variable "account_task_definition_arns" {
   description = "Initial canonical API, Route, and Worker revisions registered by the bootstrap command."
   type        = map(string)

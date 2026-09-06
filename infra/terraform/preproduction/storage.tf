@@ -18,6 +18,53 @@ resource "aws_efs_access_point" "graph" {
   tags = merge(local.tags, { Component = "graph-token-cache" })
 }
 
+locals {
+  hermes_efs_roots = {
+    hermes-home = {
+      path        = "/supportportal-preproduction-hermes-home"
+      uid         = 10000
+      gid         = 10000
+      permissions = "0755"
+    }
+    tdai-data = {
+      path        = "/supportportal-preproduction-tdai-data"
+      uid         = 0
+      gid         = 0
+      permissions = "0755"
+    }
+    pilot-creds = {
+      path        = "/supportportal-preproduction-pilot-creds"
+      uid         = 10000
+      gid         = 10000
+      permissions = "0700"
+    }
+  }
+}
+
+resource "aws_efs_access_point" "hermes" {
+  for_each       = local.hermes_efs_roots
+  file_system_id = var.shared_graph_efs_file_system_id
+
+  posix_user {
+    gid = each.value.gid
+    uid = each.value.uid
+  }
+
+  root_directory {
+    path = each.value.path
+    creation_info {
+      owner_gid   = each.value.gid
+      owner_uid   = each.value.uid
+      permissions = each.value.permissions
+    }
+  }
+
+  tags = merge(local.tags, {
+    Name      = "supportportal-preproduction-${each.key}"
+    Component = "hermes-${each.key}"
+  })
+}
+
 resource "aws_s3_bucket" "hermes_backup" {
   bucket        = local.backup_bucket_name
   force_destroy = false
