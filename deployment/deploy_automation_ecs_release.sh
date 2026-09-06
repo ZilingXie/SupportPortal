@@ -353,17 +353,20 @@ write_preflight_context() {
   local role components='{}' current_hash target_hash expected_digest observed_digest current_arn prompt_build_ref prompt_fingerprint target_configured
   for role in api route worker; do
     current_hash="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
-      task-definition-sha256 --task-definition "${TEMP_DIR}/${role}.observed.json" | jq -r '.sha256')"
+      task-definition-sha256 --task-definition "${TEMP_DIR}/${role}.observed.json" | jq -er '.sha256')" \
+      || { fail "${role} current task definition fingerprint failed"; return 1; }
     target_hash="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
-      task-definition-sha256 --task-definition "${TEMP_DIR}/${role}.register.json" | jq -r '.sha256')"
+      task-definition-sha256 --task-definition "${TEMP_DIR}/${role}.register.json" | jq -er '.sha256')" \
+      || { fail "${role} target task definition fingerprint failed"; return 1; }
     expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest' "${MANIFEST_PATH}")"
     observed_digest="$(<"${TEMP_DIR}/${role}.ecr-digest")"
     current_arn="$(<"${TEMP_DIR}/${role}.observed-arn")"
-    components="$(jq -cn --argjson base "${components}" --arg role "${role}" \
+    components="$(jq -ecn --argjson base "${components}" --arg role "${role}" \
       --arg current_task_definition "${current_arn}" --arg current_hash "${current_hash}" \
       --arg target_hash "${target_hash}" --arg expected_digest "${expected_digest}" \
       --arg observed_digest "${observed_digest}" \
-      '$base + {($role):{current_task_definition:$current_task_definition,current_task_definition_sha256:$current_hash,target_task_definition_sha256:$target_hash,expected_digest:$expected_digest,observed_digest:$observed_digest}}')"
+      '$base + {($role):{current_task_definition:$current_task_definition,current_task_definition_sha256:$current_hash,target_task_definition_sha256:$target_hash,expected_digest:$expected_digest,observed_digest:$observed_digest}}')" \
+      || { fail "${role} Preflight component context assembly failed"; return 1; }
   done
   prompt_build_ref="$(jq -r '.identity.build_ref // ""' "${TEMP_DIR}/source-prompt.json")"
   prompt_fingerprint="$(jq -r '.identity.content_fingerprint // ""' "${TEMP_DIR}/source-prompt.json")"

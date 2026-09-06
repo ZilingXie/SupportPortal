@@ -40,6 +40,9 @@ STATIC_AWS_ENV = {
     "AWS_CREDENTIAL_EXPIRATION",
 }
 SECRET_NAME_PATTERN = re.compile(r"(?:SECRET|TOKEN|PASSWORD|DSN|CREDENTIAL|API_KEY)", re.I)
+SAFE_SECRET_NAMED_TASK_ENV = {
+    "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
+}
 
 
 def _utc_now() -> datetime:
@@ -207,7 +210,12 @@ def task_definition_sha256(value: Mapping[str, Any]) -> str:
     for container in task_definition.get("containerDefinitions") or []:
         for item in container.get("environment") or []:
             name = str(item.get("name") or "")
-            if SECRET_NAME_PATTERN.search(name) and str(item.get("value") or ""):
+            item_value = str(item.get("value") or "")
+            if (
+                SECRET_NAME_PATTERN.search(name)
+                and item_value
+                and SAFE_SECRET_NAMED_TASK_ENV.get(name) != item_value
+            ):
                 raise ValueError(f"task definition contains plaintext secret environment: {name}")
     return canonical_sha256(_registrable_task_definition(task_definition))
 

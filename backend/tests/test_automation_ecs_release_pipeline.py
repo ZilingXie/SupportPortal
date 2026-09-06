@@ -270,6 +270,25 @@ def test_task_definition_hash_ignores_revision_metadata_but_not_configuration() 
     with pytest.raises(ValueError, match="plaintext secret"):
         task_definition_sha256(unsafe)
 
+    safe_cache_path = {
+        "family": "worker",
+        "containerDefinitions": [
+            {
+                "name": "worker",
+                "environment": [
+                    {
+                        "name": "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE",
+                        "value": "/app/.msgraph/billing-automation-token.json",
+                    }
+                ],
+            }
+        ],
+    }
+    assert task_definition_sha256(safe_cache_path).startswith("sha256:")
+    safe_cache_path["containerDefinitions"][0]["environment"][0]["value"] = "token-value"
+    with pytest.raises(ValueError, match="plaintext secret"):
+        task_definition_sha256(safe_cache_path)
+
 
 def test_terraform_credential_process_is_private_absolute_and_secret_free(tmp_path: Path) -> None:
     deploy_script = Path(__file__).resolve().parents[2] / "deployment" / "deploy_automation_ecs_release.sh"

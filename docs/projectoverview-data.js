@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T07:55:45Z",
-  "source_base_commit": "fabbb3f5dbf0210aaff500e13b770f47a86de74e",
-  "registry_digest": "0def330fb1f572c979abe95f7140a43f9c48767b42b9be7f0d9874b8670c00fe",
+  "generated_at": "2026-09-06T08:21:15Z",
+  "source_base_commit": "ca5ce84cd990e478e5334b84ec2200272689fd7e",
+  "registry_digest": "f9d1fddfd07dabcc2dcb749b8c3ac7bb44a2248dbef590200db6e5e9de15e549",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2374,6 +2374,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Content-addressed ECS release pipeline contracts",
           "command": "pytest release/deploy/promotion suites; bash -n release scripts; Terraform 1.9.8 fmt/init/validate; Overview/Feature List/diff checks",
           "details": "新增正式pipeline入口、clean detached release worktree来源门禁、15分钟内容寻址Preflight Evidence、单环境唯一Terraform plan复用、refreshable Zac provider、相同task definition revision复用、Route/Worker并行等待、authoritative resume/反序rollback和统一只读collector。覆盖文档后续commit允许部署、runtime变化拒绝、evidence过期/篡改/输入变化、静态凭据清除和secret不进入argv/evidence；未触发Production promotion/deploy或业务流量。"
+        },
+        {
+          "type": "test",
+          "label": "Release pipeline live Preflight fail-closed repair",
+          "command": "release_automation_ecs_pipeline.sh --through preproduction; focused pipeline/deploy pytest; bash -n; py_compile; diff checks",
+          "details": "首次main@ca5ce84c演练的CodeBuild在129.498秒完成；Preflight在99.028秒时因把固定Graph token cache文件路径误判为明文token而安全停止，未执行Prompt或ECS mutation。修复仅允许既有精确变量和值`/app/.msgraph/billing-automation-token.json`，其他token-like明文继续拒绝，并让fingerprint/JSON组装在主错误处fail-fast。"
         },
         {
           "type": "test",
@@ -7115,6 +7121,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Content-addressed ECS release pipeline contracts",
           "command": "pytest release/deploy/promotion suites; bash -n release scripts; Terraform 1.9.8 fmt/init/validate; Overview/Feature List/diff checks",
           "details": "新增正式pipeline入口、clean detached release worktree来源门禁、15分钟内容寻址Preflight Evidence、单环境唯一Terraform plan复用、refreshable Zac provider、相同task definition revision复用、Route/Worker并行等待、authoritative resume/反序rollback和统一只读collector。覆盖文档后续commit允许部署、runtime变化拒绝、evidence过期/篡改/输入变化、静态凭据清除和secret不进入argv/evidence；未触发Production promotion/deploy或业务流量。"
+        },
+        {
+          "type": "test",
+          "label": "Release pipeline live Preflight fail-closed repair",
+          "command": "release_automation_ecs_pipeline.sh --through preproduction; focused pipeline/deploy pytest; bash -n; py_compile; diff checks",
+          "details": "首次main@ca5ce84c演练的CodeBuild在129.498秒完成；Preflight在99.028秒时因把固定Graph token cache文件路径误判为明文token而安全停止，未执行Prompt或ECS mutation。修复仅允许既有精确变量和值`/app/.msgraph/billing-automation-token.json`，其他token-like明文继续拒绝，并让fingerprint/JSON组装在主错误处fail-fast。"
         }
       ],
       "source_refs": [
@@ -7318,6 +7330,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-06",
           "event": "ecs_release_pipeline_optimization_implemented",
           "summary": "正式pipeline与可复用Preflight Evidence合同已实现：冻结origin/main commit，允许后续纯文档main变化，目标环境只执行一次Terraform零漂移plan，跳过或复用相同task revision，并行Route/Worker rollout，统一collector输出阶段耗时；Production promotion/deploy仍需独立授权。"
+        },
+        {
+          "at": "2026-09-06",
+          "event": "ecs_release_pipeline_live_preflight_repaired",
+          "summary": "首次正式Preproduction演练在mutation前暴露token cache路径误判；精确放行既有非secret路径并补充fail-fast错误边界，保留CodeBuild checkpoint用于resume。"
         }
       ],
       "legacy_refs": [
