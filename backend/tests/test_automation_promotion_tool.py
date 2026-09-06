@@ -157,7 +157,10 @@ elif args[:2] == ["ecr", "batch-get-image"]:
     image_id = args[args.index("--image-ids") + 1]
     kind, value = image_id.split("=", 1)
     if kind == "imageDigest":
-        print(value)
+        if os.environ.get("PROMOTION_TEST_SOURCE_MISMATCH") == value:
+            print("sha256:" + "9" * 64)
+        else:
+            print(value)
         sys.exit(0)
     tag = value
     digit = {"api": "1", "route": "2", "worker": "3"}[tag.split("-", 1)[0]]
@@ -252,6 +255,47 @@ def _run_direct(
     return result, state
 
 
+def _run_codebuild_direct(
+    tmp_path: Path,
+    *,
+    extra_args: list[str] | None = None,
+    source_mismatch: str = "",
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    manifest, publish, _ = _registry_release_bundle(tmp_path)
+    fake_bin, state = _fake_tools(tmp_path)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "AUTOMATION_RELEASE_PYTHON": sys.executable,
+            "PROMOTION_TEST_STATE": str(state),
+            "PROMOTION_TEST_SOURCE_MISMATCH": source_mismatch,
+        }
+    )
+    args = [
+        str(SCRIPT),
+        "--manifest",
+        str(manifest),
+        "--publish-record",
+        str(publish),
+        "--region",
+        "us-east-1",
+        "--registry-id",
+        "123456789012",
+        "--codebuild-direct-production",
+    ]
+    args.extend(extra_args or [])
+    result = subprocess.run(
+        args,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+    return result, state
+
+
 def test_promotion_copies_manifests_and_layers_and_verifies_identical_digests_without_building() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
     assert 'SOURCE_REPOSITORY="supportportal/preproduction"' in script
@@ -314,6 +358,95 @@ def test_registry_promotion_requires_and_records_preproduction_evidence(tmp_path
     assert record["preproduction_deploy_evidence_sha256"].startswith("sha256:")
     calls = [json.loads(line) for line in (state / "crane.jsonl").read_text().splitlines()]
     assert len([call for call in calls if call[:1] == ["copy"]]) == 3
+
+
+def test_codebuild_direct_production_records_publish_provenance_without_acceptance(
+    tmp_path: Path,
+) -> None:
+    result, state = _run_codebuild_direct(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads((tmp_path / "promotion-record.json").read_text(encoding="utf-8"))
+    assert record["promotion_mode"] == "codebuild-direct-production"
+    assert record["source_repository"] == "supportportal/preproduction"
+    assert record["source_publish_record_sha256"].startswith("sha256:")
+    assert "preproduction_deploy_evidence_sha256" not in record
+    calls = [json.loads(line) for line in (state / "crane.jsonl").read_text().splitlines()]
+    assert len([call for call in calls if call[:1] == ["copy"]]) == 3
+
+
+def test_codebuild_direct_production_rejects_conflicting_modes_and_deploy_evidence(
+    tmp_path: Path,
+) -> None:
+    result, _ = _run_codebuild_direct(tmp_path, extra_args=["--direct-production"])
+    assert result.returncode != 0
+    assert "mutually exclusive" in result.stderr
+
+    evidence = tmp_path / "unexpected-evidence.json"
+    evidence.write_text("{}", encoding="utf-8")
+    result, _ = _run_codebuild_direct(
+        tmp_path / "with-evidence",
+        extra_args=["--preproduction-evidence", str(evidence)],
+    )
+    assert result.returncode != 0
+    assert "does not accept Preproduction deploy evidence" in result.stderr
+
+
+def test_codebuild_direct_production_validates_publish_record_before_registry_copy(
+    tmp_path: Path,
+) -> None:
+    manifest, publish, _ = _registry_release_bundle(tmp_path)
+    payload = json.loads(publish.read_text(encoding="utf-8"))
+    payload["source_git_commit"] = "b" * 40
+    publish.write_text(json.dumps(payload), encoding="utf-8")
+    fake_bin, state = _fake_tools(tmp_path)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "AUTOMATION_RELEASE_PYTHON": sys.executable,
+            "PROMOTION_TEST_STATE": str(state),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--publish-record",
+            str(publish),
+            "--region",
+            "us-east-1",
+            "--registry-id",
+            "123456789012",
+            "--codebuild-direct-production",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Publish Record validation failed" in result.stderr
+    assert not (state / "crane.jsonl").exists()
+
+
+def test_codebuild_direct_production_rejects_source_digest_mismatch(tmp_path: Path) -> None:
+    result, state = _run_codebuild_direct(
+        tmp_path,
+        source_mismatch="sha256:" + "3" * 64,
+    )
+
+    assert result.returncode != 0
+    assert "worker source digest mismatch" in result.stderr
+    calls_path = state / "crane.jsonl"
+    copies = [] if not calls_path.exists() else [
+        json.loads(line)
+        for line in calls_path.read_text().splitlines()
+        if json.loads(line)[:1] == ["copy"]
+    ]
+    assert copies == []
 
 
 def test_direct_production_publishes_local_archives_and_records_explicit_source(tmp_path: Path) -> None:
