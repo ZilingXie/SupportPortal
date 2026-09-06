@@ -991,6 +991,8 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "HEARTBEAT_RETRY_INTERVAL_SECONDS=5" in script
     assert "SERVICE_ROLLOUT_WAIT_TIMEOUT_SECONDS=900" in script
     assert "SERVICE_ROLLOUT_RETRY_INTERVAL_SECONDS=5" in script
+    assert "TARGET_HEALTH_WAIT_TIMEOUT_SECONDS=900" in script
+    assert "TARGET_HEALTH_RETRY_INTERVAL_SECONDS=5" in script
     assert "wait_for_service_revision" in script
     assert '.services[0].taskDefinition == $expected' in script
     assert '.services[0].deployments[0].taskDefinition == $expected' in script
@@ -1202,6 +1204,87 @@ write_evidence failed_before_activation
     attempts = list((state_dir / "evidence-attempts").glob("*-failed_before_activation.json"))
     assert len(attempts) == 1
     assert json.loads(attempts[0].read_text(encoding="utf-8")) == evidence
+
+
+def test_target_health_waits_for_draining_target_to_clear(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    counter = tmp_path / "target-health-calls"
+    counter.write_text("0", encoding="utf-8")
+    shell = """
+source "$1"
+aws() {
+  if [[ "$*" == *"ecs describe-services"* ]]; then
+    printf '%s\n' 'arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/1'
+    return 0
+  fi
+  count=$(cat "$TARGET_HEALTH_COUNTER")
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$TARGET_HEALTH_COUNTER"
+  if ((count == 1)); then
+    printf '%s\n' '["healthy","draining"]'
+  else
+    printf '%s\n' '["healthy"]'
+  fi
+}
+TEMP_DIR="$2"
+REGION=us-east-1
+CLUSTER=cluster
+API_SERVICE=api
+TARGET_HEALTH_WAIT_TIMEOUT_SECONDS=30
+TARGET_HEALTH_RETRY_INTERVAL_SECONDS=0
+verify_target_health
+"""
+    result = subprocess.run(
+        ["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(state_dir)],
+        cwd=ROOT,
+        env={**os.environ, "TARGET_HEALTH_COUNTER": str(counter)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert counter.read_text(encoding="utf-8").strip() == "2"
+    assert json.loads((state_dir / "target-health.json").read_text(encoding="utf-8")) == {
+        "total": 1,
+        "healthy": 1,
+        "unhealthy": 0,
+    }
+
+
+def test_target_health_timeout_preserves_last_summary(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    shell = """
+source "$1"
+aws() {
+  if [[ "$*" == *"ecs describe-services"* ]]; then
+    printf '%s\n' 'arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/1'
+  else
+    printf '%s\n' '["healthy","draining"]'
+  fi
+}
+TEMP_DIR="$2"
+REGION=us-east-1
+CLUSTER=cluster
+API_SERVICE=api
+TARGET_HEALTH_WAIT_TIMEOUT_SECONDS=0
+verify_target_health
+"""
+    result = subprocess.run(
+        ["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(state_dir)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Target Health did not converge before timeout" in result.stderr
+    assert json.loads((state_dir / "target-health.json").read_text(encoding="utf-8")) == {
+        "total": 2,
+        "healthy": 1,
+        "unhealthy": 1,
+    }
 
 
 def test_formal_deploy_script_has_strict_preproduction_record_and_approval_boundary() -> None:

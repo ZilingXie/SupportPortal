@@ -37,6 +37,8 @@ HEARTBEAT_WAIT_TIMEOUT_SECONDS=90
 HEARTBEAT_RETRY_INTERVAL_SECONDS=5
 SERVICE_ROLLOUT_WAIT_TIMEOUT_SECONDS=900
 SERVICE_ROLLOUT_RETRY_INTERVAL_SECONDS=5
+TARGET_HEALTH_WAIT_TIMEOUT_SECONDS=900
+TARGET_HEALTH_RETRY_INTERVAL_SECONDS=5
 AWS_MIN_CREDENTIAL_TTL_SECONDS="${AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS:-2700}"
 RELEASE_ID=""
 GIT_COMMIT=""
@@ -1039,17 +1041,26 @@ verify_cloudwatch() {
 }
 
 verify_target_health() {
-  local target_group health
+  local target_group health deadline
   target_group="$(aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
     --services "${API_SERVICE}" --query 'services[0].loadBalancers[0].targetGroupArn' --output text)"
   [[ -n "${target_group}" && "${target_group}" != "None" ]] || fail "API Target Group is missing"
-  health="$(aws elbv2 describe-target-health --region "${REGION}" --target-group-arn "${target_group}" \
-    --query 'TargetHealthDescriptions[].TargetHealth.State' --output json)"
-  jq -n --argjson states "${health}" \
-    '{total:($states|length),healthy:([$states[]|select(.=="healthy")]|length),unhealthy:([$states[]|select(.!="healthy")]|length)}' \
-    >"${TEMP_DIR}/target-health.json"
-  [[ "$(jq -r '.total > 0 and .unhealthy == 0' "${TEMP_DIR}/target-health.json")" = "true" ]] \
-    || fail "API Target Health is not fully healthy"
+  deadline=$((SECONDS + TARGET_HEALTH_WAIT_TIMEOUT_SECONDS))
+  while true; do
+    health="$(aws elbv2 describe-target-health --region "${REGION}" --target-group-arn "${target_group}" \
+      --query 'TargetHealthDescriptions[].TargetHealth.State' --output json)"
+    jq -n --argjson states "${health}" \
+      '{total:($states|length),healthy:([$states[]|select(.=="healthy")]|length),unhealthy:([$states[]|select(.!="healthy")]|length)}' \
+      >"${TEMP_DIR}/target-health.json"
+    if [[ "$(jq -r '.total > 0 and .unhealthy == 0' "${TEMP_DIR}/target-health.json")" = "true" ]]; then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      fail "API Target Health did not converge before timeout"
+      return 1
+    fi
+    sleep "${TARGET_HEALTH_RETRY_INTERVAL_SECONDS}"
+  done
 }
 
 verify_public_runtime() {
