@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import patch
 
 from backend.services.account_internal_email_recipients import AccountInternalEmailRecipients
@@ -32,6 +33,22 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
     )
 
     def urlopen(request, *, timeout):
+        if "knowledge.example.com" in request.full_url:
+            assert request.method == "POST"
+            assert request.full_url.endswith("/api/v1/retrieval")
+            assert request.headers["Authorization"] == "Bearer ragflow-token"
+            assert json.loads(request.data.decode("utf-8")) == {
+                "question": "Agora documentation connectivity probe",
+                "dataset_ids": [
+                    "c2eaf30463e511f18586e7085c4194fc",
+                    "d3d8e64e63ea11f18586e7085c4194fc",
+                ],
+                "page": 1,
+                "page_size": 1,
+                "similarity_threshold": 1.0,
+            }
+            assert timeout == 10.0
+            return _Response({"code": 0, "data": {"chunks": [], "total": 0}})
         assert request.method == "GET"
         assert request.data is None
         if "graph.microsoft.com" in request.full_url:
@@ -40,7 +57,14 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
         return _Response({"user": {"id": 1}})
 
     with (
-        patch("backend.services.automation_provider_probe.RagServiceClient.health", return_value={"status": "ok"}),
+        patch.dict(
+            os.environ,
+            {
+                "RAGFLOW_BASE_URL": "https://knowledge.example.com/kb/ticket-agent",
+                "RAGFLOW_API_KEY": "ragflow-token",
+            },
+            clear=False,
+        ),
         patch("backend.services.automation_provider_probe.DirectArcherClient.call", return_value={"data": []}) as archer,
         patch("backend.services.automation_provider_probe.load_graph_mail_config", return_value={}),
         patch("backend.services.automation_provider_probe.acquire_graph_access_token", return_value="token"),
@@ -67,6 +91,16 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
     }
     assert "token" not in json.dumps(result)
     assert "example.com" not in json.dumps(result)
+
+
+def test_provider_probe_requires_the_worker_ragflow_credential() -> None:
+    with patch.dict(os.environ, {"RAGFLOW_API_KEY": ""}, clear=False):
+        try:
+            run_probe()
+        except RuntimeError as exc:
+            assert str(exc) == "RAGFlow API key is not configured"
+        else:
+            raise AssertionError("expected missing RAGFlow credentials to fail closed")
 
 
 def test_provider_probe_main_prints_single_sanitized_json_line(capsys) -> None:
