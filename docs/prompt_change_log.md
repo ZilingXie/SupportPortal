@@ -1,5 +1,19 @@
 # Prompt Change Log
 
+## 2026-09-06 - ECS release pipeline evidence and resume contract (p1-53)
+
+- Area or subsystem:
+  - CodeBuild, Preproduction deploy, Prompt Release promotion and Production authorization orchestration.
+- Prompt or model version:
+  - Prompt content, Prompt Release IDs, model names, providers, reasoning effort and fallback policy are unchanged.
+- Reason:
+  - Remove repeated build/preflight work and make credential-expiry recovery authoritative without weakening Prompt activation or Production gates.
+- Tooling and behavior change:
+  - The formal pipeline freezes a release commit, reuses 15-minute content-addressed Preflight Evidence when every bound input is unchanged, deploys Route/Worker before API, and activates Prompt only after the unified health collector passes.
+  - Resume reads the target Prompt state first and never repeats activation when the requested release is already active; activation-unknown remains reconciliation-required rather than triggering blind rollback.
+- Verification boundary:
+  - Contract tests use fake repositories/providers and contain no real Prompt content, DSN, token or business traffic. Production promotion/deploy remains separately authorized.
+
 ## 2026-09-06 - ECS deploy waits for the requested task revision (p1-53)
 
 - Area or subsystem: ECS release deployment and rollback convergence gate.

@@ -149,7 +149,13 @@ args = sys.argv[1:]
 state = pathlib.Path(os.environ["PROMOTION_TEST_STATE"])
 with (state / "aws.jsonl").open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(args) + "\\n")
-if args[:2] == ["ecr", "get-login-password"]:
+if args[:2] == ["sts", "get-caller-identity"]:
+    print(json.dumps({"Account":"891612554546","Arn":"arn:aws:iam::891612554546:user/Zac"}))
+elif args[:2] == ["configure", "list"]:
+    print("access_key : ****************TEST : login :")
+elif args[:3] == ["configure", "export-credentials", "--format"]:
+    print("{}")
+elif args[:2] == ["ecr", "get-login-password"]:
     print("password")
 elif args[:2] == ["ecr", "describe-repositories"]:
     print(os.environ.get("PROMOTION_TEST_MUTABILITY", "IMMUTABLE"))
@@ -231,6 +237,7 @@ def _run_direct(
             "PROMOTION_TEST_STATE": str(state),
             "PROMOTION_TEST_MISMATCH": mismatch,
             "PROMOTION_TEST_MUTABILITY": mutability,
+            "DEPLOY_PRODUCTION_APPROVED": "1",
         }
     )
     result = subprocess.run(
@@ -285,6 +292,7 @@ def test_registry_promotion_requires_and_records_preproduction_evidence(tmp_path
             "PATH": f"{fake_bin}:{environment['PATH']}",
             "AUTOMATION_RELEASE_PYTHON": sys.executable,
             "PROMOTION_TEST_STATE": str(state),
+            "DEPLOY_PRODUCTION_APPROVED": "1",
         }
     )
     result = subprocess.run(
