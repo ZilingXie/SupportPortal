@@ -44,6 +44,28 @@ pipeline使用当前main上的部署工具，同时创建clean detached release 
 `docs/**`、`AGENTS.md`、`CLAUDE.md`、`REASONIX.md`变化；backend、ui、deployment、
 infra、依赖或其他路径任一变化都要求新CodeBuild release。
 
+### 2026-09-06 Preproduction计时基线
+
+首次完整成功演练使用 `main@eb17106783cf` 和 release
+`r20260906-eb17106`，未设置Production授权，也未连接n8n、创建或修改工单、发送邮件或
+Slack、调用业务Responses，EC2与Production Hermes仅做前后只读核验。CodeBuild
+operator阶段为`140.136s`，其中AWS `BUILD` phase为`70s`；独立check-only为
+`100.923s`。Preproduction deploy为`986.495s`，总耗时`1227.554s`（20分27.6秒），
+达到15–30分钟目标。
+
+deploy内部计时为：复用Preflight上下文`79.203s`、Prompt/schema只读校验`84.214s`、
+Route/Worker并行rollout `279.748s`、heartbeat `5.336s`、API rollout `177.112s`、
+统一collector `241.783s`、activation/readback `19.105s`。Pipeline归类的ECS wait为
+`456.860s`；collector主要等待ALB旧target完成deregistration。可控阶段为
+`770.694s`，其中deploy证据内可控部分为`429.641s`。最终Target Health为`1/1`
+healthy、三角色CloudWatch错误计数为0、Terraform state serial为7且zero drift、EC2
+backup通过。目标Prompt Release原本已active，流程未重复sync/activate。
+
+演练过程中发现的四类缺陷均未执行Prompt activation，并fail closed保留checkpoint：非secret
+token cache/数值token-limit误判、条件函数未显式返回导致service update被跳过、以及失败
+evidence/ALB draining窗口处理。PR #1098–#1101逐项修复并增加可执行回归；失败演练均未
+触发Production，发生service update的演练均按API、Worker、Route反序恢复到已知旧revision。
+
 先通过独立 Terraform root 创建 release tooling：
 
 ```bash
@@ -509,7 +531,9 @@ Prompt identity与检查结论。失败时这些中间文件以私有权限保�
 Route 与 Worker 会先完成 update，然后并行等待 service 指针和唯一 PRIMARY deployment
 都收敛到已注册 revision、`rolloutState=COMPLETED` 及 `1/1/0`；两者 digest 和 heartbeat
 通过后才更新 API，API 使用相同 revision 门禁。公网 health/provenance、CloudWatch错误窗口
-和 EC2 backup health作为只读检查并行执行。目标 Prompt sync 后还会从目标数据库执行
+和 EC2 backup health作为只读检查并行执行。Target Health每5秒读取一次汇总，最多等待
+15分钟，直到至少一个target healthy且没有draining/unhealthy target；超时保留最后汇总并
+fail closed，不记录target IP。目标 Prompt sync 后还会从目标数据库执行
 一次只读 validate，确认 activation 前置内容可读且 CLI 没有执行 schema initialization。
 
 成功后统一证据写入：

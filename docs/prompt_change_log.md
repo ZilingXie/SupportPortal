@@ -13,6 +13,8 @@
   - Resume reads the target Prompt state first and never repeats activation when the requested release is already active; activation-unknown remains reconciliation-required rather than triggering blind rollback.
 - Verification boundary:
   - Contract tests use fake repositories/providers and contain no real Prompt content, DSN, token or business traffic. Production promotion/deploy remains separately authorized.
+  - Live Preproduction release `r20260906-eb17106` completed in `1227.554s` with the existing Prompt Release already active; the pipeline performed final validation without repeating sync/activation. Production, EC2, n8n and business traffic were unchanged.
+  - Live failures before the successful run exposed secret-name false positives, a shell conditional return bug, failure-evidence truncation and ALB draining convergence. PR #1098–#1101 repaired those boundaries; focused release suites reached `81 passed`, no failed run performed Prompt activation, and rollback/readback evidence was retained.
 
 ## 2026-09-06 - Persona publishes directly after deterministic safety checks (p2-144)
 

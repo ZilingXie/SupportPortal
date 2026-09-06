@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T08:21:15Z",
-  "source_base_commit": "ca5ce84cd990e478e5334b84ec2200272689fd7e",
-  "registry_digest": "f9d1fddfd07dabcc2dcb749b8c3ac7bb44a2248dbef590200db6e5e9de15e549",
+  "generated_at": "2026-09-06T10:27:15Z",
+  "source_base_commit": "eb17106783cf0089ba1e0bb95dd65ae654d230ff",
+  "registry_digest": "f8b40e8641db16692ec15d2eca4281790caa32b5cd80117ffad216750c9810a8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -6827,7 +6827,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
-      "next_action": "保持 active。先用新的正式pipeline完成一次无业务流量Preproduction计时演练并记录15-30分钟目标；随后仍等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后仅在单独授权下按同digest promotion流程升级ECS Production并再次回归。",
+      "next_action": "保持 active。正式pipeline的无业务流量Preproduction计时演练已以20分27.6秒完成；仍等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后仅在单独授权下按同digest promotion流程升级ECS Production并再次回归。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -7335,6 +7335,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-06",
           "event": "ecs_release_pipeline_live_preflight_repaired",
           "summary": "首次正式Preproduction演练在mutation前暴露token cache路径误判；精确放行既有非secret路径并补充fail-fast错误边界，保留CodeBuild checkpoint用于resume。"
+        },
+        {
+          "at": "2026-09-06",
+          "event": "ecs_release_pipeline_preproduction_timing_accepted",
+          "summary": "正式pipeline从main@eb171067构建并部署r20260906-eb17106：CodeBuild operator 140.136秒（AWS BUILD 70秒）、check-only 100.923秒、Preproduction deploy 986.495秒、总计1227.554秒（20分27.6秒），达到15–30分钟目标。Route/Worker与API ECS wait合计456.860秒，ALB draining collector为241.783秒；最终API/Route/Worker revision 9/9/9均为唯一COMPLETED PRIMARY和1/1/0，digest/heartbeat/Prompt/CloudWatch/Target Health/Terraform serial 7 zero drift/EC2 backup全部通过。AWS login provider在mutation阶段自动刷新；37个release state文件未发现DSN、AWS credential或PostgreSQL URI明文。Production revision 35/29/33、Production Hermes 3及EC2 build f01665b均未变化；未触发Production promotion/deploy、n8n、工单、邮件、Slack或业务Responses。"
         }
       ],
       "legacy_refs": [
