@@ -83,6 +83,7 @@ from backend.services.account_processing_profiles import is_live_account_process
 from backend.services.automation_persona import (
     AUTOMATION_PERSONA_PROMPT_VERSION,
     AutomationPersonaError,
+    assert_automation_reply_source_safety,
     build_account_automation_reply_facts,
     build_automation_reply_facts,
     assert_no_trailing_automation_signature,
@@ -912,6 +913,9 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
             payload.pop("persona_reviewer_model", None)
             payload.pop("persona_review_prompt_version", None)
             payload.pop("persona_review_issue_codes", None)
+            payload.pop("persona_generation_attempts", None)
+            payload.pop("persona_safety_status", None)
+            payload.pop("persona_safety_issue_codes", None)
             persona_assignment = {
                 "persona_key": payload.get("persona_key"),
                 "version": payload.get("persona_version"),
@@ -941,11 +945,9 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
                     "persona_render_status": "generated",
                     "persona_model": rendered.model,
                     "persona_prompt_version": rendered.prompt_version,
-                    "persona_review_status": rendered.review_status,
-                    "persona_review_rounds": rendered.review_rounds,
-                    "persona_reviewer_model": rendered.reviewer_model,
-                    "persona_review_prompt_version": rendered.reviewer_prompt_version,
-                    "persona_review_issue_codes": list(rendered.review_issue_codes),
+                    "persona_generation_attempts": rendered.generation_attempts,
+                    "persona_safety_status": rendered.safety_status,
+                    "persona_safety_issue_codes": list(rendered.safety_issue_codes),
                 }
             )
         job["payload"] = payload
@@ -1150,6 +1152,9 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload.pop("persona_reviewer_model", None)
         payload.pop("persona_review_prompt_version", None)
         payload.pop("persona_review_issue_codes", None)
+        payload.pop("persona_generation_attempts", None)
+        payload.pop("persona_safety_status", None)
+        payload.pop("persona_safety_issue_codes", None)
         persona_assignment = {
             "persona_key": payload.get("persona_key"),
             "version": payload.get("persona_version"),
@@ -1177,11 +1182,9 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload["persona_render_status"] = "generated"
         payload["persona_model"] = rendered.model
         payload["persona_prompt_version"] = rendered.prompt_version
-        payload["persona_review_status"] = rendered.review_status
-        payload["persona_review_rounds"] = rendered.review_rounds
-        payload["persona_reviewer_model"] = rendered.reviewer_model
-        payload["persona_review_prompt_version"] = rendered.reviewer_prompt_version
-        payload["persona_review_issue_codes"] = list(rendered.review_issue_codes)
+        payload["persona_generation_attempts"] = rendered.generation_attempts
+        payload["persona_safety_status"] = rendered.safety_status
+        payload["persona_safety_issue_codes"] = list(rendered.safety_issue_codes)
         current_job["payload"] = payload
         if not _update_claimed_account_reply_job(
             current_job,
@@ -1216,22 +1219,21 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     if existing_message is None:
         try:
             assert_no_trailing_automation_signature(content)
-            if (
-                isinstance(payload.get("reply_facts"), dict)
-                and payload.get("reply_facts")
-                and _account_reply_contract_required(payload)
-            ):
-                normalized_facts, derived_close = validate_account_reply_contract(
-                    content,
-                    dict(payload["reply_facts"]),
-                    top_level_reply_intent=str(payload.get("reply_intent") or "").strip() or None,
-                    close_after_publish=bool(payload.get("close_after_publish")),
-                )
-                payload["reply_facts"] = normalized_facts
-                if derived_close:
-                    payload["close_after_publish"] = True
-                else:
-                    payload.pop("close_after_publish", None)
+            if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
+                publication_facts = dict(payload["reply_facts"])
+                assert_automation_reply_source_safety(content, publication_facts)
+                if _account_reply_contract_required(payload):
+                    normalized_facts, derived_close = validate_account_reply_contract(
+                        content,
+                        publication_facts,
+                        top_level_reply_intent=str(payload.get("reply_intent") or "").strip() or None,
+                        close_after_publish=bool(payload.get("close_after_publish")),
+                    )
+                    payload["reply_facts"] = normalized_facts
+                    if derived_close:
+                        payload["close_after_publish"] = True
+                    else:
+                        payload.pop("close_after_publish", None)
         except (AutomationPersonaError, AccountReplyContractError) as exc:
             _move_invalid_account_reply_to_human_review(current_job, ticket, exc)
             return

@@ -5,8 +5,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from backend.services import automation_persona as automation_persona_module
-from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.automation_persona import (
     AutomationPersonaError,
     assert_no_trailing_automation_signature,
@@ -24,21 +22,7 @@ from backend.services.billing_automation import build_billing_automation_result
 
 
 class AutomationPersonaTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.review_patcher = patch.object(
-            automation_persona_module,
-            "_review_automation_reply",
-            return_value=automation_persona_module._AutomationPersonaReview(
-                verdict="pass",
-                feedback="",
-                issue_codes=(),
-            ),
-        )
-        self.review_reply = self.review_patcher.start()
-        self.addCleanup(self.review_patcher.stop)
-
-    def test_normal_render_uses_one_generation_and_one_review_call(self) -> None:
-        self.review_patcher.stop()
+    def test_normal_render_uses_one_single_attempt_generation(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text="Thank you for submitting this request. We are reviewing it internally and we’ll get back to you within 24 hours.",
@@ -48,10 +32,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
-        ) as generate, patch(
-            "backend.services.automation_persona.invoke_review_json",
-            return_value={"verdict": "pass", "issue_codes": [], "feedback": ""},
-        ) as review:
+        ) as generate:
             result = render_automation_reply(
                 reply_facts=closing_reply_facts(
                     confirmed_email="customer@example.com",
@@ -62,111 +43,78 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(generate.call_count, 1)
-        self.assertEqual(review.call_count, 1)
-        self.assertEqual(review.call_args.kwargs["stage"], "automation_persona_review")
-        self.assertEqual(review.call_args.kwargs["max_attempts"], 1)
-        review_payload = json.loads(review.call_args.kwargs["user_prompt"])
-        self.assertIn("For an Account Suspension handoff", review_payload["current_intent_policy"])
-        self.assertNotIn("reply_policy", review_payload)
-        self.assertEqual(result.reviewer_model, "persona-model")
-        self.assertEqual(result.reviewer_prompt_version, "automation-persona-review-v2")
+        self.assertEqual(generate.call_args.kwargs["stage"], "automation_persona")
+        self.assertEqual(generate.call_args.kwargs["max_attempts"], 1)
+        self.assertEqual(result.generation_attempts, 1)
+        self.assertEqual(result.safety_status, "passed")
+        self.assertEqual(result.safety_issue_codes, ())
 
-    def test_revision_path_uses_exactly_four_single_attempt_llm_calls(self) -> None:
-        self.review_patcher.stop()
+    def test_soft_business_omission_does_not_trigger_rewrite(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="Thank you for submitting this request. We are reviewing it internally.",
+            model_name="persona-model",
+        )
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as generate:
+            result = render_automation_reply(
+                reply_facts=closing_reply_facts(
+                    confirmed_email="customer@example.com",
+                    customer_name="Maya",
+                ),
+                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                account_scope=True,
+            )
+
+        self.assertEqual(generate.call_count, 1)
+        self.assertEqual(result.content, f"Hi Maya,\n\n{response.text}")
+        self.assertEqual(result.generation_attempts, 1)
+        self.assertEqual(result.safety_issue_codes, ())
+
+    def test_hard_safety_failure_rewrites_once_with_enumerated_feedback(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         responses = [
-            SimpleNamespace(
-                text="Thank you for submitting this request. We are reviewing it internally.",
-                model_name="persona-model",
-            ),
-            SimpleNamespace(
-                text=(
-                    "Thank you for submitting this request. We are reviewing it internally and will get back "
-                    "to you within 24 hours."
-                ),
-                model_name="persona-model",
-            ),
-        ]
-        reviews = [
-            {
-                "verdict": "revise",
-                "issue_codes": ["missing_required_fact"],
-                "feedback": "Include the required 24-hour update commitment.",
-            },
-            {"verdict": "pass", "issue_codes": [], "feedback": ""},
+            SimpleNamespace(text="Hi Maya, we are reviewing this request.", model_name="persona-model"),
+            SimpleNamespace(text="We are reviewing this request.", model_name="persona-model"),
         ]
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
             "backend.services.automation_persona.invoke_responses_text", side_effect=responses
-        ) as generate, patch(
-            "backend.services.automation_persona.invoke_review_json", side_effect=reviews
-        ) as review:
+        ) as generate:
             result = render_automation_reply(
-                reply_facts=closing_reply_facts(
-                    confirmed_email="customer@example.com",
-                    customer_name="Maya",
-                ),
-                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                persona_assignment={"content": {"instruction": "Warm"}},
                 account_scope=True,
             )
 
-        self.assertEqual(generate.call_count + review.call_count, 4)
         self.assertEqual(generate.call_count, 2)
-        self.assertEqual(review.call_count, 2)
         self.assertTrue(all(call.kwargs["max_attempts"] == 1 for call in generate.call_args_list))
-        self.assertTrue(all(call.kwargs["max_attempts"] == 1 for call in review.call_args_list))
-        self.assertEqual(result.content, f"Hi Maya,\n\n{responses[1].text}")
-        self.assertEqual(result.review_rounds, 2)
-        self.assertEqual(result.review_issue_codes, ("missing_required_fact",))
-        self.assertIn("previous_candidate", generate.call_args_list[1].kwargs["user_prompt"])
-        self.assertIn("24-hour update commitment", generate.call_args_list[1].kwargs["user_prompt"])
+        self.assertEqual(result.content, f"Hi Customer,\n\n{responses[1].text}")
+        self.assertEqual(result.generation_attempts, 2)
+        self.assertEqual(result.safety_issue_codes, ("automation_persona_greeting_forbidden",))
+        revision_payload = json.loads(generate.call_args_list[1].kwargs["user_prompt"])["revision"]
+        self.assertEqual(revision_payload["issue_codes"], ["automation_persona_greeting_forbidden"])
+        self.assertIn("Rewrite the complete body", revision_payload["instruction"])
 
-    def test_invalid_reviewer_payload_fails_without_regeneration(self) -> None:
-        self.review_patcher.stop()
+    def test_generation_failure_fails_without_retry(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        response = SimpleNamespace(text="We are reviewing this request.", model_name="persona-model")
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
-            "backend.services.automation_persona.invoke_responses_text", return_value=response
-        ) as generate, patch(
-            "backend.services.automation_persona.invoke_review_json",
-            return_value={"verdict": "pass"},
+            "backend.services.automation_persona.invoke_responses_text",
+            side_effect=ValueError("provider failed"),
         ), self.assertRaisesRegex(
-            AutomationPersonaError, "automation_persona_review_invalid_payload"
+            AutomationPersonaError, "automation_persona_generation_failed"
         ):
             render_automation_reply(
                 reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
                 persona_assignment={"content": {"instruction": "Warm"}},
                 account_scope=True,
             )
-
-        self.assertEqual(generate.call_count, 1)
-
-    def test_reviewer_invocation_failure_fails_without_regeneration(self) -> None:
-        self.review_patcher.stop()
-        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        response = SimpleNamespace(text="We are reviewing this request.", model_name="persona-model")
-        with patch(
-            "backend.services.automation_persona.resolve_model_profile", return_value=profile
-        ), patch(
-            "backend.services.automation_persona.invoke_responses_text", return_value=response
-        ) as generate, patch(
-            "backend.services.automation_persona.invoke_review_json",
-            side_effect=AccountProcessingFailure(
-                "account_ai_structured_output_exhausted", stage="automation_persona_review"
-            ),
-        ), self.assertRaisesRegex(
-            AutomationPersonaError, "automation_persona_review_failed"
-        ):
-            render_automation_reply(
-                reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
-                persona_assignment={"content": {"instruction": "Warm"}},
-                account_scope=True,
-            )
-
-        self.assertEqual(generate.call_count, 1)
 
     def _archer_facts(self, intent: str, outcome: str) -> dict:
         facts = build_automation_reply_facts(
@@ -274,7 +222,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v27")
+        self.assertEqual(result.prompt_version, "automation-persona-v28")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -543,11 +491,6 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertTrue(result.content.startswith("Hi Maya,\n\n"))
         self.assertIn("An App ID is the Agora project identifier", result.content)
 
-        reviewer_policy = self.review_reply.call_args.kwargs["current_intent_policy"]
-        self.assertIn("restate the provided_answer technical content", reviewer_policy)
-        self.assertNotIn("For submission_confirmation", reviewer_policy)
-        self.assertNotIn("For request_missing_information", reviewer_policy)
-
     def test_account_persona_selects_only_the_current_intent_policy(self) -> None:
         cases = [
             (
@@ -637,7 +580,6 @@ class AutomationPersonaTests(unittest.TestCase):
                 "backend.services.automation_persona.invoke_responses_text",
                 return_value=SimpleNamespace(text=body, model_name="persona-model"),
             ) as invoke:
-                self.review_reply.reset_mock()
                 render_automation_reply(
                     reply_facts=facts,
                     persona_assignment={"content": {"instruction": "Warm"}},
@@ -645,13 +587,10 @@ class AutomationPersonaTests(unittest.TestCase):
                 )
 
             system_prompt = invoke.call_args.kwargs["system_prompt"]
-            reviewer_policy = self.review_reply.call_args.kwargs["current_intent_policy"]
             for policy in expected_policies:
                 self.assertIn(policy, system_prompt)
-                self.assertIn(policy, reviewer_policy)
             for policy in excluded_policies:
                 self.assertNotIn(policy, system_prompt)
-                self.assertNotIn(policy, reviewer_policy)
             if name == "fraud_handoff":
                 self.assertNotIn(
                     "never present an internal team, a job title, or a system as the party responsible",
@@ -669,14 +608,12 @@ class AutomationPersonaTests(unittest.TestCase):
         ), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ) as invoke:
-            self.review_reply.reset_mock()
             render_automation_reply(
                 reply_facts={"behavior": "quota", "reply_intent": "submission_confirmation"},
                 persona_assignment={"content": {"instruction": "Warm"}},
             )
 
         self.assertNotIn("For submission_confirmation", invoke.call_args.kwargs["system_prompt"])
-        self.assertEqual(self.review_reply.call_args.kwargs["current_intent_policy"], "")
 
     def test_account_persona_generic_instruction_only_requires_applicable_facts(self) -> None:
         facts = {
@@ -967,7 +904,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertIn("warm, natural sentences", invoke.call_args.kwargs["system_prompt"])
         self.assertNotIn("Best,\nSid\nSupport Engineer 2", invoke.call_args.kwargs["system_prompt"])
 
-    def test_missing_information_business_content_is_reviewer_owned(self) -> None:
+    def test_missing_information_business_content_is_prompt_guided(self) -> None:
         inline_facts = build_account_automation_reply_facts(
             handler="fraud_account",
             action="fraud_account",
@@ -1019,7 +956,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v27")
+        self.assertEqual(result.prompt_version, "automation-persona-v28")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1073,35 +1010,16 @@ class AutomationPersonaTests(unittest.TestCase):
                 result.content,
             )
 
-    def test_missing_information_reviewer_feedback_triggers_full_rewrite(self) -> None:
+    def test_missing_information_soft_omission_publishes_without_rewrite(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        responses = [
-            SimpleNamespace(text="Thank you for sharing the information you have so far.", model_name="persona-model"),
-            SimpleNamespace(
-                text=(
-                    "Thank you for sharing the information you have so far. Could you provide the following?\n\n"
-                    "- Office address\n- Official contact number\n- Last known console configuration\n\n"
-                    "After you provide this information, I will continue coordinating the review."
-                ),
-                model_name="persona-model",
-            ),
-        ]
-        self.review_reply.side_effect = [
-            automation_persona_module._AutomationPersonaReview(
-                verdict="revise",
-                feedback="Ask for every missing field using the supplied readable labels.",
-                issue_codes=("missing_required_fact",),
-            ),
-            automation_persona_module._AutomationPersonaReview(
-                verdict="pass",
-                feedback="",
-                issue_codes=(),
-            ),
-        ]
+        response = SimpleNamespace(
+            text="Thank you for sharing the information you have so far.",
+            model_name="persona-model",
+        )
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
-            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
         ) as invoke:
             result = render_automation_reply(
                 reply_facts=build_account_automation_reply_facts(
@@ -1114,16 +1032,10 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.content.count("Office address"), 1)
-        self.assertEqual(result.content.count("Official contact number"), 1)
-        self.assertEqual(result.content.count("Last known console configuration"), 1)
-        self.assertEqual(result.review_rounds, 2)
-        self.assertEqual(result.review_issue_codes, ("missing_required_fact",))
-        revision_prompt = invoke.call_args_list[1].kwargs["user_prompt"]
-        self.assertIn("previous_candidate", revision_prompt)
-        self.assertIn("Ask for every missing field", revision_prompt)
-        self.assertIn("Rewrite the complete body", revision_prompt)
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
+        self.assertEqual(result.generation_attempts, 1)
+        self.assertEqual(result.safety_issue_codes, ())
 
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
@@ -1172,7 +1084,7 @@ class AutomationPersonaTests(unittest.TestCase):
             "take up to 24 hours, and the change window is Monday-Friday.",
         )
         self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.review_issue_codes, ("automation_persona_greeting_forbidden",))
+        self.assertEqual(result.safety_issue_codes, ("automation_persona_greeting_forbidden",))
 
     def test_engineer_guided_reply_rewrites_embedded_greeting(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -1408,9 +1320,9 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertIn("Media Relay is already enabled", result.content)
         self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.review_rounds, 2)
+        self.assertEqual(result.generation_attempts, 2)
         self.assertEqual(
-            result.review_issue_codes,
+            result.safety_issue_codes,
             ("automation_persona_completion_contract_failed_enabled_state",),
         )
         self.assertIn("previous_candidate", invoke.call_args_list[1].kwargs["user_prompt"])
@@ -1439,7 +1351,7 @@ class AutomationPersonaTests(unittest.TestCase):
         self.assertEqual(invoke.call_count, 2)
 
     def test_enablement_submission_wording_is_prompt_guided(self) -> None:
-        # Business completeness is reviewer-owned; code validation keeps no
+        # Business completeness is prompt-owned; code validation keeps no
         # SLA or weekday presence detector.
         facts = {
             "behavior": "enablement",
@@ -1456,33 +1368,15 @@ class AutomationPersonaTests(unittest.TestCase):
             facts,
         )
 
-    def test_enablement_submission_reviewer_requests_full_persona_rewrite(self) -> None:
+    def test_enablement_submission_soft_omission_does_not_rewrite(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        responses = [
-            SimpleNamespace(
-                text=(
-                    "Thank you for providing the requested information. I am reviewing the request with our internal "
-                    "team and will keep you updated."
-                ),
-                model_name="persona-model",
+        response = SimpleNamespace(
+            text=(
+                "Thank you for providing the requested information. I am reviewing the request with our internal "
+                "team and will keep you updated."
             ),
-            SimpleNamespace(
-                text=(
-                    "Thank you for providing the requested information. I am reviewing the request with our internal "
-                    "team and will keep you updated. Activation may take up to 24 hours, and the change window is "
-                    "Monday-Friday."
-                ),
-                model_name="persona-model",
-            ),
-        ]
-        self.review_reply.side_effect = [
-            automation_persona_module._AutomationPersonaReview(
-                verdict="revise",
-                feedback="Include both the 24-hour activation window and Monday-Friday change window.",
-                issue_codes=("missing_required_fact",),
-            ),
-            automation_persona_module._AutomationPersonaReview("pass", "", ()),
-        ]
+            model_name="persona-model",
+        )
         facts = build_account_automation_reply_facts(
             handler="enablement",
             action="enablement",
@@ -1492,7 +1386,7 @@ class AutomationPersonaTests(unittest.TestCase):
         )
 
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
-            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
         ) as invoke:
             result = render_automation_reply(
                 reply_facts=facts,
@@ -1500,13 +1394,10 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertIn(
-            "Activation may take up to 24 hours, and the change window is Monday-Friday.",
-            result.content,
-        )
-        self.assertEqual(result.prompt_version, "automation-persona-v27")
-        self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.review_rounds, 2)
+        self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
+        self.assertEqual(result.prompt_version, "automation-persona-v28")
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(result.generation_attempts, 1)
 
     def test_enablement_submission_pass_preserves_persona_body_exactly(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -1543,7 +1434,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 self.assertEqual(result.content, f"Hi Customer,\n\n{text}")
                 self.assertEqual(invoke.call_count, 1)
 
-    def test_enablement_submission_reviewer_rejects_second_incomplete_body(self) -> None:
+    def test_enablement_submission_incomplete_body_is_not_semantically_blocked(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         facts = build_account_automation_reply_facts(
             handler="enablement",
@@ -1556,29 +1447,19 @@ class AutomationPersonaTests(unittest.TestCase):
             text="I am reviewing the request and will keep you updated.",
             model_name="persona-model",
         )
-        self.review_reply.side_effect = [
-            automation_persona_module._AutomationPersonaReview(
-                "revise", "Include both required timing facts.", ("missing_required_fact",)
-            ),
-            automation_persona_module._AutomationPersonaReview(
-                "revise", "The required timing facts are still missing.", ("missing_required_fact",)
-            ),
-        ]
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
             "backend.services.account_ai_execution.invoke_responses_text", return_value=response
-        ) as invoke, self.assertRaisesRegex(
-            AutomationPersonaError, "automation_persona_review_rejected"
-        ) as raised:
-            render_automation_reply(
+        ) as invoke:
+            result = render_automation_reply(
                 reply_facts=facts,
                 persona_assignment={"content": {"instruction": "Warm and precise."}},
                 account_scope=True,
             )
 
-        self.assertEqual(raised.exception.attempt_count, 2)
-        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
+        self.assertEqual(invoke.call_count, 1)
 
     def test_suspension_replies_reject_affirmative_close_claims_only(self) -> None:
         facts = {
@@ -1641,34 +1522,19 @@ class AutomationPersonaTests(unittest.TestCase):
                 ):
                     validate_account_reply_contract(invalid_reply, facts)
 
-    def test_suspension_missing_commitment_is_rewritten_by_persona(self) -> None:
+    def test_suspension_missing_commitment_is_not_semantically_blocked(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        responses = [
-            SimpleNamespace(
-                text="Thank you for submitting this request. It is under internal review.",
-                model_name="persona-model",
-            ),
-            SimpleNamespace(
-                text=(
-                    "Thank you for submitting this request. It is under internal review, and we'll get back to "
-                    "you within 24 hours."
-                ),
-                model_name="persona-model",
-            ),
-        ]
-        self.review_reply.side_effect = [
-            automation_persona_module._AutomationPersonaReview(
-                "revise", "Add the required 24-hour customer update commitment.", ("missing_required_fact",)
-            ),
-            automation_persona_module._AutomationPersonaReview("pass", "", ()),
-        ]
+        response = SimpleNamespace(
+            text="Thank you for submitting this request. It is under internal review.",
+            model_name="persona-model",
+        )
         facts = closing_reply_facts(
             confirmed_email="customer@example.com",
             customer_name="Maya",
         )
 
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
-            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
         ) as invoke:
             result = render_automation_reply(
                 reply_facts=facts,
@@ -1676,41 +1542,22 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(result.content, f"Hi Maya,\n\n{responses[1].text}")
-        self.assertEqual(result.content.lower().count("24 hours"), 1)
-        self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.review_rounds, 2)
+        self.assertEqual(result.content, f"Hi Maya,\n\n{response.text}")
+        self.assertEqual(invoke.call_count, 1)
 
-    def test_suspension_duplicate_commitment_is_rewritten_not_trimmed(self) -> None:
+    def test_suspension_duplicate_commitment_is_published_unchanged(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
-        responses = [
-            SimpleNamespace(
-                text=(
-                    "Thank you for submitting this request. We are reviewing it internally and will get back to "
-                    "you within 24 hours. We will get back to you within 24 hours."
-                ),
-                model_name="persona-model",
+        response = SimpleNamespace(
+            text=(
+                "Thank you for submitting this request. We are reviewing it internally and will get back to "
+                "you within 24 hours. We will get back to you within 24 hours."
             ),
-            SimpleNamespace(
-                text=(
-                    "Thank you for submitting this request. We are reviewing it internally and will get back to "
-                    "you within 24 hours."
-                ),
-                model_name="persona-model",
-            ),
-        ]
-        self.review_reply.side_effect = [
-            automation_persona_module._AutomationPersonaReview(
-                "revise",
-                "Remove the repeated 24-hour commitment and rewrite the complete body once.",
-                ("duplicate_or_redundant_content",),
-            ),
-            automation_persona_module._AutomationPersonaReview("pass", "", ()),
-        ]
+            model_name="persona-model",
+        )
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
         ), patch(
-            "backend.services.account_ai_execution.invoke_responses_text", side_effect=responses
+            "backend.services.account_ai_execution.invoke_responses_text", return_value=response
         ) as invoke:
             result = render_automation_reply(
                 reply_facts=closing_reply_facts(
@@ -1721,10 +1568,10 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(result.content, f"Hi Maya,\n\n{responses[1].text}")
-        self.assertEqual(result.content.count("within 24 hours"), 1)
-        self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.review_issue_codes, ("duplicate_or_redundant_content",))
+        self.assertEqual(result.content, f"Hi Maya,\n\n{response.text}")
+        self.assertEqual(result.content.count("within 24 hours"), 2)
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(result.safety_issue_codes, ())
 
     def test_suspension_curly_apostrophe_passes_without_worker_repair(self) -> None:
         # p2-142: the brief customer-facing three-point reply (thanks /
@@ -1756,8 +1603,8 @@ class AutomationPersonaTests(unittest.TestCase):
             f"Hi Maya,\n\n{response.text}",
         )
         self.assertEqual(result.content.count("24 hours"), 1)
-        self.assertEqual(result.review_status, "passed")
-        self.assertEqual(result.review_rounds, 1)
+        self.assertEqual(result.safety_status, "passed")
+        self.assertEqual(result.generation_attempts, 1)
         self.assertNotIn("suspension", result.content.lower())
         self.assertEqual(invoke.call_count, 1)
         system_prompt = invoke.call_args.kwargs["system_prompt"]
@@ -1867,7 +1714,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v27")
+        self.assertEqual(result.prompt_version, "automation-persona-v28")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)

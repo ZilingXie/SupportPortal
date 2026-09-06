@@ -4564,11 +4564,9 @@ class WorkerResilienceTests(unittest.TestCase):
             content="Hi Customer,\n\nAn App ID identifies your Agora project.",
             model="gpt-5.4-mini",
             prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
-            review_status="passed",
-            review_rounds=1,
-            reviewer_model="gpt-5.4-mini",
-            reviewer_prompt_version="automation-persona-review-v2",
-            review_issue_codes=(),
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -5366,7 +5364,10 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("- Official contact number", content)
         self.assertIn("- Last known console configuration", content)
         self.assertNotIn("1. Office address", content)
-        self.assertEqual(job["payload"]["persona_review_status"], "passed")
+        self.assertEqual(job["payload"]["persona_safety_status"], "passed")
+        self.assertEqual(job["payload"]["persona_generation_attempts"], 1)
+        self.assertEqual(job["payload"]["persona_safety_issue_codes"], [])
+        self.assertFalse(any(key.startswith("persona_review_") for key in job["payload"]))
         self.assertNotIn("persona_contract_repair", job["payload"])
         repository.transition_claimed_account_reply_to_human_review.assert_not_called()
 
@@ -5399,11 +5400,9 @@ class WorkerResilienceTests(unittest.TestCase):
             content="Please share the App ID.",
             model="persona-model",
             prompt_version="automation-persona-v4",
-            review_status="passed",
-            review_rounds=1,
-            reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v2",
-            review_issue_codes=(),
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -5887,11 +5886,9 @@ class WorkerResilienceTests(unittest.TestCase):
             ),
             model="test-model",
             prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
-            review_status="passed",
-            review_rounds=1,
-            reviewer_model="test-model",
-            reviewer_prompt_version="automation-persona-review-v2",
-            review_issue_codes=(),
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
         )
         followup_job["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING
         repository.save_account_reply_job(followup_job)
@@ -6111,11 +6108,9 @@ class WorkerResilienceTests(unittest.TestCase):
             content="I am coordinating this request and will keep you updated.",
             model="persona-model",
             prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
-            review_status="passed",
-            review_rounds=1,
-            reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v2",
-            review_issue_codes=(),
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6177,12 +6172,10 @@ class WorkerResilienceTests(unittest.TestCase):
                 "We are archiving this case now. If you have further questions, you can open a new ticket."
             ),
             model="persona-model",
-            prompt_version="automation-persona-v27",
-            review_status="passed",
-            review_rounds=1,
-            reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v2",
-            review_issue_codes=(),
+            prompt_version="automation-persona-v28",
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6190,12 +6183,12 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._publish_account_reply_job(job)
 
-        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v27")
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v28")
         self.assertEqual(
             render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v27")
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v28")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
@@ -6299,6 +6292,50 @@ class WorkerResilienceTests(unittest.TestCase):
             "account_reply_contract_human_review",
         )
 
+    def test_source_external_value_moves_to_human_review_before_publish(self) -> None:
+        job = {
+            "job_id": "account-reply-source-value",
+            "ticket_id": "TK-SOURCE-VALUE",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "publishing",
+            "scheduled_for": "2026-03-22T00:01:00+00:00",
+            "payload": {
+                "reply_facts": {
+                    "behavior": "quota",
+                    "reply_intent": "submission_confirmation",
+                    "_forbidden_values": ["private-token-123"],
+                },
+                "generated_content": "Hi Customer,\n\nI logged private-token-123 and will keep you updated.",
+                "persona_prompt_version": worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+                "persona_key": "default-support",
+                "persona_version": 1,
+                "effective_prompt": {"instruction": "Warm"},
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = {
+            "ticket_id": job["ticket_id"],
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": "Please increase quota",
+                    "created_at": "2026-03-22T00:00:00+00:00",
+                }
+            ],
+        }
+        repository.get_account_case_by_ticket_id.return_value = None
+        repository.transition_claimed_account_reply_to_human_review.return_value = {
+            **job,
+            "status": "human_review",
+        }
+
+        with patch.object(worker, "ticket_repository", repository):
+            worker._publish_account_reply_job(job)
+
+        repository.publish_account_reply.assert_not_called()
+        repository.transition_claimed_account_reply_to_human_review.assert_called_once()
+
     def test_persona_reply_facts_are_rendered_before_scheduling(self) -> None:
         job = {
             "job_id": "account-reply-persona-prepare",
@@ -6331,11 +6368,9 @@ class WorkerResilienceTests(unittest.TestCase):
             content="Hi Customer,\\n\\nPlease share the App ID.\\n\\nBest,\\nSid",
             model="persona-model",
             prompt_version="automation-persona-v4",
-            review_status="passed",
-            review_rounds=1,
-            reviewer_model="persona-model",
-            reviewer_prompt_version="automation-persona-review-v2",
-            review_issue_codes=(),
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6348,14 +6383,10 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(job["status"], worker.ACCOUNT_REPLY_PERSONA_SCHEDULED)
         self.assertEqual(job["payload"]["generated_content"], rendered.content)
         self.assertEqual(job["payload"]["persona_render_status"], "generated")
-        self.assertEqual(job["payload"]["persona_review_status"], "passed")
-        self.assertEqual(job["payload"]["persona_review_rounds"], 1)
-        self.assertEqual(job["payload"]["persona_reviewer_model"], "persona-model")
-        self.assertEqual(
-            job["payload"]["persona_review_prompt_version"],
-            "automation-persona-review-v2",
-        )
-        self.assertEqual(job["payload"]["persona_review_issue_codes"], [])
+        self.assertEqual(job["payload"]["persona_generation_attempts"], 1)
+        self.assertEqual(job["payload"]["persona_safety_status"], "passed")
+        self.assertEqual(job["payload"]["persona_safety_issue_codes"], [])
+        self.assertFalse(any(key.startswith("persona_review_") for key in job["payload"]))
         self.assertNotIn("persona_contract_repair", job["payload"])
         repository.update_claimed_account_reply_job.assert_called_once_with(
             job,
@@ -6436,11 +6467,9 @@ class WorkerResilienceTests(unittest.TestCase):
                 content="The request has been submitted.",
                 model="persona-model",
                 prompt_version="automation-persona-v4",
-                review_status="passed",
-                review_rounds=1,
-                reviewer_model="persona-model",
-                reviewer_prompt_version="automation-persona-review-v2",
-                review_issue_codes=(),
+                generation_attempts=1,
+                safety_status="passed",
+                safety_issue_codes=(),
             ),
         ):
             worker._prepare_account_reply_job(job)
