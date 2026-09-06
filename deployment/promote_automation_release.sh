@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/release_aws_provider.sh"
 SOURCE_REPOSITORY="supportportal/preproduction"
 TARGET_REPOSITORY="supportportal/production"
 MANIFEST_PATH=""
@@ -69,6 +70,8 @@ main() {
   parse_args "$@"
   [[ -n "${MANIFEST_PATH}" && -f "${MANIFEST_PATH}" ]] || fail "Release Manifest is required"
   [[ -n "${REGION}" ]] || fail "AWS region is required"
+  [[ "${REGION}" = "us-east-1" ]] || fail "AWS region must be us-east-1"
+  [[ "${DEPLOY_PRODUCTION_APPROVED:-}" = "1" ]] || fail "DEPLOY_PRODUCTION_APPROVED=1 is required before Production ECR promotion"
   command -v aws >/dev/null 2>&1 || fail "aws CLI is required"
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
@@ -129,6 +132,7 @@ main() {
   fi
   local registry
   registry="${REGISTRY_ID}.dkr.ecr.${REGION}.amazonaws.com"
+  verify_release_aws_mutation_ready 1800 || fail "AWS identity/provider preflight failed before Production ECR promotion"
   local target_mutability
   target_mutability="$(aws_ecr describe-repositories \
     --repository-names "${TARGET_REPOSITORY}" \
