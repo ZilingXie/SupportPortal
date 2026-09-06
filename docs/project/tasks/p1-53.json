@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
-  "next_action": "保持 active。完成Preproduction Persona endpoint与typed Case Workflow模式解耦后，仅重部署Preproduction Account为HERMES_CASE_WORKFLOW_MODE=disabled且Persona enabled；随后完成双环境服务、heartbeat、Prompt、Terraform零漂移、Hermes鉴权与EC2只读健康验收。停在用户创建全新Production/Preproduction业务工单之前；不修改n8n、EC2或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown。",
+  "next_action": "保持 active。技术门禁已完成；等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后按同digest promotion流程升级ECS Production并再次回归。",
   "acceptance_criteria": [
     "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -281,6 +281,12 @@
       "label": "Latest-main ECS Production release r20260905-19d30d3",
       "command": "build_automation_ecs_release.sh; promote_automation_release.sh --direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy_automation_ecs_release.sh --bootstrap-account-schema --hermes-case-workflow-mode mock; independent post-release readback",
       "details": "从clean main@19d30d341308f3e0d905d885f4fe7bb5ade93b7e构建并部署。API/Route/Worker revision 32/27/30均为1/1/0且COMPLETED；运行digest分别为sha256:f94d0d5c99d668a6c2bd06046508dc7f3fcd194a61e63e8ceba346b172d35141、sha256:eadc43d519094293157e461baffe8bfab6d593e2c568fc3372e3a867ba29c74e、sha256:ec3b010890aed6471138e5d56d5a65ed97b78a27cd292bfdd6cb75e213e2b2e7，与Manifest/ECR/Promotion Record一致。Prompt Release pr-c9b3a291ecf1 active，Hermes mode=mock且九张表齐全；当前Route/Worker heartbeat age<1秒、provenance_mismatches为空。revision 30一次性只读探针通过三组精确收件人To=1/Cc=1、无Pilot、Archer GET、Graph /me、Zendesk identity；CloudWatch自build窗口错误0、EC2 backup健康、Terraform 1.9.8远程锁定plan为No changes/exit 0。ECR按当前加两套回滚策略保留9个manifest，删除12个旧或未部署tag且零失败。全过程未发送邮件、未创建/修改/重放工单。"
+    },
+    {
+      "type": "deployment",
+      "label": "CodeBuild release and isolated ECS Preproduction ready for business acceptance",
+      "command": "CodeBuild release r20260906-0591a71; deploy_automation_ecs_release.sh --environment preproduction --hermes-case-workflow-mode disabled --hermes-persona-enabled; independent ECS/ELB/EFS/CloudWatch/Prompt/S3/EC2 readback; Terraform 1.9.8 locked plans",
+      "details": "SupportPortal PR #1093已合入clean main@0591a71a72ee；CodeBuild #7在约85秒内SUCCEEDED并生成registry-backed Manifest r20260906-0591a71，API/Route/Worker linux/amd64 digest分别为sha256:ca6c246356416b8a36f1ff99b205ae764d06bb539f9678113f4bbd2e5a31549a、sha256:88e52037e9ef825e6bbd7b15693f9fe12e695084b1f60147158414084d83248d、sha256:1666a2ce2b0ac6c0bcf355d996bbe996ece78a165f6ce7b42bada205095b3ae5，S3加密Manifest版本与Publish Record一致。Preproduction API/Route/Worker :6均1/1/0、PRIMARY COMPLETED并运行上述digest；公网live/release/ready为ok，最新Route/Worker heartbeat age<1秒且provenance_mismatches为空，Prompt pr-c9b3a291ecf1 active并匹配build_ref和28项内容指纹。Account为HERMES_CASE_WORKFLOW_MODE=disabled且Persona enabled：API/Worker仅保留两个outbound Persona secret，Route无Hermes配置；复用API :6的一次性只读任务authenticated GET /v1/models返回200、model_count=1并exit 0，未调用Responses或产生工单/邮件/Slack副作用。Preproduction Hermes :10与保留给EC2的Production Hermes :3均1/1/0、双容器HEALTHY；Preproduction使用三个全新且与Production不重叠的EFS access point。部署窗口API/Route/Worker错误计数均为0；release、preproduction、production三个远程锁定Terraform 1.9.8 plan均exit 0/No changes；EC2 https://support.stellarix.space/health保持ok且未修改。ECS Production Account仍为Hermes disabled，未晋升本release；n8n与真实工单未触碰。"
     }
   ],
   "source_refs": [
@@ -474,6 +480,11 @@
       "at": "2026-09-06",
       "event": "preproduction_database_role_bootstrap_corrected",
       "summary": "首次数据库bootstrap在同一事务内因PostgreSQL 16要求schema owner可SET ROLE而失败并完整回滚；修复为事务内临时授予新migration role、完成schema/default privilege与Production隔离验证后立即revoke，并补充SQL顺序及原子回滚测试。"
+    },
+    {
+      "at": "2026-09-06",
+      "event": "ecs_preproduction_ready_for_business_acceptance",
+      "summary": "CodeBuild固定main@0591a71构建的r20260906-0591a71已部署到隔离ECS Preproduction；Account三角色、Prompt、heartbeat、公网health、CloudWatch、三套Terraform零漂移及Account到Hermes Persona只读鉴权全部通过。Preproduction Hermes使用全新状态并健康运行，Production Hermes和EC2保持原状；等待用户通过n8n投递全新业务工单。"
     }
   ],
   "legacy_refs": [
