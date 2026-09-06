@@ -75,19 +75,50 @@ def validate_promotion(manifest_path: str | Path, record_path: str | Path) -> di
         raise ValueError("Promotion Record release_id does not match manifest")
     if record.get("target_repository") != "supportportal/production":
         raise ValueError("Promotion Record target repository must be supportportal/production")
-    if record.get("source_repository") not in {
+    source_repository = record.get("source_repository")
+    if source_repository not in {
         "local-oci",
         "supportportal/preproduction",
     }:
         raise ValueError("Promotion Record source repository is not approved")
-    if record.get("source_repository") == "supportportal/preproduction":
+    promotion_mode = record.get("promotion_mode")
+    if promotion_mode is None:
+        promotion_mode = (
+            "preproduction-accepted"
+            if source_repository == "supportportal/preproduction"
+            else "local-oci-direct-production"
+        )
+    expected_source = {
+        "preproduction-accepted": "supportportal/preproduction",
+        "codebuild-direct-production": "supportportal/preproduction",
+        "local-oci-direct-production": "local-oci",
+    }.get(promotion_mode)
+    if expected_source is None:
+        raise ValueError("Promotion Record promotion_mode is not approved")
+    if source_repository != expected_source:
+        raise ValueError("Promotion Record source repository does not match promotion_mode")
+    if promotion_mode in {"preproduction-accepted", "codebuild-direct-production"}:
+        value = str(record.get("source_publish_record_sha256") or "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+            raise ValueError("Promotion Record source_publish_record_sha256 is invalid")
+    if promotion_mode == "preproduction-accepted":
         for field in (
-            "source_publish_record_sha256",
             "preproduction_deploy_evidence_sha256",
         ):
             value = str(record.get(field) or "")
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
                 raise ValueError(f"Promotion Record {field} is invalid")
+    elif "preproduction_deploy_evidence_sha256" in record:
+        raise ValueError(
+            "Promotion Record preproduction_deploy_evidence_sha256 is not allowed for this promotion_mode"
+        )
+    if (
+        promotion_mode == "local-oci-direct-production"
+        and "source_publish_record_sha256" in record
+    ):
+        raise ValueError(
+            "Promotion Record source_publish_record_sha256 is not allowed for this promotion_mode"
+        )
     if set(record.get("components") or {}) != {"api", "route", "worker"}:
         raise ValueError("Promotion Record must contain api, route, and worker")
     for role, component in manifest.components.items():

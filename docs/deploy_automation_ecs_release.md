@@ -363,6 +363,30 @@ DEPLOY_PRODUCTION_APPROVED=1 \
 4. 验证Publish Record与Preproduction完整deploy evidence，并把两者SHA-256写入
    `promotion-record.json`；不修改Release Manifest。
 
+### CodeBuild 直晋 Production 例外
+
+当 owner 对某个具体 release 单独批准“CodeBuild 已发布到 Preproduction ECR、但不更新
+Preproduction ECS，直接部署 Production”时，执行：
+
+```bash
+./deployment/promote_automation_release.sh \
+  --manifest .deployments/releases/<release_id>/release-manifest.json \
+  --publish-record .deployments/releases/<release_id>/publish-record.json \
+  --region <aws-region> \
+  --registry-id <aws-account-id> \
+  --codebuild-direct-production
+```
+
+该模式严格校验 CodeBuild Publish Record 与 Manifest 的 release、完整 Git commit、
+account、region 及三角色 tag/digest，并在任何 registry copy 前 readback 三个
+Preproduction ECR source digest。Promotion Record 使用
+`promotion_mode=codebuild-direct-production`、保留真实
+`source_repository=supportportal/preproduction` 和 Publish Record SHA-256，但不写
+`preproduction_deploy_evidence_sha256`，也不声称完成 Preproduction ECS 验收。
+
+此例外不改变常规发布合同。后续 release 若未获得单独批准，仍必须完成
+Preproduction ECS 部署、业务验收和外部 readback，才能按上一节晋升。
+
 Production task definition使用：
 
 ```text

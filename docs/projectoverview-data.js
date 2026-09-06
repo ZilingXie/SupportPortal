@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-06T07:53:26Z",
-  "source_base_commit": "c7b489dbdd883dae9e0a41f75c855421236d248b",
-  "registry_digest": "cfac912a36d6000eda15c8212c7f37f4697fac81b019f5b8f4c572833cd7aba7",
+  "generated_at": "2026-09-06T07:55:45Z",
+  "source_base_commit": "fabbb3f5dbf0210aaff500e13b770f47a86de74e",
+  "registry_digest": "0def330fb1f572c979abe95f7140a43f9c48767b42b9be7f0d9874b8670c00fe",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2096,6 +2096,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Staging remains on existing EC2",
           "details": "2026-08-26 用户确认第三阶段的 Staging 不部署到 ECS，而是在现有 EC2 上以独立运行环境建立。"
+        },
+        {
+          "type": "test",
+          "label": "CodeBuild direct Production promotion fail-closed contract",
+          "command": "bash -n deployment/promote_automation_release.sh; /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_promotion_tool.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_release_manifest.py",
+          "details": "50 passed。新增owner按具体release授权的codebuild-direct-production模式：严格绑定Manifest与CodeBuild Publish Record、在任何copy前完成三角色Preproduction ECR digest readback，并生成仅含Publish Record hash、不含Preproduction deploy evidence hash的明确Promotion Record；普通Preproduction验收晋升与local-oci历史bootstrap合同保持fail closed。此证据只证明工具合同，未预先声称r20260906-094062d已晋升或部署。"
         },
         {
           "type": "test",
@@ -6814,14 +6820,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production 优先的 Automation 三环境部署重构",
       "status": "active",
       "owner": "zac",
-      "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
+      "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
       "next_action": "保持 active。先用新的正式pipeline完成一次无业务流量Preproduction计时演练并记录15-30分钟目标；随后仍等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后仅在单独授权下按同digest promotion流程升级ECS Production并再次回归。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
         "Production Terraform使用远程加密版本化 state 和 DynamoDB lock，仅 import/manage ECR、Automation target group/listener rule及三 ECS service稳定配置；task_definition指针归发布脚本，线上共享 cluster/ALB/ACM/security group/log/SSM/IAM/EFS/Hermes不由该 root创建或删除。",
         "ECS runtime使用三个独立长运行角色：API只鉴权/校验/持久化/查询，Route Worker完成分类且仅对已有父Ticket的后续事件读取Persona，Automation Worker在ticket.created Processing先持久化父Ticket再固定Persona并执行AI、远端RAG与外部动作；角色之间通过隔离RDS schema内的durable Jobs交接，不依赖Redis/SQS或EC2 runtime。",
-        "常规Release先以role tag上传supportportal/preproduction并按digest部署Preproduction，通过验收后复制相同OCI manifest到supportportal/production且禁止rebuild；Preproduction建立前获批的首次Production bootstrap允许从经Manifest验证的本地OCI直接发布，并必须记录source_repository=local-oci及保持digest完全一致。",
+        "常规Release先以role tag上传supportportal/preproduction并按digest部署Preproduction，通过验收后复制相同OCI manifest到supportportal/production且禁止rebuild；owner对具体release单独批准时，可将严格验证CodeBuild Publish Record的同组digest直接晋升Production而不更新Preproduction ECS，Promotion Record必须明确codebuild-direct-production且不得声称Preproduction验收；历史首次bootstrap的local-oci合同保持不变。",
         "ECS Production切换后，support.stellarix.space/production及其独立 schema/Redis/worker长期保持为 EC2 backup，但 n8n不再向其投递新 Case；回滚只把后续新 Case路径切回该 endpoint，不得迁移或重放 ECS已接收任务，也不得重试 outcome_unknown外部副作用。",
         "Preproduction与 Production使用隔离的 ECS Service、RDS schema、job namespace、Secrets、日志和入口；由 n8n筛选测试 Case完成 intake、异步 reply、delivery ledger、Zendesk、邮件、Slack和外部 readback验收。",
         "Preproduction上线后，后续 production-safe release只有在 Preproduction证据与运行 provenance匹配时才可标记 approved_for_production；Production必须使用已批准 manifest的同一组 digest，不得重新 build。",
@@ -6832,6 +6838,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "CodeBuild direct Production promotion fail-closed contract",
+          "command": "bash -n deployment/promote_automation_release.sh; /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_promotion_tool.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_release_manifest.py",
+          "details": "50 passed。新增owner按具体release授权的codebuild-direct-production模式：严格绑定Manifest与CodeBuild Publish Record、在任何copy前完成三角色Preproduction ECR digest readback，并生成仅含Publish Record hash、不含Preproduction deploy evidence hash的明确Promotion Record；普通Preproduction验收晋升与local-oci历史bootstrap合同保持fail closed。此证据只证明工具合同，未预先声称r20260906-094062d已晋升或部署。"
+        },
         {
           "type": "test",
           "label": "CodeBuild and isolated Preproduction implementation contract",

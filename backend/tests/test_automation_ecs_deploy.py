@@ -780,6 +780,43 @@ def test_preproduction_promotion_record_requires_acceptance_hashes(tmp_path: Pat
     assert validate_promotion(manifest, record)["repository"] == "supportportal/production"
 
 
+def test_codebuild_direct_promotion_requires_only_publish_record_hash(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    record = tmp_path / "promotion-record.json"
+    payload = {
+        "schema_version": "automation-promotion-v1",
+        "release_id": "release-42",
+        "promotion_mode": "codebuild-direct-production",
+        "source_repository": "supportportal/preproduction",
+        "target_repository": "supportportal/production",
+        "source_publish_record_sha256": "sha256:" + "4" * 64,
+        "registry_id": "123456789012",
+        "region": "us-east-1",
+        "components": {
+            role: {
+                "tag": f"{role}-release-42",
+                "source_digest": f"sha256:{digit * 64}",
+                "target_digest": f"sha256:{digit * 64}",
+            }
+            for role, digit in (("api", "1"), ("route", "2"), ("worker", "3"))
+        },
+    }
+    record.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert validate_promotion(manifest, record)["repository"] == "supportportal/production"
+
+    payload["preproduction_deploy_evidence_sha256"] = None
+    record.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_promotion(manifest, record)
+
+    payload.pop("preproduction_deploy_evidence_sha256")
+    payload["promotion_mode"] = "unknown"
+    record.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="promotion_mode is not approved"):
+        validate_promotion(manifest, record)
+
+
 def test_suspension_recipient_readback_validates_without_returning_addresses() -> None:
     env_name = "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"
     with patch.dict(

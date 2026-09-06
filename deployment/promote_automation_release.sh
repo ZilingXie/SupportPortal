@@ -14,6 +14,7 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 REGISTRY_ID=""
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
 DIRECT_PRODUCTION=0
+CODEBUILD_DIRECT_PRODUCTION=0
 SOURCE_REPOSITORY_EXPLICIT=0
 
 fail() { printf '[promotion] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -33,6 +34,9 @@ Options:
                                Required complete Preproduction deploy evidence
   --direct-production          Publish the Manifest's local OCI archives directly
                                to Production and record source_repository=local-oci
+  --codebuild-direct-production
+                               Promote a verified CodeBuild Publish Record directly
+                               from Preproduction ECR without deploying Preproduction ECS
 
 The default mode uses crane to copy the exact OCI manifests and layers accepted
 in Preproduction into Production. The explicitly approved direct-production
@@ -54,6 +58,7 @@ parse_args() {
       --publish-record) [[ $# -ge 2 ]] || fail "--publish-record requires a value"; PUBLISH_RECORD="$2"; shift 2 ;;
       --preproduction-evidence) [[ $# -ge 2 ]] || fail "--preproduction-evidence requires a value"; PREPRODUCTION_EVIDENCE="$2"; shift 2 ;;
       --direct-production) DIRECT_PRODUCTION=1; shift ;;
+      --codebuild-direct-production) CODEBUILD_DIRECT_PRODUCTION=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1" ;;
     esac
@@ -74,12 +79,26 @@ main() {
   [[ "${DEPLOY_PRODUCTION_APPROVED:-}" = "1" ]] || fail "DEPLOY_PRODUCTION_APPROVED=1 is required before Production ECR promotion"
   command -v aws >/dev/null 2>&1 || fail "aws CLI is required"
   command -v "${PYTHON_BIN}" >/dev/null 2>&1 || [[ -x "${PYTHON_BIN}" ]] || fail "Python runtime is required"
+  [[ "$((DIRECT_PRODUCTION + CODEBUILD_DIRECT_PRODUCTION))" -le 1 ]] \
+    || fail "--direct-production and --codebuild-direct-production are mutually exclusive"
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
     [[ "${SOURCE_REPOSITORY_EXPLICIT}" = "0" ]] || fail "--direct-production cannot be combined with --source-repository"
     [[ -z "${PUBLISH_RECORD}" && -z "${PREPRODUCTION_EVIDENCE}" ]] \
       || fail "--direct-production does not accept Preproduction evidence"
     command -v skopeo >/dev/null 2>&1 || fail "skopeo is required for direct Production publishing"
     SOURCE_REPOSITORY="local-oci"
+  elif [[ "${CODEBUILD_DIRECT_PRODUCTION}" = "1" ]]; then
+    [[ "${SOURCE_REPOSITORY_EXPLICIT}" = "0" ]] \
+      || fail "--codebuild-direct-production cannot be combined with --source-repository"
+    [[ "${SOURCE_REPOSITORY}" = "supportportal/preproduction" ]] \
+      || fail "CodeBuild direct Production source must be supportportal/preproduction"
+    [[ "${TARGET_REPOSITORY}" = "supportportal/production" ]] \
+      || fail "CodeBuild direct Production target must be supportportal/production"
+    [[ -n "${PUBLISH_RECORD}" && -f "${PUBLISH_RECORD}" ]] \
+      || fail "CodeBuild Preproduction Publish Record is required"
+    [[ -z "${PREPRODUCTION_EVIDENCE}" ]] \
+      || fail "--codebuild-direct-production does not accept Preproduction deploy evidence"
+    command -v crane >/dev/null 2>&1 || fail "crane is required for digest-preserving registry copy"
   else
     [[ "${SOURCE_REPOSITORY}" = "supportportal/preproduction" ]] \
       || fail "normal promotion source must be supportportal/preproduction"
@@ -98,7 +117,7 @@ main() {
   PROMOTION_RECORD="${PROMOTION_RECORD:-${manifest_dir}/promotion-record.json}"
   [[ ! -e "${PROMOTION_RECORD}" ]] || fail "Promotion Record already exists: ${PROMOTION_RECORD}"
 
-  local release_id acceptance_json publish_record_sha256 deploy_evidence_sha256
+  local release_id acceptance_json publish_json publish_record_sha256 deploy_evidence_sha256 promotion_mode
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
     PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -m backend.scripts.automation_release \
       validate --manifest "${MANIFEST_PATH}" >/dev/null \
@@ -106,7 +125,15 @@ main() {
   fi
   release_id="$(PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -c 'import sys; from pathlib import Path; from backend.services.automation_release_manifest import read_manifest; print(read_manifest(Path(sys.argv[1])).release_id)' "${MANIFEST_PATH}")" \
     || fail "Release Manifest validation failed"
-  if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+  if [[ "${CODEBUILD_DIRECT_PRODUCTION}" = "1" ]]; then
+    publish_json="$(PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -m backend.scripts.automation_release \
+      validate-preproduction-publish \
+      --manifest "${MANIFEST_PATH}" \
+      --publish-record "${PUBLISH_RECORD}")" \
+      || fail "CodeBuild Preproduction Publish Record validation failed"
+    publish_record_sha256="$("${PYTHON_BIN}" -c 'import hashlib,sys; print("sha256:" + hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${PUBLISH_RECORD}")"
+    promotion_mode="codebuild-direct-production"
+  elif [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
     acceptance_json="$(PYTHONPATH="${PROJECT_ROOT}" "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
       validate-preproduction-acceptance \
       --manifest "${MANIFEST_PATH}" \
@@ -115,16 +142,26 @@ main() {
       || fail "Preproduction release evidence validation failed"
     publish_record_sha256="$(jq -r '.publish_record_sha256' <<<"${acceptance_json}")"
     deploy_evidence_sha256="$(jq -r '.deploy_evidence_sha256' <<<"${acceptance_json}")"
+    promotion_mode="preproduction-accepted"
+  else
+    promotion_mode="local-oci-direct-production"
   fi
   if [[ -z "${REGISTRY_ID}" ]]; then
-    if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+    if [[ "${CODEBUILD_DIRECT_PRODUCTION}" = "1" ]]; then
+      REGISTRY_ID="$(jq -r '.registry_id' <<<"${publish_json}")"
+    elif [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
       REGISTRY_ID="$(jq -r '.registry_id' <<<"${acceptance_json}")"
     else
       REGISTRY_ID="$(aws sts get-caller-identity --query Account --output text)"
     fi
   fi
   [[ "${REGISTRY_ID}" =~ ^[0-9]{12}$ ]] || fail "AWS registry id must be a 12-digit account id"
-  if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+  if [[ "${CODEBUILD_DIRECT_PRODUCTION}" = "1" ]]; then
+    [[ "$(jq -r '.registry_id' <<<"${publish_json}")" = "${REGISTRY_ID}" ]] \
+      || fail "CodeBuild Publish Record registry id mismatch"
+    [[ "$(jq -r '.region' <<<"${publish_json}")" = "${REGION}" ]] \
+      || fail "CodeBuild Publish Record region mismatch"
+  elif [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
     [[ "$(jq -r '.registry_id' <<<"${acceptance_json}")" = "${REGISTRY_ID}" ]] \
       || fail "Preproduction evidence registry id mismatch"
     [[ "$(jq -r '.region' <<<"${acceptance_json}")" = "${REGION}" ]] \
@@ -139,6 +176,17 @@ main() {
     --query 'repositories[0].imageTagMutability' --output text)"
   [[ "${target_mutability}" = "IMMUTABLE" ]] \
     || fail "Target ECR repository must use immutable tags"
+  local role tag expected source_digest
+  if [[ "${DIRECT_PRODUCTION}" = "0" ]]; then
+    for role in api route worker; do
+      read -r tag expected < <("${PYTHON_BIN}" -c 'import json,sys; c=json.load(open(sys.argv[1]))["components"][sys.argv[2]]; print(c["tag"], c["digest"])' "${MANIFEST_PATH}" "${role}")
+      source_digest="$(aws_ecr batch-get-image \
+        --repository-name "${SOURCE_REPOSITORY}" \
+        --image-ids "imageDigest=${expected}" \
+        --query 'images[0].imageId.imageDigest' --output text)"
+      [[ "${source_digest}" = "${expected}" ]] || fail "${role} source digest mismatch: ${source_digest}"
+    done
+  fi
   if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
     aws ecr get-login-password --region "${REGION}" \
       | skopeo login "${registry}" --username AWS --password-stdin >/dev/null
@@ -150,17 +198,14 @@ main() {
   records_file="$(mktemp "${manifest_dir}/promotion.XXXXXX")"
   trap 'rm -f -- "${records_file}"' EXIT
 
-  local role tag expected layout_path source_digest target_digest existing
+  local layout_path target_digest existing
   for role in api route worker; do
     read -r tag expected < <("${PYTHON_BIN}" -c 'import json,sys; c=json.load(open(sys.argv[1]))["components"][sys.argv[2]]; print(c["tag"], c["digest"])' "${MANIFEST_PATH}" "${role}")
     if [[ "${DIRECT_PRODUCTION}" = "1" ]]; then
       layout_path="${manifest_dir}/$("${PYTHON_BIN}" -c 'import json,sys; print(json.load(open(sys.argv[1]))["components"][sys.argv[2]]["oci_layout"])' "${MANIFEST_PATH}" "${role}")"
       source_digest="${expected}"
     else
-      source_digest="$(aws_ecr batch-get-image \
-        --repository-name "${SOURCE_REPOSITORY}" \
-        --image-ids "imageDigest=${expected}" \
-        --query 'images[0].imageId.imageDigest' --output text)"
+      source_digest="${expected}"
     fi
     [[ "${source_digest}" = "${expected}" ]] || fail "${role} source digest mismatch: ${source_digest}"
     existing="$(aws_ecr batch-get-image \
@@ -194,13 +239,13 @@ main() {
     printf '%s\t%s\t%s\n' "${role}" "${tag}" "${expected}" >> "${records_file}"
   done
 
-  "${PYTHON_BIN}" - "${PROMOTION_RECORD}" "${release_id}" "${SOURCE_REPOSITORY}" "${TARGET_REPOSITORY}" "${REGION}" "${REGISTRY_ID}" "${records_file}" "${publish_record_sha256:-}" "${deploy_evidence_sha256:-}" <<'PY'
+  "${PYTHON_BIN}" - "${PROMOTION_RECORD}" "${release_id}" "${SOURCE_REPOSITORY}" "${TARGET_REPOSITORY}" "${REGION}" "${REGISTRY_ID}" "${records_file}" "${promotion_mode}" "${publish_record_sha256:-}" "${deploy_evidence_sha256:-}" <<'PY'
 import datetime
 import json
 import pathlib
 import sys
 
-output, release_id, source, target, region, registry_id, rows, publish_sha, deploy_sha = sys.argv[1:]
+output, release_id, source, target, region, registry_id, rows, mode, publish_sha, deploy_sha = sys.argv[1:]
 components = {}
 for line in pathlib.Path(rows).read_text(encoding="utf-8").splitlines():
     role, tag, digest = line.split("\t")
@@ -209,14 +254,16 @@ payload = {
     "schema_version": "automation-promotion-v1",
     "release_id": release_id,
     "promoted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "promotion_mode": mode,
     "source_repository": source,
     "target_repository": target,
     "region": region,
     "registry_id": registry_id or None,
     "components": components,
 }
-if source == "supportportal/preproduction":
+if mode in {"preproduction-accepted", "codebuild-direct-production"}:
     payload["source_publish_record_sha256"] = publish_sha
+if mode == "preproduction-accepted":
     payload["preproduction_deploy_evidence_sha256"] = deploy_sha
 path = pathlib.Path(output)
 temporary = path.with_suffix(path.suffix + ".tmp")
