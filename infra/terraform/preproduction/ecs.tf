@@ -24,7 +24,7 @@ resource "aws_ecs_service" "account" {
   }
 
   network_configuration {
-    subnets          = var.public_subnet_ids
+    subnets          = each.key == "worker" ? [var.efs_subnet_id] : var.public_subnet_ids
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
@@ -40,6 +40,11 @@ resource "aws_ecs_service" "account" {
 
   lifecycle {
     ignore_changes = [task_definition]
+
+    precondition {
+      condition     = contains(var.public_subnet_ids, var.efs_subnet_id)
+      error_message = "The EFS subnet must also be one of the Preproduction public subnets."
+    }
   }
 
   tags = merge(local.tags, { Component = each.key })

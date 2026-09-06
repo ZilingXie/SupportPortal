@@ -230,6 +230,8 @@ def test_preproduction_network_and_runtime_identity_are_explicit() -> None:
     assert "to_port                      = 5432" in postgres_rule
     assert 'ip_protocol                  = "tcp"' in postgres_rule
     assert 'cidr_ipv4' not in postgres_rule
+    assert 'subnets          = each.key == "worker" ? [var.efs_subnet_id] : var.public_subnet_ids' in ecs
+    assert "contains(var.public_subnet_ids, var.efs_subnet_id)" in ecs
     assert "assign_public_ip = true" in ecs
     assert 'name = "preproduction.supportportal.local"' in network
     assert 'name = "hermes"' in network

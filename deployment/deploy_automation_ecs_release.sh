@@ -680,7 +680,8 @@ verify_cloudwatch() {
     group="$(jq -r --arg role "${role}" '.taskDefinition.containerDefinitions[] | select(.name == $role) | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/${role}.current.json")"
     [[ -n "${group}" && "${group}" != "null" ]] || fail "${role} CloudWatch log group is missing"
     count="$(aws logs filter-log-events --region "${REGION}" --log-group-name "${group}" \
-      --start-time "${start_ms}" --filter-pattern '?ERROR ?Traceback ?Exception' \
+      --log-stream-name-prefix "${role}/${role}/" --start-time "${start_ms}" \
+      --filter-pattern '?ERROR ?Traceback ?Exception' \
       --query 'length(events)' --output text)"
     [[ "${count}" = "0" ]] || fail "${role} CloudWatch errors detected after deployment"
   done

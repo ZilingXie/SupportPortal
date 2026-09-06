@@ -13,6 +13,11 @@ variable "public_subnet_ids" {
   type        = list(string)
 }
 
+variable "efs_subnet_id" {
+  description = "Public subnet in the availability zone that has the shared EFS mount target."
+  type        = string
+}
+
 variable "shared_https_listener_arn" {
   description = "Existing HTTPS listener on the shared ALB."
   type        = string
