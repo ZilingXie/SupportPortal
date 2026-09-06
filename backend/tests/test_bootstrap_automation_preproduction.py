@@ -169,11 +169,19 @@ def test_preproduction_bootstrap_creates_isolated_roles_and_secret_namespace() -
         if call.kwargs["Name"].endswith("/hermes-api-server-key")
     )
     assert generated_api_key != "postgresql://admin:secret@db/supportportal"
+    generated_admin_key = next(
+        call.kwargs["Value"]
+        for call in ssm.put_parameter.call_args_list
+        if call.kwargs["Name"].endswith("/hermes-tdai-admin-key")
+    )
+    assert generated_admin_key.startswith("sk-mem-")
+    assert generated_admin_key != "postgresql://admin:secret@db/supportportal"
     source_reads = {call.kwargs["Name"] for call in ssm.get_parameter.call_args_list}
     assert {
         f"/supportportal/production/{suffix}" for suffix in copied_suffixes
     } <= source_reads
     assert "/supportportal/production/hermes-api-server-key" not in source_reads
+    assert "/supportportal/production/hermes-tdai-admin-key" not in source_reads
     rendered_sql = " ".join(str(call.args[0]) for call in cursor.execute.call_args_list)
     assert "CREATE ROLE" in rendered_sql
     assert "CREATE SCHEMA" in rendered_sql
