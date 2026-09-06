@@ -34,6 +34,8 @@ DEPLOY_COMPLETE=0
 UPDATED_ROLES=()
 HEARTBEAT_WAIT_TIMEOUT_SECONDS=90
 HEARTBEAT_RETRY_INTERVAL_SECONDS=5
+SERVICE_ROLLOUT_WAIT_TIMEOUT_SECONDS=900
+SERVICE_ROLLOUT_RETRY_INTERVAL_SECONDS=5
 AWS_MIN_CREDENTIAL_TTL_SECONDS="${AUTOMATION_AWS_MIN_CREDENTIAL_TTL_SECONDS:-2700}"
 RELEASE_ID=""
 GIT_COMMIT=""
@@ -354,8 +356,7 @@ rollback_services() {
     if ! aws ecs update-service --region "${REGION}" --cluster "${CLUSTER}" \
       --service "${service}" --task-definition "${old_arn}" >/dev/null; then
       failed=1
-    elif ! aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" \
-      --services "${service}"; then
+    elif ! wait_for_service_revision "${role}" "${service}" "${old_arn}"; then
       failed=1
     fi
     rm -f -- "${TEMP_DIR}/${role}.verified"
@@ -366,6 +367,42 @@ rollback_services() {
   fi
   ROLLBACK_STATUS="failed"
   return 1
+}
+
+wait_for_service_revision() {
+  local role="$1" service="$2" expected_task_definition="$3"
+  local deadline service_json rollout_state
+  deadline="$(($(date -u +%s) + SERVICE_ROLLOUT_WAIT_TIMEOUT_SECONDS))"
+  while true; do
+    service_json="$(aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
+      --services "${service}")"
+    [[ "$(jq '.failures | length' <<<"${service_json}")" = "0" ]] \
+      || fail "${role} service readback failed during rollout"
+    rollout_state="$(jq -r '.services[0].deployments[]? | select(.status == "PRIMARY") | .rolloutState // empty' <<<"${service_json}")"
+    [[ "${rollout_state}" != "FAILED" ]] || fail "${role} ECS rollout failed"
+    if jq -e --arg expected "${expected_task_definition}" '
+      (.services | length) == 1
+      and .services[0].status == "ACTIVE"
+      and .services[0].taskDefinition == $expected
+      and .services[0].desiredCount == 1
+      and .services[0].runningCount == 1
+      and .services[0].pendingCount == 0
+      and (.services[0].deployments | length) == 1
+      and .services[0].deployments[0].status == "PRIMARY"
+      and .services[0].deployments[0].taskDefinition == $expected
+      and .services[0].deployments[0].rolloutState == "COMPLETED"
+      and .services[0].deployments[0].desiredCount == 1
+      and .services[0].deployments[0].runningCount == 1
+      and .services[0].deployments[0].pendingCount == 0
+    ' <<<"${service_json}" >/dev/null; then
+      return 0
+    fi
+    if (( $(date -u +%s) >= deadline )); then
+      fail "${role} ECS revision did not converge before timeout"
+      return 1
+    fi
+    sleep "${SERVICE_ROLLOUT_RETRY_INTERVAL_SECONDS}"
+  done
 }
 
 cleanup_schema_bootstrap() {
@@ -892,9 +929,9 @@ main() {
     update_role_if_needed "${role}"
   done
   verify_aws_credential_lifetime
-  aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" \
-    --services "${ROUTE_SERVICE}" "${WORKER_SERVICE}"
   for role in route worker; do
+    wait_for_service_revision \
+      "${role}" "$(service_name "${role}")" "$(<"${TEMP_DIR}/${role}.new-arn")"
     verify_role_and_record "${role}"
   done
 
@@ -907,7 +944,7 @@ main() {
 
   update_role_if_needed api
   verify_aws_credential_lifetime
-  aws ecs wait services-stable --region "${REGION}" --cluster "${CLUSTER}" --services "${API_SERVICE}"
+  wait_for_service_revision api "${API_SERVICE}" "$(<"${TEMP_DIR}/api.new-arn")"
   verify_role_and_record api
   run_parallel_post_deploy_checks "${deployment_start_ms}"
 

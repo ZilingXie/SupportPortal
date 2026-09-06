@@ -417,8 +417,9 @@ credentials、收件人地址或 secret value。状态目录以 `0700`、文件�
 后会删除完整 task definition副本和检查日志，只保留恢复/审计所需的 ARN、digest、
 Prompt identity与检查结论。失败时这些中间文件以私有权限保留，供同一次 release恢复。
 
-Route 与 Worker 会先完成 update，然后使用一次 ECS stable waiter共同等待；两者 digest
-和 heartbeat通过后才更新 API。API 稳定后，公网 health/provenance、CloudWatch错误窗口
+Route 与 Worker 会先完成 update，然后分别等待 service 指针和唯一 PRIMARY deployment
+都收敛到已注册 revision、`rolloutState=COMPLETED` 及 `1/1/0`；两者 digest 和 heartbeat
+通过后才更新 API，API 使用相同 revision 门禁。公网 health/provenance、CloudWatch错误窗口
 和 EC2 backup health作为只读检查并行执行。目标 Prompt sync 后还会从目标数据库执行
 一次只读 validate，确认 activation 前置内容可读且 CLI 没有执行 schema initialization。
 
@@ -433,7 +434,7 @@ definition ARN、期望 digest，以及 Terraform、ECR、收件人合同、hear
 health、CloudWatch、EC2 backup和 Prompt activation 状态。失败时保留 checkpoint 和
 失败证据；若激活尚未开始仍按原顺序回滚，若激活已开始或目标已 active，则保持新栈并
 报告 `reconciliation_required`。
-回滚命令或 stable waiter 任一失败时，evidence明确记录 `rollback_incomplete` 和
+回滚命令或 revision 收敛门禁任一失败时，evidence明确记录 `rollback_incomplete` 和
 `checks.rollback=failed`，不得把已尝试回滚报告成恢复成功。
 
 Terraform 必须为已校验的 `1.9.8`；本机不在 PATH 时通过

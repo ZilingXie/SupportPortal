@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-06 - ECS deploy waits for the requested task revision (p1-53)
+
+- Area or subsystem: ECS release deployment and rollback convergence gate.
+- Prompt or model version: No prompt, model, provider, or Prompt Release content change.
+- Reason: Immediately after `update-service`, the stock ECS stable waiter can still observe the old `1/1/0` deployment and return before the requested task-definition revision is running.
+- Tooling change: Forward rollout and rollback now require the service pointer and its sole completed primary deployment to match the requested task-definition ARN at `1/1/0`. A failed rollout stops immediately; other transitional states poll every five seconds for at most fifteen minutes.
+- Verification: Executable shell harnesses prove an old stable revision is rejected and the requested completed revision passes. The focused deploy/contract suite and shell syntax checks are required before finalization.
+
 ## 2026-09-06 - CodeBuild release and environment-accurate Preproduction runtime (p1-53)
 
 - Area or subsystem: ECS release tooling, Prompt Release deployment gate, Preproduction Account runtime identity, and Hermes activation configuration.
