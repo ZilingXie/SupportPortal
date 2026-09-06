@@ -876,8 +876,20 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     api_update = main_script.index("update_role_if_needed api")
     activation = main_script.rindex("ACTIVATION_STARTED=1")
     assert route_worker < heartbeat < api_update < activation
+    route_worker_wait = main_script.index("wait_for_service_revision", route_worker)
+    api_wait = main_script.index("wait_for_service_revision api", api_update)
+    assert route_worker < route_worker_wait < heartbeat
+    assert api_update < api_wait < activation
     assert "HEARTBEAT_WAIT_TIMEOUT_SECONDS=90" in script
     assert "HEARTBEAT_RETRY_INTERVAL_SECONDS=5" in script
+    assert "SERVICE_ROLLOUT_WAIT_TIMEOUT_SECONDS=900" in script
+    assert "SERVICE_ROLLOUT_RETRY_INTERVAL_SECONDS=5" in script
+    assert "wait_for_service_revision" in script
+    assert '.services[0].taskDefinition == $expected' in script
+    assert '.services[0].deployments[0].taskDefinition == $expected' in script
+    assert '.services[0].deployments[0].rolloutState == "COMPLETED"' in script
+    assert '[[ "${rollout_state}" != "FAILED" ]]' in script
+    assert 'wait_for_service_revision "${role}" "${service}" "${old_arn}"' in script
     assert "while true" in script
     assert "heartbeat provenance did not converge" in script
     assert "--max-age-seconds 90" in script
@@ -939,6 +951,65 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     )[1].split("fi", 1)[0]
     assert "ACTIVATION_STARTED" not in already_active
     assert "pre-activation failures remain rollback-safe" in already_active
+
+
+def test_formal_deploy_waits_for_the_registered_ecs_revision() -> None:
+    expected = "arn:aws:ecs:us-east-1:123456789012:task-definition/service:4"
+
+    def run_wait(task_definition: str, deployment_task_definition: str) -> subprocess.CompletedProcess[str]:
+        service = {
+            "failures": [],
+            "services": [
+                {
+                    "status": "ACTIVE",
+                    "taskDefinition": task_definition,
+                    "desiredCount": 1,
+                    "runningCount": 1,
+                    "pendingCount": 0,
+                    "deployments": [
+                        {
+                            "status": "PRIMARY",
+                            "rolloutState": "COMPLETED",
+                            "taskDefinition": deployment_task_definition,
+                            "desiredCount": 1,
+                            "runningCount": 1,
+                            "pendingCount": 0,
+                        }
+                    ],
+                }
+            ],
+        }
+        return subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; '
+                'aws() { printf "%s\\n" "$FAKE_SERVICE_JSON"; }; '
+                'date() { printf "100\\n"; }; '
+                'sleep() { return 99; }; '
+                'REGION=us-east-1; CLUSTER=cluster; '
+                'SERVICE_ROLLOUT_WAIT_TIMEOUT_SECONDS=0; '
+                'wait_for_service_revision route service "$EXPECTED_TASK_DEFINITION"',
+                "bash",
+                str(DEPLOY_SCRIPT),
+            ],
+            env={
+                **os.environ,
+                "FAKE_SERVICE_JSON": json.dumps(service),
+                "EXPECTED_TASK_DEFINITION": expected,
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    converged = run_wait(expected, expected)
+    assert converged.returncode == 0, converged.stderr
+
+    old = "arn:aws:ecs:us-east-1:123456789012:task-definition/service:3"
+    stale = run_wait(old, old)
+    assert stale.returncode != 0
+    assert "revision did not converge before timeout" in stale.stderr
 
 
 def test_formal_deploy_script_has_strict_preproduction_record_and_approval_boundary() -> None:
