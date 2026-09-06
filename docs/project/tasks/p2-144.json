@@ -10,7 +10,7 @@
   "created_at": "2026-09-05",
   "updated_at": "2026-09-06",
   "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona 并加入有界 Reviewer。Case 13302 推动 v27 隔离 current-intent policy，但 Production Case 13314 仍被独立 Reviewer 以 intent_policy_violation 连续误拒，虽然 Handler 已提供结构化 Fraud missing-information facts。v28 因此删除所有 render_automation_reply 路径的 LLM Reviewer：Handler 提供 reply_facts，pinned Persona 一次生成最终正文，代码只执行硬安全/格式拒绝，Worker 原样发布；仅首稿硬安全失败时允许同一 Persona 整段重写一次。",
-  "next_action": "完成 v28 合并、本地 official stack marker 和 ECS Production immutable release；随后等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收。不得代替用户创建工单，不重放或回复 13314。",
+  "next_action": "保持 active，等待用户提供全新 Enablement、Fraud 与 Account Suspension 工单号进行业务验收；追踪新任务是否单次 Persona 生成、无 Reviewer stage、硬安全地板通过且正文原样发布。不得代替用户创建工单，不重放或回复 13314。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
     "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
@@ -21,6 +21,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "deployment",
+      "label": "Persona v28 ECS Production immutable release",
+      "command": "CodeBuild r20260906-a2693a5; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh --check-only; authorized deploy with --bootstrap-account-schema --hermes-case-workflow-mode disabled; post-release readback",
+      "details": "PR #1103修复automation-ecs-001到002事务升级后，clean main@a2693a5ea19d以CodeBuild release r20260906-a2693a5发布。API/Route/Worker revision 37/31/35均1/1/0、COMPLETED，运行digest分别为sha256:326fa289.../sha256:9a27ffc2.../sha256:cb26c59d...并与Manifest、ECR和Promotion Record一致。schema bootstrap与002 readback、公网live/release/ready、当前heartbeat无provenance mismatch、Prompt pr-c9b3a291ecf1 active、CloudWatch零错误、EC2 backup及部署后Terraform zero-drift均通过；Production Hermes disabled。相同Worker revision一次性只读marker确认automation-persona-v28、无Reviewer stage及无Pilot；Archer合成不存在App ID GET、Graph /me、Zendesk identity探针均为true。未创建、修改、回复或重放工单，未发送邮件。"
+    },
     {
       "type": "test",
       "label": "Persona v28 direct-publication regression",

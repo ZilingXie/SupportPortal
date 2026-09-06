@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "AWS CodeBuild固定完整 main SHA 的三角色 linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立 release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造Preproduction ECS验收。ECS Preproduction Account已使用全新空schema、独立roles/namespace/Prompt target/Secrets/logs及Production等价业务合同运行；Preproduction Hermes使用三组全新EFS access point和独立密钥/团队/会话/记忆状态，真实Persona/Responses endpoint运行健康，typed Case Workflow保持disabled。Automation schema现支持显式、事务性的automation-ecs-001到automation-ecs-002升级，未知revision继续fail closed。EC2 /production仍承载生产流量且未修改；Production Hermes及其ECS/ALB/SSM/IAM/EFS资源继续为EC2保留，ECS Production Account保持Hermes disabled；n8n由用户独立控制。",
-  "next_action": "保持 active。正式pipeline的无业务流量Preproduction计时演练已以20分27.6秒完成；仍等待用户通过n8n分别向 https://supportcenter.stellarix.space/automation/preproduction 和 https://supportcenter.stellarix.space/automation/production 投递全新业务工单，验收Enablement、Fraud、Suspension及Preproduction Hermes Persona实际回复。验收前不修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown；Preproduction通过后仅在单独授权下按同digest promotion流程升级ECS Production并再次回归。",
+  "next_action": "保持 active。ECS Production已部署r20260906-a2693a5并通过技术门禁，等待用户通过n8n向 https://supportcenter.stellarix.space/automation/production 投递全新Enablement、Fraud与Suspension工单完成业务验收；Preproduction Hermes继续由用户另行测试。不得修改EC2、n8n或Production Hermes，不创建/回复/关闭/重放工单，也不重试outcome_unknown。",
   "acceptance_criteria": [
     "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
     "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -22,6 +22,12 @@
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "deployment",
+      "label": "CodeBuild direct Production release with schema 002",
+      "command": "start_automation_codebuild_release.sh; promote_automation_release.sh --codebuild-direct-production; deploy_automation_ecs_release.sh check-only/deploy/post-check-only; independent ECS/schema/provider readback",
+      "details": "release r20260906-a2693a5基于main@a2693a5ea19d，CodeBuild向Preproduction ECR发布三角色linux/amd64 digest后按获批直晋模式复制同digest到Production ECR，未更新Preproduction ECS。Production bootstrap将schema从automation-ecs-001事务升级为002；API/Route/Worker revision 37/31/35均1/1/0、COMPLETED且digest匹配。正式证据status=complete：Terraform zero-drift、Prompt active、heartbeats、public health、CloudWatch error_count=0、EC2 backup、Suspension recipients全部passed；部署后第二次check-only仍通过且schema已匹配。Worker保持Hermes disabled、无Pilot，Archer/Graph/Zendesk只读探针通过。EC2、n8n和工单均未修改。"
+    },
     {
       "type": "test",
       "label": "Production Automation schema 001 to 002 transactional upgrade",
