@@ -4567,6 +4567,7 @@ class WorkerResilienceTests(unittest.TestCase):
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
+            generation_diagnostics=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -5369,7 +5370,54 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(job["payload"]["persona_safety_issue_codes"], [])
         self.assertFalse(any(key.startswith("persona_review_") for key in job["payload"]))
         self.assertNotIn("persona_contract_repair", job["payload"])
+        self.assertEqual(job["payload"]["persona_generation_diagnostics"], [{
+            "attempt": 1, "safety_issue_codes": [], "expected_field_count": 3,
+            "list_item_count": 3, "list_type": "bullet", "layout_issue_codes": [],
+        }])
         repository.transition_claimed_account_reply_to_human_review.assert_not_called()
+
+    def test_persona_failure_diagnostics_reach_atomic_transition_in_both_render_paths(self) -> None:
+        diagnostics = ({"attempt": 1, "safety_issue_codes": ["automation_persona_greeting_forbidden"],
+                        "expected_field_count": 3, "list_item_count": 0, "list_type": "none",
+                        "layout_issue_codes": ["missing_information_list_layout"]},
+                       {"attempt": 2, "safety_issue_codes": ["automation_persona_generation_failed"],
+                        "expected_field_count": 3, "list_item_count": 0, "list_type": "none",
+                        "layout_issue_codes": []})
+        for status, run in (("preparing", worker._prepare_account_reply_job),
+                            ("publishing", worker._publish_account_reply_job)):
+            job = {"job_id": "diagnostic-job", "ticket_id": "diagnostic-ticket", "status": status,
+                   "trigger_message_created_at": "2026-09-07T00:00:00+00:00",
+                   "payload": {"reply_facts": worker.build_account_automation_reply_facts(
+                       handler="fraud_account", action="fraud_account", collected_fields={},
+                       missing_fields=["office_address", "contact_number", "console_configuration"]),
+                       "persona_key": "sid-precise", "persona_version": 1,
+                       "effective_prompt": {"instruction": "Precise"},
+                       "generated_content": "Old body must not survive.",
+                       "persona_prompt_version": "automation-persona-v29",
+                       "persona_generation_diagnostics": [{"attempt": 99}]}}
+            repository = Mock()
+            repository.get_account_reply_job.return_value = job
+            repository.get_ticket.return_value = {"ticket_id": job["ticket_id"], "messages": [{
+                "role": "customer", "content": "Please review my account.",
+                "created_at": job["trigger_message_created_at"]}]}
+            captured = []
+
+            def transition(value, **kwargs):
+                captured.append(copy.deepcopy(value))
+                return None
+
+            repository.transition_claimed_account_reply_to_human_review.side_effect = transition
+            with self.subTest(status=status), patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "render_automation_reply", side_effect=worker.AutomationPersonaError(
+                    "automation_persona_generation_failed", attempt_count=2, generation_diagnostics=diagnostics)
+            ):
+                run(job)
+            self.assertEqual(len(captured), 1)
+            payload = captured[0]["payload"]
+            self.assertEqual(payload["persona_generation_diagnostics"], list(diagnostics))
+            self.assertEqual(payload["persona_generation_attempts"], 2)
+            self.assertNotIn("generated_content", payload)
+            repository.publish_account_reply.assert_not_called()
 
     def test_reply_facts_prepare_pins_persisted_persona_assignment(self) -> None:
         job = {
@@ -5403,6 +5451,7 @@ class WorkerResilienceTests(unittest.TestCase):
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
+            generation_diagnostics=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -5889,6 +5938,7 @@ class WorkerResilienceTests(unittest.TestCase):
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
+            generation_diagnostics=(),
         )
         followup_job["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING
         repository.save_account_reply_job(followup_job)
@@ -6111,6 +6161,7 @@ class WorkerResilienceTests(unittest.TestCase):
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
+            generation_diagnostics=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6172,10 +6223,11 @@ class WorkerResilienceTests(unittest.TestCase):
                 "We are archiving this case now. If you have further questions, you can open a new ticket."
             ),
             model="persona-model",
-            prompt_version="automation-persona-v29",
+            prompt_version="automation-persona-v30",
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
+            generation_diagnostics=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6183,12 +6235,12 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._publish_account_reply_job(job)
 
-        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v29")
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v30")
         self.assertEqual(
             render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v29")
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v30")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
@@ -6371,6 +6423,7 @@ class WorkerResilienceTests(unittest.TestCase):
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
+            generation_diagnostics=(),
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -6470,6 +6523,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 generation_attempts=1,
                 safety_status="passed",
                 safety_issue_codes=(),
+                generation_diagnostics=(),
             ),
         ):
             worker._prepare_account_reply_job(job)

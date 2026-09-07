@@ -8,20 +8,30 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "created_at": "2026-09-05",
-  "updated_at": "2026-09-06",
-  "summary": "Case 13292 证明 Worker 确定性补句会篡改 Persona 正文；v26 将正文所有权收回 Persona并加入有界Reviewer。Case 13302/13314证明语义Reviewer会误拒，v28因此删除所有render_automation_reply路径的LLM Reviewer：Handler提供reply_facts，pinned Persona一次生成最终正文，代码只执行硬安全/格式拒绝，Worker原样发布。Production Case 13317进一步证明三项missing-information仅靠prompt不能稳定得到可扫读格式；v29新增三项及以上逐项bullet的格式拒绝，首稿失败仅允许同一Persona整段重写一次，不恢复语义Reviewer或代码补写。",
-  "next_action": "保持 active。Persona v29已随r20260906-734fb77发布到ECS Production；等待用户提供全新Fraud工单验证三项及以上缺失字段逐项bullet、单次Persona生成、无Reviewer stage且正文原样发布；不得代替用户创建工单，不重放或修改13314/13317。",
+  "updated_at": "2026-09-07",
+  "summary": "Persona 保持唯一正文作者，无独立 Reviewer 或代码补句。13326 排版拦截调查与真实合成样本发现共享 Responses 解析会压平换行；v30 修复两种正文返回路径的换行保留，排版降为非阻断诊断，明确一项单句、两项 and、多项 bullet 的 prompt 优先级，Persona profile 切为 Astra/low 且不发送 temperature。硬安全失败最多整段重写一次；Worker 两个生成入口保存内容无关逐轮诊断。13326 原始模型正文未留存，不推断其具体原稿。",
+  "next_action": "保持 active。完成 v30 合成样本门禁、正式合并、本地栈验证与直接 Production 发布后，等待用户全新 Fraud 工单验收；不创建、修改或重放历史工单，包括13326。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
     "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
-    "只有硬安全或格式错误允许把枚举 issue code 和固定修改要求交回同一 Persona 整段重写一次；第二稿仍失败或模型异常时在发布前原子转 Human Review。",
+    "只有硬安全或额外 greeting/signature 等外壳错误允许同一 Persona 整段重写一次；第二稿仍失败或模型异常时原子转 Human Review。缺失信息排版不是阻断条件。",
     "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
     "Worker payload 停止写 persona_contract_repair 与 persona_review_*，改写 generation_attempts/safety_status/safety_issue_codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
-    "三项及以上 missing-information 必须由Persona正文按每项独立 `- ` bullet输出；检查只拒绝，首稿失败由同一pinned Persona整段重写，Worker不得组装bullet。",
-    "ECS Production 发布 v29 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform、Provider probe和backup门禁；新任务不再产生automation_persona_review usage stage，真实业务验收只使用用户后续创建的新工单。"
+    "一项单句、两项 and、多项 bullet 由 Persona prompt 指导；Responses 解析保留换行，同义标签和其他列表布局不阻断，布局诊断与安全检查分离，Worker不得组装bullet。",
+    "ECS Production 发布 v30 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform、Provider probe和backup门禁；Persona 使用 gpt-6-astra/low，不发送 temperature，无 Reviewer，真实业务验收只使用用户新工单。"
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Astra v30 fixed synthetic evaluation",
+      "details": "18/18 合成样本通过：1/2/3字段 x Sid Precise/Bright/Warm x 2次。全部gpt-6-astra/low单次调用，2.014-5.031秒；逐条检查字段完整、无编造，六个三字段样本均独立bullet。修复前同样六个样本被公共Responses解析压成一行；仅修复解析后恢复。无工单或业务Provider写入。"
+    },
+    {
+      "type": "test",
+      "label": "Persona v30 and Responses layout regression",
+      "details": "503 passed + 137 subtests。覆盖 Responses 两种 wire format 原始换行、Astra/low 无 temperature、非阻断布局、硬安全重写、Worker 两入口原子诊断持久化及正文不改写。真实样本和发布为独立门禁。"
+    },
     {
       "type": "test",
       "label": "Persona v29 missing-information format regression",

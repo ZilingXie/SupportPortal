@@ -37,7 +37,7 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v29"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v30"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -65,10 +65,6 @@ _SAFETY_FEEDBACK = {
     "automation_persona_completion_contract_failed_enabled_state": "Do not describe an already-completed enablement as future work.",
     "automation_persona_completion_contract_failed_archive": "Do not describe an already-completed case closure as future work.",
     "automation_persona_archer_error_overclaim": "Do not claim enablement, handoff, an SLA, or closure for this recoverable App ID error.",
-    "automation_persona_missing_information_format_invalid": (
-        "When three or more missing-information fields are supplied, rewrite the complete body with exactly one "
-        "Markdown bullet line starting with '- ' for each supplied field."
-    ),
 }
 
 
@@ -176,12 +172,14 @@ def customer_first_name(customer_name: Any) -> str:
 class AutomationPersonaError(AccountProcessingFailure):
     """Raised when a customer-facing Automation reply cannot be generated."""
 
-    def __init__(self, code: str, detail: Any = "", *, attempt_count: int = 1) -> None:
+    def __init__(self, code: str, detail: Any = "", *, attempt_count: int = 1,
+                 generation_diagnostics: tuple[dict[str, Any], ...] = ()) -> None:
         # Keep legacy callers' human-readable exception text while retaining a
         # stable normalized failure code for persistence and alerting.
         raw_code = " ".join(str(code or "").split()).strip()
         message_detail = detail or (raw_code if raw_code and raw_code != "_".join(raw_code.lower().split()) else "")
         super().__init__(code, message_detail, stage="automation_persona", attempt_count=attempt_count)
+        self.generation_diagnostics = generation_diagnostics
 
 
 @dataclass(frozen=True)
@@ -192,6 +190,7 @@ class AutomationPersonaResult:
     generation_attempts: int = 1
     safety_status: str = "passed"
     safety_issue_codes: tuple[str, ...] = ()
+    generation_diagnostics: tuple[dict[str, Any], ...] = ()
 
 
 def assert_no_trailing_automation_signature(reply: str) -> None:
@@ -531,26 +530,31 @@ def _assert_enablement_appid_not_found_contract(reply: str) -> None:
     _assert_no_enablement_error_overclaim(reply)
 
 
-def _assert_missing_information_format(reply: str, facts: dict[str, Any]) -> None:
+def _generation_diagnostic(reply: str, facts: dict[str, Any], attempt: int) -> dict[str, Any]:
+    """Observe layout without judging field semantics or changing publication."""
     missing = facts.get("missing_information")
-    if not isinstance(missing, list) or len(missing) < 3:
-        return
-    labels = _humanize_missing_fields([str(item) for item in missing])
-    bullet_lines = [
-        match.group(1).strip()
+    expected = len(missing) if isinstance(missing, list) else 0
+    markers = [
+        match.group(1)
         for line in str(reply or "").splitlines()
-        if (match := re.match(r"^\s*-\s+(\S.*)$", line))
+        if (match := re.match(r"^\s*([-*+•]|\d+[.)])\s+\S", line))
     ]
-    label_matches = [
-        [label for label in labels if label.casefold() in line.casefold()]
-        for line in bullet_lines
-    ]
-    if (
-        len(bullet_lines) != len(labels)
-        or any(len(matches) != 1 for matches in label_matches)
-        or {matches[0].casefold() for matches in label_matches} != {label.casefold() for label in labels}
-    ):
-        raise AutomationPersonaError("automation_persona_missing_information_format_invalid")
+    kinds = {"numbered" if marker[0].isdigit() else "bullet" for marker in markers}
+    layout = next(iter(kinds)) if len(kinds) == 1 else "mixed" if kinds else "none"
+    issues = []
+    if facts.get("reply_intent") == "request_missing_information":
+        if expected >= 3 and (layout != "bullet" or len(markers) != expected):
+            issues.append("missing_information_list_layout")
+        elif 0 < expected < 3 and markers:
+            issues.append("missing_information_inline_layout")
+    return {
+        "attempt": attempt,
+        "safety_issue_codes": [],
+        "expected_field_count": expected,
+        "list_item_count": len(markers),
+        "list_type": layout,
+        "layout_issue_codes": issues,
+    }
 
 
 def validate_account_reply_contract(
@@ -576,8 +580,6 @@ def validate_account_reply_contract(
     if not normalized_reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     assert_no_trailing_automation_signature(normalized_reply)
-    if intent == "request_missing_information":
-        _assert_missing_information_format(normalized_reply, facts)
     if intent in {
         ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
         ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
@@ -679,10 +681,14 @@ def render_automation_reply(
         "continue coordinating the review once the missing information is received. Do not promise a time or "
         "outcome. Use a warm, direct first-person voice with natural phrasing rather than wording such as 'the "
         "missing details below' or 'as soon as I have'. Ask for every missing-information field supplied in the "
-        "facts, using each readable field label exactly once. If only one or two items are missing, weave them "
-        "naturally into one sentence. If three or more items are missing, use a brief lead-in sentence followed by "
-        "one Markdown-style bullet line starting with '- ' for each item. Never use a numbered list or run multiple "
-        "missing items together into one unbroken line. "
+        "facts, preserving each field's meaning; natural synonyms are allowed. This intent's layout overrides "
+        "general prose preferences and the Persona instruction. For one item, ask in one natural sentence. "
+        "For two items, join them with 'and' in one sentence. For three or more, use a brief lead-in followed by "
+        "one '- ' bullet per item. Examples of layout only (ask only for fields actually supplied):\n"
+        "One: Please share your office address.\n"
+        "Two: Please share your office address and official contact number.\n"
+        "Three: Please share the following details:\n- Office address\n- Official contact number\n"
+        "- Last known console configuration\n"
     )
     shared_account_policy = (
         "For every Account reply, speak as the first-person owner of the customer conversation. Semantic fields "
@@ -823,14 +829,15 @@ def render_automation_reply(
         "information the customer needs to provide, and the next step only when supplied and applicable. Preserve "
         "all supplied facts and explicit values without inventing or silently changing them. Match the "
         "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
-        "engineer replying personally, with warm, natural sentences rather than labels, fragments, canned "
+        "engineer replying personally, with warm, natural sentences rather than canned "
         "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
         "Every point named in the reply policy below is required content: make sure each one is actually "
         "expressed somewhere in your reply, always in your own words and phrasing. "
         "You are the human owner of this case: speak in first person (I/we), and do not narrate a job title or "
         "system as the author of the reply. Follow the current intent policy for who performs the next action. "
         "Vary sentence structure and rhythm - combine related points with natural connectors or a dash "
-        "instead of one flat sentence per fact, and use customer vocabulary (for example 'closing this "
+        "instead of one flat sentence per fact. Missing-information lists are exempt: keep each requested item "
+        "separate, and allow short labels or fragments. Use customer vocabulary (for example 'closing this "
         "case' rather than 'archiving this case'). "
         f"{reply_policy}"
         "Do not repeat identifier values that the customer has already supplied, including App IDs, "
@@ -846,6 +853,7 @@ def render_automation_reply(
     )
     prompt_facts = _facts_for_persona_prompt(facts)
     accumulated_safety_issue_codes: list[str] = []
+    generation_diagnostics: list[dict[str, Any]] = []
     revision: dict[str, Any] | None = None
 
     for generation_attempt in (1, 2):
@@ -861,17 +869,27 @@ def render_automation_reply(
                 max_attempts=1,
             )
         except AccountProcessingFailure as exc:
+            diagnostic = _generation_diagnostic("", facts, generation_attempt)
+            diagnostic["safety_issue_codes"] = ["automation_persona_generation_failed"]
+            generation_diagnostics.append(diagnostic)
             raise AutomationPersonaError(
                 "automation_persona_generation_failed",
                 exc.detail,
                 attempt_count=generation_attempt,
+                generation_diagnostics=tuple(generation_diagnostics),
             ) from exc
         except (LlmInvocationError, ValueError, TypeError) as exc:
+            diagnostic = _generation_diagnostic("", facts, generation_attempt)
+            diagnostic["safety_issue_codes"] = ["automation_persona_generation_failed"]
+            generation_diagnostics.append(diagnostic)
             raise AutomationPersonaError(
                 "automation_persona_generation_failed",
                 attempt_count=generation_attempt,
+                generation_diagnostics=tuple(generation_diagnostics),
             ) from exc
 
+        diagnostic = _generation_diagnostic(str(getattr(response, "text", "") or ""), facts, generation_attempt)
+        generation_diagnostics.append(diagnostic)
         try:
             candidate_body = _validated_automation_reply_body(
                 response,
@@ -880,11 +898,13 @@ def render_automation_reply(
                 account_scope=account_scope,
             )
         except AutomationPersonaError as exc:
+            diagnostic["safety_issue_codes"] = [exc.code]
             feedback = _SAFETY_FEEDBACK.get(exc.code)
             if feedback is None or generation_attempt == 2:
                 raise AutomationPersonaError(
                     exc.code,
                     attempt_count=generation_attempt,
+                    generation_diagnostics=tuple(generation_diagnostics),
                 ) from exc
             accumulated_safety_issue_codes.append(exc.code)
             revision = {
@@ -901,6 +921,7 @@ def render_automation_reply(
             generation_attempts=generation_attempt,
             safety_status="passed",
             safety_issue_codes=tuple(dict.fromkeys(accumulated_safety_issue_codes)),
+            generation_diagnostics=tuple(generation_diagnostics),
         )
 
     raise AutomationPersonaError("automation_persona_generation_failed", attempt_count=2)
