@@ -24,7 +24,6 @@ from backend.services.account_automation_reconciliation import (
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_reply_jobs import ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
 from backend.services.account_reply_rag_fallback import (
-    escalate_unexpected_reply_to_human,
     should_run_reply_rag_fallback,
     try_rag_fallback_answer,
 )
@@ -66,6 +65,8 @@ from backend.services.billing_automation import (
     send_billing_internal_email,
 )
 from backend.services.enablement_automation import send_enablement_internal_email
+from backend.services.enablement_field_extractor import EnablementFieldExtraction
+from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.engineer_assignment import EngineerAssignmentService
 from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
@@ -151,13 +152,6 @@ def _rag_fallback_ticket_context(canonical_ticket: dict[str, Any]) -> list[dict[
         if role and content:
             context.append({"role": role, "content": content})
     return context
-
-
-def _rag_fallback_zendesk_ticket_id(billing_ticket: dict[str, Any], client_ticket_id: str) -> str:
-    zendesk_ticket_id = str(billing_ticket.get("zendesk_ticket_id") or "").strip()
-    if not zendesk_ticket_id and client_ticket_id.isdigit():
-        zendesk_ticket_id = client_ticket_id
-    return zendesk_ticket_id
 
 
 async def process_zendesk_comment_trigger(
@@ -430,6 +424,12 @@ async def _process_account_customer_reply_impl(
     if canonical_ticket is None:
         raise ReplySyncError(404, "linked support ticket not found")
 
+    if (
+        str(canonical_ticket.get("status") or "").lower() in {"solved", "closed", "resolved"}
+        or str(billing_ticket.get("automation_status") or "") in ZENDESK_COMMENT_TRIGGER_IGNORED_CASE_STATUSES
+    ):
+        return {**billing_ticket, "ai_reply_status": None}
+
     # The route worker already pinned the persona and carries it in the
     # processing payload; only callers without a routed payload (tests, the
     # legacy direct entry) resolve here. A failed resolve keeps the job
@@ -701,6 +701,8 @@ async def _process_account_customer_reply_impl(
             "ai_reply_status": None,
         }
 
+    enablement_diagnostics: list[dict[str, Any]] = []
+
     def build_automation_attempt(handler: str, action: str) -> dict[str, Any]:
         registration = account_automation_handler(action)
         if registration is None or registration.handler != handler:
@@ -744,17 +746,42 @@ async def _process_account_customer_reply_impl(
                 # revive the old Archer attempt from accumulated history.
                 enablement_existing_fields.pop("app_id", None)
                 enablement_customer_messages = [customer_msg]
-            return _build_enablement_attempt(
-                message=conversation_text,
-                ticket_subject=ticket_subject,
-                customer_messages=enablement_customer_messages,
-                ticket_id=client_ticket_id,
-                account_case_id=account_case_id_value,
-                customer_email=customer_email,
-                zendesk_ticket_url=url,
-                existing_fields=enablement_existing_fields,
-                already_requested_fields=sorted(already_requested_fields),
-            )
+            try:
+                attempt = _build_enablement_attempt(
+                    message=conversation_text,
+                    ticket_subject=ticket_subject,
+                    customer_messages=enablement_customer_messages,
+                    ticket_id=client_ticket_id,
+                    account_case_id=account_case_id_value,
+                    customer_email=customer_email,
+                    zendesk_ticket_url=url,
+                    existing_fields=enablement_existing_fields,
+                    already_requested_fields=sorted(already_requested_fields),
+                )
+            except AccountProcessingFailure as exc:
+                attempt = {
+                    "requires_human_review": True,
+                    "collected_fields": enablement_existing_fields,
+                    "field_extraction": EnablementFieldExtraction(
+                        status="uncertain",
+                        collected_fields=enablement_existing_fields,
+                        failure_type=exc.code,
+                        grounding_status="failed",
+                    ),
+                }
+            extraction = attempt.get("field_extraction")
+            if isinstance(extraction, EnablementFieldExtraction):
+                audit = extraction.audit_payload()
+                # Persist diagnostics, never source quotes, identifiers or model prose.
+                enablement_diagnostics.append({
+                    key: audit[key]
+                    for key in (
+                        "status", "missing_fields", "ambiguous_fields", "failure_type",
+                        "grounding_status", "grounding_reason_code", "verification_status",
+                        "source_message_ids", "prompt_version",
+                    )
+                })
+            return attempt
         raise ReplySyncError(409, "account case has no registered automation handler")
 
     automation_attempt: dict[str, Any] | None = None
@@ -858,7 +885,17 @@ async def _process_account_customer_reply_impl(
             route_family=decision.route_family,
             execution_action=route,
         )
-        if prior_classification.get("handler_binding_status") == "active":
+        # A knowledge question is a turn route, not abandonment of pending enablement.
+        pending_enablement = dict(billing_ticket) if (
+            prior_handler == "enablement"
+            and prior_classification.get("handler_binding_status") == "active"
+            and str(billing_ticket.get("automation_status") or "") == "automation"
+            and route == "rag"
+        ) else None
+        if pending_enablement is not None:
+            route_classification["retained_automation_handler"] = "enablement"
+            route_classification["handler_continuation_reason"] = "rag_side_question"
+        elif prior_classification.get("handler_binding_status") == "active":
             route_classification["superseded_automation_handler"] = prior_handler or None
             route_classification["previous_handler_binding_status"] = "superseded"
             route_classification["handler_continuation_reason"] = "no_current_message_field_progress"
@@ -886,7 +923,9 @@ async def _process_account_customer_reply_impl(
             route_family=decision.route_family,
             execution_action=route,
         )
-        if is_automation_route:
+        if pending_enablement is not None:
+            billing_ticket = pending_enablement
+        elif is_automation_route:
             new_handler = str(route_metadata.get("automation_handler") or "").strip()
             automation_attempt = build_automation_attempt(new_handler, route)
             billing_ticket["automation_status"] = "automation"
@@ -920,8 +959,37 @@ async def _process_account_customer_reply_impl(
 
     should_send_internal_email = False
     collected_fields: dict[str, Any] = dict(billing_ticket.get("collected_fields") or {})
+    for diagnostic in enablement_diagnostics:
+        await _sync(
+            repository.record_event,
+            client_ticket_id,
+            "enablement_reply_field_extraction",
+            {**diagnostic, "source_comment_id": normalized_source_id or timestamp},
+        )
+    if enablement_diagnostics:
+        billing_ticket["route_classification"] = {
+            **dict(billing_ticket.get("route_classification") or {}),
+            "field_extraction": enablement_diagnostics[-1],
+        }
     if automation_attempt is not None and automation_attempt.get("requires_human_review"):
         extraction = automation_attempt.get("field_extraction")
+        if isinstance(extraction, EnablementFieldExtraction):
+            await _sync(repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+            billing_ticket = await _record_execution_failure(
+                repository=repository,
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                handler="enablement",
+                stage="enablement_field_extractor",
+                reason_code=f"enablement_field_extraction_{extraction.status}",
+                detail=extraction.grounding_reason_code or extraction.failure_type or extraction.status,
+            )
+            return {
+                **billing_ticket,
+                "messages": canonical_ticket.get("messages", []),
+                "support_ticket_status": canonical_ticket.get("status"),
+                **_reply_job_public(None),
+            }
         if isinstance(extraction, AccountVerificationFieldExtraction):
             failure_reason = f"account_verification_field_extraction_{extraction.status}"
             billing_ticket = reconcile_automation_execution_failure(
@@ -1163,20 +1231,20 @@ async def _process_account_customer_reply_impl(
                 )
                 reply_job = None
         else:
-            escalation = await _sync(
-                escalate_unexpected_reply_to_human,
+            billing_ticket = await _record_execution_failure(
                 account_case=billing_ticket,
                 ticket_id=client_ticket_id,
-                zendesk_ticket_id=_rag_fallback_zendesk_ticket_id(billing_ticket, client_ticket_id),
-                customer_reply_text=customer_message,
-                reason=fallback.reason,
+                handler=str(billing_ticket.get("automation_handler") or "automation"),
+                stage="reply_rag_fallback",
+                reason_code="reply_rag_fallback_escalation",
+                customer_context=customer_message,
+                detail=fallback.reason,
                 repository=repository,
-                timestamp=timestamp,
             )
             LOGGER.info(
                 "reply RAG fallback escalated case %s to human review: %s",
                 client_ticket_id,
-                escalation,
+                billing_ticket.get("alert_status"),
             )
 
     return {

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-07T02:47:20Z",
-  "source_base_commit": "8596d77c61e135316bf8ab75e13c8304e2d6f578",
-  "registry_digest": "3d9045744275c58d3f9f4235d54760b801bfa9beab856c58324270a7bfcd094c",
+  "generated_at": "2026-09-07T06:03:06Z",
+  "source_base_commit": "107cd4bec26007d723256ca2f922f1bc8e981f6d",
+  "registry_digest": "77e5a481c4d78ac8c5374d6b38fb6daa747303e39ec58cf2fe2c1c78d5938832",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2804,6 +2804,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Parity intake and runtime contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_account_intake backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 backend.tests.test_build_automation_release",
           "details": "111 项全部通过：intake 六分支单测（fraud 缺/齐字段、suspension contact、抽取失败→#916 升级、not_automated→Engineer Case+派单、ownership fail-closed）；production runtime 契约（无 visibility 也进管线、pipeline 异常→failed+409 重放、legacy 五字段免 visibility、intake_outcome 落库）；契约矩阵（production visibility 可选，preprod forced internal 不变）；route_payload decision 字段；bundle/镜像清单（依赖模块留在 production 镜像）；compose/deploy/蓝绿假命令回归。"
+        },
+        {
+          "type": "test",
+          "label": "13328 Enablement RAG resume and failure notification regression",
+          "command": "root .venv/bin/python -m pytest -q backend/tests/test_enablement_rag_resume.py plus approved Account/Persona/Worker regression suite",
+          "details": "定向回归515 passed + 137 subtests。合成多轮用例验证知识问题、错误App ID、再次知识问题与更正值的完整链路，以及提取失败、重复incident、告警失败、人工接管、已完成和未知交接结果；Provider、Archer、Zendesk及邮件均为替身，无真实工单副作用。原始13328提取细节未持久化，不将多ID冲突宣称为已证实的唯一原因。"
         },
         {
           "type": "test",
@@ -8327,8 +8333,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。2026-09-01 两次修复 ECS Fraud parity：先恢复 precomputed Route 下 active handler 的字段进展检查，使部分字段回复继续 handoff；再修正共享 Fraud builder 的模型场景为 ACCOUNT_EXTRACTOR，并把 uncertain/sensitive extraction failure 按旧 /production 合同 reconciliation 为 Human Review，从而阻止错误进入 RAG。真正无字段进展的 Agora 产品问题仍保留 RAG fallback。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
-      "next_action": "保持 active。Route v11/Intent v3已随r20260906-734fb77发布到ECS Production；等待用户创建全新Enablement工单验证询问App ID的后续客户问题进入RAG，历史invalid App ID与internal_email_to_send不得伪装成本轮字段进展；不得重放或修改13316。",
+      "next_action": "保持 active。完成13328多轮续跑修复的正式合并及本地栈验证；取得本次单独授权后通过CodeBuild直接Production发布，再由用户以全新Enablement工单验收：知识问答保留业务状态、更正App ID恢复Archer、提取失败不落入RAG、真正转人工只发送一次错误告警。不重放13316或13328，不更新Preproduction ECS、EC2或n8n。",
       "acceptance_criteria": [
+        "active Enablement中途进入RAG只改变本轮路由审计，不丢失已收集字段、Archer恢复状态或原始队列；错误App ID后经过知识问答再提供更正值仍可续跑。",
+        "Enablement提取ambiguous/uncertain或模型失败保留内容无关诊断，直接Human Review且不调用RAG/Archer、不创建客户回复；ECS RAG escalation与提取失败复用幂等错误邮件入口。",
         "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
         "触发链：幂等 per comment id、agent/initial/private/empty/前置评论忽略、非 production case 忽略、Engineer Case 分支记录客户评论事件。",
         "回复链：ownership gate fail-closed停自动化、Suspension direct handoff、handler进展判定与重路由、RAG fallback answer/escalation、追问与确认reply job；绑定Handler只有本轮新增或改变字段时才可覆盖authoritative Route，invalid历史App ID不得复用。",
@@ -8336,6 +8344,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "13328 Enablement RAG resume and failure notification regression",
+          "command": "root .venv/bin/python -m pytest -q backend/tests/test_enablement_rag_resume.py plus approved Account/Persona/Worker regression suite",
+          "details": "定向回归515 passed + 137 subtests。合成多轮用例验证知识问题、错误App ID、再次知识问题与更正值的完整链路，以及提取失败、重复incident、告警失败、人工接管、已完成和未知交接结果；Provider、Archer、Zendesk及邮件均为替身，无真实工单副作用。原始13328提取细节未持久化，不将多ID冲突宣称为已证实的唯一原因。"
+        },
         {
           "type": "test",
           "label": "Case 13316 current-turn Handler/RAG precedence regression",
@@ -8377,8 +8391,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-09-06",
+      "updated_at": "2026-09-07",
       "history": [
+        {
+          "at": "2026-09-07",
+          "event": "enablement_rag_resume_and_failure_alert_fix",
+          "summary": "13328暴露RAG清空Enablement恢复状态、ECS漏接Enablement提取失败及RAG无邮件告警。保留未完成业务绑定，恢复本轮App ID提取，失败立即终止并复用既有人工交接/邮件入口；Persona v30和模型不变，历史工单不动。"
+        },
         {
           "at": "2026-09-06",
           "event": "route_v11_intent_v3_ecs_release_verified",
@@ -16376,7 +16395,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
         "`/account` 的 Automated execution view 展示三类 active Automation：Account & Billing / Fraud Account、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。",
         "Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。",
-        "Enablement 使用 LLM 从客户原文提取并校验字段证据，不限制 App ID 格式；缺失时生成上下文追问，不确定或多候选时转 Human Review。",
+        "Enablement 使用 LLM 从客户原文提取并校验字段证据，知识问答保留未完成业务状态，更正 App ID 后继续处理，提取失败转 Human Review 并发送幂等错误告警。",
         "Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "Fraud Account 自动化通过公司 Outlook reply 接收内部处理结果。",
         "Detailed Invoice 仅保留 Account & Billing 分类，不进入 Automation 执行；既有自动化实现保留供未来启用。",

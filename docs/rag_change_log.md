@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-07 - ECS Enablement resumes after RAG side questions (p2-110)
+
+- Summary: RAG answers preserve active Enablement state; extraction failures stop before RAG, and ECS RAG escalation uses the existing Human Review and idempotent failure-email path.
+- Reason: Case 13328 lost its rejected-App-ID recovery context across a knowledge question; the ECS failure branch omitted Enablement extraction and hid the original failure behind insufficient_evidence.
+- Affected files: automation_account_reply_sync.py and automation_account_intake.py; no RAG retrieval, prompt, Persona model, or legacy entrypoint change.
+- Data impact: no migrations, historical updates, real ticket replay, test email, or knowledge writes.
+- Verification: synthetic multi-turn regression and Account/Persona/Worker tests; live business acceptance awaits a new user-created ticket after an authorized Production release.
+
 ## 2026-09-05 - Hermes Case investigation keeps RAG and L0 promotion disabled (p2-146)
 
 - Summary:
