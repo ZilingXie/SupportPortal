@@ -488,6 +488,7 @@ async def _record_execution_failure(
     reason_code: str,
     detail: Any = "",
     job_id: str | None = None,
+    customer_context: str = "",
 ) -> dict[str, Any]:
     account_case_id = str(
         account_case.get("account_case_id")
@@ -522,6 +523,7 @@ async def _record_execution_failure(
         failure_stage=stage,
         failure_code=reason_code,
         reason=str(detail or reason_code),
+        customer_context=customer_context,
         repository=repository,
         timestamp=updated.get("updated_at") or _now_iso(),
     )

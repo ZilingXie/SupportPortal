@@ -901,7 +901,8 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         self.assertNotIn("app_id", build_attempt.call_args.kwargs["existing_fields"])
         rag_fallback.assert_called_once()
         run_archer.assert_not_awaited()
-        self.assertEqual(outcome["execution_action"], "rag")
+        self.assertEqual(outcome["execution_action"], "enablement")
+        self.assertEqual(outcome["automation_context"], account_case["automation_context"])
         self.assertEqual(created_jobs[0]["reply_intent"], "rag_fallback_answer")
 
     def test_runtime_requests_route_without_preparation(self):
@@ -1506,13 +1507,9 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
                 reason="ragflow_skill_authentication",
             ),
         ), patch(
-            "backend.services.automation_account_reply_sync.escalate_unexpected_reply_to_human",
-            return_value={
-                "mode": "production",
-                "internal_note_status": "sent",
-                "route_back_status": "queued",
-                "handoff_status": "queued",
-            },
+            "backend.services.automation_account_reply_sync._record_execution_failure",
+            new_callable=AsyncMock,
+            return_value={"execution_action": "rag", "automation_status": "human_review_required"},
         ) as escalate, patch(
             "backend.services.automation_account_reply_sync._create_reply_job",
         ) as create_reply_job:
@@ -1531,8 +1528,9 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         escalate.assert_called_once()
         escalation_call = escalate.call_args.kwargs
         self.assertEqual(escalation_call["ticket_id"], "12992")
-        self.assertEqual(escalation_call["zendesk_ticket_id"], "12992")
-        self.assertEqual(escalation_call["reason"], "ragflow_skill_authentication")
+        self.assertEqual(escalation_call["detail"], "ragflow_skill_authentication")
+        self.assertEqual(escalation_call["stage"], "reply_rag_fallback")
+        self.assertEqual(escalation_call["customer_context"], "question outside the knowledge base")
         self.assertEqual(escalation_call["account_case"]["automation_handler"], None)
 
     def test_split_reply_rag_answer_greeting_uses_case_name_then_comment_hint(self):
