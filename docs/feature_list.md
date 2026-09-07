@@ -36,7 +36,7 @@
 - staging Account 入口的 AI 消息可由 Admin 选择写入关联 Zendesk ticket 的 internal comment；production Automated case 的 AI 回复自动以公开评论发给客户，人工改派工单后自动停止发言。
 - production Automated case 在任何外部副作用前自动由配置的 AI Agent 接手 Zendesk 工单并持久化 ownership 状态，手动按钮已移除；ownership 失败 fail closed 转 Human Review。
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
-- Automation Behavior 只提取结构化字段和处理事实，所有语义正文由 pinned Automation Persona 一次性完整生成；缺字段、SLA、24h 与措辞要求由当前 intent 的结构化 facts 和 prompt 指导，不再经过独立 LLM Reviewer。三项及以上缺失字段要求逐项 bullet，代码只对硬安全或该格式错误拒绝并允许同一 Persona 整段重写一次；Worker 不补写、裁剪或改写正文，应用只添加 greeting、RAG 引用、附件与传输格式。
+- Automation Behavior 提供结构化事实，pinned Persona 使用 Astra/low 完整生成正文；缺失信息排版由 prompt 指导并保留原始换行，排版差异不阻断，只有硬安全失败允许一次整段重写，Worker 原样发布且无 Reviewer 或代码补句。
 - Account 入口支持人工纠正完整路由元组，并通过 Route errors 视图分析误路由案例。
 - Account 入口支持对每条工单的路由结果进行 pass/review 标记，默认只显示未 review 工单，可切换 reviewed 视图。
 - Account 入口支持默认 All 的重叠 route filter，按 Automated、Backend Operation、Account & Billing、Tech、Security & Compliance、Conversation 和 Human Review 等细分类别分页查看，并显示同一快照的 case counts。

@@ -34,6 +34,18 @@ from backend.services.llm_profiles import (
 
 
 class LlmProfileTests(unittest.TestCase):
+    def test_persona_astra_low_omits_temperature_even_with_legacy_override(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
+                                    "AUTOMATION_PERSONA_TEMPERATURE": "0.4"}, clear=True):
+            profile = resolve_model_profile("automation_persona")
+            route = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
+            extractor = resolve_model_profile(ACCOUNT_EXTRACTOR_SCENARIO)
+        self.assertEqual(profile.model, "gpt-6-astra")
+        self.assertEqual(profile.reasoning_effort, "low")
+        self.assertIsNone(profile.temperature)
+        self.assertEqual(route.model, "gpt-5.6-luna")
+        self.assertEqual(extractor.model, "gpt-5.6-luna")
+
     def test_account_route_profile_uses_luna_defaults_without_changing_legacy_router(self) -> None:
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",

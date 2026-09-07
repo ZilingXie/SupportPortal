@@ -916,6 +916,7 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
             payload.pop("persona_generation_attempts", None)
             payload.pop("persona_safety_status", None)
             payload.pop("persona_safety_issue_codes", None)
+            payload.pop("persona_generation_diagnostics", None)
             persona_assignment = {
                 "persona_key": payload.get("persona_key"),
                 "version": payload.get("persona_version"),
@@ -928,6 +929,9 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
                     account_scope=True,
                 )
             except AutomationPersonaError as exc:
+                payload["persona_generation_diagnostics"] = list(exc.generation_diagnostics)
+                payload["persona_generation_attempts"] = exc.attempt_count
+                job["payload"] = payload
                 transitioned = _move_automation_reply_to_human_review(
                     job,
                     ticket,
@@ -948,6 +952,7 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
                     "persona_generation_attempts": rendered.generation_attempts,
                     "persona_safety_status": rendered.safety_status,
                     "persona_safety_issue_codes": list(rendered.safety_issue_codes),
+                    "persona_generation_diagnostics": list(rendered.generation_diagnostics),
                 }
             )
         job["payload"] = payload
@@ -1155,6 +1160,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload.pop("persona_generation_attempts", None)
         payload.pop("persona_safety_status", None)
         payload.pop("persona_safety_issue_codes", None)
+        payload.pop("persona_generation_diagnostics", None)
         persona_assignment = {
             "persona_key": payload.get("persona_key"),
             "version": payload.get("persona_version"),
@@ -1167,6 +1173,9 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
                 account_scope=True,
             )
         except AutomationPersonaError as exc:
+            payload["persona_generation_diagnostics"] = list(exc.generation_diagnostics)
+            payload["persona_generation_attempts"] = exc.attempt_count
+            current_job["payload"] = payload
             transitioned = _move_automation_reply_to_human_review(
                 current_job,
                 ticket,
@@ -1185,6 +1194,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         payload["persona_generation_attempts"] = rendered.generation_attempts
         payload["persona_safety_status"] = rendered.safety_status
         payload["persona_safety_issue_codes"] = list(rendered.safety_issue_codes)
+        payload["persona_generation_diagnostics"] = list(rendered.generation_diagnostics)
         current_job["payload"] = payload
         if not _update_claimed_account_reply_job(
             current_job,

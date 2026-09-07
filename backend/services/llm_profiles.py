@@ -425,14 +425,15 @@ def resolve_model_profile(
             fallback_models=(),
         ))
     if scenario == AUTOMATION_PERSONA_SCENARIO:
+        persona_model = _clean_text(os.getenv("AUTOMATION_PERSONA_MODEL")) or "gpt-6-astra"
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("AUTOMATION_PERSONA_MODEL")) or "gpt-5.6-luna",
+            model=persona_model,
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("AUTOMATION_PERSONA_REASONING_EFFORT")) or "low",
-            temperature=_safe_float_env("AUTOMATION_PERSONA_TEMPERATURE", 0.4),
+            temperature=None if persona_model == "gpt-6-astra" else _safe_float_env("AUTOMATION_PERSONA_TEMPERATURE", 0.4),
             timeout_seconds=_safe_positive_float_env("AUTOMATION_PERSONA_TIMEOUT_SECONDS", 30.0),
             max_retries=_safe_int_env("AUTOMATION_PERSONA_MAX_RETRIES", 1),
             fallback_models=(),

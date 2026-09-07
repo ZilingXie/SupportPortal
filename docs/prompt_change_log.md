@@ -1,5 +1,12 @@
 # Prompt Change Log
 
+## 2026-09-07 - Persona v30 Astra and lossless Responses layout (p2-144)
+
+- Version/model: `automation-persona-v30`, `gpt-6-astra/low`; Astra requests omit temperature, including legacy environment overrides. Other model profiles remain unchanged.
+- Root mechanism: shared Responses text extraction collapsed all whitespace before Persona validation. A correct multiline list therefore became an inline sentence. Both Responses wire formats now preserve internal whitespace; metadata/error normalization is unchanged. Historical Case 13326 raw drafts were not retained, so its exact generated layout remains unknown.
+- Contract: missing-information one/two/many examples override generic prose preferences. Layout and label wording are nonblocking diagnostics, not safety failures; no Reviewer or deterministic prose assembly. Hard safety still permits at most one whole-body rewrite. Both Worker render paths retain content-free per-attempt diagnostics on success and atomic Human Review transition.
+- Verification: targeted regression 503 passed + 137 subtests, including both response wire formats, Astra request parameters, hard safety, immutable publication and failure diagnostics. Real-provider acceptance and Production release evidence are recorded separately; existing tickets are not replayed.
+
 ## 2026-09-06 - Route continuation and missing-information format repair (p2-110, p2-144)
 
 - Prompt or model version: `account-layered-router-v10` -> `account-layered-router-v11`, `account-intent-v2` -> `account-intent-v3`, `automation-persona-v28` -> `automation-persona-v29`; model profiles unchanged.

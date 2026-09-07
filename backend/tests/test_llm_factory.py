@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import unittest
 import urllib.error
 from unittest.mock import patch
 
 from backend.services.llm_factory import LlmInvocationError, _responses_request, invoke_chat_text, invoke_responses_text
-from backend.services.llm_profiles import ModelProfile, OPENAI_CHAT_API, OPENAI_RESPONSES_API
+from backend.services.llm_profiles import ModelProfile, OPENAI_CHAT_API, OPENAI_RESPONSES_API, resolve_model_profile
 
 
 class _FakeResponse:
@@ -25,6 +26,37 @@ class _FakeResponse:
 
 
 class LlmFactoryTests(unittest.TestCase):
+    def test_responses_preserve_body_layout_in_both_wire_formats(self) -> None:
+        body = "Please share:\n\n- Office address\n- Contact number\n- Console settings\n\nI’ll follow up."
+        for payload in ({"output_text": body}, {"output": [{"type": "message", "content": [
+            {"type": "output_text", "text": body}]}]}):
+            with self.subTest(payload=tuple(payload)), patch(
+                "backend.services.llm_factory.urllib.request.urlopen", return_value=_FakeResponse(payload)
+            ):
+                result = invoke_responses_text(profile=self._profile(api_mode=OPENAI_RESPONSES_API),
+                                               system_prompt="test", user_prompt="test")
+            self.assertEqual(result.text, body)
+
+    def test_astra_persona_request_omits_temperature_without_retry(self) -> None:
+        from backend.services.account_ai_execution import invoke_account_responses_text
+
+        requests = []
+
+        def respond(request, timeout):
+            requests.append(json.loads(request.data))
+            return _FakeResponse({"output_text": "Please share your office address."})
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
+                                    "AUTOMATION_PERSONA_TEMPERATURE": "0.4"}, clear=True), patch(
+            "backend.services.llm_factory.urllib.request.urlopen", side_effect=respond
+        ):
+            invoke_account_responses_text(profile=resolve_model_profile("automation_persona"),
+                system_prompt="test", user_prompt="test", stage="automation_persona", max_attempts=1)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["model"], "gpt-6-astra")
+        self.assertEqual(requests[0]["reasoning"]["effort"], "low")
+        self.assertNotIn("temperature", requests[0])
+
     def test_account_endpoint_override_is_used_only_by_account_profile_request(self) -> None:
         profile = ModelProfile(
             scenario="account_route",

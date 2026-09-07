@@ -67,7 +67,8 @@ def _read_http_error_payload(error: urllib.error.HTTPError) -> str:
 
 
 def _responses_text(payload: dict[str, Any]) -> str:
-    output_text = _normalize_text(payload.get("output_text"))
+    # Customer prose must retain paragraph and list boundaries.
+    output_text = str(payload.get("output_text") or "").strip()
     if output_text:
         return output_text
     output_items = payload.get("output") if isinstance(payload.get("output"), list) else []
@@ -77,7 +78,7 @@ def _responses_text(payload: dict[str, Any]) -> str:
         for content_item in item.get("content") or []:
             if not isinstance(content_item, dict):
                 continue
-            text = _normalize_text(content_item.get("text"))
+            text = str(content_item.get("text") or "").strip()
             if text:
                 return text
     return ""

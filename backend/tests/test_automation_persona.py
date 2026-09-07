@@ -222,7 +222,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v29")
+        self.assertEqual(result.prompt_version, "automation-persona-v30")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -956,7 +956,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v29")
+        self.assertEqual(result.prompt_version, "automation-persona-v30")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1010,7 +1010,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 result.content,
             )
 
-    def test_three_missing_fields_rewrite_once_when_bullets_are_missing(self) -> None:
+    def test_three_missing_fields_without_bullets_publish_without_rewrite(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         responses = [
             SimpleNamespace(
@@ -1043,20 +1043,17 @@ class AutomationPersonaTests(unittest.TestCase):
                 account_scope=True,
             )
 
-        self.assertEqual(invoke.call_count, 2)
-        self.assertEqual(result.content, f"Hi Customer,\n\n{responses[1].text}")
-        self.assertEqual(result.generation_attempts, 2)
-        self.assertEqual(
-            result.safety_issue_codes,
-            ("automation_persona_missing_information_format_invalid",),
-        )
-        revision = json.loads(invoke.call_args_list[1].kwargs["user_prompt"])["revision"]
-        self.assertEqual(
-            revision["issue_codes"],
-            ["automation_persona_missing_information_format_invalid"],
-        )
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(result.content, f"Hi Customer,\n\n{responses[0].text}")
+        self.assertEqual(result.generation_attempts, 1)
+        self.assertEqual(result.safety_issue_codes, ())
+        self.assertEqual(result.generation_diagnostics, ({
+            "attempt": 1, "safety_issue_codes": [], "expected_field_count": 3,
+            "list_item_count": 0, "list_type": "none",
+            "layout_issue_codes": ["missing_information_list_layout"],
+        },))
 
-    def test_three_missing_fields_fail_closed_after_second_invalid_format(self) -> None:
+    def test_soft_missing_information_omission_does_not_block(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(text="Please send all missing details.", model_name="persona-model")
         with patch(
@@ -1064,8 +1061,7 @@ class AutomationPersonaTests(unittest.TestCase):
         ), patch(
             "backend.services.account_ai_execution.invoke_responses_text", return_value=response
         ) as invoke:
-            with self.assertRaises(AutomationPersonaError) as raised:
-                render_automation_reply(
+            result = render_automation_reply(
                     reply_facts=build_account_automation_reply_facts(
                         handler="fraud_account",
                         action="fraud_account",
@@ -1076,9 +1072,49 @@ class AutomationPersonaTests(unittest.TestCase):
                     account_scope=True,
                 )
 
-        self.assertEqual(raised.exception.code, "automation_persona_missing_information_format_invalid")
-        self.assertEqual(raised.exception.attempt_count, 2)
-        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
+        self.assertEqual(result.safety_status, "passed")
+        self.assertEqual(invoke.call_count, 1)
+
+    def test_missing_information_layout_variants_are_nonblocking_at_publication(self) -> None:
+        facts = build_account_automation_reply_facts(
+            handler="fraud_account", action="fraud_account",
+            missing_fields=["office_address", "contact_number", "console_configuration"],
+            collected_fields={},
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        for marker, kind in (("-", "bullet"), ("*", "bullet"), ("•", "bullet"), ("1.", "numbered")):
+            body = (f"Please send:\n{marker} **Your office location**\n"
+                    f"{marker} A business phone number\n{marker} Your most recent console settings")
+            with self.subTest(marker=marker), patch(
+                "backend.services.automation_persona.resolve_model_profile", return_value=profile
+            ), patch("backend.services.automation_persona.invoke_responses_text",
+                     return_value=SimpleNamespace(text=body, model_name="persona-model")) as invoke:
+                result = render_automation_reply(reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Precise"}}, account_scope=True)
+                validate_account_reply_contract(result.content, facts)
+            self.assertEqual(invoke.call_count, 1)
+            self.assertEqual(result.content, f"Hi Customer,\n\n{body}")
+            self.assertEqual(result.generation_diagnostics[0]["list_type"], kind)
+            self.assertEqual(result.generation_diagnostics[0]["list_item_count"], 3)
+
+    def test_failed_generation_preserves_both_rounds_without_draft_text(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        for second in (SimpleNamespace(text="Hi Maya, still unsafe.", model_name="persona-model"),
+                       ValueError("provider failure")):
+            with self.subTest(second=type(second).__name__), patch(
+                "backend.services.automation_persona.resolve_model_profile", return_value=profile
+            ), patch("backend.services.automation_persona.invoke_responses_text", side_effect=[
+                SimpleNamespace(text="Hi Maya, first draft.", model_name="persona-model"), second
+            ]) as invoke, self.assertRaises(AutomationPersonaError) as raised:
+                render_automation_reply(reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                    persona_assignment={"content": {"instruction": "Precise"}}, account_scope=True)
+            self.assertEqual(invoke.call_count, 2)
+            diagnostics = raised.exception.generation_diagnostics
+            self.assertEqual([d["attempt"] for d in diagnostics], [1, 2])
+            self.assertEqual(diagnostics[0]["safety_issue_codes"], ["automation_persona_greeting_forbidden"])
+            self.assertTrue(diagnostics[1]["safety_issue_codes"])
+            self.assertNotIn("Maya", json.dumps(diagnostics))
 
     def test_customer_first_name_uses_first_token_and_safe_fallback(self) -> None:
         self.assertEqual(customer_first_name("  Jack   Gold  "), "Jack")
@@ -1438,7 +1474,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.prompt_version, "automation-persona-v29")
+        self.assertEqual(result.prompt_version, "automation-persona-v30")
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.generation_attempts, 1)
 
@@ -1757,7 +1793,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v29")
+        self.assertEqual(result.prompt_version, "automation-persona-v30")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
