@@ -26,7 +26,7 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - `/account` 的 Automated execution view 展示三类 active Automation：Account & Billing / Fraud Account、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。
 - Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。
-- Enablement 使用 LLM 从客户原文提取并校验字段证据，知识问答保留未完成业务状态，更正 App ID 后继续处理，提取失败转 Human Review 并发送幂等错误告警。
+- ECS Enablement、Fraud、Suspension 使用统一公开对话上下文理解本轮请求，以客户来源校验新增字段，知识问答保留未完成业务状态，失败转人工并发送幂等错误告警。
 - Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。
 - Fraud Account 自动化通过公司 Outlook reply 接收内部处理结果。
 - Detailed Invoice 仅保留 Account & Billing 分类，不进入 Automation 执行；既有自动化实现保留供未来启用。

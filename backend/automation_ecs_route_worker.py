@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from backend.repositories.ticket_repository import create_ticket_repository
 from backend.services.account_route_pipeline import decide_account_route
+from backend.services.automation_context import build_automation_context, public_messages, understanding_messages
 from backend.services.automation_ecs_contracts import IntakeEventType, JobKind, RouteJobPayload
 from backend.services.automation_ecs_heartbeat import JobLeaseHeartbeat, WorkerHeartbeat
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
@@ -19,6 +20,25 @@ from backend.services.automation_ecs_store import AutomationEcsStore, create_aut
 from backend.services.prompt_runtime import initialize_prompt_runtime
 
 LOGGER = logging.getLogger("supportportal.automation_ecs_route_worker")
+
+
+def _comment_role(comment: Any) -> str | None:
+    role = str(comment.author.role or "").strip().lower()
+    role_is_agent = None
+    if role in {"agent", "staff", "admin", "support"}:
+        role_is_agent = True
+    elif role in {"end-user", "end_user", "customer", "requester", "user"}:
+        role_is_agent = False
+    if (
+        role_is_agent is not None
+        and comment.author.is_agent is not None
+        and role_is_agent != comment.author.is_agent
+    ):
+        raise ValueError("automation_context_author_identity_conflict")
+    is_agent = role_is_agent if role_is_agent is not None else comment.author.is_agent
+    if is_agent is None:
+        return None
+    return "assistant" if is_agent else "user"
 
 
 def _route_payload(result: Any) -> dict[str, Any]:
@@ -51,15 +71,30 @@ def _route_payload(result: Any) -> dict[str, Any]:
 def _ticket_context(payload: RouteJobPayload) -> list[dict[str, str]]:
     snapshot = payload.event.comment_snapshot
     if snapshot is None:
-        return []
-    return [
-        {
-            "role": "assistant" if comment.author.is_agent else "user",
+        return public_messages([{"message_id": payload.event.event_id, "role": "customer",
+                                 "created_at": payload.event.occurred_at.isoformat(),
+                                 "content": payload.event.routing_text()}])
+    comments = sorted(snapshot.comments, key=lambda comment: (comment.created_at, comment.id))
+    if snapshot.trigger_comment_id:
+        trigger_index = next((i for i, comment in enumerate(comments)
+                              if str(comment.id) == str(snapshot.trigger_comment_id)), None)
+        if trigger_index is None:
+            raise ValueError("automation_context_current_message_not_found")
+        comments = comments[:trigger_index + 1]
+    context = []
+    for comment in comments:
+        if not comment.public or not comment.body.strip():
+            continue
+        role = _comment_role(comment)
+        if role is None:
+            continue
+        context.append({
+            "role": role,
             "content": comment.body,
-        }
-        for comment in snapshot.comments
-        if comment.body.strip()
-    ]
+            "message_id": comment.id,
+            "created_at": comment.created_at.isoformat(),
+        })
+    return public_messages(context)
 
 
 @dataclass
@@ -69,6 +104,7 @@ class RouteWorker:
     persona_resolver: Callable[[str], dict[str, Any] | None]
     route_decider: Callable[..., Any] = decide_account_route
     lease_seconds: int = 120
+    case_loader: Callable[[str], dict[str, Any] | None] | None = None
 
     def process_once(self) -> bool:
         self.store.heartbeat(
@@ -87,10 +123,14 @@ class RouteWorker:
         try:
             payload = RouteJobPayload.model_validate(job.payload)
             event = payload.event
+            context = _ticket_context(payload)
+            case = self.case_loader(event.ticket.id) if self.case_loader else None
+            context = understanding_messages(build_automation_context({"ticket_id": event.ticket.id,
+                "status": event.ticket.status, "messages": context}, case if isinstance(case, dict) else {}))
             result = self.route_decider(
-                f"{event.ticket.subject}\n\n{event.routing_text()}".strip(),
+                event.routing_text(),
                 ticket_subject=event.ticket.subject,
-                ticket_context=_ticket_context(payload),
+                ticket_context=context,
                 current_ticket_status=event.ticket.status,
                 require_latest=True,
             )
@@ -130,6 +170,7 @@ def run_route_worker() -> int:
         settings=settings,
         store=store,
         persona_resolver=repository.resolve_account_persona,
+        case_loader=repository.get_billing_ticket_by_client_ticket_id,
     )
     stopping = Event()
     heartbeat = WorkerHeartbeat(

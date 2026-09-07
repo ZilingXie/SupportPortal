@@ -15,6 +15,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 from typing import Any
+from backend.services.automation_context import build_automation_context, persona_context, extraction_audit, understanding_messages
 
 from backend.services.account_processing_profiles import is_live_account_processing_profile
 
@@ -45,6 +46,7 @@ from backend.services.account_verification_field_extractor import (
 )
 from backend.services.account_zendesk_comments import (
     ZendeskCommentSnapshotError,
+    author_is_agent,
     normalize_snapshot,
 )
 from backend.services.automation_account_intake import (
@@ -140,18 +142,6 @@ def _reply_job_public(job: dict[str, Any] | None) -> dict[str, Any]:
         "ai_reply_published_at": job.get("published_at"),
         "ai_reply_error": str(payload.get("error") or payload.get("cancel_reason") or "") or None,
     }
-
-
-def _rag_fallback_ticket_context(canonical_ticket: dict[str, Any]) -> list[dict[str, str]]:
-    context: list[dict[str, str]] = []
-    for message in (canonical_ticket.get("messages") or [])[-6:]:
-        if not isinstance(message, dict):
-            continue
-        role = str(message.get("role") or "").strip()
-        content = str(message.get("content") or "").strip()
-        if role and content:
-            context.append({"role": role, "content": content})
-    return context
 
 
 async def process_zendesk_comment_trigger(
@@ -318,6 +308,14 @@ async def process_zendesk_comment_trigger(
             processing_profile=expected_profile,
             persona_assignment=persona_assignment,
             customer_name_hint=str(getattr(trigger_comment, "author_name", None) or "").strip() or None,
+            public_conversation=[
+                {"message_id": str(comment.zendesk_comment_id),
+                 "role": "assistant" if author_is_agent(comment.author_kind) else "customer",
+                 "created_at": str(comment.created_at), "content": comment.body,
+                 "is_public": True}
+                for comment in snapshot.comments
+                if comment.is_public and author_is_agent(comment.author_kind) is not None
+            ],
         )
     except ReplySyncError as exc:
         failure_payload = {
@@ -360,6 +358,7 @@ async def process_account_customer_reply(
     processing_profile: str = "production",
     customer_name_hint: str | None = None,
     persona_assignment: dict[str, Any] | None = None,
+    public_conversation: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     from backend.services.llm_usage_capture import (
         begin_case_usage_capture,
@@ -381,6 +380,7 @@ async def process_account_customer_reply(
             processing_profile=processing_profile,
             customer_name_hint=customer_name_hint,
             persona_assignment=persona_assignment,
+            public_conversation=public_conversation,
         )
     finally:
         end_case_usage_capture(usage_token)
@@ -405,6 +405,7 @@ async def _process_account_customer_reply_impl(
     processing_profile: str = "production",
     customer_name_hint: str | None = None,
     persona_assignment: dict[str, Any] | None = None,
+    public_conversation: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     import asyncio
 
@@ -461,6 +462,8 @@ async def _process_account_customer_reply_impl(
     normalized_source_id = str(message_source_id or "").strip()
     if normalized_source_id:
         customer_msg["external_id"] = normalized_source_id
+        if public_conversation is not None:
+            customer_msg["message_id"] = normalized_source_id
         duplicate = any(
             isinstance(existing, dict)
             and str(existing.get("external_id") or "").strip() == normalized_source_id
@@ -503,6 +506,13 @@ async def _process_account_customer_reply_impl(
         else {}
     )
     prior_archer = prior_automation_context.get("enablement_archer")
+    context_ticket = canonical_ticket if public_conversation is None else {
+        **canonical_ticket, "messages": public_conversation,
+    }
+    conversation_context = build_automation_context(context_ticket, billing_ticket, current_message=customer_msg)
+    prior_automation_context["reply_conversation_context"] = persona_context(conversation_context,
+        [str(v) for k, v in prior_collected_fields.items() if k in {"app_id", "customer_email"}])
+    billing_ticket["automation_context"] = dict(prior_automation_context)
     enablement_archer_recoverable = (
         prior_handler == "enablement"
         and isinstance(prior_archer, dict)
@@ -701,7 +711,7 @@ async def _process_account_customer_reply_impl(
             "ai_reply_status": None,
         }
 
-    enablement_diagnostics: list[dict[str, Any]] = []
+    extraction_diagnostics: list[dict[str, Any]] = []
 
     def build_automation_attempt(handler: str, action: str) -> dict[str, Any]:
         registration = account_automation_handler(action)
@@ -716,7 +726,7 @@ async def _process_account_customer_reply_impl(
             persisted_follow_up_count = int(prior_automation_context.get("follow_up_count") or 0)
             if persisted_follow_up_count == 0 and already_requested_fields:
                 persisted_follow_up_count = 1
-            return _build_verification_attempt(
+            attempt = _build_verification_attempt(
                 ticket_subject=ticket_subject,
                 customer_messages=customer_messages,
                 ticket_id=client_ticket_id,
@@ -724,8 +734,13 @@ async def _process_account_customer_reply_impl(
                 customer_email=customer_email,
                 zendesk_ticket_url=url,
                 existing_fields=prior_collected_fields,
+                automation_context=conversation_context,
                 follow_up_count=persisted_follow_up_count,
             )
+            extraction = attempt.get("field_extraction")
+            if isinstance(extraction, AccountVerificationFieldExtraction):
+                extraction_diagnostics.append(extraction_audit(extraction))
+            return attempt
         if registration.implementation == "billing":
             return _build_billing_attempt(
                 action=action,
@@ -745,7 +760,6 @@ async def _process_account_customer_reply_impl(
                 # only from this comment so an unrelated question cannot
                 # revive the old Archer attempt from accumulated history.
                 enablement_existing_fields.pop("app_id", None)
-                enablement_customer_messages = [customer_msg]
             try:
                 attempt = _build_enablement_attempt(
                     message=conversation_text,
@@ -756,6 +770,7 @@ async def _process_account_customer_reply_impl(
                     customer_email=customer_email,
                     zendesk_ticket_url=url,
                     existing_fields=enablement_existing_fields,
+                    automation_context=conversation_context,
                     already_requested_fields=sorted(already_requested_fields),
                 )
             except AccountProcessingFailure as exc:
@@ -771,16 +786,7 @@ async def _process_account_customer_reply_impl(
                 }
             extraction = attempt.get("field_extraction")
             if isinstance(extraction, EnablementFieldExtraction):
-                audit = extraction.audit_payload()
-                # Persist diagnostics, never source quotes, identifiers or model prose.
-                enablement_diagnostics.append({
-                    key: audit[key]
-                    for key in (
-                        "status", "missing_fields", "ambiguous_fields", "failure_type",
-                        "grounding_status", "grounding_reason_code", "verification_status",
-                        "source_message_ids", "prompt_version",
-                    )
-                })
+                extraction_diagnostics.append(extraction_audit(extraction))
             return attempt
         raise ReplySyncError(409, "account case has no registered automation handler")
 
@@ -819,15 +825,11 @@ async def _process_account_customer_reply_impl(
         current_handler_progress_fields = changed_fields
         registration = account_automation_handler(prior_action)
         if registration and registration.implementation == "account_verification":
-            ticket_context = [
-                {"role": str(msg.get("role") or ""), "content": str(msg.get("content") or "")}
-                for msg in canonical_ticket.get("messages", [])
-                if isinstance(msg, dict)
-            ]
+            ticket_context = understanding_messages(conversation_context)
             latest_assistant_message = next(
                 (
                     msg
-                    for msg in reversed(canonical_ticket.get("messages", []))
+                    for msg in reversed(conversation_context["conversation"])
                     if isinstance(msg, dict) and str(msg.get("role") or "").lower() == "assistant"
                 ),
                 None,
@@ -855,15 +857,11 @@ async def _process_account_customer_reply_impl(
 
     decision = None
     if not handler_continued:
-        ticket_context = [
-            {"role": str(msg.get("role") or ""), "content": str(msg.get("content") or "")}
-            for msg in canonical_ticket.get("messages", [])
-            if isinstance(msg, dict)
-        ]
+        ticket_context = understanding_messages(conversation_context)
         latest_assistant_message = next(
             (
                 msg
-                for msg in reversed(canonical_ticket.get("messages", []))
+                for msg in reversed(conversation_context["conversation"])
                 if isinstance(msg, dict) and str(msg.get("role") or "").lower() == "assistant"
             ),
             None,
@@ -885,15 +883,16 @@ async def _process_account_customer_reply_impl(
             route_family=decision.route_family,
             execution_action=route,
         )
-        # A knowledge question is a turn route, not abandonment of pending enablement.
-        pending_enablement = dict(billing_ticket) if (
-            prior_handler == "enablement"
+        # A knowledge question is a turn route, not abandonment of pending business.
+        pending_automation = dict(billing_ticket) if (
+            (prior_handler == "enablement" or
+             (prior_handler == "billing" and prior_action == "fraud_account"))
             and prior_classification.get("handler_binding_status") == "active"
             and str(billing_ticket.get("automation_status") or "") == "automation"
             and route == "rag"
         ) else None
-        if pending_enablement is not None:
-            route_classification["retained_automation_handler"] = "enablement"
+        if pending_automation is not None:
+            route_classification["retained_automation_handler"] = prior_handler
             route_classification["handler_continuation_reason"] = "rag_side_question"
         elif prior_classification.get("handler_binding_status") == "active":
             route_classification["superseded_automation_handler"] = prior_handler or None
@@ -923,8 +922,8 @@ async def _process_account_customer_reply_impl(
             route_family=decision.route_family,
             execution_action=route,
         )
-        if pending_enablement is not None:
-            billing_ticket = pending_enablement
+        if pending_automation is not None:
+            billing_ticket = pending_automation
         elif is_automation_route:
             new_handler = str(route_metadata.get("automation_handler") or "").strip()
             automation_attempt = build_automation_attempt(new_handler, route)
@@ -959,17 +958,17 @@ async def _process_account_customer_reply_impl(
 
     should_send_internal_email = False
     collected_fields: dict[str, Any] = dict(billing_ticket.get("collected_fields") or {})
-    for diagnostic in enablement_diagnostics:
+    for diagnostic in extraction_diagnostics:
         await _sync(
             repository.record_event,
             client_ticket_id,
-            "enablement_reply_field_extraction",
+            "enablement_reply_field_extraction" if prior_handler == "enablement" else "fraud_reply_field_extraction",
             {**diagnostic, "source_comment_id": normalized_source_id or timestamp},
         )
-    if enablement_diagnostics:
+    if extraction_diagnostics:
         billing_ticket["route_classification"] = {
             **dict(billing_ticket.get("route_classification") or {}),
-            "field_extraction": enablement_diagnostics[-1],
+            "field_extraction": extraction_diagnostics[-1],
         }
     if automation_attempt is not None and automation_attempt.get("requires_human_review"):
         extraction = automation_attempt.get("field_extraction")
@@ -1037,6 +1036,7 @@ async def _process_account_customer_reply_impl(
         merged_automation_context = dict(
             automation_attempt.get("automation_context") or prior_automation_context
         )
+        merged_automation_context["reply_conversation_context"] = prior_automation_context["reply_conversation_context"]
         ownership_state = (billing_ticket.get("automation_context") or {}).get("zendesk_ownership")
         if isinstance(ownership_state, dict):
             merged_automation_context["zendesk_ownership"] = ownership_state
@@ -1188,7 +1188,7 @@ async def _process_account_customer_reply_impl(
             question=customer_message,
             request_id=f"reply-rag-fallback:{client_ticket_id}:{timestamp}",
             ticket_id=client_ticket_id or None,
-            ticket_context=_rag_fallback_ticket_context(canonical_ticket),
+            ticket_context=understanding_messages(conversation_context),
         )
         if fallback.kind == "answer":
             try:

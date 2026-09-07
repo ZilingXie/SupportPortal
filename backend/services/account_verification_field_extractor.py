@@ -79,7 +79,7 @@ class AccountVerificationFieldExtraction:
     grounding_reason_code: str | None = None
     sensitive_data_types: list[str] = field(default_factory=list)
     failure_type: str | None = None
-    prompt_snapshot: dict[str, str] = field(default_factory=dict)
+    prompt_snapshot: dict[str, Any] = field(default_factory=dict)
 
     @property
     def requires_human_review(self) -> bool:
@@ -101,6 +101,8 @@ class AccountVerificationFieldExtraction:
             "sensitive_data_types": list(self.sensitive_data_types),
             "failure_type": self.failure_type,
             "prompt_version": ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION,
+            "verification_status": self.prompt_snapshot.get("verification_status", "not_attempted"),
+            "field_diagnostics": list(self.prompt_snapshot.get("field_diagnostics") or []),
         }
 
 
@@ -254,10 +256,15 @@ def extract_account_verification_fields(
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_json,
     model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
+    automation_context: dict[str, Any] | None = None,
 ) -> AccountVerificationFieldExtraction:
+    from backend.services.automation_context import evidence_messages, extraction_context_prompt, without_trusted_candidates, field_evidence_diagnostics
     trusted_fields = _clean_existing_fields(existing_fields)
-    messages = _customer_messages(customer_messages)
+    messages = _customer_messages(evidence_messages(customer_messages, automation_context))
     sensitive_sources = [str(ticket_subject or ""), *[message["content"] for message in messages]]
+    if automation_context is not None:
+        sensitive_sources.extend(m["content"] for m in automation_context["conversation"]
+                                 if m["role"] == "customer")
     if isinstance(existing_fields, dict):
         sensitive_sources.extend(str(value or "") for value in existing_fields.values())
     sensitive_types = sorted({
@@ -273,6 +280,7 @@ def extract_account_verification_fields(
         "system_prompt": system_prompt,
         "user_prompt": "[redacted account verification extraction input]",
         "verification_status": "not_attempted",
+        "field_diagnostics": [],
     }
     if sensitive_types:
         return AccountVerificationFieldExtraction(
@@ -307,6 +315,8 @@ def extract_account_verification_fields(
             "customer_messages": redacted_messages,
         }
     )
+    if automation_context is not None:
+        user_prompt += _redact_sensitive_payment_data(extraction_context_prompt(automation_context))
     try:
         payload = (
             _invoke_json_for_scenario(system_prompt=system_prompt, user_prompt=user_prompt, scenario=model_scenario)
@@ -326,6 +336,14 @@ def extract_account_verification_fields(
             prompt_snapshot=snapshot,
         )
 
+    if automation_context is not None:
+        snapshot["field_diagnostics"].extend(field_evidence_diagnostics(
+            payload, automation_context, trusted_fields, ACCOUNT_VERIFICATION_REQUIRED_GROUPS, 1))
+        payload, conflicts = without_trusted_candidates(payload, trusted_fields)
+        if conflicts:
+            return AccountVerificationFieldExtraction(status="ambiguous", collected_fields=trusted_fields,
+                ambiguous_fields=conflicts, reason="trusted fields conflict", grounding_status="failed",
+                failure_type="trusted_field_conflict", prompt_snapshot=snapshot)
     raw_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
     by_id = {message["message_id"]: message["content"] for message in redacted_messages}
     grounding_failures = {
@@ -345,6 +363,8 @@ def extract_account_verification_fields(
             },
             payload,
         )
+        if automation_context is not None:
+            verification_prompt += _redact_sensitive_payment_data(extraction_context_prompt(automation_context))
         try:
             verified_payload = (
                 _invoke_json_for_scenario(system_prompt=system_prompt, user_prompt=verification_prompt, scenario=model_scenario)
@@ -377,6 +397,14 @@ def extract_account_verification_fields(
                 grounding_failures={"verifier": ["verification_conflict"]},
                 prompt_snapshot={**snapshot, "verification_status": "verification_conflict"},
             )
+        if automation_context is not None:
+            snapshot["field_diagnostics"].extend(field_evidence_diagnostics(
+                verified_payload, automation_context, trusted_fields, ACCOUNT_VERIFICATION_REQUIRED_GROUPS, 2))
+            verified_payload, conflicts = without_trusted_candidates(verified_payload, trusted_fields)
+            if conflicts:
+                return AccountVerificationFieldExtraction(status="ambiguous", collected_fields=trusted_fields,
+                    ambiguous_fields=conflicts, reason="trusted fields conflict", grounding_status="failed",
+                    failure_type="trusted_field_conflict", prompt_snapshot=snapshot)
         verified_fields = verified_payload.get("fields") if isinstance(verified_payload.get("fields"), dict) else {}
         repaired_verified = {
             group: _repair_source_message_id(candidate, redacted_messages) if isinstance(candidate, dict) else candidate

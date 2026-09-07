@@ -110,7 +110,7 @@ def _question_with_ticket_context(
 ) -> str:
     normalized_question = str(question or "").strip()
     context_lines: list[str] = []
-    for item in list(ticket_context or [])[-6:]:
+    for item in list(ticket_context or []):
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "").strip()

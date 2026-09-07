@@ -39,7 +39,7 @@ class AccountSuspensionFieldExtraction:
     source_message_ids: dict[str, str] = field(default_factory=dict)
     grounding_status: str = "not_checked"
     failure_type: str | None = None
-    prompt_snapshot: dict[str, str] = field(default_factory=dict)
+    prompt_snapshot: dict[str, Any] = field(default_factory=dict)
 
     @property
     def requires_human_review(self) -> bool:
@@ -55,6 +55,7 @@ class AccountSuspensionFieldExtraction:
             "grounding_status": self.grounding_status,
             "failure_type": self.failure_type,
             "prompt_version": ACCOUNT_SUSPENSION_FIELD_PROMPT_VERSION,
+            "field_diagnostics": list(self.prompt_snapshot.get("field_diagnostics") or []),
         }
 
 
@@ -108,6 +109,7 @@ def extract_account_suspension_fields(
     ticket_subject: str,
     customer_messages: list[dict[str, Any]],
     existing_fields: dict[str, Any] | None = None,
+    automation_context: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
     model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
 ) -> AccountSuspensionFieldExtraction:
@@ -116,7 +118,8 @@ def extract_account_suspension_fields(
         for key, value in dict(existing_fields or {}).items()
         if key in FIELD_NAMES and value not in (None, "", [])
     }
-    messages = _customer_messages(customer_messages)
+    from backend.services.automation_context import evidence_messages, extraction_context_prompt, field_evidence_diagnostics, without_trusted_candidates
+    messages = _customer_messages(evidence_messages(customer_messages, automation_context))
     system_prompt = resolve_system_prompt(
         ACCOUNT_SUSPENSION_FIELD_PROMPT_KEY,
         build_account_suspension_field_system_prompt(),
@@ -141,6 +144,7 @@ def extract_account_suspension_fields(
             "customer_messages": messages,
         }
     )
+    user_prompt += extraction_context_prompt(automation_context)
     try:
         payload = (
             _invoke_extractor_for_scenario(system_prompt=system_prompt, user_prompt=user_prompt, scenario=model_scenario)
@@ -160,6 +164,10 @@ def extract_account_suspension_fields(
             prompt_snapshot=snapshot,
         )
 
+    conflicts = []
+    if automation_context is not None:
+        snapshot["field_diagnostics"] = field_evidence_diagnostics(payload, automation_context, trusted, FIELD_NAMES, 1)
+        payload, conflicts = without_trusted_candidates(payload, trusted)
     raw_fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
     by_id = {message["message_id"]: message["content"] for message in messages}
     collected = dict(trusted)
@@ -167,6 +175,9 @@ def extract_account_suspension_fields(
     source_ids: dict[str, str] = {}
     rejected = False
     for field_name in FIELD_NAMES:
+        if field_name in conflicts:
+            rejected = True
+            continue
         candidate = raw_fields.get(field_name)
         if not isinstance(candidate, dict):
             continue

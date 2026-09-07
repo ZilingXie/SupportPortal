@@ -311,11 +311,11 @@ def resolve_model_profile(
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("ACCOUNT_ROUTE_MODEL")) or "gpt-5.6-luna",
+            model=_clean_text(os.getenv("ACCOUNT_ROUTE_MODEL")) or "gpt-6-astra",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             base_url=_clean_text(os.getenv("ACCOUNT_ROUTE_BASE_URL")) or None,
-            reasoning_effort=_clean_text(os.getenv("ACCOUNT_ROUTE_REASONING_EFFORT")) or "xhigh",
+            reasoning_effort=_clean_text(os.getenv("ACCOUNT_ROUTE_REASONING_EFFORT")) or "low",
             temperature=None,
             timeout_seconds=_safe_positive_float_env("ACCOUNT_ROUTE_TIMEOUT_SECONDS", 120.0),
             max_retries=1,
@@ -415,11 +415,11 @@ def resolve_model_profile(
         return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_MODEL")) or "gpt-5.6-luna",
+            model=_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_MODEL")) or "gpt-6-astra",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_REASONING_EFFORT")) or "low",
-            temperature=_safe_float_env("ENABLEMENT_COMPLETION_CLASSIFIER_TEMPERATURE", 0.0),
+            temperature=None if (_clean_text(os.getenv("ENABLEMENT_COMPLETION_CLASSIFIER_MODEL")) or "gpt-6-astra") == "gpt-6-astra" else _safe_float_env("ENABLEMENT_COMPLETION_CLASSIFIER_TEMPERATURE", 0.0),
             timeout_seconds=_safe_positive_float_env("ENABLEMENT_COMPLETION_CLASSIFIER_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("ENABLEMENT_COMPLETION_CLASSIFIER_MAX_RETRIES", 1),
             fallback_models=(),
@@ -457,31 +457,31 @@ def resolve_model_profile(
         ))
     if scenario == RAGFLOW_ANSWER_SCENARIO:
         # RAGFlow fallback answers for production cases: pinned single model
-        # (mirrors the account-route luna config) with independent knobs so
+        # with independent knobs so
         # retuning account_route never silently changes fallback answers.
         return ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("RAGFLOW_ANSWER_MODEL")) or "gpt-5.6-luna",
+            model=_clean_text(os.getenv("RAGFLOW_ANSWER_MODEL")) or "gpt-6-astra",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
-            reasoning_effort=_clean_text(os.getenv("RAGFLOW_ANSWER_REASONING_EFFORT")) or "xhigh",
+            reasoning_effort=_clean_text(os.getenv("RAGFLOW_ANSWER_REASONING_EFFORT")) or "low",
             temperature=None,
             timeout_seconds=_safe_positive_float_env("RAGFLOW_ANSWER_TIMEOUT_SECONDS", 120.0),
             max_retries=1,
         )
     if scenario == ACCOUNT_EXTRACTOR_SCENARIO:
-        # Account-chain field extractors: pinned luna with a budget that fits
+        # Account-chain field extractors: pinned model with a budget that fits
         # JSON extraction on the larger model. The shared intent-router
         # scenario keeps its tight client-flow latency budget untouched.
         return ModelProfile(
             scenario=scenario,
             provider="openai",
-            model=_clean_text(os.getenv("ACCOUNT_EXTRACTOR_MODEL")) or "gpt-5.6-luna",
+            model=_clean_text(os.getenv("ACCOUNT_EXTRACTOR_MODEL")) or "gpt-6-astra",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("ACCOUNT_EXTRACTOR_REASONING_EFFORT")) or "low",
-            temperature=0.2,
+            temperature=None if (_clean_text(os.getenv("ACCOUNT_EXTRACTOR_MODEL")) or "gpt-6-astra") == "gpt-6-astra" else 0.2,
             timeout_seconds=_safe_positive_float_env("ACCOUNT_EXTRACTOR_TIMEOUT_SECONDS", 30.0),
             max_retries=1,
         )

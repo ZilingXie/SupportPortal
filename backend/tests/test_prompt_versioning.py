@@ -63,7 +63,7 @@ class PromptVersioningRepositoryTests(unittest.TestCase):
             created_at="2026-08-25T00:02:00+00:00",
         )
 
-    def test_validate_release_accepts_current_fraud_v4_contract(self) -> None:
+    def test_validate_release_accepts_current_fraud_v5_contract(self) -> None:
         release = self.repository.get_active_prompt_release()
 
         result = PromptVersionService(self.repository).validate_release(release["release_id"])

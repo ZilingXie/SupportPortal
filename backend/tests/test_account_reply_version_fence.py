@@ -22,6 +22,24 @@ from backend.services.account_reply_jobs import (
 
 
 class AccountReplyVersionFenceTests(unittest.TestCase):
+    def test_ecs_conversation_is_frozen_in_job(self) -> None:
+        repository = InMemoryTicketRepository()
+        context = {"version": "automation-context-v1", "current_message_id": "m1",
+                   "conversation": [{"message_id": "m1", "role": "customer", "content": "Please continue"}]}
+        case = {"billing_ticket_id": "context-case", "client_ticket_id": "context-ticket",
+                "automation_context": {"reply_conversation_context": context}}
+        repository.save_billing_ticket(case)
+        job = create_account_reply_job(repository, ticket_id="context-ticket",
+            trigger_message_created_at="2026-09-07T00:00:00+00:00",
+            created_at="2026-09-07T00:00:01+00:00", delay_seconds=360,
+            reply_facts={"resolution_status": "internal_review_in_progress"})
+        frozen = job["payload"]["reply_facts"]["conversation_context"]
+        self.assertEqual(frozen, context)
+        context["conversation"].append({"message_id": "m2", "role": "customer", "content": "A later request"})
+        repository.save_billing_ticket(case)
+        self.assertEqual(len(frozen["conversation"]), 1)
+        self.assertEqual(frozen["current_message_id"], "m1")
+
     def test_staging_reply_delay_is_zero_without_random_sampling(self) -> None:
         with patch(
             "backend.services.account_reply_jobs._ACCOUNT_REPLY_RANDOM.randint",
