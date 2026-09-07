@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import logging
 import os
@@ -2537,6 +2538,9 @@ def _render_case_persona_reply(
             ),
             customer_name=str(case.get("customer_name") or ""),
         )
+    conversation_context = (case.get("automation_context") or {}).get("reply_conversation_context")
+    if isinstance(conversation_context, dict) and conversation_context.get("version") == "automation-context-v1":
+        facts["conversation_context"] = copy.deepcopy(conversation_context)
     try:
         return render_automation_reply(
             reply_facts=facts,

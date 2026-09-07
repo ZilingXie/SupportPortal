@@ -43,10 +43,10 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.model, "gpt-6-astra")
         self.assertEqual(profile.reasoning_effort, "low")
         self.assertIsNone(profile.temperature)
-        self.assertEqual(route.model, "gpt-5.6-luna")
-        self.assertEqual(extractor.model, "gpt-5.6-luna")
+        self.assertEqual(route.model, "gpt-6-astra")
+        self.assertEqual(extractor.model, "gpt-6-astra")
 
-    def test_account_route_profile_uses_luna_defaults_without_changing_legacy_router(self) -> None:
+    def test_account_route_profile_uses_astra_defaults_without_changing_legacy_router(self) -> None:
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",
             "ACCOUNT_ROUTE_MODEL": "",
@@ -57,8 +57,8 @@ class LlmProfileTests(unittest.TestCase):
         }, clear=False):
             account = resolve_model_profile(ACCOUNT_ROUTE_SCENARIO)
             legacy = resolve_model_profile(INTENT_ROUTER_SCENARIO)
-        self.assertEqual(account.model, "gpt-5.6-luna")
-        self.assertEqual(account.reasoning_effort, "xhigh")
+        self.assertEqual(account.model, "gpt-6-astra")
+        self.assertEqual(account.reasoning_effort, "low")
         self.assertEqual(account.timeout_seconds, 120.0)
         self.assertIsNone(account.temperature)
         self.assertEqual(legacy.model, "legacy-model")
@@ -95,11 +95,11 @@ class LlmProfileTests(unittest.TestCase):
     def tearDown(self) -> None:
         clear_config_warnings_for_testing()
 
-    def test_account_extractor_profile_uses_luna_low_without_fallbacks(self) -> None:
+    def test_account_extractor_profile_uses_astra_low_without_fallbacks(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             profile = resolve_model_profile(ACCOUNT_EXTRACTOR_SCENARIO)
         self.assertEqual(profile.provider, "openai")
-        self.assertEqual(profile.model, "gpt-5.6-luna")
+        self.assertEqual(profile.model, "gpt-6-astra")
         self.assertEqual(profile.reasoning_effort, "low")
         self.assertEqual(profile.timeout_seconds, 30.0)
         self.assertEqual(profile.fallback_models, ())

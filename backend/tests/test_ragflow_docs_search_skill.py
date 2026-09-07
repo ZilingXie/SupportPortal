@@ -361,12 +361,13 @@ class RagflowDocsSearchSkillClientTest(unittest.TestCase):
         self.assertEqual(capture.entries[0]["prompt_tokens"], 120)
         self.assertEqual(capture.entries[0]["completion_tokens"], 45)
 
-    def test_ragflow_answer_scenario_defaults_to_luna_xhigh(self) -> None:
+    def test_ragflow_answer_scenario_defaults_to_astra_low(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             profile = resolve_model_profile(RAGFLOW_ANSWER_SCENARIO)
         self.assertEqual(profile.provider, "openai")
-        self.assertEqual(profile.model, "gpt-5.6-luna")
-        self.assertEqual(profile.reasoning_effort, "xhigh")
+        self.assertEqual(profile.model, "gpt-6-astra")
+        self.assertEqual(profile.reasoning_effort, "low")
+        self.assertIsNone(profile.temperature)
         self.assertEqual(profile.fallback_models, ())
         self.assertEqual(profile.fallback_profiles, ())
 

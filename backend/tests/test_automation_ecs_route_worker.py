@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from backend.automation_ecs_route_worker import RouteWorker, _route_payload
-from backend.services.automation_ecs_contracts import IntakeEventType, JobKind
+from backend.services.automation_ecs_contracts import AutomationIntakeEvent, INTAKE_CONTRACT_VERSION, IntakeEventType, JobKind
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 from backend.tests.test_automation_ecs_store import _event, _settings
 
@@ -112,3 +112,52 @@ def test_idle_worker_still_writes_fresh_heartbeat() -> None:
     worker = RouteWorker(settings, store, Mock(), Mock())
     assert worker.process_once() is False
     assert store.list_heartbeats()[0]["worker_id"] == settings.runtime_identity
+
+
+def test_route_context_is_chronological_and_stops_at_trigger_comment() -> None:
+    event = AutomationIntakeEvent.model_validate({
+        "schema_version": INTAKE_CONTRACT_VERSION,
+        "event_id": "zendesk:ticket:123:comment:20",
+        "event_type": "comment.created",
+        "occurred_at": "2026-09-07T00:03:00Z",
+        "ticket": {
+            "id": "123", "status": "open", "subject": "Enable Media Relay",
+            "description": "Original request",
+            "requester": {"email": "cx@example.com", "name": "Customer"},
+        },
+        "comment_snapshot": {
+            "source_updated_at": "2026-09-07T00:04:00Z",
+            "snapshot_complete": True,
+            "trigger_comment_id": "20",
+            "comments": [
+                {"id": "30", "public": True, "author": {"role": "end-user"},
+                 "body": "Later message", "created_at": "2026-09-07T00:04:00Z"},
+                {"id": "20", "public": True, "author": {"role": "end-user"},
+                 "body": "What is an App ID?", "created_at": "2026-09-07T00:03:00Z"},
+                {"id": "15", "public": False, "author": {"role": "agent"},
+                 "body": "Private note", "created_at": "2026-09-07T00:02:30Z"},
+                {"id": "12", "public": True, "author": {},
+                 "body": "Unknown author", "created_at": "2026-09-07T00:02:15Z"},
+                {"id": "10", "public": True, "author": {"role": "agent"},
+                 "body": "Please provide the App ID.", "created_at": "2026-09-07T00:02:00Z"},
+                {"id": "5", "public": True, "author": {"role": "end-user"},
+                 "body": "Enable Media Relay", "created_at": "2026-09-07T00:01:00Z"},
+            ],
+        },
+    })
+    decider = Mock(return_value=_decision())
+    worker, _, _, _ = _worker(decider, event=event)
+
+    assert worker.process_once() is True
+
+    assert decider.call_args.args == ("What is an App ID?",)
+    context = decider.call_args.kwargs["ticket_context"]
+    assert [(item["role"], item["content"]) for item in context[:-1]] == [
+        ("customer", "Enable Media Relay"),
+        ("assistant", "Please provide the App ID."),
+        ("customer", "What is an App ID?"),
+    ]
+    assert context[-1]["role"] == "context"
+    assert "Later message" not in str(context)
+    assert "Private note" not in str(context)
+    assert "Unknown author" not in str(context)

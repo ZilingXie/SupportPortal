@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-07T06:03:06Z",
-  "source_base_commit": "107cd4bec26007d723256ca2f922f1bc8e981f6d",
-  "registry_digest": "77e5a481c4d78ac8c5374d6b38fb6daa747303e39ec58cf2fe2c1c78d5938832",
+  "generated_at": "2026-09-07T10:22:13Z",
+  "source_base_commit": "a4938b6b45dab027e3f8369b0e2d80ddfc5e6f0a",
+  "registry_digest": "92c5e57270650c8b942b92c16eb22dd0904dccc920298fc28cfb0c11db9c050c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2804,6 +2804,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Parity intake and runtime contract regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_account_intake backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_deploy_ec2 backend.tests.test_build_automation_release",
           "details": "111 项全部通过：intake 六分支单测（fraud 缺/齐字段、suspension contact、抽取失败→#916 升级、not_automated→Engineer Case+派单、ownership fail-closed）；production runtime 契约（无 visibility 也进管线、pipeline 异常→failed+409 重放、legacy 五字段免 visibility、intake_outcome 落库）；契约矩阵（production visibility 可选，preprod forced internal 不变）；route_payload decision 字段；bundle/镜像清单（依赖模块留在 production 镜像）；compose/deploy/蓝绿假命令回归。"
+        },
+        {
+          "type": "test",
+          "label": "ECS Automation unified context and Astra/low final regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation context, ECS Route/Worker, intake/comment-sync, three business handlers, RAG, Persona, Worker, reply fence, lifecycle, model, Prompt and Compose suites>",
+          "details": "最终确定性回归731 passed + 162 subtests；覆盖当前评论证据、公开历史角色与触发截断、跨工单拒绝、Enablement问答/错误值/更正值、Fraud补值→RAG→继续补值→唯一handoff、Suspension direct handoff/no-op、终态/outcome_unknown、Persona冻结正文和四个Astra/low无temperature请求合同。固定最终Prompt的真实Provider评估32/32 passed（12 Enablement、8 Fraud、4 Suspension、4 RAG、4 completion），无失败重抽；XML逐样本记录实际模型、调用次数和时延。Archer、Zendesk、邮件及业务服务均为替身，未操作历史工单。"
         },
         {
           "type": "test",
@@ -8333,8 +8339,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按用户选定方案 B（纯移植、镜像物理排除契约不变）把旧栈评论摄入与客户回复链搬进 /automation/production：新增 backend/services/automation_account_reply_sync.py（main.py _process_zendesk_comment_trigger 与 _process_account_customer_reply_impl 的忠实移植：幂等 claim、过滤规则、Engineer Case 客户评论入线程事件、ownership gate、suspension 两阶段确认（contact 确认→handoff 邮件→closing reply job）、handler 字段进展、无进展重路由（decide_account_route）、RAGFlow fallback（answer→verbatim reply job / 不能答→escalate_unexpected_reply_to_human）、追问/确认 reply job）；runtime 新增 GET comment-sync-target 与 PUT comments 端点（X-N8n-Request-Token，快照校验/404/409 语义复刻）；compose 与蓝绿 candidate 补 RAG/RAGFlow env。Phase B 模块的 attempt 构建器扩展 existing_fields/already_requested/follow_up 参数供回复链复用。2026-09-01 两次修复 ECS Fraud parity：先恢复 precomputed Route 下 active handler 的字段进展检查，使部分字段回复继续 handoff；再修正共享 Fraud builder 的模型场景为 ACCOUNT_EXTRACTOR，并把 uncertain/sensitive extraction failure 按旧 /production 合同 reconciliation 为 Human Review，从而阻止错误进入 RAG。真正无字段进展的 Agora 产品问题仍保留 RAG fallback。工程师 AI 调查回合（_process_engineer_investigation_message）按阶段边界留给 Slack 协作阶段接线，本阶段先落客户评论的线程事件。",
-      "next_action": "保持 active。完成13328多轮续跑修复的正式合并及本地栈验证；取得本次单独授权后通过CodeBuild直接Production发布，再由用户以全新Enablement工单验收：知识问答保留业务状态、更正App ID恢复Archer、提取失败不落入RAG、真正转人工只发送一次错误告警。不重放13316或13328，不更新Preproduction ECS、EC2或n8n。",
+      "next_action": "保持 active。统一上下文、Astra/low 与固定32个真实Provider合成样本已完成；完成正式合并及本地栈验证后，取得新的单独Production授权再发布。等待用户以全新Enablement/Fraud/Suspension工单验收；不重放13334或其他历史工单，不更新Preproduction ECS、EC2、Hermes或n8n。",
       "acceptance_criteria": [
+        "ECS Enablement、Fraud、Suspension 初次摄入及续回复使用统一公开对话和业务状态；助手仅提供理解上下文，新增字段必须来自允许的当前客户消息，可信旧字段省略或重复不要求重新证明。",
+        "公开上下文截止当前触发评论，不包含私有备注或未公开草稿；Persona使用脱敏冻结快照与权威reply_facts，Worker不改写正文；新评论、人工接管、完成和outcome_unknown保护不变。",
+        "account_route、account_extractor、ragflow_answer、enablement_completion_classifier 使用Astra/low Responses且不发送temperature；Persona v31保持同模型、无Reviewer及硬安全合同。",
         "active Enablement中途进入RAG只改变本轮路由审计，不丢失已收集字段、Archer恢复状态或原始队列；错误App ID后经过知识问答再提供更正值仍可续跑。",
         "Enablement提取ambiguous/uncertain或模型失败保留内容无关诊断，直接Human Review且不调用RAG/Archer、不创建客户回复；ECS RAG escalation与提取失败复用幂等错误邮件入口。",
         "GET /api/integrations/zendesk/account-cases/{id}/comment-sync-target 与 PUT .../comments 在 /automation/production 下可用，鉴权与 422/404/409 语义与旧栈一致。",
@@ -8344,6 +8353,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "ECS Automation unified context and Astra/low final regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \u003cAutomation context, ECS Route/Worker, intake/comment-sync, three business handlers, RAG, Persona, Worker, reply fence, lifecycle, model, Prompt and Compose suites>",
+          "details": "最终确定性回归731 passed + 162 subtests；覆盖当前评论证据、公开历史角色与触发截断、跨工单拒绝、Enablement问答/错误值/更正值、Fraud补值→RAG→继续补值→唯一handoff、Suspension direct handoff/no-op、终态/outcome_unknown、Persona冻结正文和四个Astra/low无temperature请求合同。固定最终Prompt的真实Provider评估32/32 passed（12 Enablement、8 Fraud、4 Suspension、4 RAG、4 completion），无失败重抽；XML逐样本记录实际模型、调用次数和时延。Archer、Zendesk、邮件及业务服务均为替身，未操作历史工单。"
+        },
         {
           "type": "test",
           "label": "13328 Enablement RAG resume and failure notification regression",
@@ -8382,6 +8397,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         }
       ],
       "source_refs": [
+        "backend/services/automation_context.py",
         "backend/services/automation_account_reply_sync.py",
         "backend/services/automation_account_intake.py",
         "backend/automation_production_runtime.py",
@@ -8393,6 +8409,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-08-24",
       "updated_at": "2026-09-07",
       "history": [
+        {
+          "at": "2026-09-07",
+          "event": "ecs_automation_unified_context_and_astra_low",
+          "summary": "三类ECS Automation统一使用公开对话、当前客户消息证据和持久业务状态；Route/Extractor/RAG/Completion统一Astra/low，Persona升v31。最终确定性回归731 passed + 162 subtests，最终Prompt真实Provider固定样本32/32通过；不重放13334，Production发布仍需单独授权。"
+        },
         {
           "at": "2026-09-07",
           "event": "enablement_rag_resume_and_failure_alert_fix",
@@ -16395,7 +16416,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
         "`/account` 的 Automated execution view 展示三类 active Automation：Account & Billing / Fraud Account、Account & Billing / Account Suspension 和 Backend Operation / Enablement；每个 Case 同时保留其 Primary Category。Backend Operation / Unregistered 仅作为发现 taxonomy 缺口的诊断 fallback，不属于 Automated 或 Human Review membership。",
         "Quota 自动化会处理配额审核、并发提升和 Big Event 容量报备，最多追问一次后将现有信息交给内部团队。",
-        "Enablement 使用 LLM 从客户原文提取并校验字段证据，知识问答保留未完成业务状态，更正 App ID 后继续处理，提取失败转 Human Review 并发送幂等错误告警。",
+        "ECS Enablement、Fraud、Suspension 使用统一公开对话上下文理解本轮请求，以客户来源校验新增字段，知识问答保留未完成业务状态，失败转人工并发送幂等错误告警。",
         "Fraud Account 使用 LLM 收集公司、联系人、使用场景和安全支付概况，Website 为可选，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "Fraud Account 自动化通过公司 Outlook reply 接收内部处理结果。",
         "Detailed Invoice 仅保留 Account & Billing 分类，不进入 Automation 执行；既有自动化实现保留供未来启用。",

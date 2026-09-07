@@ -4,16 +4,16 @@ import json
 from typing import Any
 
 ACCOUNT_INTENT_PROMPT_VERSION = "account-intent-v3"
-ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v10"
+ACCOUNT_AGORA_PROMPT_VERSION = "account-agora-v11"
 ACCOUNT_BILLING_PROMPT_VERSION = "account-billing-v2"
 ACCOUNT_AUTOMATION_PROMPT_VERSION = "account-automation-v7"
 ACCOUNT_BACKEND_OPERATION_PROMPT_VERSION = "account-backend-operation-v1"
-ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v3"
+ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION = "account-enablement-fields-v4"
 ACCOUNT_QUOTA_FIELD_PROMPT_VERSION = "account-quota-fields-v1"
-ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "fraud-account-fields-v4"
+ACCOUNT_VERIFICATION_FIELD_PROMPT_VERSION = "fraud-account-fields-v5"
 ACCOUNT_VERIFICATION_FOLLOW_UP_PROMPT_VERSION = "fraud-account-follow-up-v2"
 ACCOUNT_DETAILED_INVOICE_FIELD_PROMPT_VERSION = "detailed-invoice-fields-v2"
-ACCOUNT_SUSPENSION_FIELD_PROMPT_VERSION = "account-suspension-fields-v2"
+ACCOUNT_SUSPENSION_FIELD_PROMPT_VERSION = "account-suspension-fields-v3"
 
 
 def _json(value: Any) -> str:
@@ -132,6 +132,16 @@ Classify only; do not answer the customer.
   rewards, public company/product questions previously handled by the removed Non-technical route, and mixed intents.
 
 ## Rules
+- Route the CURRENT `message`, not the ticket subject or a historical request. The
+  conversation history explains what a short current reply refers to; it does not repeat
+  prior requests as new instructions. The entire-message rules below apply to the
+  current message, not the concatenated conversation.
+- If the customer now asks "What is an App ID?" or "Where can I find it?" after being
+  asked for an App ID, the current task is a technical documentation question, even
+  when the ticket originally requested feature activation. Choose technical, not
+  backend_operation. Keep the unfinished activation only as background context.
+- Conversely, "can you try: VALUE" or a bare value answering an earlier App ID
+  request continues that backend operation; use the history to identify its target.
 - First identify the customer's primary requested outcome across the entire message. A long legal,
   regulatory, enforcement, or third-party fraud complaint is uncategorized even if a later
   paragraph asks Agora to extract logs, preserve evidence, investigate, freeze assets, or disclose data.
@@ -434,6 +444,10 @@ def build_account_enablement_field_system_prompt() -> str:
 ## Role
 You are the Enablement Field Extractor. Extract fields from customer-authored Account Case messages.
 Do not route the Case, answer unrelated questions, or infer identifiers that the customer did not provide.
+When Automation conversation context is provided, use its public dialogue to interpret the current reply,
+but extract new values only from the Customer messages evidence section. Existing fields are trusted:
+omit unchanged field objects. A bare value or "can you try" can answer the preceding request for App ID.
+Previously rejected App IDs are historical context, not competing candidates for the current correction.
 
 ## Fields
 - app_id: the application or project identifier the customer wants Agora to operate on. App IDs may use
@@ -510,7 +524,7 @@ def build_account_enablement_field_verification_user_prompt(
     return "\n".join(
         [
             "## Verification task",
-            "Independently re-extract the fields from the complete customer history.",
+            "Independently verify new fields from the supplied customer evidence; use any conversation context only for interpretation.",
             "The primary extraction may have missed an App ID or used a pronoun as the feature name.",
             "It may also have silently corrected a misspelled feature label. Preserve the customer's exact spelling",
             "in original_label and source_quote; normalize spelling only in the canonical value.",
@@ -598,6 +612,9 @@ def build_account_verification_field_system_prompt() -> str:
 ## Role
 You are the Fraud Account Field Extractor. Read only customer-authored Account Case messages.
 Classify the seven required information fields; do not route the Case or answer the customer.
+If Automation conversation context is provided, use previous public questions to understand the current
+answer. Only Customer messages in the evidence section can supply new field values; assistant messages
+and historical values cannot. Omit unchanged trusted fields instead of citing them again.
 
 ## Required information fields
 - account_type: the customer's account type (e.g., Enterprise, Startup, Individual, Developer).
@@ -709,6 +726,8 @@ def build_account_suspension_field_system_prompt() -> str:
 You are the Account Suspension Field Extractor. Read only customer-authored Account Case messages and extract
 available operational context. This workflow is classification-only: do not ask questions, draft replies,
 promise restoration, recommend actions, or create an internal request.
+If Automation conversation context is provided, public dialogue helps interpret the current customer
+message, but only customer evidence can supply fields. Existing operational state remains authoritative.
 
 ## Optional fields
 - suspension_status_or_error: the suspension state, error, or access symptom the customer reports.

@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from backend.services.automation_context import evidence_messages, extraction_context_prompt, without_trusted_candidates, field_evidence_diagnostics
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.account_ai_execution import AccountProcessingFailure, invoke_account_json_payload
@@ -53,7 +54,7 @@ class EnablementFieldExtraction:
     grounding_status: str = "not_checked"
     failure_type: str | None = None
     grounding_reason_code: str | None = None
-    prompt_snapshot: dict[str, str] = field(default_factory=dict)
+    prompt_snapshot: dict[str, Any] = field(default_factory=dict)
 
     @property
     def requires_human_review(self) -> bool:
@@ -74,6 +75,7 @@ class EnablementFieldExtraction:
             "reason_code": self.grounding_reason_code or self.failure_type,
             "prompt_version": ACCOUNT_ENABLEMENT_FIELD_PROMPT_VERSION,
             "verification_status": self.prompt_snapshot.get("verification_status", "not_attempted"),
+            "field_diagnostics": list(self.prompt_snapshot.get("field_diagnostics") or []),
         }
 
 
@@ -139,6 +141,7 @@ def _uncertain(
     missing_fields: list[str] | None = None,
     ambiguous_fields: list[str] | None = None,
     verification_status: str = "not_attempted",
+    field_diagnostics: list[dict[str, Any]] | None = None,
 ) -> EnablementFieldExtraction:
     return EnablementFieldExtraction(
         status="uncertain",
@@ -153,6 +156,7 @@ def _uncertain(
             "system_prompt": system_prompt,
             "user_prompt": "[redacted field extraction input]",
             "verification_status": verification_status,
+            "field_diagnostics": list(field_diagnostics or []),
         },
     )
 
@@ -295,6 +299,7 @@ def _reconcile_verified_payload(
     verified: dict[str, Any],
     *,
     messages: list[dict[str, str]],
+    existing_fields: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any] | None, str, str]:
     primary_fields = primary.get("fields") if isinstance(primary.get("fields"), dict) else {}
     repaired_primary = dict(primary)
@@ -394,7 +399,7 @@ def _reconcile_verified_payload(
             if primary_feature_reasons
             else "corrected_grounding"
         ), "field verifier corrected the customer evidence grounding"
-    if not _feature_label_is_exactly_grounded(repaired_primary, messages):
+    if not (existing_fields or {}).get("requested_feature") and not _feature_label_is_exactly_grounded(repaired_primary, messages):
         if verified_status == "complete" and _feature_label_is_exactly_grounded(repaired_verified, messages):
             return (
                 repaired_verified,
@@ -431,12 +436,14 @@ def extract_enablement_fields(
     existing_fields: dict[str, Any] | None = None,
     invoke: Callable[..., dict[str, Any]] = _invoke_extractor,
     model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
+    automation_context: dict[str, Any] | None = None,
 ) -> EnablementFieldExtraction:
+    diagnostics: list[dict[str, Any]] = []
     trusted_fields = _clean_existing_fields(existing_fields)
     if str(trusted_fields.get("requested_feature_label") or "").strip().lower() in _GENERIC_FEATURE_LABELS:
         trusted_fields.pop("requested_feature", None)
         trusted_fields.pop("requested_feature_label", None)
-    messages = _customer_messages(customer_messages)
+    messages = _customer_messages(evidence_messages(customer_messages, automation_context))
     system_prompt = resolve_system_prompt(
         ACCOUNT_ENABLEMENT_FIELD_PROMPT_KEY,
         build_account_enablement_field_system_prompt(),
@@ -448,10 +455,12 @@ def extract_enablement_fields(
             "customer_messages": messages,
         }
     )
+    user_prompt += extraction_context_prompt(automation_context)
     snapshot = {
         "system_prompt": system_prompt,
         "user_prompt": "[redacted field extraction input]",
         "verification_status": "not_attempted",
+        "field_diagnostics": diagnostics,
     }
     if trusted_fields.get("app_id") and trusted_fields.get("requested_feature"):
         return EnablementFieldExtraction(
@@ -463,6 +472,7 @@ def extract_enablement_fields(
         )
     if not messages:
         return _uncertain(
+            field_diagnostics=diagnostics,
             existing_fields=trusted_fields,
             system_prompt=system_prompt,
             reason="no customer-authored messages were available",
@@ -483,12 +493,21 @@ def extract_enablement_fields(
     except (LlmInvocationError, ValueError, TypeError):
         LOGGER.warning("Enablement field extraction failed", exc_info=True)
         return _uncertain(
+            field_diagnostics=diagnostics,
             existing_fields=trusted_fields,
             system_prompt=system_prompt,
             reason="field extractor invocation failed",
             failure_type="llm_extraction_failed",
         )
 
+    if automation_context is not None:
+        diagnostics.extend(field_evidence_diagnostics(
+            payload, automation_context, trusted_fields, ("app_id", "requested_feature"), 1))
+        payload, conflicts = without_trusted_candidates(payload, trusted_fields)
+        if conflicts:
+            return _uncertain(existing_fields=trusted_fields, system_prompt=system_prompt,
+                field_diagnostics=diagnostics,
+                reason="trusted fields conflict", failure_type="trusted_field_conflict")
     if _requires_verification(payload, messages, trusted_fields):
         verification_user_prompt = build_account_enablement_field_verification_user_prompt(
             {
@@ -498,6 +517,7 @@ def extract_enablement_fields(
             },
             payload,
         )
+        verification_user_prompt += extraction_context_prompt(automation_context)
         try:
             verified_payload = (
                 _invoke_extractor_with_scenario(
@@ -513,6 +533,7 @@ def extract_enablement_fields(
         except (LlmInvocationError, ValueError, TypeError):
             LOGGER.warning("Enablement field verification failed", exc_info=True)
             return _uncertain(
+                field_diagnostics=diagnostics,
                 existing_fields=trusted_fields,
                 system_prompt=system_prompt,
                 reason="field verifier invocation failed",
@@ -520,10 +541,19 @@ def extract_enablement_fields(
                 grounding_reason_code="verification_conflict",
                 verification_status="failed",
             )
+        if automation_context is not None:
+            diagnostics.extend(field_evidence_diagnostics(
+                verified_payload, automation_context, trusted_fields, ("app_id", "requested_feature"), 2))
+            verified_payload, conflicts = without_trusted_candidates(verified_payload, trusted_fields)
+            if conflicts:
+                return _uncertain(existing_fields=trusted_fields, system_prompt=system_prompt,
+                    field_diagnostics=diagnostics,
+                    reason="trusted fields conflict", failure_type="trusted_field_conflict")
         payload, verification_status, verification_reason = _reconcile_verified_payload(
             payload,
             verified_payload,
             messages=messages,
+            existing_fields=trusted_fields if automation_context is not None else None,
         )
         if payload is None:
             return EnablementFieldExtraction(
@@ -550,6 +580,7 @@ def extract_enablement_fields(
     status = str(payload.get("status") or "").strip().lower()
     if status not in {"complete", "missing", "ambiguous", "uncertain"}:
         return _uncertain(
+            field_diagnostics=diagnostics,
             existing_fields=trusted_fields,
             system_prompt=system_prompt,
             reason="field extractor returned an unsupported status",
@@ -595,6 +626,7 @@ def extract_enablement_fields(
                 if reason in grounding_reasons
             )
             return _uncertain(
+                field_diagnostics=diagnostics,
                 existing_fields=trusted_fields,
                 system_prompt=system_prompt,
                 reason=f"{field_name} could not be grounded to customer text",
@@ -607,6 +639,7 @@ def extract_enablement_fields(
             canonical = str(candidate.get("value") or "").strip()
             if not canonical:
                 return _uncertain(
+                    field_diagnostics=diagnostics,
                     existing_fields=trusted_fields,
                     system_prompt=system_prompt,
                     reason="requested_feature canonical value was empty",
@@ -659,6 +692,7 @@ def extract_enablement_fields(
         )
     if not collected.get("requested_feature"):
         return _uncertain(
+            field_diagnostics=diagnostics,
             existing_fields=trusted_fields,
             system_prompt=system_prompt,
             reason="requested feature was not grounded",
@@ -678,6 +712,7 @@ def extract_enablement_fields(
         )
     if status != "missing" or "app_id" not in missing_fields:
         return _uncertain(
+            field_diagnostics=diagnostics,
             existing_fields=trusted_fields,
             system_prompt=system_prompt,
             reason="missing App ID was not established confidently",
@@ -687,6 +722,7 @@ def extract_enablement_fields(
     follow_up = str(payload.get("follow_up") or "").strip()
     if not follow_up:
         return _uncertain(
+            field_diagnostics=diagnostics,
             existing_fields=trusted_fields,
             system_prompt=system_prompt,
             reason="missing result did not include a follow-up",

@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-07 - ECS shared public conversation context (p2-110)
+
+- Summary: active Fraud and Enablement retain unfinished business state across RAG side questions; RAG receives the public conversation through the triggering comment and interpretation-only business state without a six-message truncation.
+- Reason: understanding context and field evidence must remain separate across Automation stages. A knowledge question is not abandonment of an active request or new business progress.
+- Affected files/config: automation_context.py, automation_account_reply_sync.py, ragflow_docs_search_skill.py; ragflow_answer defaults to Astra/low Responses.
+- Data impact: no knowledge ingestion, schema change, historical replay, real ticket actions or source Prompt activation.
+- Verification: final deterministic regression passed with 731 tests and 162 subtests, including one persisted Fraud partial/RAG/completion sequence with a single handoff. The fixed final-Prompt Provider gate passed all 4 RAG samples as part of a 32/32 run without success resampling; runtime verification remains a post-merge gate.
+
 ## 2026-09-07 - ECS Enablement resumes after RAG side questions (p2-110)
 
 - Summary: RAG answers preserve active Enablement state; extraction failures stop before RAG, and ECS RAG escalation uses the existing Human Review and idempotent failure-email path.

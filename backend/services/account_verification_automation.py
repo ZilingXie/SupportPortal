@@ -126,6 +126,7 @@ def build_account_verification_automation_result(
     compose_follow_up: Callable[..., tuple[str, dict[str, str]]] | None = None,
     model_scenario: str = ACCOUNT_EXTRACTOR_SCENARIO,
     zendesk_ticket_url: str | None = None,
+    automation_context: dict[str, Any] | None = None,
 ) -> AccountVerificationAutomationResult:
     # Customer copy is intentionally deferred to Automation Persona. Keep the
     # legacy argument for callers that still pass it while migrating tests/data.
@@ -135,6 +136,7 @@ def build_account_verification_automation_result(
         customer_messages=customer_messages,
         existing_fields=existing_fields,
         model_scenario=model_scenario,
+        **({"automation_context": automation_context} if automation_context is not None else {}),
     )
     safe_count = max(0, int(follow_up_count or 0))
     if extraction.requires_human_review:

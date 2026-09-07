@@ -222,7 +222,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v30")
+        self.assertEqual(result.prompt_version, "automation-persona-v31")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -956,7 +956,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v30")
+        self.assertEqual(result.prompt_version, "automation-persona-v31")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1474,7 +1474,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.prompt_version, "automation-persona-v30")
+        self.assertEqual(result.prompt_version, "automation-persona-v31")
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.generation_attempts, 1)
 
@@ -1793,7 +1793,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v30")
+        self.assertEqual(result.prompt_version, "automation-persona-v31")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)

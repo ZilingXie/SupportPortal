@@ -128,7 +128,9 @@ class EnablementRagResumeTest(TestCase):
             self.assertEqual(self.case["automation_context"]["zendesk_ownership"]["source_group_id"], "original-group")
         self.turn("try: " + "b" * 32, comment_id="corrected")
         self.assertEqual([c.args[0] for c in self.archer.call_args_list], ["a" * 33, "b" * 32])
-        self.assertEqual(len(self.extract.call_args.kwargs["customer_messages"]), 1)
+        context = self.extract.call_args.kwargs["automation_context"]
+        self.assertEqual(context["evidence_message_ids"], [context["current_message_id"]])
+        self.assertEqual(len(context["conversation"]), 7)
         self.assertNotIn("app_id", self.extract.call_args.kwargs["existing_fields"])
         self.assertEqual(self.case["route_classification"]["handler_binding_status"], "completed")
         self.assertEqual(self.rag.call_count, 3)
@@ -143,6 +145,30 @@ class EnablementRagResumeTest(TestCase):
         self.assertTrue(any(c.args[0]["final_route"] == "rag" and
                             c.args[0]["classification"].get("retained_automation_handler") == "enablement"
                             for c in self.repo.save_account_route_execution.call_args_list))
+
+    def test_full_sequence_with_real_extractor_and_grounding(self):
+        from backend.services.enablement_field_extractor import extract_enablement_fields
+
+        def real_extraction(**kwargs):
+            context = kwargs["automation_context"]
+            current = context["conversation"][-1]
+            fields = {"requested_feature": {
+                "value": "media_relay", "original_label": "Media Relay",
+                "source_message_id": "old-source", "source_quote": "Media Relay", "confidence": 0.99,
+            }}
+            if current["content"].startswith("try: "):
+                value = current["content"].split(": ", 1)[1]
+                fields["app_id"] = {"value": value, "source_message_id": current["message_id"],
+                                    "source_quote": value, "confidence": 0.99}
+            payload = {"status": "complete" if "app_id" in fields else "missing", "fields": fields,
+                       "missing_fields": [] if "app_id" in fields else ["app_id"],
+                       "follow_up": "Please provide the App ID."}
+            result = extract_enablement_fields(**kwargs, invoke=lambda **_: deepcopy(payload))
+            self.assertFalse(result.requires_human_review, result.audit_payload())
+            return result
+
+        self.extract.side_effect = real_extraction
+        self.test_full_question_invalid_question_corrected_sequence()
 
     def test_extraction_failure_never_falls_through_to_rag(self):
         self.extract.side_effect = None
@@ -217,7 +243,9 @@ class EnablementRagResumeTest(TestCase):
         self.turn("try: " + "a" * 32)
         self.turn("try: " + "b" * 32)
         self.assertEqual(self.archer.call_count, 2)
-        self.assertEqual(len(self.extract.call_args.kwargs["customer_messages"]), 1)
+        context = self.extract.call_args.kwargs["automation_context"]
+        self.assertEqual(context["evidence_message_ids"], [context["current_message_id"]])
+        self.assertEqual(len(context["conversation"]), 4)
         self.assertEqual(self.case["route_classification"]["handler_binding_status"], "completed")
         self.rag.assert_not_called()
 

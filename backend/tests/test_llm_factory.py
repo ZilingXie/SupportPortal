@@ -57,6 +57,26 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(requests[0]["reasoning"]["effort"], "low")
         self.assertNotIn("temperature", requests[0])
 
+    def test_automation_profiles_send_astra_low_responses_without_temperature(self) -> None:
+        for scenario in ("account_route", "account_extractor", "ragflow_answer", "enablement_completion_classifier"):
+            with self.subTest(scenario=scenario):
+                requests = []
+
+                def respond(request, timeout):
+                    requests.append(json.loads(request.data))
+                    return _FakeResponse({"output_text": "synthetic"})
+
+                with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
+                    "ENABLEMENT_COMPLETION_CLASSIFIER_TEMPERATURE": "0.3"}, clear=True), patch(
+                    "backend.services.llm_factory.urllib.request.urlopen", side_effect=respond
+                ):
+                    invoke_responses_text(profile=resolve_model_profile(scenario),
+                                          system_prompt="test", user_prompt="test")
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(requests[0]["model"], "gpt-6-astra")
+                self.assertEqual(requests[0]["reasoning"]["effort"], "low")
+                self.assertNotIn("temperature", requests[0])
+
     def test_account_endpoint_override_is_used_only_by_account_profile_request(self) -> None:
         profile = ModelProfile(
             scenario="account_route",

@@ -19,7 +19,7 @@ from backend.services.prompts.account_routing import (
 
 MAX_PROMPT_CONTENT_CHARS = 100_000
 MAX_CHANGE_NOTE_CHARS = 500
-FRAUD_ACCOUNT_PROMPT_VERSION = "fraud-account-fields-v4"
+FRAUD_ACCOUNT_PROMPT_VERSION = "fraud-account-fields-v5"
 FRAUD_ACCOUNT_LEGACY_FIELDS = {
     "company_information",
     "contact_information",

@@ -190,8 +190,12 @@ class AutomationAccountIntakeTest(unittest.TestCase):
         ):
             outcome = self._run(repository)
 
+        context = dict(outcome["account_case"]["automation_context"])
+        conversation = context.pop("reply_conversation_context")
+        self.assertEqual(conversation["version"], "automation-context-v1")
+        self.assertTrue(conversation["conversation"])
         self.assertEqual(
-            outcome["account_case"]["automation_context"],
+            context,
             {
                 "handler": "fraud_account",
                 "extractor_version": None,

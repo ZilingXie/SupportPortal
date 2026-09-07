@@ -10,6 +10,7 @@ untouched: the legacy /production stack must not change before cutover.
 """
 
 from __future__ import annotations
+from backend.services.automation_context import build_automation_context, persona_context, extraction_audit
 
 import json
 import logging
@@ -232,6 +233,7 @@ def _build_verification_attempt(
     customer_email: str | None,
     zendesk_ticket_url: str | None,
     existing_fields: dict[str, Any] | None = None,
+    automation_context: dict[str, Any] | None = None,
     follow_up_count: int = 0,
 ) -> dict[str, Any]:
     result = build_account_verification_automation_result(
@@ -241,6 +243,7 @@ def _build_verification_attempt(
         account_case_id=account_case_id,
         customer_email=customer_email,
         existing_fields=existing_fields,
+        automation_context=automation_context,
         follow_up_count=follow_up_count,
         zendesk_ticket_url=zendesk_ticket_url,
     )
@@ -282,12 +285,14 @@ def _build_enablement_attempt(
     customer_email: str | None,
     zendesk_ticket_url: str | None,
     existing_fields: dict[str, Any] | None = None,
+    automation_context: dict[str, Any] | None = None,
     already_requested_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     extraction = extract_enablement_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
         existing_fields=existing_fields,
+        automation_context=automation_context,
     )
     if extraction.requires_human_review:
         return {
@@ -333,6 +338,7 @@ def _build_suspension_contact_attempt(
     ticket_email: str | None,
     customer_name: str | None,
     created_at: str,
+    automation_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from backend.services.account_suspension_automation import (
         contact_confirmation_reply_facts,
@@ -341,6 +347,7 @@ def _build_suspension_contact_attempt(
     extraction = extract_account_suspension_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
+        automation_context=automation_context,
     )
     workflow = dict(initial_contact_workflow(ticket_email=ticket_email, created_at=created_at))
     workflow.setdefault("state", SUSPENSION_STATE_AWAITING_CONTACT_CONFIRMATION)
@@ -374,10 +381,12 @@ def _build_suspension_direct_handoff_attempt(
     customer_name: str | None,
     created_at: str,
     zendesk_ticket_url: str | None,
+    automation_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     extraction = extract_account_suspension_fields(
         ticket_subject=ticket_subject,
         customer_messages=customer_messages,
+        automation_context=automation_context,
     )
     collected_fields = {
         str(key): str(value)
@@ -927,10 +936,14 @@ async def run_production_account_intake(
             raise RuntimeError(f"unsupported account automation subcategory: {route}")
         handler_implementation = str(registration.implementation or "").strip()
         messages = list(ticket.get("messages") or [])
+        conversation_context = build_automation_context(ticket, {
+            "automation_handler": automation_handler, "automation_status": "automation"
+        }, initial=True)
         if handler_implementation == "account_verification" or route == "fraud_account":
             attempt = _build_verification_attempt(
                 ticket_subject=title,
                 customer_messages=messages,
+                automation_context=conversation_context,
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=customer_email,
@@ -951,6 +964,7 @@ async def run_production_account_intake(
                 attempt = _build_suspension_direct_handoff_attempt(
                     ticket_subject=title,
                     customer_messages=messages,
+                    automation_context=conversation_context,
                     message=f"{title}\n\n{question}",
                     ticket_id=ticket_id,
                     account_case_id=account_case_id,
@@ -963,6 +977,7 @@ async def run_production_account_intake(
                 attempt = _build_suspension_contact_attempt(
                     ticket_subject=title,
                     customer_messages=messages,
+                    automation_context=conversation_context,
                     ticket_email=customer_email,
                     customer_name=customer_name,
                     created_at=timestamp,
@@ -972,6 +987,7 @@ async def run_production_account_intake(
                 message=f"{title}\n\n{question}",
                 ticket_subject=title,
                 customer_messages=messages,
+                automation_context=conversation_context,
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
                 customer_email=customer_email,
@@ -993,7 +1009,7 @@ async def run_production_account_intake(
                 AccountSuspensionFieldExtraction,
             ),
         ):
-            route_classification["field_extraction"] = extraction.audit_payload()
+            route_classification["field_extraction"] = extraction_audit(extraction)
         if attempt.get("requires_human_review") and isinstance(
             extraction,
             (
@@ -1112,6 +1128,10 @@ async def run_production_account_intake(
         "automation_context": automation_context,
         **route_metadata,
     }
+    billing_ticket["automation_context"]["reply_conversation_context"] = persona_context(
+        build_automation_context(ticket, billing_ticket, initial=True),
+        [str(v) for k, v in collected_fields.items() if k in {"app_id", "customer_email"}],
+    )
     await _sync(repository.save_account_case, billing_ticket)
     await _sync(
         repository.save_account_route_execution,

@@ -137,7 +137,7 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
-            "ENABLEMENT_COMPLETION_CLASSIFIER_MODEL: ${ENABLEMENT_COMPLETION_CLASSIFIER_MODEL:-gpt-5.6-luna}",
+            "ENABLEMENT_COMPLETION_CLASSIFIER_MODEL: ${ENABLEMENT_COMPLETION_CLASSIFIER_MODEL:-gpt-6-astra}",
             worker_block,
         )
         self.assertIn(
@@ -203,6 +203,22 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertNotIn("PADDLEOCR_API_TOKEN", worker_block)
+
+    def test_account_automation_model_defaults_reach_actual_consumers(self) -> None:
+        expected = (
+            "ACCOUNT_EXTRACTOR_MODEL: ${ACCOUNT_EXTRACTOR_MODEL:-gpt-6-astra}",
+            "ACCOUNT_EXTRACTOR_REASONING_EFFORT: ${ACCOUNT_EXTRACTOR_REASONING_EFFORT:-low}",
+            "RAGFLOW_ANSWER_MODEL: ${RAGFLOW_ANSWER_MODEL:-gpt-6-astra}",
+            "RAGFLOW_ANSWER_REASONING_EFFORT: ${RAGFLOW_ANSWER_REASONING_EFFORT:-low}",
+        )
+        for service_name in (
+            "automation_production", "automation_production_worker",
+            "api", "worker_aux", "api_production", "worker_aux_production",
+        ):
+            with self.subTest(service=service_name):
+                service_block = self._service_block(service_name)
+                for setting in expected:
+                    self.assertIn(setting, service_block)
 
     def test_worker_service_mounts_huggingface_cache(self) -> None:
         worker_block = self._service_block("worker_query")
@@ -501,6 +517,9 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("RUNTIME_PROFILE: local_lightweight", content)
         self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "true"', content)
         self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "true"', content)
+        self.assertNotIn("ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-5.6-luna}", content)
+        self.assertNotIn("ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-xhigh}", content)
+        self.assertGreaterEqual(content.count("ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-6-astra}"), 3)
 
     def test_local_db_override_restores_account_reply_poller(self) -> None:
         content = LOCAL_DB_COMPOSE_PATH.read_text(encoding="utf-8")
@@ -508,6 +527,8 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("<<: *local_app_db_environment", content)
         self.assertIn('ACCOUNT_REPLY_POLLER_ENABLED: "true"', content)
         self.assertIn('ACCOUNT_REPLY_LEGACY_POLLER_ENABLED: "true"', content)
+        self.assertIn("ACCOUNT_ROUTE_MODEL: ${ACCOUNT_ROUTE_MODEL:-gpt-6-astra}", content)
+        self.assertIn("ACCOUNT_ROUTE_REASONING_EFFORT: ${ACCOUNT_ROUTE_REASONING_EFFORT:-low}", content)
 
     def test_base_compose_defaults_runtime_profile_to_full(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")

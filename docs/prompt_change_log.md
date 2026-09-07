@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-07 - ECS conversation context and Astra profiles (p2-110)
+
+- Versions: Enablement fields v4, Fraud fields v5, Suspension fields v3, Account Persona v31. The four profiles `account_route`, `account_extractor`, `ragflow_answer`, and `enablement_completion_classifier` now default to Astra/low Responses without temperature; Persona remains Astra/low. Other profiles and Engineer-specific prompts are unchanged.
+- Reason: Case 13334 exposed a mismatch between trusted historical fields and current-message grounding. Public assistant questions now help interpret customer answers without becoming field evidence; unchanged trusted values no longer require current-message proof.
+- Contract: ECS context includes current public dialogue and business state; only permitted customer messages supply new field values. Persona receives sanitized dialogue for continuity, while current handler facts and tool results remain authoritative. No Reviewer, body rewriting, added model fallback, or historical replay.
+- Files: automation_context.py, ECS Route/intake/reply-sync, the three field extractors, automation_persona.py, llm_profiles.py and official Compose/environment defaults.
+- Verification: final deterministic regression passed with 731 tests and 162 subtests, including the continuous Fraud partial/RAG/completion handoff sequence. The fixed final-Prompt Provider gate passed 32/32 samples without success resampling; its XML records the actual model, call count and latency for every sample, and every observed request used `gpt-6-astra`/low without temperature. Formal local runtime verification remains a post-merge gate. Source Prompt activation and Production deployment are not performed by these changes.
+
 ## 2026-09-07 - Persona v30 Astra and lossless Responses layout (p2-144)
 
 - Version/model: `automation-persona-v30`, `gpt-6-astra/low`; Astra requests omit temperature, including legacy environment overrides. Other model profiles remain unchanged.

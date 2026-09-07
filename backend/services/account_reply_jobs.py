@@ -212,6 +212,13 @@ def create_account_reply_job(
         close_after_publish=close_after_publish,
         reject_legacy_fraud_close=True,
     )
+    # Only ECS cases carry this opt-in snapshot; legacy entrypoints remain unchanged.
+    lookup = getattr(repository, "get_billing_ticket_by_client_ticket_id", None)
+    case = lookup(ticket_id) if callable(lookup) else None
+    if isinstance(case, dict) and isinstance(normalized_facts, dict):
+        context = (case.get("automation_context") or {}).get("reply_conversation_context")
+        if isinstance(context, dict) and context.get("version") == "automation-context-v1":
+            normalized_facts["conversation_context"] = copy.deepcopy(context)
     repository.cancel_pending_account_reply_jobs(
         ticket_id,
         updated_at=created_at,
