@@ -567,6 +567,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         or args.hermes_case_workflow_mode not in {None, "disabled"}
     ):
         raise ValueError("CodeBuild direct Production keeps Production Hermes disabled")
+    if args.through == "production" and args.hermes_persona_enabled:
+        raise ValueError("--through production keeps Hermes Persona disabled")
     release_commit = args.release_commit or _git(project_root, "rev-parse", "origin/main")
     release_commit = _git(project_root, "rev-parse", f"{release_commit}^{{commit}}")
     release_id = f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"

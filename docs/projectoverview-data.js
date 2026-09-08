@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-07T10:22:13Z",
-  "source_base_commit": "a4938b6b45dab027e3f8369b0e2d80ddfc5e6f0a",
-  "registry_digest": "92c5e57270650c8b942b92c16eb22dd0904dccc920298fc28cfb0c11db9c050c",
+  "generated_at": "2026-09-08T05:49:04Z",
+  "source_base_commit": "3adc2c9d48661dc52844e540a9fce8ba2e806ec2",
+  "registry_digest": "0c2298bd127dc88029a5d47097110d89e03ccfd46974536fd329cbc8658f8506",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2441,6 +2441,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Production Persona pipeline guard and regression coverage",
+          "details": "run_pipeline 在既有 direct Production 限制之后拒绝普通 --through production --hermes-persona-enabled，错误为 --through production keeps Hermes Persona disabled。真实调用回归覆盖普通/direct 拒绝且不触发 Git、checkpoint 或发布阶段；Preproduction Persona 与普通 Production mock 路径仍可进入 release 解析。补 flag 的文档示例与守卫合同一致，不改 deploy shell、render 层或 checkpoint schema。定向 pipeline/deploy 测试 70 passed；新增用例已先在原实现复现缺失守卫。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction aligned to immutable Production release with Persona",
+          "details": "2026-09-08 复用 r20260907-3adc2c9 的原始 Manifest/Preproduction Publish Record，未重新 CodeBuild。Preproduction API/Route/Worker :10/:10/:10 均唯一 PRIMARY COMPLETED、1/1/0，实际运行 digest 逐角色等于 Production :43/:37/:41；commit 3adc2c9d48661dc52844e540a9fce8ba2e806ec2。Prompt pr-ef75242faa67 同步并激活，数据库独立读回 active，内容指纹 sha256:4f3ab72e570f3be244cd79c90b381b348c635a0530dc3dfc74ee783f7cc7f322。API/Worker 仅注入 Preproduction Persona 两项 secret 引用，Route 无注入；typed workflow disabled。公网 live/release/ready、新鲜 heartbeat、CloudWatch、只读 Provider probe、ALB、EC2 backup 与部署前后 Terraform zero drift 全通过。check-only 105.713秒、deploy 墙钟910.743秒；deploy evidence 阶段累计801.149秒，不等于端到端墙钟时间。证据 .deployments/ecs-deploy-preproduction-r20260907-3adc2c9-disabled-persona/evidence.json 为 complete、hermes.persona_enabled=true。Production/EC2/n8n 与 Hermes 配置未修改，未投单或发送外部消息。"
+        },
+        {
+          "type": "test",
           "label": "ECS dashboard and runtime regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_*.py",
           "details": "65 passed, 3 skipped；skip 为未配置 AUTOMATION_ECS_TEST_POSTGRES_DSN 的真实 Postgres integration；fresh 组合同时覆盖 dashboard/runtime、release builder/manifest、管理员 session、分页筛选、详情脱敏、jobs/deliveries、heartbeat/provenance、static/API 优先级、写方法 fail closed、镜像角色隔离与 Terraform API-only secret wiring。"
@@ -2968,6 +2978,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction Hermes Persona isolated while typed workflow remains disabled",
           "details": "main@0591a71a72ee的r20260906-0591a71已部署到ECS Preproduction API/Route/Worker :6，三服务1/1/0且PRIMARY COMPLETED。API/Worker保留真实Hermes Persona endpoint凭据但HERMES_CASE_WORKFLOW_MODE=disabled，Route无Hermes配置；复用API :6网络与SSM注入的一次性authenticated GET /v1/models返回200且exit 0。Preproduction Hermes :10双容器HEALTHY并使用三组全新EFS access point；Production Hermes :3双容器仍HEALTHY并继续服务EC2。未调用Responses、未创建或修改工单、未发送邮件/Slack，typed Case Workflow业务验收未开始。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Persona restored on Production-identical images",
+          "details": "2026-09-08 Preproduction 三角色 :10 对齐 r20260907-3adc2c9 / pr-ef75242faa67；API/Worker 的 ENGINEER_INVESTIGATION_REPLY_BASE_URL 与 ENGINEER_INVESTIGATION_REPLY_API_KEY 均引用 Preproduction SSM，Route 无注入且没有 callback token。Hermes 服务保持 :10、1/1/0 和原镜像，Hermes/memory-core 双容器 HEALTHY。复用新 API task definition 的短生命周期探针 authenticated GET /v1/models 返回200、exit0；未调用 Responses 或 /v1/turns。首次探针因错误假定 base URL 带 /v1 在发请求前退出，核对配置为 origin 后修正探针路径，未修改服务配置。两环境三角色实际 digest、live/release/ready、目标 release 新鲜 heartbeat 及 Production 原 revision 独立读回通过。技术验收不代表实际 Persona 回复或真实调查链业务验收。"
         },
         {
           "type": "test",
@@ -6909,7 +6924,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "AWS CodeBuild固定完整main SHA的三角色linux/amd64构建、registry-backed Manifest v2、Preproduction Publish Record、独立release/preproduction Terraform state、canonical initial task definitions和同digest晋升链已落地；另支持owner对具体release单独批准的CodeBuild直晋Production模式，且不会伪造或更新Preproduction ECS验收。Production deploy复用一次preflight evidence，Route/Worker并行rollout，ALB只等待新API target健康，并把公网health、CloudWatch、发布后Terraform zero-drift、EC2 backup及单个Worker只读Provider probe合并为并行collector；无schema变更目标为10-15分钟并记录slo_breach。ECS Preproduction Account与Hermes保持独立运行；ECS Production Account保持Hermes disabled；EC2、n8n由用户独立控制。",
-      "next_action": "保持 active。ECS Production已发布main@734fb772并等待用户投递全新Enablement、Fraud与Suspension工单验收；不得修改Preproduction ECS/Hermes、EC2、n8n或既有工单，也不重试outcome_unknown。部署性能后续继续收敛：当前Production deploy本体709.267秒达标，但CodeBuild到最终激活总计1151.4秒、slo_breach=true，需将端到端时间压到900秒以内。",
+      "next_action": "保持 active。Production 与 Preproduction 三角色现均使用 r20260907-3adc2c9 和 pr-ef75242faa67；Preproduction Persona 配置与只读鉴权已恢复，待用户投递全新受控工单验收。typed Case Workflow 保持 disabled，不重放既有工单或 outcome_unknown；本次不修改 Production、EC2、n8n 或 Hermes 镜像。后续发布性能仍按真实端到端墙钟时间评估，不能以阶段耗时之和替代。",
       "acceptance_criteria": [
         "AWS CodeBuild从固定完整main commit各构建一次 linux/amd64 的 api、route、worker镜像并按不可变digest直接发布到Preproduction ECR；三个安全镜像均物理排除rerun/reset、backend.main、测试代码和项目内rag_api/rag_worker入口。",
         "ECR使用 supportportal/preproduction与 supportportal/production两个环境仓库并启用 immutable tag；repository-independent Release Manifest持久化 commit、api/route/worker OCI digest、schema revision、contract versions和 prompt_release_id。",
@@ -7241,6 +7256,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "CodeBuild direct Production v29 release and fail-closed probe repairs",
           "command": "release_automation_ecs_pipeline.sh --through production --codebuild-direct-production --hermes-case-workflow-mode disabled; independent ECS/public health/evidence readback",
           "details": "PR #1105/#1106/#1107/#1108合入后，clean main@734fb7726353以r20260906-734fb77发布到Production API/Route/Worker revision 40/34/38；运行digest分别为sha256:7175206de8bb9a029cc50141c173361c285dbb0dbb8835a1f919c2baf03bcf42、sha256:caf4f94bef4562a0d6e3f9ad324ef2087e909cec4b2ad6e568c73838afb5bc7e、sha256:0c60b7d7f8f2e437dcfa9e9dc2121aa4299b9a24eb03b54e70bb909f0dadb51f，均与Manifest/ECR/Promotion Record一致且服务1/1/0、唯一PRIMARY COMPLETED。前两次尝试分别因Provider probe误用旧RAG client、错误依赖ECS不存在的container logStreamName而在Prompt激活前fail closed并完整恢复37/31/35；修复后真实Worker探针通过RAGFlow retrieval、Archer GET、Graph /me、Zendesk identity与三类收件人To=1/Cc=1。最终公网live/release/ready、当前heartbeat、Prompt pr-c9b3a291ecf1 active、CloudWatch三角色错误0、Terraform发布前后zero drift、EC2 backup与Production Hermes workflow disabled全部通过；Preproduction ECS、EC2、n8n和既有工单未修改。Production deploy evidence为709.267秒且slo_breach=false，但含CodeBuild/promotion/check-only的pipeline总计1151.4秒、slo_breach=true。"
+        },
+        {
+          "type": "test",
+          "label": "Production Persona pipeline guard and regression coverage",
+          "details": "run_pipeline 在既有 direct Production 限制之后拒绝普通 --through production --hermes-persona-enabled，错误为 --through production keeps Hermes Persona disabled。真实调用回归覆盖普通/direct 拒绝且不触发 Git、checkpoint 或发布阶段；Preproduction Persona 与普通 Production mock 路径仍可进入 release 解析。补 flag 的文档示例与守卫合同一致，不改 deploy shell、render 层或 checkpoint schema。定向 pipeline/deploy 测试 70 passed；新增用例已先在原实现复现缺失守卫。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction aligned to immutable Production release with Persona",
+          "details": "2026-09-08 复用 r20260907-3adc2c9 的原始 Manifest/Preproduction Publish Record，未重新 CodeBuild。Preproduction API/Route/Worker :10/:10/:10 均唯一 PRIMARY COMPLETED、1/1/0，实际运行 digest 逐角色等于 Production :43/:37/:41；commit 3adc2c9d48661dc52844e540a9fce8ba2e806ec2。Prompt pr-ef75242faa67 同步并激活，数据库独立读回 active，内容指纹 sha256:4f3ab72e570f3be244cd79c90b381b348c635a0530dc3dfc74ee783f7cc7f322。API/Worker 仅注入 Preproduction Persona 两项 secret 引用，Route 无注入；typed workflow disabled。公网 live/release/ready、新鲜 heartbeat、CloudWatch、只读 Provider probe、ALB、EC2 backup 与部署前后 Terraform zero drift 全通过。check-only 105.713秒、deploy 墙钟910.743秒；deploy evidence 阶段累计801.149秒，不等于端到端墙钟时间。证据 .deployments/ecs-deploy-preproduction-r20260907-3adc2c9-disabled-persona/evidence.json 为 complete、hermes.persona_enabled=true。Production/EC2/n8n 与 Hermes 配置未修改，未投单或发送外部消息。"
         }
       ],
       "source_refs": [
@@ -7263,7 +7288,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-25",
-      "updated_at": "2026-09-06",
+      "updated_at": "2026-09-08",
       "history": [
         {
           "at": "2026-09-06",
@@ -7469,6 +7494,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-06",
           "event": "ecs_release_pipeline_preproduction_timing_accepted",
           "summary": "正式pipeline从main@eb171067构建并部署r20260906-eb17106：CodeBuild operator 140.136秒（AWS BUILD 70秒）、check-only 100.923秒、Preproduction deploy 986.495秒、总计1227.554秒（20分27.6秒），达到15–30分钟目标。Route/Worker与API ECS wait合计456.860秒，ALB draining collector为241.783秒；最终API/Route/Worker revision 9/9/9均为唯一COMPLETED PRIMARY和1/1/0，digest/heartbeat/Prompt/CloudWatch/Target Health/Terraform serial 7 zero drift/EC2 backup全部通过。AWS login provider在mutation阶段自动刷新；37个release state文件未发现DSN、AWS credential或PostgreSQL URI明文。Production revision 35/29/33、Production Hermes 3及EC2 build f01665b均未变化；未触发Production promotion/deploy、n8n、工单、邮件、Slack或业务Responses。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "preproduction_production_release_aligned",
+          "summary": "先复用 Production 的原有三角色 digest 部署 Preproduction 并恢复 Persona，随后修复 pipeline Production flag 守卫；保持严格同镜像，不因工具修复重建业务镜像。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "pipeline_production_persona_guard_verified",
+          "summary": "普通和 direct Production Persona 均在发布阶段前拒绝；Preproduction flag 透传与普通 Production mock 兼容性保留，70 项定向测试通过。"
         }
       ],
       "legacy_refs": [
@@ -10945,9 +10980,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-05",
-      "updated_at": "2026-09-06",
+      "updated_at": "2026-09-08",
       "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。canonical SupportPortal Runtime已进入镜像，但当前ECS Production与Preproduction的typed Case Workflow均为disabled；Preproduction仅启用Hermes Persona/Responses endpoint，真实Hermes/AgentRelay调查链尚未激活。",
-      "next_action": "保持 active。先由用户验收Preproduction的Hermes Persona Account回复；typed Case Workflow当前在Preproduction和Production均disabled。后续启用真实technical Case调查前，需另行确认zac-agent/AgentRelay、Slack/Zendesk外部闭环、知识promotion sink与环境晋升边界。",
+      "next_action": "保持 active。Preproduction Persona endpoint 配置已恢复，并通过新 API definition 的 authenticated GET /v1/models（200、exit 0）；待用户向 /automation/preproduction/v1/intake 投递全新受控工单验收 Persona Account 回复。两环境 typed Case Workflow 仍 disabled；真实 Hermes/AgentRelay 调查、Slack/Zendesk 闭环与知识 promotion 仍需另行确认。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -11008,6 +11043,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction Hermes Persona isolated while typed workflow remains disabled",
           "details": "main@0591a71a72ee的r20260906-0591a71已部署到ECS Preproduction API/Route/Worker :6，三服务1/1/0且PRIMARY COMPLETED。API/Worker保留真实Hermes Persona endpoint凭据但HERMES_CASE_WORKFLOW_MODE=disabled，Route无Hermes配置；复用API :6网络与SSM注入的一次性authenticated GET /v1/models返回200且exit 0。Preproduction Hermes :10双容器HEALTHY并使用三组全新EFS access point；Production Hermes :3双容器仍HEALTHY并继续服务EC2。未调用Responses、未创建或修改工单、未发送邮件/Slack，typed Case Workflow业务验收未开始。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Persona restored on Production-identical images",
+          "details": "2026-09-08 Preproduction 三角色 :10 对齐 r20260907-3adc2c9 / pr-ef75242faa67；API/Worker 的 ENGINEER_INVESTIGATION_REPLY_BASE_URL 与 ENGINEER_INVESTIGATION_REPLY_API_KEY 均引用 Preproduction SSM，Route 无注入且没有 callback token。Hermes 服务保持 :10、1/1/0 和原镜像，Hermes/memory-core 双容器 HEALTHY。复用新 API task definition 的短生命周期探针 authenticated GET /v1/models 返回200、exit0；未调用 Responses 或 /v1/turns。首次探针因错误假定 base URL 带 /v1 在发请求前退出，核对配置为 origin 后修正探针路径，未修改服务配置。两环境三角色实际 digest、live/release/ready、目标 release 新鲜 heartbeat 及 Production 原 revision 独立读回通过。技术验收不代表实际 Persona 回复或真实调查链业务验收。"
         }
       ],
       "history": [
@@ -11045,6 +11085,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-06",
           "event": "preproduction_persona_only_runtime_ready",
           "summary": "隔离Preproduction Hermes与Account Persona endpoint鉴权已通过，但typed Case Workflow在Preproduction和Production均保持disabled；任务继续active，等待后续真实调查链授权与验收。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "preproduction_persona_endpoint_restored",
+          "summary": "恢复被未带 flag 部署移除的 API/Worker Persona secret 引用，并以 authenticated GET /v1/models 验证；Hermes 镜像不变，typed workflow disabled，继续等待用户受控工单验收。"
         }
       ],
       "legacy_ids": [],
