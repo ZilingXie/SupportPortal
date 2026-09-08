@@ -1160,6 +1160,111 @@ class InMemoryAutomationEcsStore:
             )
             return copy.deepcopy(turn)
 
+    def create_investigation_feedback_turn(
+        self,
+        zendesk_ticket_id: str,
+        *,
+        feedback: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        namespace = self.settings.job_namespace
+        with self._lock:
+            case_row = self._cases.get(zendesk_ticket_id)
+            binding = self._hermes_bindings.get((namespace, zendesk_ticket_id))
+            if case_row is None or binding is None:
+                raise HermesTurnStateError("", "case mirror or binding not found")
+            blocker = self.get_hermes_turn_fence_blocker(zendesk_ticket_id)
+            if blocker is not None:
+                raise HermesTurnConflictError(blocker["turn_id"])
+            now_value = _iso()
+            execution_id = _new_id("exec")
+            turn_id = _new_id("turn")
+            request_id = _new_id("hmreq")
+            revision = int(case_row.get("case_revision") or 1)
+            self._executions[execution_id] = {
+                "execution_id": execution_id,
+                "zendesk_ticket_id": zendesk_ticket_id,
+                "event_id": f"feedback:{turn_id}",
+                "event_type": "investigation_feedback",
+                "status": ExecutionStatus.PROCESSING_PENDING.value,
+                "current_stage": "agent_turn.queued",
+                "failure_stage": None,
+                "failure_code": None,
+                "error_message": None,
+                "requires_human_review": False,
+                "intake": {"feedback": feedback[:4000]},
+                "route": {"engine": "hermes", "turn_kind": "investigation_feedback"},
+                "persona": None,
+                "outcome": None,
+                "provenance": base_event.get("provenance") or {},
+                "case_revision": revision,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            self._hermes_turns[turn_id] = {
+                "turn_id": turn_id,
+                "namespace": namespace,
+                "zendesk_ticket_id": zendesk_ticket_id,
+                "execution_id": execution_id,
+                "event_id": f"feedback:{turn_id}",
+                "event_type": "investigation_feedback",
+                "input_version": int(binding["conversation_version"]),
+                "case_revision": revision,
+                "turn_kind": "investigation_feedback",
+                "phase": "work",
+                "direction": "investigation",
+                "route": None,
+                "work_result": {"reviewer_feedback": feedback[:4000]},
+                "input_snapshot": None,
+                "request_id": request_id,
+                "prompt_release_id": str(prompt_release_id or "") or None,
+                "run_id": None,
+                "status": "pending",
+                "cancel_reason": None,
+                "cancelled_at": None,
+                "result": None,
+                "error_code": None,
+                "error_message": None,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            agent_job_id = _new_id("job")
+            self._jobs[agent_job_id] = {
+                "job_id": agent_job_id,
+                "execution_id": execution_id,
+                "kind": JobKind.AGENT_TURN.value,
+                "status": JobStatus.PENDING.value,
+                "namespace": namespace,
+                "payload": {
+                    "contract_version": "automation-agent-turn-v1",
+                    "execution_id": execution_id,
+                    "turn_id": turn_id,
+                    "conversation_key": str(binding["logical_conversation_key"]),
+                    "event": {
+                        "event_id": f"feedback:{turn_id}",
+                        "event_type": "investigation_feedback",
+                        "occurred_at": now_value,
+                        "ticket": case_row.get("ticket") or {},
+                    },
+                },
+                "attempt": 0,
+                "claim_token": None,
+                "claimed_by": None,
+                "lease_expires_at": None,
+                "external_started_at": None,
+                "available_at": now_value,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            return {
+                "turn_id": turn_id,
+                "job_id": agent_job_id,
+                "case_revision": revision,
+                "phase": "work",
+                "direction": "investigation",
+            }
+
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._hermes_drafts.get(draft_id)
@@ -1403,6 +1508,20 @@ class InMemoryAutomationEcsStore:
                 )
             return copy.deepcopy(draft)
 
+    def supersede_hermes_draft(self, draft_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET status='superseded',updated_at=NOW() WHERE draft_id=%s RETURNING *").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                return dict(row)
+
     def mark_hermes_draft_queued(self, draft_id: str, *, delivery_message_id: str) -> dict[str, Any]:
         with self._lock:
             draft = self._hermes_drafts.get(draft_id)
@@ -1411,6 +1530,15 @@ class InMemoryAutomationEcsStore:
             if draft["status"] != "approved":
                 raise HermesDraftStateError(draft_id, f"draft is {draft['status']}")
             draft.update(status="queued", delivery_message_id=delivery_message_id, updated_at=_iso())
+            return copy.deepcopy(draft)
+
+    def supersede_hermes_draft(self, draft_id: str) -> dict[str, Any]:
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            draft["status"] = "superseded"
+            draft["updated_at"] = _iso()
             return copy.deepcopy(draft)
 
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
@@ -2902,6 +3030,129 @@ class PostgresAutomationEcsStore:
                     {"turn_id": turn_id, "reason": reason},
                 )
                 return dict(row)
+
+    def create_investigation_feedback_turn(
+        self,
+        zendesk_ticket_id: str,
+        *,
+        feedback: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Open a feedback turn on the same revision/session/workspace.
+
+        Skips routing: the direction stays investigation and the turn starts
+        at the work phase so reviewer changes flow straight into a new draft.
+        """
+        namespace = self.settings.job_namespace
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_cases")),
+                    (namespace, zendesk_ticket_id),
+                )
+                case_row = cursor.fetchone()
+                if case_row is None:
+                    raise HermesTurnStateError("", "case mirror not found")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (namespace, zendesk_ticket_id),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError("", "case binding not found")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "AND status IN ('pending','running','cancel_requested')"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (namespace, zendesk_ticket_id),
+                )
+                if cursor.fetchone() is not None:
+                    raise HermesTurnConflictError("")
+                execution_id = _new_id("exec")
+                turn_id = _new_id("turn")
+                request_id = _new_id("hmreq")
+                revision = int(case_row["case_revision"])
+                execution_route = {"engine": "hermes", "turn_kind": "investigation_feedback"}
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (execution_id,namespace,zendesk_ticket_id,event_id,event_type,status,current_stage,intake,provenance,case_revision)
+                        VALUES (%s,%s,%s,%s,'investigation_feedback',%s,%s,%s,%s,%s)
+                        """
+                    ).format(self._table("automation_executions")),
+                    (
+                        execution_id,
+                        namespace,
+                        zendesk_ticket_id,
+                        f"feedback:{turn_id}",
+                        ExecutionStatus.PROCESSING_PENDING.value,
+                        "agent_turn.queued",
+                        Jsonb({"feedback": feedback[:4000]}),
+                        Jsonb(base_event),
+                        revision,
+                    ),
+                )
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
+                            input_version,case_revision,turn_kind,phase,direction,request_id,prompt_release_id,status,work_result)
+                        VALUES (%s,%s,%s,%s,%s,'investigation_feedback',%s,%s,'investigation_feedback','work','investigation',%s,%s,'pending',%s)
+                        """
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (
+                        turn_id,
+                        namespace,
+                        zendesk_ticket_id,
+                        execution_id,
+                        f"feedback:{turn_id}",
+                        int(binding["conversation_version"]),
+                        revision,
+                        request_id,
+                        str(prompt_release_id or "") or None,
+                        Jsonb({"reviewer_feedback": feedback[:4000]}),
+                    ),
+                )
+                agent_job_id = _new_id("job")
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) VALUES (%s,%s,%s,%s,%s,%s)"
+                    ).format(self._table("automation_jobs")),
+                    (
+                        agent_job_id,
+                        namespace,
+                        execution_id,
+                        JobKind.AGENT_TURN.value,
+                        JobStatus.PENDING.value,
+                        Jsonb(
+                            {
+                                "contract_version": "automation-agent-turn-v1",
+                                "execution_id": execution_id,
+                                "turn_id": turn_id,
+                                "conversation_key": str(binding["logical_conversation_key"]),
+                                "event": {
+                                    "event_id": f"feedback:{turn_id}",
+                                    "event_type": "investigation_feedback",
+                                    "occurred_at": _iso(),
+                                    "ticket": case_row["ticket"],
+                                },
+                            }
+                        ),
+                    ),
+                )
+                return {
+                    "turn_id": turn_id,
+                    "job_id": agent_job_id,
+                    "case_revision": revision,
+                    "phase": "work",
+                    "direction": "investigation",
+                }
 
     def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
