@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import psycopg
 from psycopg import sql
@@ -15,6 +15,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from backend.services.automation_ecs_contracts import (
+    DEFAULT_ZENDESK_INSTANCE,
+    AgentTurnJobPayload,
     AutomationIntakeEvent,
     DeliveryStatus,
     ExecutionStatus,
@@ -53,6 +55,34 @@ class JobClaimLostError(RuntimeError):
     pass
 
 
+class HermesTurnStateError(RuntimeError):
+    def __init__(self, turn_id: str, reason: str) -> None:
+        self.turn_id = turn_id
+        self.reason = reason
+        super().__init__(f"hermes turn {turn_id}: {reason}")
+
+
+class HermesTurnConflictError(RuntimeError):
+    """Another turn for the same case is already running."""
+
+    def __init__(self, turn_id: str) -> None:
+        self.turn_id = turn_id
+        super().__init__(f"another hermes turn is running for the case of turn {turn_id}")
+
+
+class HermesDraftStateError(RuntimeError):
+    def __init__(self, draft_id: str, reason: str) -> None:
+        self.draft_id = draft_id
+        self.reason = reason
+        super().__init__(f"hermes draft {draft_id}: {reason}")
+
+
+class HermesDraftStaleError(RuntimeError):
+    def __init__(self, draft_id: str) -> None:
+        self.draft_id = draft_id
+        super().__init__(f"hermes draft {draft_id} is stale for the current conversation version")
+
+
 @dataclass(frozen=True)
 class ClaimedJob:
     job_id: str
@@ -85,6 +115,12 @@ class AutomationEcsStore(Protocol):
     def claim_job(self, kind: JobKind, *, worker_id: str, lease_seconds: int) -> ClaimedJob | None: ...
     def renew_job_lease(self, job: ClaimedJob, *, lease_seconds: int) -> None: ...
     def complete_route(self, job: ClaimedJob, *, route: dict[str, Any], persona: dict[str, Any] | None, prompt_snapshots: dict[str, Any], provenance: RuntimeProvenance) -> None: ...
+    def hand_off_to_hermes_agent(self, job: ClaimedJob, *, zendesk_instance: str | None, prompt_release_id: str | None) -> dict[str, Any]: ...
+    def defer_job(self, job: ClaimedJob, *, delay_seconds: int) -> None: ...
+    def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
+    def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
+    def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
+    def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
     def mark_processing_external_started(self, job: ClaimedJob) -> None: ...
     def complete_processing(self, job: ClaimedJob, *, outcome: dict[str, Any], status: ExecutionStatus) -> None: ...
     def fail_job(self, job: ClaimedJob, *, failure_stage: str, failure_code: str, error_message: str, outcome_unknown: bool = False) -> None: ...
@@ -107,6 +143,9 @@ class InMemoryAutomationEcsStore:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._deliveries: dict[str, dict[str, Any]] = {}
         self._heartbeats: dict[str, dict[str, Any]] = {}
+        self._hermes_bindings: dict[tuple[str, str], dict[str, Any]] = {}
+        self._hermes_turns: dict[str, dict[str, Any]] = {}
+        self._hermes_drafts: dict[str, dict[str, Any]] = {}
 
     def migrate(self) -> None:
         self._migrated = True
@@ -396,7 +435,13 @@ class InMemoryAutomationEcsStore:
                     updated_at=_iso(now_value),
                 )
                 execution = self._executions[job["execution_id"]]
-                stage = "route.classify" if kind == JobKind.ROUTE else "automation.process"
+                stage = (
+                    "route.classify"
+                    if kind == JobKind.ROUTE
+                    else "agent.turn"
+                    if kind == JobKind.AGENT_TURN
+                    else "automation.process"
+                )
                 execution.update(
                     status=(
                         ExecutionStatus.ROUTING.value
@@ -513,6 +558,42 @@ class InMemoryAutomationEcsStore:
             current["updated_at"] = _iso()
             self._append_event(job.execution_id, "automation.external_started")
 
+    def defer_job(self, job: ClaimedJob, *, delay_seconds: int) -> None:
+        with self._lock:
+            current = self._claimed(job)
+            current["status"] = JobStatus.PENDING.value
+            current["claim_token"] = None
+            current["claimed_by"] = None
+            current["lease_expires_at"] = None
+            current["available_at"] = _now() + timedelta(seconds=max(0, delay_seconds))
+            current["updated_at"] = _iso()
+            execution = self._executions.get(job.execution_id)
+            if execution is not None and execution.get("status") not in {
+                ExecutionStatus.COMPLETED.value,
+                ExecutionStatus.FAILED.value,
+                ExecutionStatus.HUMAN_REVIEW.value,
+                ExecutionStatus.OUTCOME_UNKNOWN.value,
+                ExecutionStatus.PROCESSING.value,
+                ExecutionStatus.ROUTING.value,
+            }:
+                execution["status"] = ExecutionStatus.PROCESSING_PENDING.value
+                execution["current_stage"] = "agent_turn.deferred"
+                execution["updated_at"] = _iso()
+            self._append_event(
+                job.execution_id,
+                "agent_turn.deferred",
+                {"job_id": job.job_id, "delay_seconds": max(0, delay_seconds)},
+            )
+
+    def set_hermes_turn_run_id(self, turn_id: str, *, run_id: str) -> dict[str, Any]:
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None or turn["status"] != "running":
+                raise HermesTurnStateError(turn_id, "turn is not running")
+            turn["run_id"] = run_id
+            turn["updated_at"] = _iso()
+            return copy.deepcopy(turn)
+
     def complete_processing(
         self,
         job: ClaimedJob,
@@ -578,7 +659,13 @@ class InMemoryAutomationEcsStore:
                 requires_human_review=True,
                 updated_at=_iso(),
             )
-            step_name = "route.classify" if job.kind == JobKind.ROUTE else "automation.process"
+            step_name = (
+                "route.classify"
+                if job.kind == JobKind.ROUTE
+                else "agent.turn"
+                if job.kind == JobKind.AGENT_TURN
+                else "automation.process"
+            )
             self._upsert_step(
                 job.execution_id,
                 step_name,
@@ -648,9 +735,415 @@ class InMemoryAutomationEcsStore:
         with self._lock:
             return copy.deepcopy(list(self._heartbeats.values()))
 
+    def hand_off_to_hermes_agent(
+        self,
+        job: ClaimedJob,
+        *,
+        zendesk_instance: str | None = None,
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        namespace = self.settings.job_namespace
+        instance = str(zendesk_instance or DEFAULT_ZENDESK_INSTANCE).strip() or DEFAULT_ZENDESK_INSTANCE
+        with self._lock:
+            current = self._claimed(job)
+            event = AutomationIntakeEvent.model_validate(current["payload"]["event"])
+            ticket_id = event.ticket.id
+            binding = self._hermes_bindings.get((namespace, ticket_id))
+            if binding is None:
+                conversation_key = f"supportportal:zendesk:{namespace}:{ticket_id}"
+                binding = {
+                    "namespace": namespace,
+                    "zendesk_instance": instance,
+                    "zendesk_ticket_id": ticket_id,
+                    "logical_conversation_key": conversation_key,
+                    "hermes_session_id": f"hermes-session:{uuid5(NAMESPACE_URL, conversation_key)}",
+                    "engine": "hermes",
+                    "conversation_version": 0,
+                    "direction": "pending",
+                    "direction_reason": None,
+                    "status": "active",
+                    "escalation": None,
+                    "investigation": None,
+                    "created_at": _iso(),
+                    "updated_at": _iso(),
+                }
+                self._hermes_bindings[(namespace, ticket_id)] = binding
+            now_value = _iso()
+            turn_id = _new_id("turn")
+            request_id = _new_id("hmreq")
+            self._hermes_turns[turn_id] = {
+                "turn_id": turn_id,
+                "namespace": namespace,
+                "zendesk_ticket_id": ticket_id,
+                "execution_id": job.execution_id,
+                "event_id": event.event_id,
+                "event_type": event.event_type.value,
+                "input_version": int(binding["conversation_version"]),
+                "request_id": request_id,
+                "prompt_release_id": str(prompt_release_id or "") or None,
+                "run_id": None,
+                "status": "pending",
+                "result": None,
+                "error_code": None,
+                "error_message": None,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            current.update(status=JobStatus.COMPLETED.value, updated_at=now_value)
+            execution = self._executions[job.execution_id]
+            handoff_route = {
+                "engine": "hermes",
+                "logical_conversation_key": binding["logical_conversation_key"],
+                "input_version": int(binding["conversation_version"]),
+                "turn_id": turn_id,
+            }
+            execution.update(
+                status=ExecutionStatus.PROCESSING_PENDING.value,
+                current_stage="agent_turn.queued",
+                route=copy.deepcopy(handoff_route),
+                updated_at=now_value,
+            )
+            self._upsert_step(
+                job.execution_id,
+                "route.classify",
+                job.attempt,
+                StepStatus.SUCCEEDED,
+                worker_identity=job.claimed_by,
+                output=copy.deepcopy(handoff_route),
+            )
+            self._append_event(job.execution_id, "route.hermes_handoff", copy.deepcopy(handoff_route))
+            agent_job_id = _new_id("job")
+            agent_payload = AgentTurnJobPayload(
+                execution_id=job.execution_id,
+                turn_id=turn_id,
+                conversation_key=str(binding["logical_conversation_key"]),
+                event=event,
+            )
+            self._jobs[agent_job_id] = {
+                "job_id": agent_job_id,
+                "execution_id": job.execution_id,
+                "kind": JobKind.AGENT_TURN.value,
+                "status": JobStatus.PENDING.value,
+                "namespace": namespace,
+                "payload": agent_payload.model_dump(mode="json"),
+                "attempt": 0,
+                "claim_token": None,
+                "claimed_by": None,
+                "lease_expires_at": None,
+                "external_started_at": None,
+                "available_at": now_value,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            self._append_event(
+                job.execution_id,
+                "agent_turn.queued",
+                {"job_id": agent_job_id, "turn_id": turn_id},
+            )
+            return {
+                "turn_id": turn_id,
+                "request_id": request_id,
+                "job_id": agent_job_id,
+                "conversation_key": str(binding["logical_conversation_key"]),
+                "hermes_session_id": str(binding["hermes_session_id"]),
+                "input_version": int(binding["conversation_version"]),
+            }
+
+    def _stale_hermes_drafts(self, ticket_id: str, *, floor_version: int) -> int:
+        namespace = self.settings.job_namespace
+        stale = 0
+        for draft in self._hermes_drafts.values():
+            if (
+                draft["namespace"] == namespace
+                and draft["zendesk_ticket_id"] == ticket_id
+                and int(draft["conversation_version"]) < floor_version
+                and draft["status"] in {"draft", "awaiting_approval", "approved"}
+            ):
+                draft["status"] = "stale"
+                draft["updated_at"] = _iso()
+                stale += 1
+        return stale
+
+    def _binding_row(self, ticket_id: str) -> dict[str, Any] | None:
+        row = self._hermes_bindings.get((self.settings.job_namespace, ticket_id))
+        return copy.deepcopy(row) if row is not None else None
+
+    def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return self._binding_row(zendesk_ticket_id)
+
+    def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._hermes_turns.get(turn_id)
+            return copy.deepcopy(row) if row is not None else None
+
+    def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._hermes_drafts.get(draft_id)
+            return copy.deepcopy(row) if row is not None else None
+
+    def _turn_rows(self, ticket_id: str) -> list[dict[str, Any]]:
+        namespace = self.settings.job_namespace
+        rows = [
+            copy.deepcopy(turn)
+            for turn in self._hermes_turns.values()
+            if turn["namespace"] == namespace and turn["zendesk_ticket_id"] == ticket_id
+        ]
+        return sorted(rows, key=lambda row: row["created_at"])
+
+    def get_hermes_case_active_turn(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            for turn in self._turn_rows(zendesk_ticket_id):
+                if turn["status"] in {"pending", "running"}:
+                    return turn
+        return None
+
+    def list_hermes_case_turns(self, zendesk_ticket_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(reversed(self._turn_rows(zendesk_ticket_id)))[: max(1, limit)]
+
+    def start_hermes_agent_turn(self, turn_id: str, *, run_id: str) -> dict[str, Any]:
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None or turn["status"] != "pending":
+                raise HermesTurnStateError(turn_id, "turn is not pending")
+            running = self.get_hermes_case_active_turn(turn["zendesk_ticket_id"])
+            if running is not None and running["turn_id"] != turn_id and running["status"] == "running":
+                raise HermesTurnConflictError(turn_id)
+            turn.update(status="running", run_id=run_id, updated_at=_iso())
+            return copy.deepcopy(turn)
+
+    def complete_hermes_agent_turn(self, turn_id: str, *, result: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None or turn["status"] != "running":
+                raise HermesTurnStateError(turn_id, "turn is not running")
+            turn.update(status="completed", result=copy.deepcopy(result), updated_at=_iso())
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesTurnStateError(turn_id, "case binding disappeared")
+            binding["conversation_version"] = max(
+                int(binding["conversation_version"]), int(turn["input_version"]) + 1
+            )
+            binding["updated_at"] = _iso()
+            self._stale_hermes_drafts(
+                turn["zendesk_ticket_id"], floor_version=int(binding["conversation_version"])
+            )
+            self._append_event(
+                turn["execution_id"],
+                "agent_turn.completed",
+                {"turn_id": turn_id, "conversation_version": binding["conversation_version"]},
+            )
+            return copy.deepcopy(turn)
+
+    def fail_hermes_agent_turn(
+        self,
+        turn_id: str,
+        *,
+        status: str,
+        error_code: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        if status not in {"failed", "interrupted", "outcome_unknown"}:
+            raise ValueError("invalid hermes turn failure status")
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None or turn["status"] not in {"pending", "running"}:
+                raise HermesTurnStateError(turn_id, "turn is not pending or running")
+            turn.update(
+                status=status, error_code=error_code, error_message=error_message, updated_at=_iso()
+            )
+            self._append_event(
+                turn["execution_id"], f"agent_turn.{status}", {"turn_id": turn_id, "error_code": error_code}
+            )
+            return copy.deepcopy(turn)
+
+    def record_hermes_case_direction(self, turn_id: str, *, direction: str, reason: str) -> dict[str, Any]:
+        if direction not in {"pending", "automation", "investigation", "human"}:
+            raise ValueError("invalid hermes case direction")
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None:
+                raise HermesTurnStateError(turn_id, "turn not found")
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesTurnStateError(turn_id, "case binding disappeared")
+            binding.update(direction=direction, direction_reason=reason, updated_at=_iso())
+            self._append_event(
+                turn["execution_id"],
+                "agent_turn.direction_recorded",
+                {"turn_id": turn_id, "direction": direction},
+            )
+            return copy.deepcopy(binding)
+
+    def save_hermes_investigation(
+        self,
+        turn_id: str,
+        *,
+        summary: str,
+        evidence: list[dict[str, Any]],
+        blockers: list[str],
+        next_steps: list[str],
+    ) -> dict[str, Any]:
+        payload = {
+            "summary": summary,
+            "evidence": list(evidence),
+            "blockers": list(blockers),
+            "next_steps": list(next_steps),
+        }
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None:
+                raise HermesTurnStateError(turn_id, "turn not found")
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesTurnStateError(turn_id, "case binding disappeared")
+            binding.update(investigation=copy.deepcopy(payload), updated_at=_iso())
+            self._append_event(turn["execution_id"], "agent_turn.investigation_saved", {"turn_id": turn_id})
+            return copy.deepcopy(binding)
+
+    def escalate_hermes_case(self, turn_id: str, *, reason: str) -> dict[str, Any]:
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None:
+                raise HermesTurnStateError(turn_id, "turn not found")
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesTurnStateError(turn_id, "case binding disappeared")
+            binding.update(
+                direction="human",
+                direction_reason=reason,
+                status="paused",
+                escalation={"reason": reason, "turn_id": turn_id},
+                updated_at=_iso(),
+            )
+            self._stale_hermes_drafts(
+                turn["zendesk_ticket_id"], floor_version=int(binding["conversation_version"])
+            )
+            self._append_event(
+                turn["execution_id"], "agent_turn.escalated", {"turn_id": turn_id, "reason": reason}
+            )
+            return copy.deepcopy(binding)
+
+    def save_hermes_case_draft(
+        self,
+        turn_id: str,
+        *,
+        content: str,
+        basis: dict[str, Any],
+        guardrail: dict[str, Any] | None,
+        publish_policy: str,
+    ) -> dict[str, Any]:
+        if publish_policy not in {"auto", "manual"}:
+            raise ValueError("publish policy must be auto or manual")
+        normalized = str(content or "").strip()
+        if not normalized:
+            raise ValueError("draft content is required")
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None or turn["status"] not in {"pending", "running"}:
+                raise HermesTurnStateError(turn_id, "turn is not active")
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesTurnStateError(turn_id, "case binding disappeared")
+            draft_id = _new_id("draft")
+            draft = {
+                "draft_id": draft_id,
+                "namespace": turn["namespace"],
+                "zendesk_ticket_id": turn["zendesk_ticket_id"],
+                "turn_id": turn_id,
+                "conversation_version": int(binding["conversation_version"]),
+                "content": normalized,
+                "basis": copy.deepcopy(basis or {}),
+                "guardrail": copy.deepcopy(guardrail) if guardrail is not None else None,
+                "publish_policy": publish_policy,
+                "status": "draft",
+                "delivery_message_id": None,
+                "approved_by": None,
+                "approved_at": None,
+                "created_at": _iso(),
+                "updated_at": _iso(),
+            }
+            self._hermes_drafts[draft_id] = draft
+            self._append_event(
+                turn["execution_id"],
+                "agent_turn.draft_saved",
+                {"draft_id": draft_id, "publish_policy": publish_policy},
+            )
+            return copy.deepcopy(draft)
+
+    def request_hermes_draft_publish(self, draft_id: str) -> dict[str, Any]:
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            if draft["status"] != "draft":
+                raise HermesDraftStateError(draft_id, f"draft is {draft['status']}")
+            next_status = "approved" if draft["publish_policy"] == "auto" else "awaiting_approval"
+            draft.update(status=next_status, updated_at=_iso())
+            turn = self._hermes_turns.get(draft["turn_id"])
+            if turn is not None:
+                self._append_event(
+                    turn["execution_id"],
+                    "agent_turn.publish_requested",
+                    {"draft_id": draft_id, "status": next_status},
+                )
+            return copy.deepcopy(draft)
+
+    def approve_hermes_case_draft(self, draft_id: str, *, approver: str) -> dict[str, Any]:
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            if draft["status"] != "awaiting_approval":
+                raise HermesDraftStateError(draft_id, f"draft is {draft['status']}")
+            binding = self._hermes_bindings.get((draft["namespace"], draft["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesDraftStateError(draft_id, "case binding disappeared")
+            if int(binding["conversation_version"]) != int(draft["conversation_version"]):
+                draft.update(status="stale", updated_at=_iso())
+                raise HermesDraftStaleError(draft_id)
+            draft.update(approved_by=approver, approved_at=_iso(), status="approved", updated_at=_iso())
+            turn = self._hermes_turns.get(draft["turn_id"])
+            if turn is not None:
+                self._append_event(
+                    turn["execution_id"],
+                    "agent_turn.draft_approved",
+                    {"draft_id": draft_id, "approver": approver},
+                )
+            return copy.deepcopy(draft)
+
+    def mark_hermes_draft_queued(self, draft_id: str, *, delivery_message_id: str) -> dict[str, Any]:
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            if draft["status"] != "approved":
+                raise HermesDraftStateError(draft_id, f"draft is {draft['status']}")
+            draft.update(status="queued", delivery_message_id=delivery_message_id, updated_at=_iso())
+            return copy.deepcopy(draft)
+
+    def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            binding = self._binding_row(zendesk_ticket_id)
+            if binding is None:
+                return None
+            turns = self.list_hermes_case_turns(zendesk_ticket_id, limit=10)
+            active_turn = next((turn for turn in turns if turn["status"] in {"pending", "running"}), None)
+            namespace = self.settings.job_namespace
+            drafts = [
+                copy.deepcopy(draft)
+                for draft in self._hermes_drafts.values()
+                if draft["namespace"] == namespace
+                and draft["zendesk_ticket_id"] == zendesk_ticket_id
+                and draft["status"] in {"draft", "awaiting_approval", "approved", "queued"}
+            ]
+            drafts.sort(key=lambda row: row["created_at"], reverse=True)
+            return {"binding": binding, "active_turn": active_turn, "turns": turns, "drafts": drafts[:10]}
+
 
 class PostgresAutomationEcsStore:
-    _UPGRADABLE_SCHEMA_REVISIONS = frozenset({"automation-ecs-001"})
+    _UPGRADABLE_SCHEMA_REVISIONS = frozenset({"automation-ecs-001", "automation-ecs-002"})
 
     def __init__(self, settings: AutomationEcsSettings) -> None:
         self.settings = settings
@@ -826,6 +1319,60 @@ class PostgresAutomationEcsStore:
                 last_seen_at TIMESTAMPTZ NOT NULL,
                 PRIMARY KEY (namespace, worker_id)
             """),
+            ("automation_hermes_case_bindings", """
+                namespace TEXT NOT NULL,
+                zendesk_instance TEXT NOT NULL,
+                zendesk_ticket_id TEXT NOT NULL,
+                logical_conversation_key TEXT NOT NULL,
+                hermes_session_id TEXT NOT NULL,
+                engine TEXT NOT NULL DEFAULT 'hermes',
+                conversation_version INTEGER NOT NULL DEFAULT 0,
+                direction TEXT NOT NULL DEFAULT 'pending',
+                direction_reason TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                escalation JSONB,
+                investigation JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (namespace, zendesk_ticket_id),
+                UNIQUE (namespace, logical_conversation_key)
+            """),
+            ("automation_hermes_agent_turns", """
+                turn_id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                zendesk_ticket_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                input_version INTEGER NOT NULL,
+                request_id TEXT NOT NULL UNIQUE,
+                prompt_release_id TEXT,
+                run_id TEXT,
+                status TEXT NOT NULL,
+                result JSONB,
+                error_code TEXT,
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (namespace, execution_id)
+            """),
+            ("automation_hermes_case_drafts", """
+                draft_id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                zendesk_ticket_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                conversation_version INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                basis JSONB NOT NULL DEFAULT '{}'::jsonb,
+                guardrail JSONB,
+                publish_policy TEXT NOT NULL,
+                status TEXT NOT NULL,
+                delivery_message_id TEXT,
+                approved_by TEXT,
+                approved_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            """),
         ]
         for name, definition in statements:
             cursor.execute(
@@ -841,6 +1388,20 @@ class PostgresAutomationEcsStore:
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, zendesk_ticket_id, created_at DESC)").format(
                 sql.Identifier("automation_executions_ticket_idx"), self._table("automation_executions")
+            )
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (namespace, zendesk_ticket_id) WHERE status='running'"
+            ).format(
+                sql.Identifier("automation_hermes_turns_one_running"),
+                self._table("automation_hermes_agent_turns"),
+            )
+        )
+        cursor.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, zendesk_ticket_id, created_at DESC)").format(
+                sql.Identifier("automation_hermes_drafts_case_idx"),
+                self._table("automation_hermes_case_drafts"),
             )
         )
 
@@ -1242,7 +1803,13 @@ class PostgresAutomationEcsStore:
                 claimed = cursor.fetchone()
                 if claimed is None:
                     raise RuntimeError("job claim update returned no row")
-                stage = "route.classify" if kind == JobKind.ROUTE else "automation.process"
+                stage = (
+                    "route.classify"
+                    if kind == JobKind.ROUTE
+                    else "agent.turn"
+                    if kind == JobKind.AGENT_TURN
+                    else "automation.process"
+                )
                 execution_status = (
                     ExecutionStatus.ROUTING if kind == JobKind.ROUTE else ExecutionStatus.PROCESSING
                 )
@@ -1376,6 +1943,658 @@ class PostgresAutomationEcsStore:
                 )
                 self._insert_timeline(cursor, job.execution_id, "automation.external_started")
 
+    def defer_job(self, job: ClaimedJob, *, delay_seconds: int) -> None:
+        """Return a claimed job to the queue after the delay without failing it."""
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                self._lock_claimed(cursor, job)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,claim_token=NULL,claimed_by=NULL,lease_expires_at=NULL,"
+                        "available_at=NOW()+(%s * INTERVAL '1 second'),updated_at=NOW() WHERE job_id=%s"
+                    ).format(self._table("automation_jobs")),
+                    (JobStatus.PENDING.value, max(0, delay_seconds), job.job_id),
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,current_stage=%s,updated_at=NOW() WHERE execution_id=%s "
+                        "AND status NOT IN (%s,%s,%s,%s,%s,%s)"
+                    ).format(self._table("automation_executions")),
+                    (
+                        ExecutionStatus.PROCESSING_PENDING.value,
+                        "agent_turn.deferred",
+                        job.execution_id,
+                        ExecutionStatus.COMPLETED.value,
+                        ExecutionStatus.FAILED.value,
+                        ExecutionStatus.HUMAN_REVIEW.value,
+                        ExecutionStatus.OUTCOME_UNKNOWN.value,
+                        ExecutionStatus.PROCESSING.value,
+                        ExecutionStatus.ROUTING.value,
+                    ),
+                )
+                self._insert_timeline(
+                    cursor,
+                    job.execution_id,
+                    "agent_turn.deferred",
+                    {"job_id": job.job_id, "delay_seconds": max(0, delay_seconds)},
+                )
+
+    def set_hermes_turn_run_id(self, turn_id: str, *, run_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET run_id=%s,updated_at=NOW() "
+                        "WHERE turn_id=%s AND status='running' RETURNING *"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (run_id, turn_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesTurnStateError(turn_id, "turn is not running")
+                return dict(row)
+
+    def hand_off_to_hermes_agent(
+        self,
+        job: ClaimedJob,
+        *,
+        zendesk_instance: str | None = None,
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically bind a Zendesk case to a Hermes session and queue its first turn.
+
+        Completes the route job without running the legacy route LLM, creates or
+        reuses the case binding, persists a pending agent turn, and enqueues the
+        agent_turn job. The Engineer Case opening flow is never entered.
+        """
+        namespace = self.settings.job_namespace
+        instance = str(zendesk_instance or DEFAULT_ZENDESK_INSTANCE).strip() or DEFAULT_ZENDESK_INSTANCE
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                current = self._lock_claimed(cursor, job)
+                event = AutomationIntakeEvent.model_validate(current["payload"]["event"])
+                ticket_id = event.ticket.id
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (namespace, ticket_id),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    conversation_key = f"supportportal:zendesk:{namespace}:{ticket_id}"
+                    session_id = f"hermes-session:{uuid5(NAMESPACE_URL, conversation_key)}"
+                    cursor.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (namespace,zendesk_instance,zendesk_ticket_id,logical_conversation_key,
+                                hermes_session_id,engine,conversation_version,direction,status)
+                            VALUES (%s,%s,%s,%s,%s,'hermes',0,'pending','active')
+                            """
+                        ).format(self._table("automation_hermes_case_bindings")),
+                        (namespace, instance, ticket_id, conversation_key, session_id),
+                    )
+                    cursor.execute(
+                        sql.SQL(
+                            "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s"
+                        ).format(self._table("automation_hermes_case_bindings")),
+                        (namespace, ticket_id),
+                    )
+                    binding = cursor.fetchone()
+                    if binding is None:
+                        raise RuntimeError("hermes case binding insert returned no row")
+                turn_id = _new_id("turn")
+                request_id = _new_id("hmreq")
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
+                            input_version,request_id,prompt_release_id,status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                        """
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (
+                        turn_id,
+                        namespace,
+                        ticket_id,
+                        job.execution_id,
+                        event.event_id,
+                        event.event_type.value,
+                        int(binding["conversation_version"]),
+                        request_id,
+                        str(prompt_release_id or "") or None,
+                    ),
+                )
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET status=%s,updated_at=NOW() WHERE job_id=%s").format(
+                        self._table("automation_jobs")
+                    ),
+                    (JobStatus.COMPLETED.value, job.job_id),
+                )
+                handoff_route = {
+                    "engine": "hermes",
+                    "logical_conversation_key": binding["logical_conversation_key"],
+                    "input_version": int(binding["conversation_version"]),
+                    "turn_id": turn_id,
+                }
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,current_stage=%s,route=%s,updated_at=NOW() WHERE execution_id=%s"
+                    ).format(self._table("automation_executions")),
+                    (
+                        ExecutionStatus.PROCESSING_PENDING.value,
+                        "agent_turn.queued",
+                        Jsonb(handoff_route),
+                        job.execution_id,
+                    ),
+                )
+                self._upsert_step(
+                    cursor,
+                    job.execution_id,
+                    "route.classify",
+                    job.attempt,
+                    StepStatus.SUCCEEDED,
+                    worker_identity=job.claimed_by,
+                    output=handoff_route,
+                )
+                self._insert_timeline(cursor, job.execution_id, "route.hermes_handoff", handoff_route)
+                agent_job_id = _new_id("job")
+                agent_payload = AgentTurnJobPayload(
+                    execution_id=job.execution_id,
+                    turn_id=turn_id,
+                    conversation_key=str(binding["logical_conversation_key"]),
+                    event=event,
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) VALUES (%s,%s,%s,%s,%s,%s)"
+                    ).format(self._table("automation_jobs")),
+                    (
+                        agent_job_id,
+                        namespace,
+                        job.execution_id,
+                        JobKind.AGENT_TURN.value,
+                        JobStatus.PENDING.value,
+                        Jsonb(agent_payload.model_dump(mode="json")),
+                    ),
+                )
+                self._insert_timeline(
+                    cursor,
+                    job.execution_id,
+                    "agent_turn.queued",
+                    {"job_id": agent_job_id, "turn_id": turn_id},
+                )
+                return {
+                    "turn_id": turn_id,
+                    "request_id": request_id,
+                    "job_id": agent_job_id,
+                    "conversation_key": str(binding["logical_conversation_key"]),
+                    "hermes_session_id": str(binding["hermes_session_id"]),
+                    "input_version": int(binding["conversation_version"]),
+                }
+
+    def _stale_drafts_for_version(
+        self,
+        cursor: psycopg.Cursor[Any],
+        ticket_id: str,
+        *,
+        floor_version: int,
+    ) -> int:
+        cursor.execute(
+            sql.SQL(
+                """
+                UPDATE {} SET status='stale',updated_at=NOW()
+                WHERE namespace=%s AND zendesk_ticket_id=%s AND conversation_version<%s
+                  AND status IN ('draft','awaiting_approval','approved')
+                """
+            ).format(self._table("automation_hermes_case_drafts")),
+            (self.settings.job_namespace, ticket_id, floor_version),
+        )
+        return int(cursor.rowcount)
+
+    def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (self.settings.job_namespace, zendesk_ticket_id),
+                )
+                row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE turn_id=%s").format(
+                        self._table("automation_hermes_agent_turns")
+                    ),
+                    (turn_id,),
+                )
+                row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def get_hermes_case_active_turn(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "AND status IN ('pending','running') ORDER BY created_at LIMIT 1"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (self.settings.job_namespace, zendesk_ticket_id),
+                )
+                row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def list_hermes_case_turns(self, zendesk_ticket_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "ORDER BY created_at DESC LIMIT %s"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (self.settings.job_namespace, zendesk_ticket_id, max(1, limit)),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+
+    def start_hermes_agent_turn(self, turn_id: str, *, run_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                try:
+                    with connection.transaction():
+                        cursor.execute(
+                            sql.SQL(
+                                "UPDATE {} SET status='running',run_id=%s,updated_at=NOW() "
+                                "WHERE turn_id=%s AND status='pending' RETURNING *"
+                            ).format(self._table("automation_hermes_agent_turns")),
+                            (run_id, turn_id),
+                        )
+                        row = cursor.fetchone()
+                except psycopg.errors.UniqueViolation:
+                    raise HermesTurnConflictError(turn_id) from None
+                if row is None:
+                    raise HermesTurnStateError(turn_id, "turn is not pending")
+                return dict(row)
+
+    def complete_hermes_agent_turn(self, turn_id: str, *, result: dict[str, Any]) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='completed',result=%s,updated_at=NOW() "
+                        "WHERE turn_id=%s AND status='running' RETURNING *"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (Jsonb(result), turn_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesTurnStateError(turn_id, "turn is not running")
+                next_version = int(row["input_version"]) + 1
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET conversation_version=GREATEST(conversation_version,%s),updated_at=NOW() "
+                        "WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING conversation_version"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (next_version, row["namespace"], row["zendesk_ticket_id"]),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
+                self._stale_drafts_for_version(
+                    cursor, str(row["zendesk_ticket_id"]), floor_version=int(binding["conversation_version"])
+                )
+                self._insert_timeline(
+                    cursor,
+                    str(row["execution_id"]),
+                    "agent_turn.completed",
+                    {"turn_id": turn_id, "conversation_version": int(binding["conversation_version"])},
+                )
+                return dict(row)
+
+    def fail_hermes_agent_turn(
+        self,
+        turn_id: str,
+        *,
+        status: str,
+        error_code: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        if status not in {"failed", "interrupted", "outcome_unknown"}:
+            raise ValueError("invalid hermes turn failure status")
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status=%s,error_code=%s,error_message=%s,updated_at=NOW() "
+                        "WHERE turn_id=%s AND status IN ('pending','running') RETURNING *"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (status, error_code, error_message, turn_id),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesTurnStateError(turn_id, "turn is not pending or running")
+                self._insert_timeline(
+                    cursor,
+                    str(row["execution_id"]),
+                    f"agent_turn.{status}",
+                    {"turn_id": turn_id, "error_code": error_code},
+                )
+                return dict(row)
+
+    def record_hermes_case_direction(self, turn_id: str, *, direction: str, reason: str) -> dict[str, Any]:
+        if direction not in {"pending", "automation", "investigation", "human"}:
+            raise ValueError("invalid hermes case direction")
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                turn = self._lock_turn(cursor, turn_id)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET direction=%s,direction_reason=%s,updated_at=NOW() "
+                        "WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (direction, reason, turn["namespace"], turn["zendesk_ticket_id"]),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
+                self._insert_timeline(
+                    cursor,
+                    str(turn["execution_id"]),
+                    "agent_turn.direction_recorded",
+                    {"turn_id": turn_id, "direction": direction},
+                )
+                return dict(binding)
+
+    def save_hermes_investigation(
+        self,
+        turn_id: str,
+        *,
+        summary: str,
+        evidence: list[dict[str, Any]],
+        blockers: list[str],
+        next_steps: list[str],
+    ) -> dict[str, Any]:
+        payload = {
+            "summary": summary,
+            "evidence": list(evidence),
+            "blockers": list(blockers),
+            "next_steps": list(next_steps),
+        }
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                turn = self._lock_turn(cursor, turn_id)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET investigation=%s,updated_at=NOW() "
+                        "WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (Jsonb(payload), turn["namespace"], turn["zendesk_ticket_id"]),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
+                self._insert_timeline(
+                    cursor,
+                    str(turn["execution_id"]),
+                    "agent_turn.investigation_saved",
+                    {"turn_id": turn_id},
+                )
+                return dict(binding)
+
+    def escalate_hermes_case(self, turn_id: str, *, reason: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                turn = self._lock_turn(cursor, turn_id)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET direction='human',direction_reason=%s,status='paused',"
+                        "escalation=%s,updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (
+                        reason,
+                        Jsonb({"reason": reason, "turn_id": turn_id}),
+                        turn["namespace"],
+                        turn["zendesk_ticket_id"],
+                    ),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
+                self._stale_drafts_for_version(
+                    cursor, str(turn["zendesk_ticket_id"]), floor_version=int(binding["conversation_version"])
+                )
+                self._insert_timeline(
+                    cursor,
+                    str(turn["execution_id"]),
+                    "agent_turn.escalated",
+                    {"turn_id": turn_id, "reason": reason},
+                )
+                return dict(binding)
+
+    def _lock_turn(self, cursor: psycopg.Cursor[Any], turn_id: str) -> dict[str, Any]:
+        cursor.execute(
+            sql.SQL("SELECT * FROM {} WHERE turn_id=%s").format(
+                self._table("automation_hermes_agent_turns")
+            ),
+            (turn_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise HermesTurnStateError(turn_id, "turn not found")
+        return dict(row)
+
+    def save_hermes_case_draft(
+        self,
+        turn_id: str,
+        *,
+        content: str,
+        basis: dict[str, Any],
+        guardrail: dict[str, Any] | None,
+        publish_policy: str,
+    ) -> dict[str, Any]:
+        if publish_policy not in {"auto", "manual"}:
+            raise ValueError("publish policy must be auto or manual")
+        normalized = str(content or "").strip()
+        if not normalized:
+            raise ValueError("draft content is required")
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                turn = self._lock_turn(cursor, turn_id)
+                if str(turn["status"]) not in {"pending", "running"}:
+                    raise HermesTurnStateError(turn_id, "turn is not active")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (turn["namespace"], turn["zendesk_ticket_id"]),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
+                draft_id = _new_id("draft")
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (draft_id,namespace,zendesk_ticket_id,turn_id,conversation_version,
+                            content,basis,guardrail,publish_policy,status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft')
+                        RETURNING *
+                        """
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (
+                        draft_id,
+                        turn["namespace"],
+                        turn["zendesk_ticket_id"],
+                        turn_id,
+                        int(binding["conversation_version"]),
+                        normalized,
+                        Jsonb(basis or {}),
+                        Jsonb(guardrail) if guardrail is not None else None,
+                        publish_policy,
+                    ),
+                )
+                row = cursor.fetchone()
+                self._insert_timeline(
+                    cursor,
+                    str(turn["execution_id"]),
+                    "agent_turn.draft_saved",
+                    {"draft_id": draft_id, "publish_policy": publish_policy},
+                )
+                return dict(row)
+
+    def request_hermes_draft_publish(self, draft_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                if str(row["status"]) != "draft":
+                    raise HermesDraftStateError(draft_id, f"draft is {row['status']}")
+                next_status = "approved" if str(row["publish_policy"]) == "auto" else "awaiting_approval"
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET status=%s,updated_at=NOW() WHERE draft_id=%s RETURNING *").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (next_status, draft_id),
+                )
+                updated = cursor.fetchone()
+                self._insert_timeline(
+                    cursor,
+                    self._draft_execution_id(cursor, draft_id),
+                    "agent_turn.publish_requested",
+                    {"draft_id": draft_id, "status": next_status},
+                )
+                return dict(updated)
+
+    def approve_hermes_case_draft(self, draft_id: str, *, approver: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                if str(row["status"]) != "awaiting_approval":
+                    raise HermesDraftStateError(draft_id, f"draft is {row['status']}")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT conversation_version FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (row["namespace"], row["zendesk_ticket_id"]),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesDraftStateError(draft_id, "case binding disappeared")
+                if int(binding["conversation_version"]) != int(row["conversation_version"]):
+                    cursor.execute(
+                        sql.SQL("UPDATE {} SET status='stale',updated_at=NOW() WHERE draft_id=%s").format(
+                            self._table("automation_hermes_case_drafts")
+                        ),
+                        (draft_id,),
+                    )
+                    raise HermesDraftStaleError(draft_id)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='approved',approved_by=%s,approved_at=NOW(),updated_at=NOW() "
+                        "WHERE draft_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (approver, draft_id),
+                )
+                updated = cursor.fetchone()
+                self._insert_timeline(
+                    cursor,
+                    self._draft_execution_id(cursor, draft_id),
+                    "agent_turn.draft_approved",
+                    {"draft_id": draft_id, "approver": approver},
+                )
+                return dict(updated)
+
+    def mark_hermes_draft_queued(self, draft_id: str, *, delivery_message_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                if str(row["status"]) != "approved":
+                    raise HermesDraftStateError(draft_id, f"draft is {row['status']}")
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='queued',delivery_message_id=%s,updated_at=NOW() "
+                        "WHERE draft_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (delivery_message_id, draft_id),
+                )
+                updated = cursor.fetchone()
+                return dict(updated)
+
+    def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        binding = self.get_hermes_case_binding(zendesk_ticket_id)
+        if binding is None:
+            return None
+        turns = self.list_hermes_case_turns(zendesk_ticket_id, limit=10)
+        active_turn = next((turn for turn in turns if str(turn["status"]) in {"pending", "running"}), None)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "AND status IN ('draft','awaiting_approval','approved','queued') "
+                        "ORDER BY created_at DESC LIMIT 10"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (self.settings.job_namespace, zendesk_ticket_id),
+                )
+                drafts = [dict(row) for row in cursor.fetchall()]
+        return {
+            "binding": binding,
+            "active_turn": active_turn,
+            "turns": turns,
+            "drafts": drafts,
+        }
+
+    def _draft_execution_id(self, cursor: psycopg.Cursor[Any], draft_id: str) -> str:
+        cursor.execute(
+            sql.SQL(
+                "SELECT t.execution_id FROM {} t JOIN {} d ON d.turn_id=t.turn_id WHERE d.draft_id=%s"
+            ).format(self._table("automation_hermes_agent_turns"), self._table("automation_hermes_case_drafts")),
+            (draft_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise HermesDraftStateError(draft_id, "draft turn disappeared")
+        return str(row["execution_id"])
+
     def complete_processing(self, job: ClaimedJob, *, outcome: dict[str, Any], status: ExecutionStatus) -> None:
         if status not in {ExecutionStatus.COMPLETED, ExecutionStatus.HUMAN_REVIEW}:
             raise ValueError("processing completion status must be completed or human_review")
@@ -1446,7 +2665,13 @@ class PostgresAutomationEcsStore:
                         job.execution_id,
                     ),
                 )
-                step_name = "route.classify" if job.kind == JobKind.ROUTE else "automation.process"
+                step_name = (
+                    "route.classify"
+                    if job.kind == JobKind.ROUTE
+                    else "agent.turn"
+                    if job.kind == JobKind.AGENT_TURN
+                    else "automation.process"
+                )
                 self._upsert_step(
                     cursor,
                     job.execution_id,

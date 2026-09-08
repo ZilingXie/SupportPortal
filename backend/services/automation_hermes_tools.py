@@ -1,0 +1,495 @@
+"""Business tool implementations for the Hermes support-profile agent.
+
+The Hermes agent calls these through authenticated SupportPortal endpoints
+during a run. Every tool derives the case from the durable turn context —
+the model never chooses which ticket it operates on.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from backend.services.automation_ecs_store import (
+    AutomationEcsStore,
+    HermesDraftStateError,
+    HermesTurnStateError,
+)
+from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
+
+LOGGER = logging.getLogger("supportportal.automation_hermes_tools")
+
+
+class HermesToolError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _resolve_turn_context(
+    store: AutomationEcsStore, repository: Any, turn_id: str
+) -> dict[str, Any]:
+    turn = store.get_hermes_turn(turn_id)
+    if turn is None:
+        raise HermesToolError("turn_not_found", f"turn {turn_id} does not exist")
+    if str(turn["status"]) not in {"pending", "running"}:
+        raise HermesToolError("turn_not_active", f"turn {turn_id} is {turn['status']}")
+    binding = store.get_hermes_case_binding(str(turn["zendesk_ticket_id"]))
+    if binding is None:
+        raise HermesToolError("binding_missing", "case binding disappeared")
+    account_case = (
+        repository.get_account_case_by_ticket_id(str(turn["zendesk_ticket_id"]))
+        if repository is not None
+        else None
+    )
+    return {
+        "turn": turn,
+        "binding": binding,
+        "account_case": account_case if isinstance(account_case, dict) else None,
+    }
+
+
+def _require_account_case(context: dict[str, Any]) -> dict[str, Any]:
+    account_case = context.get("account_case")
+    if not isinstance(account_case, dict):
+        raise HermesToolError(
+            "account_case_missing", "the Zendesk case mirror does not exist yet"
+        )
+    return account_case
+
+
+def tool_get_case_context(
+    store: AutomationEcsStore, repository: Any, *, turn_id: str
+) -> dict[str, Any]:
+    context = _resolve_turn_context(store, repository, turn_id)
+    turn = context["turn"]
+    binding = context["binding"]
+    ticket_id = str(turn["zendesk_ticket_id"])
+    case_row = store.list_case_executions(ticket_id)
+    latest_execution = case_row[0] if case_row else None
+    ticket = repository.get_ticket(ticket_id) if repository is not None else None
+    messages = list((ticket or {}).get("messages") or [])
+    account_case = context["account_case"]
+    return {
+        "zendesk_ticket_id": ticket_id,
+        "ticket": (
+            {
+                "subject": (ticket or {}).get("subject"),
+                "status": (ticket or {}).get("status"),
+                "customer_id": (ticket or {}).get("customer_id"),
+            }
+            if isinstance(ticket, dict)
+            else None
+        ),
+        "conversation_version": int(binding["conversation_version"]),
+        "direction": binding["direction"],
+        "investigation": binding.get("investigation"),
+        "collected_fields": (account_case or {}).get("collected_fields") or {},
+        "missing_fields": (account_case or {}).get("missing_fields") or [],
+        "automation_status": (account_case or {}).get("automation_status"),
+        "internal_email_send_status": (account_case or {}).get("internal_email_send_status"),
+        "recent_messages": [
+            {
+                "role": message.get("role"),
+                "content": message.get("content"),
+                "created_at": message.get("created_at"),
+            }
+            for message in messages[-20:]
+        ],
+        "current_execution": (
+            {
+                "execution_id": latest_execution.get("execution_id"),
+                "event_type": latest_execution.get("event_type"),
+                "status": latest_execution.get("status"),
+            }
+            if isinstance(latest_execution, dict)
+            else None
+        ),
+    }
+
+
+def tool_record_direction(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn_id: str,
+    direction: str,
+    reason: str,
+    route: str | None = None,
+) -> dict[str, Any]:
+    normalized_direction = str(direction or "").strip().lower()
+    if normalized_direction not in {"automation", "investigation", "human"}:
+        raise HermesToolError("invalid_direction", "direction must be automation, investigation, or human")
+    normalized_reason = str(reason or "").strip()
+    if not normalized_reason:
+        raise HermesToolError("reason_required", "a direction reason is required")
+    context = _resolve_turn_context(store, repository, turn_id)
+    binding = store.record_hermes_case_direction(
+        turn_id, direction=normalized_direction, reason=normalized_reason
+    )
+    account_case = _require_account_case(context)
+    normalized_route = str(route or "").strip() or None
+    if normalized_direction == "automation":
+        account_case["route"] = normalized_route or account_case.get("route")
+        account_case["execution_action"] = normalized_route or account_case.get("execution_action")
+    account_case["automation_status"] = (
+        "automation" if normalized_direction == "automation" else account_case.get("automation_status")
+    )
+    if repository is not None:
+        repository.save_account_case(account_case)
+    return {
+        "direction": binding["direction"],
+        "conversation_version": int(binding["conversation_version"]),
+        "route": account_case.get("route"),
+    }
+
+
+async def tool_execute_automation_action(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn_id: str,
+    route: str,
+    environment: str,
+    zendesk_side_effects_enabled: bool = True,
+) -> dict[str, Any]:
+    """Run the deterministic extraction/validation/execution chain for a route.
+
+    Reuses the existing per-route attempt builders and executors so the Hermes
+    engine inherits the same business rules as the legacy harness; the agent's
+    role is deciding *when* and *for which route* to execute, never redefining
+    the validation.
+    """
+    from backend.services.account_automation_handlers import account_automation_handler
+    from backend.services.account_route_pipeline import account_route_metadata
+    from backend.services.automation_account_intake import (
+        _build_billing_attempt,
+        _build_enablement_attempt,
+        _build_suspension_contact_attempt,
+        _build_suspension_direct_handoff_attempt,
+        _build_verification_attempt,
+        _run_enablement_archer_workflow,
+        _run_internal_email_delivery,
+        _zendesk_ticket_url,
+        send_billing_internal_email,
+        send_enablement_internal_email,
+    )
+    from backend.services.automation_context import build_automation_context
+
+    normalized_route = str(route or "").strip()
+    if not normalized_route:
+        raise HermesToolError("route_required", "a registered automation route is required")
+    registration = account_automation_handler(normalized_route)
+    if registration is None:
+        raise HermesToolError(
+            "route_not_automatable",
+            f"route {normalized_route} has no registered automation handler; escalate to human",
+        )
+    context = _resolve_turn_context(store, repository, turn_id)
+    turn = context["turn"]
+    binding = context["binding"]
+    if str(binding["direction"]) != "automation":
+        raise HermesToolError(
+            "direction_mismatch",
+            "record the automation direction before executing automation actions",
+        )
+    account_case = _require_account_case(context)
+    ticket_id = str(turn["zendesk_ticket_id"])
+    ticket = repository.get_ticket(ticket_id)
+    if not isinstance(ticket, dict):
+        raise HermesToolError("ticket_missing", "the local ticket mirror does not exist")
+    handler_implementation = str(registration.implementation or "").strip()
+    automation_handler = str(
+        (account_route_metadata(classification={}, route_family="", execution_action=normalized_route) or {}).get(
+            "automation_handler"
+        )
+        or normalized_route
+    )
+    messages = list(ticket.get("messages") or [])
+    conversation_context = build_automation_context(
+        ticket, {"automation_handler": automation_handler, "automation_status": "automation"}, initial=True
+    )
+    zendesk_ticket_url = _zendesk_ticket_url(ticket_id)
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or f"AC-{ticket_id}"
+    )
+    subject = str(ticket.get("subject") or "")
+    question = str(
+        (messages[0] or {}).get("content")
+        if messages and (messages[0] or {}).get("role") == "customer"
+        else (ticket.get("question") or subject)
+    )
+    timestamp = str(turn["created_at"])
+
+    attempt: dict[str, Any] | None = None
+    if handler_implementation == "account_verification" or normalized_route == "fraud_account":
+        attempt = _build_verification_attempt(
+            ticket_subject=subject,
+            customer_messages=messages,
+            automation_context=conversation_context,
+            ticket_id=ticket_id,
+            account_case_id=account_case_id,
+            customer_email=str(ticket.get("customer_id") or ""),
+            zendesk_ticket_url=zendesk_ticket_url,
+        )
+    elif handler_implementation == "billing" or normalized_route in {"fraud_account", "detailed_invoice"}:
+        attempt = _build_billing_attempt(
+            action=normalized_route,
+            message=question,
+            ticket_id=ticket_id,
+            billing_ticket_id=account_case_id,
+            customer_email=str(ticket.get("customer_id") or ""),
+            requester=str(ticket.get("customer_id") or ""),
+            zendesk_ticket_url=zendesk_ticket_url,
+        )
+    elif handler_implementation == "account_suspension" or normalized_route == "account_suspension":
+        suspension_direct_handoff = normalized_route == "account_suspension" and environment in {
+            "preproduction",
+            "production",
+        }
+        if suspension_direct_handoff:
+            attempt = _build_suspension_direct_handoff_attempt(
+                ticket_subject=subject,
+                customer_messages=messages,
+                automation_context=conversation_context,
+                message=f"{subject}\n\n{question}",
+                ticket_id=ticket_id,
+                account_case_id=account_case_id,
+                ticket_email=str(ticket.get("customer_id") or ""),
+                customer_name=str(account_case.get("customer_name") or ""),
+                created_at=timestamp,
+                zendesk_ticket_url=zendesk_ticket_url,
+            )
+        else:
+            attempt = _build_suspension_contact_attempt(
+                ticket_subject=subject,
+                customer_messages=messages,
+                automation_context=conversation_context,
+                ticket_email=str(ticket.get("customer_id") or ""),
+                customer_name=str(account_case.get("customer_name") or ""),
+            )
+    elif handler_implementation == "enablement" or normalized_route == "enablement":
+        attempt = _build_enablement_attempt(
+            message=f"{subject}\n\n{question}",
+            ticket_subject=subject,
+            customer_messages=messages,
+            automation_context=conversation_context,
+            ticket_id=ticket_id,
+            account_case_id=account_case_id,
+            customer_email=str(ticket.get("customer_id") or ""),
+            zendesk_ticket_url=zendesk_ticket_url,
+        )
+    else:
+        raise HermesToolError(
+            "handler_unsupported",
+            f"automation handler {handler_implementation} is not executable by the hermes engine",
+        )
+
+    extraction = attempt.get("field_extraction")
+    collected_fields = dict(attempt.get("collected_fields") or {})
+    missing_fields = list(attempt.get("missing_fields") or [])
+    requires_human_review = bool(attempt.get("requires_human_review"))
+    executed_actions: list[str] = []
+    internal_email_status = "not_applicable"
+    internal_email_reason = ""
+
+    account_case["route"] = normalized_route
+    account_case["execution_action"] = normalized_route
+    account_case["collected_fields"] = collected_fields
+    account_case["missing_fields"] = missing_fields
+    account_case["automation_context"] = dict(
+        attempt.get("automation_context") or account_case.get("automation_context") or {}
+    )
+
+    if requires_human_review:
+        account_case["automation_status"] = "human_review_required"
+        account_case["execution_reason_code"] = f"{automation_handler}_field_extraction_failed"
+        repository.save_account_case(account_case)
+        store.escalate_hermes_case(turn_id, reason="field_extraction_requires_human_review")
+        return {
+            "status": "human_review_required",
+            "reason": "field_extraction_requires_human_review",
+            "missing_fields": missing_fields,
+            "collected_fields": collected_fields,
+            "executed_actions": [],
+        }
+
+    if attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
+        if automation_handler == "enablement":
+            archer_result, account_case, _reply_job = await _run_enablement_archer_workflow(
+                repository=repository,
+                account_case=account_case,
+                ticket_id=ticket_id,
+                fallback_email_payload=dict(attempt["internal_email_to_send"]),
+                persona_assignment=None,
+                processing_profile=environment,
+                trigger_message_created_at=timestamp,
+            )
+            executed_actions.append(f"enablement_archer:{archer_result.outcome}")
+            internal_email_status = str(account_case.get("internal_email_send_status") or "")
+            internal_email_reason = str(account_case.get("internal_email_send_reason") or "")
+        else:
+            sender = (
+                send_enablement_internal_email
+                if automation_handler == "enablement"
+                else send_billing_internal_email
+            )
+            delivery_result, account_case = await _run_internal_email_delivery(
+                repository=repository,
+                account_case=account_case,
+                ticket_id=ticket_id,
+                handler=automation_handler or "billing",
+                payload=dict(attempt["internal_email_to_send"]),
+                sender=sender,
+            )
+            executed_actions.append("internal_email_submitted")
+            internal_email_status = str(delivery_result.status)
+            internal_email_reason = str(delivery_result.reason)
+    elif attempt.get("internal_email_to_send"):
+        executed_actions.append("internal_email_blocked_no_side_effects")
+        internal_email_status = "not_applicable"
+        internal_email_reason = "zendesk_side_effects_disabled"
+
+    account_case["automation_status"] = "automation"
+    if missing_fields:
+        account_case["execution_reason_code"] = None
+    repository.save_account_case(account_case)
+    return {
+        "status": "missing_fields" if missing_fields else "executed",
+        "route": normalized_route,
+        "missing_fields": missing_fields,
+        "collected_fields": collected_fields,
+        "executed_actions": executed_actions,
+        "internal_email_send_status": internal_email_status,
+        "internal_email_send_reason": internal_email_reason,
+    }
+
+
+def tool_save_investigation_progress(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn_id: str,
+    summary: str,
+    evidence: list[dict[str, Any]] | None = None,
+    blockers: list[str] | None = None,
+    next_steps: list[str] | None = None,
+) -> dict[str, Any]:
+    normalized_summary = str(summary or "").strip()
+    if not normalized_summary:
+        raise HermesToolError("summary_required", "an investigation summary is required")
+    context = _resolve_turn_context(store, repository, turn_id)
+    binding = store.save_hermes_investigation(
+        turn_id,
+        summary=normalized_summary,
+        evidence=list(evidence or []),
+        blockers=[str(item) for item in (blockers or [])],
+        next_steps=[str(item) for item in (next_steps or [])],
+    )
+    if str(binding["direction"]) not in {"investigation", "human"}:
+        store.record_hermes_case_direction(
+            turn_id, direction="investigation", reason="investigation progress saved"
+        )
+    return {"saved": True, "summary": normalized_summary}
+
+
+def tool_save_reply_draft(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn_id: str,
+    content: str,
+    basis: dict[str, Any] | None = None,
+    publish_policy: str,
+) -> dict[str, Any]:
+    normalized_policy = str(publish_policy or "").strip().lower()
+    if normalized_policy not in {"auto", "manual"}:
+        raise HermesToolError("invalid_publish_policy", "publish_policy must be auto or manual")
+    context = _resolve_turn_context(store, repository, turn_id)
+    binding = context["binding"]
+    normalized_content = str(content or "").strip()
+    if not normalized_content:
+        raise HermesToolError("content_required", "draft content is required")
+    if normalized_policy == "auto" and str(binding["direction"]) != "automation":
+        raise HermesToolError(
+            "policy_direction_mismatch",
+            "auto publication is only allowed for direction=automation cases",
+        )
+    guardrail = run_engineer_guardrail_final(
+        draft_customer_reply=normalized_content,
+        reply_readiness={"summary": str((binding.get("investigation") or {}).get("summary") or "")},
+    )
+    draft = store.save_hermes_case_draft(
+        turn_id,
+        content=normalized_content,
+        basis=dict(basis or {}),
+        guardrail=guardrail,
+        publish_policy=normalized_policy,
+    )
+    return {
+        "draft_id": draft["draft_id"],
+        "conversation_version": int(draft["conversation_version"]),
+        "publish_policy": draft["publish_policy"],
+        "guardrail_decision": str((guardrail or {}).get("decision") or ""),
+        "guardrail_blockers": list((guardrail or {}).get("blockers") or []),
+    }
+
+
+def tool_request_publish(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn_id: str,
+    draft_id: str,
+    environment: str,
+    zendesk_side_effects_enabled: bool = True,
+) -> dict[str, Any]:
+    context = _resolve_turn_context(store, repository, turn_id)
+    turn = context["turn"]
+    draft_row = store.get_hermes_case_review(str(turn["zendesk_ticket_id"]))
+    draft = next(
+        (item for item in (draft_row or {}).get("drafts", []) if item.get("draft_id") == draft_id),
+        None,
+    )
+    if draft is None:
+        raise HermesDraftStateError(draft_id, "draft not found")
+    guardrail = draft.get("guardrail") if isinstance(draft.get("guardrail"), dict) else {}
+    if str(guardrail.get("decision")) != "pass" and str(draft.get("publish_policy")) == "auto":
+        raise HermesToolError(
+            "guardrail_blocked",
+            f"deterministic guardrail did not pass: {guardrail.get('decision')}",
+        )
+    updated = store.request_hermes_draft_publish(draft_id)
+    if str(updated.get("publish_policy")) != "auto":
+        return {"draft_id": draft_id, "status": "awaiting_approval", "queued": False}
+    if not zendesk_side_effects_enabled:
+        return {"draft_id": draft_id, "status": "approved", "queued": False, "reason": "zendesk_side_effects_disabled"}
+    from backend.services.automation_hermes_delivery import queue_hermes_draft_delivery
+
+    queue_hermes_draft_delivery(
+        store,
+        repository,
+        draft_id=updated["draft_id"],
+        environment=environment,
+    )
+    return {"draft_id": draft_id, "status": "queued", "queued": True}
+
+
+def tool_escalate_human(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    normalized_reason = str(reason or "").strip()
+    if not normalized_reason:
+        raise HermesToolError("reason_required", "an escalation reason is required")
+    context = _resolve_turn_context(store, repository, turn_id)
+    binding = store.escalate_hermes_case(turn_id, reason=normalized_reason)
+    account_case = context.get("account_case")
+    if isinstance(account_case, dict) and repository is not None:
+        account_case["automation_status"] = "human_review_required"
+        account_case["execution_reason_code"] = normalized_reason
+        repository.save_account_case(account_case)
+    return {"status": binding["status"], "direction": binding["direction"], "reason": normalized_reason}

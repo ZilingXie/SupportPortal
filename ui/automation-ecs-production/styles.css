@@ -1484,3 +1484,10 @@ a:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Hermes agent review */
+.hermes-review-section h4 { margin: 0.9rem 0 0.4rem; }
+.hermes-investigation ul { margin: 0.3rem 0 0.3rem 1.1rem; }
+.hermes-draft footer { word-break: break-word; }
+.hermes-feedback-form { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.8rem; }
+.hermes-feedback-form textarea { width: 100%; }

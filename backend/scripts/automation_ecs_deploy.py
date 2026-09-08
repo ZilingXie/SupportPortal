@@ -29,6 +29,7 @@ PROVENANCE_ENV_NAMES = {
     "PROMPT_RELEASE_ID",
 }
 HERMES_CASE_WORKFLOW_MODES = {"disabled", "mock", "real"}
+AUTOMATION_CASE_ENGINES = {"legacy", "hermes"}
 HERMES_OUTBOUND_SECRET_NAMES = {
     "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
     "ENGINEER_INVESTIGATION_REPLY_API_KEY",
@@ -38,6 +39,16 @@ HERMES_SECRET_SUFFIXES = {
     "ENGINEER_INVESTIGATION_REPLY_BASE_URL": "hermes-base-url",
     "ENGINEER_INVESTIGATION_REPLY_API_KEY": "hermes-api-server-key",
     "HERMES_CALLBACK_TOKEN": "hermes-callback-token",
+}
+HERMES_AGENT_SECRET_NAMES = {
+    "HERMES_AGENT_BASE_URL",
+    "HERMES_AGENT_API_TOKEN",
+    "HERMES_AGENT_TOOL_TOKEN",
+}
+HERMES_AGENT_SECRET_SUFFIXES = {
+    "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
+    "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
+    "HERMES_AGENT_TOOL_TOKEN": "hermes-agent-tool-token",
 }
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
@@ -311,6 +322,7 @@ def _base_environment(
     role: str,
     environment: str,
     hermes_case_workflow_mode: str,
+    automation_case_engine: str = "legacy",
 ) -> list[dict[str, str]]:
     values = {
         "AUTOMATION_RUNTIME_ALLOW_MEMORY": "0",
@@ -344,6 +356,8 @@ def _base_environment(
                 "PROMPT_RUNTIME_SERVICE": f"automation-ecs-{role}-{environment}",
             }
         )
+        if role == "route":
+            values["AUTOMATION_CASE_ENGINE"] = automation_case_engine
     if role == "worker":
         values.update(
             {
@@ -381,6 +395,8 @@ def render_initial_task_definition(
     parameter_prefix_arn: str,
     hermes_case_workflow_mode: str = "disabled",
     hermes_persona_enabled: bool = False,
+    automation_case_engine: str = "legacy",
+    hermes_agent_enabled: bool = False,
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
 ) -> dict[str, Any]:
@@ -392,6 +408,10 @@ def render_initial_task_definition(
         raise ValueError("initial Preproduction repository must be supportportal/preproduction")
     if hermes_case_workflow_mode not in HERMES_CASE_WORKFLOW_MODES:
         raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
+    if automation_case_engine not in AUTOMATION_CASE_ENGINES:
+        raise ValueError("automation case engine must be legacy or hermes")
+    if automation_case_engine == "hermes" and not hermes_agent_enabled:
+        raise ValueError("the hermes engine requires hermes agent credentials")
     if role == "worker" and not (graph_efs_file_system_id and graph_efs_access_point_id):
         raise ValueError("Worker initial task definition requires Graph EFS inputs")
 
@@ -456,6 +476,16 @@ def render_initial_task_definition(
         )
     if role == "api" and hermes_case_workflow_mode != "disabled":
         secret_names[role]["HERMES_CALLBACK_TOKEN"] = "hermes-callback-token"
+    if hermes_agent_enabled:
+        if role == "worker":
+            secret_names[role].update(
+                {
+                    "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
+                    "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
+                }
+            )
+        if role == "api":
+            secret_names[role]["HERMES_AGENT_TOOL_TOKEN"] = "hermes-agent-tool-token"
     container: dict[str, Any] = {
         "name": role,
         "image": (
@@ -470,6 +500,7 @@ def render_initial_task_definition(
             role=role,
             environment=environment,
             hermes_case_workflow_mode=hermes_case_workflow_mode,
+            automation_case_engine=automation_case_engine,
         ),
         "secrets": [
             {"name": name, "valueFrom": _parameter_arn(parameter_prefix_arn, suffix)}
@@ -576,6 +607,8 @@ def render_task_definition(
     repository: str = "supportportal/production",
     hermes_case_workflow_mode: str | None = None,
     hermes_persona_enabled: bool | None = None,
+    automation_case_engine: str | None = None,
+    hermes_agent_enabled: bool | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -595,6 +628,13 @@ def render_task_definition(
         and hermes_case_workflow_mode not in HERMES_CASE_WORKFLOW_MODES
     ):
         raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
+    if automation_case_engine is not None:
+        if automation_case_engine not in AUTOMATION_CASE_ENGINES:
+            raise ValueError("automation case engine must be legacy or hermes")
+        if environment == "production" and automation_case_engine == "hermes":
+            raise ValueError("the hermes case engine is not allowed in Production")
+    if automation_case_engine == "hermes" and hermes_agent_enabled is False:
+        raise ValueError("the hermes engine requires hermes agent credentials")
     manifest = read_manifest(Path(manifest_path))
     component = manifest.components[role]
     rendered = _registrable_task_definition(task_definition)
@@ -655,6 +695,33 @@ def render_task_definition(
                     name,
                     _parameter_arn(prefix_arn, HERMES_SECRET_SUFFIXES[name]),
                 )
+    if automation_case_engine is not None or hermes_agent_enabled is not None:
+        if role == "route" and automation_case_engine is not None:
+            _set_environment_value(
+                container,
+                "AUTOMATION_CASE_ENGINE",
+                automation_case_engine,
+            )
+        effective_agent_enabled = (
+            hermes_agent_enabled
+            if hermes_agent_enabled is not None
+            else environment_values.get("AUTOMATION_CASE_ENGINE") == "hermes"
+        )
+        agent_required: set[str] = set()
+        if effective_agent_enabled:
+            if role == "worker":
+                agent_required.update({"HERMES_AGENT_BASE_URL", "HERMES_AGENT_API_TOKEN"})
+            if role == "api":
+                agent_required.add("HERMES_AGENT_TOOL_TOKEN")
+        _remove_secret_references(container, HERMES_AGENT_SECRET_NAMES)
+        if agent_required:
+            prefix_arn = _parameter_prefix_arn(container, environment=environment)
+            for name in sorted(agent_required):
+                _set_secret_reference(
+                    container,
+                    name,
+                    _parameter_arn(prefix_arn, HERMES_AGENT_SECRET_SUFFIXES[name]),
+                )
     return rendered
 
 
@@ -684,6 +751,7 @@ def render_production_hermes_disabled_task_definition(
 
     _remove_environment_values(container, HERMES_SECRET_NAMES)
     _remove_secret_references(container, HERMES_SECRET_NAMES)
+    _remove_secret_references(container, HERMES_AGENT_SECRET_NAMES)
     _set_environment_value(container, "HERMES_CASE_WORKFLOW_MODE", "disabled")
     if role == "worker":
         validate_worker_contract(rendered)
@@ -836,6 +904,16 @@ def build_parser() -> argparse.ArgumentParser:
         const=True,
         default=None,
     )
+    render.add_argument(
+        "--automation-case-engine",
+        choices=sorted(AUTOMATION_CASE_ENGINES),
+    )
+    render.add_argument(
+        "--hermes-agent-enabled",
+        action="store_const",
+        const=True,
+        default=None,
+    )
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -860,6 +938,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="disabled",
     )
     initial.add_argument("--hermes-persona-enabled", action="store_true")
+    initial.add_argument(
+        "--automation-case-engine",
+        choices=sorted(AUTOMATION_CASE_ENGINES),
+        default="legacy",
+    )
+    initial.add_argument("--hermes-agent-enabled", action="store_true")
     initial.add_argument("--graph-efs-file-system-id")
     initial.add_argument("--graph-efs-access-point-id")
     initial.add_argument("--output", required=True)
@@ -904,6 +988,8 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             repository=args.repository,
             hermes_case_workflow_mode=args.hermes_case_workflow_mode,
             hermes_persona_enabled=args.hermes_persona_enabled,
+            automation_case_engine=args.automation_case_engine,
+            hermes_agent_enabled=args.hermes_agent_enabled,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -934,6 +1020,8 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             parameter_prefix_arn=args.parameter_prefix_arn,
             hermes_case_workflow_mode=args.hermes_case_workflow_mode,
             hermes_persona_enabled=args.hermes_persona_enabled,
+            automation_case_engine=args.automation_case_engine,
+            hermes_agent_enabled=args.hermes_agent_enabled,
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
         )

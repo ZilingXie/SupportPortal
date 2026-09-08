@@ -40,6 +40,7 @@ from backend.services.automation_ecs_store import (
     ClaimedJob,
     create_automation_ecs_store,
 )
+from backend.services.automation_hermes_agent import HermesAgentTurnProcessor, HermesTurnDeferred
 from backend.services.prompt_runtime import initialize_prompt_runtime
 
 LOGGER = logging.getLogger("supportportal.automation_ecs_worker")
@@ -218,6 +219,7 @@ class AutomationWorker:
     processor: BusinessProcessor
     lease_seconds: int = 300
     background_cycle: Callable[[], None] | None = None
+    agent_processor: HermesAgentTurnProcessor | None = None
 
     def _run_background_cycle(self) -> None:
         if self.background_cycle is None:
@@ -227,11 +229,92 @@ class AutomationWorker:
         except Exception:
             LOGGER.exception("Account reply/delivery cycle failed")
 
+    def process_agent_turn_once(self) -> bool:
+        if self.agent_processor is None:
+            return False
+        job = self.store.claim_job(
+            JobKind.AGENT_TURN,
+            worker_id=self.settings.runtime_identity,
+            lease_seconds=self.lease_seconds,
+        )
+        if job is None:
+            return False
+        lease = JobLeaseHeartbeat(self.store, job=job, lease_seconds=self.lease_seconds)
+        lease.start()
+        action_key = f"{self.settings.environment}:{job.execution_id}:hermes_agent_turn"
+
+        def before_external() -> None:
+            self.store.mark_processing_external_started(job)
+            self.store.record_delivery(
+                execution_id=job.execution_id,
+                action_type="hermes_agent_turn",
+                idempotency_key=action_key,
+                target_identity=None,
+                status=DeliveryStatus.IN_PROGRESS,
+            )
+
+        try:
+            outcome = self.agent_processor.process(job, before_external=before_external)
+            normalized = jsonable_encoder(outcome)
+            lease.stop()
+            if str(normalized.get("status") or "") in {"failed", "interrupted", "outcome_unknown"}:
+                self.store.record_delivery(
+                    execution_id=job.execution_id,
+                    action_type="hermes_agent_turn",
+                    idempotency_key=action_key,
+                    target_identity=None,
+                    status=DeliveryStatus.OUTCOME_UNKNOWN,
+                    result=normalized,
+                    error_code=str(normalized.get("error_code") or "hermes_agent_turn_failed"),
+                )
+                self.store.fail_job(
+                    job,
+                    failure_stage="agent.turn",
+                    failure_code=str(normalized.get("error_code") or "hermes_agent_turn_failed"),
+                    error_message=str(normalized.get("error_message") or "hermes agent turn failed"),
+                )
+                self._run_background_cycle()
+                return True
+            binding_ticket_id = str((job.payload.get("event") or {}).get("ticket", {}).get("id") or "")
+            binding = self.store.get_hermes_case_binding(binding_ticket_id) if binding_ticket_id else None
+            status = ExecutionStatus.COMPLETED
+            if isinstance(binding, dict) and str(binding.get("direction")) == "human":
+                status = ExecutionStatus.HUMAN_REVIEW
+            self.store.record_delivery(
+                execution_id=job.execution_id,
+                action_type="hermes_agent_turn",
+                idempotency_key=action_key,
+                target_identity=None,
+                status=DeliveryStatus.CONFIRMED,
+                result=normalized,
+            )
+            self.store.complete_processing(job, outcome=normalized, status=status)
+            self._run_background_cycle()
+            return True
+        except HermesTurnDeferred:
+            lease.stop()
+            self.store.defer_job(job, delay_seconds=self.agent_processor.defer_seconds)
+            self._run_background_cycle()
+            return True
+        except Exception as exc:
+            lease.stop()
+            LOGGER.exception("Hermes agent turn failed execution_id=%s", job.execution_id)
+            self.store.fail_job(
+                job,
+                failure_stage="agent.turn",
+                failure_code=f"hermes_agent_{type(exc).__name__}",
+                error_message=str(exc),
+            )
+            self._run_background_cycle()
+            return True
+
     def process_once(self) -> bool:
         self.store.heartbeat(
             worker_id=self.settings.runtime_identity,
             provenance=self.settings.provenance(),
         )
+        if self.process_agent_turn_once():
+            return True
         job = self.store.claim_job(
             JobKind.PROCESSING,
             worker_id=self.settings.runtime_identity,
@@ -353,6 +436,11 @@ def run_automation_worker() -> int:
         store=store,
         processor=AccountBusinessProcessor(repository, environment=settings.environment),
         background_cycle=background_cycle,
+        agent_processor=HermesAgentTurnProcessor(
+            store,
+            environment=settings.environment,
+            repository=repository,
+        ),
     )
     stopping = Event()
     heartbeat = WorkerHeartbeat(
