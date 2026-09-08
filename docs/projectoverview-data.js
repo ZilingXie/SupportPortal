@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-08T10:21:24Z",
-  "source_base_commit": "7eddd825b00ef5b3e6d817892943439801c63558",
-  "registry_digest": "54715b67807cfd6a1f5b47032abd238203b2f76fdd88d938419ef62ea20aa320",
+  "generated_at": "2026-09-08T11:55:54Z",
+  "source_base_commit": "1e743017658f7816e9cab9d11ae064eba6169d60",
+  "registry_digest": "7dc629f84068865bf3923d8f2e897d772a1f02ec97a86e31dc1fcd636eee477e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -921,7 +921,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Live acceptance on production ticket AC-13254 (EC2 /production, main 3760b44, 2026-09-03)",
           "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13254",
-          "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email(xieziling97@163.com)；内部 handoff 邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
+          "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email([email redacted])；内部 handoff 邮件 sent（to=[email redacted]，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
         },
         {
           "type": "test",
@@ -975,7 +975,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Live acceptance on production ticket AC-13258 (EC2 /production, main 29dd57d, 2026-09-03)",
           "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13258",
-          "details": "受控工单 AC-13258 全链通过：intake 08:25:59 判 route=account_suspension、direct workflow（intake_mode=direct_handoff）；内部邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13258:v1）先于唯一 job（intent=account_suspension_handoff_and_close）；渲染 automation-persona-v24 一次通过（repair=None）；08:36:54 公开回复 'Hi Ziling, Thank you for submitting this account suspension request. I've sent it for internal review, and we will get back to you within 24 hours.'（三要素齐/两短句/无 relevant-team/无 close-reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case human_review_required、workflow=closed、reviewer_notify_email=sent。另：AC-13257 未被 n8n 转发（无 case，可忽略）。"
+          "details": "受控工单 AC-13258 全链通过：intake 08:25:59 判 route=account_suspension、direct workflow（intake_mode=direct_handoff）；内部邮件 sent（to=[email redacted]，delivery_key=account_suspension:AC-13258:v1）先于唯一 job（intent=account_suspension_handoff_and_close）；渲染 automation-persona-v24 一次通过（repair=None）；08:36:54 公开回复 'Hi Ziling, Thank you for submitting this account suspension request. I've sent it for internal review, and we will get back to you within 24 hours.'（三要素齐/两短句/无 relevant-team/无 close-reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case human_review_required、workflow=closed、reviewer_notify_email=sent。另：AC-13257 未被 n8n 转发（无 case，可忽略）。"
         },
         {
           "type": "deployment",
@@ -2689,6 +2689,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Hermes workflow tab and public data privacy verification",
+          "command": "python3 -m unittest backend.tests.test_project_overview_contract && python3 scripts/generate_project_overview.py --check",
+          "result": "10 tests passed; desktop and 390x844 workflow layout verified with no mobile content overflow; generated public data contains no email addresses."
+        },
+        {
+          "type": "test",
           "label": "Project Overview registry title and route contract tests",
           "command": "python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract backend.tests.test_dashboard_routes"
         },
@@ -2927,7 +2933,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Revert deploy + controlled acceptance (PR#965)",
           "command": "ssh zacbot 'cd ~/SupportPortal && bash scripts/ops/deploy_surfaces_ec2.sh --branch main --skip-split'；psql production outbox 查询；POST /automation-test/tickets（建单）+ /tickets/4/refresh",
-          "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=xieziling@agora.io delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
+          "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=[email redacted] delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
         },
         {
           "type": "decision",
@@ -3368,7 +3374,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "title": "Production 工单回归测试",
-      "goal": "提供 /automation/test 控制台：复用 workspace 登录，按分类（fraud_account / enablement / account_suspension）一键通过专用测试邮箱向 support@agoraio.zendesk.com 发送可编辑的测试工单邮件，并单独建表追踪测试工单与其在 production 管线的实时状态，用于大改动后的生产回归验证。",
+      "goal": "提供 /automation/test 控制台：复用 workspace 登录，按分类（fraud_account / enablement / account_suspension）一键通过专用测试邮箱向 [email redacted] 发送可编辑的测试工单邮件，并单独建表追踪测试工单与其在 production 管线的实时状态，用于大改动后的生产回归验证。",
       "acceptance_criteria": [],
       "evidence": [
         {
@@ -5051,8 +5057,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "确认通用 Zendesk 账号、显示名称、邮箱地址及 API 权限。",
       "status": "active",
       "owner": "zac",
-      "summary": "当前使用 ai-support-agent@agora.io 作为 Account Automation 发送身份，后续可评估是否创建专用账号。",
-      "next_action": "确认 ai-support-agent@agora.io 的显示名称、权限和端到端发送结果，并评估新专用账号需求。",
+      "summary": "当前使用 [email redacted] 作为 Account Automation 发送身份，后续可评估是否创建专用账号。",
+      "next_action": "确认 [email redacted] 的显示名称、权限和端到端发送结果，并评估新专用账号需求。",
       "acceptance_criteria": [
         "完成发送身份的端到端测试，不使用个人账号。"
       ],
@@ -5669,7 +5675,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "建立 SupportPortal Project Overview 单一维护入口",
       "status": "done",
       "owner": "Zac",
-      "summary": "建立 Project Overview 单一维护入口，并优化任务、会议、功能模块和用户手册的展示与跳转。",
+      "summary": "建立 Project Overview 单一维护入口，并优化任务、会议、功能模块、工作流程和用户手册的展示与跳转。",
       "next_action": "",
       "acceptance_criteria": [
         "项目资料侧栏移除后，Project Overview 在桌面和移动端均使用完整内容宽度。",
@@ -5677,7 +5683,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "会议记录以单行卡片展示，点击后弹窗列出带完整标题的全部关联 Task，并可跳转到对应 Task。",
         "功能模块按 Module 分组，Function 使用统一用户可见命名和单列布局，同时保留旧 hash 深链。",
         "用户手册展开后的已完成能力数量与标题统计一致。",
-        "file URL、正式静态路由、旧 Roadmap URL 和 Project Overview 数据校验保持可用。"
+        "file URL、正式静态路由、旧 Roadmap URL 和 Project Overview 数据校验保持可用。",
+        "工作流程 Tab 明确展示 Hermes Case 的持久化、取消、串行 Session、Route、审批回路和发送前唯一检查。",
+        "公开 Project Overview 生成数据不包含邮箱地址。"
       ],
       "blockers": [],
       "evidence": [
@@ -5689,16 +5697,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Desktop and 390x844 browser verification for board, meetings, functions and handbook"
+        },
+        {
+          "type": "test",
+          "label": "Hermes workflow tab and public data privacy verification",
+          "command": "python3 -m unittest backend.tests.test_project_overview_contract && python3 scripts/generate_project_overview.py --check",
+          "result": "10 tests passed; desktop and 390x844 workflow layout verified with no mobile content overflow; generated public data contains no email addresses."
         }
       ],
       "source_refs": [
         "docs/projectoverview.html",
         "backend/tests/test_project_overview_contract.py",
+        "scripts/generate_project_overview.py",
         "docs/roadmap.html",
         "docs/feature_list.md"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-17",
+      "updated_at": "2026-09-08",
       "history": [
         {
           "at": "2026-08-16",
@@ -5724,6 +5739,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-17",
           "event": "reclassified",
           "summary": "Task ID 从 p2-35 迁移为 p1-35；迁移到 phase-1 / platform-delivery / project-governance。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "hermes_workflow_tab_added",
+          "summary": "新增工作流程 Tab，记录当前确认的 Hermes Case 目标流程；公开生成数据统一脱敏邮箱地址。"
         }
       ],
       "legacy_refs": [],
@@ -7646,7 +7666,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-24",
           "event": "email_cc_and_recipient_routing",
-          "summary": "所有自动化内部邮件统一 cc xieziling@agora.io（AUTOMATION_INTERNAL_EMAIL_CC env 可覆盖）；EC2 .env 变更：enablement→zhonghuang、suspension+verification→suhrid.das、fraud assignee→suhrid.das (31116644140308)。"
+          "summary": "所有自动化内部邮件统一 cc [email redacted]（AUTOMATION_INTERNAL_EMAIL_CC env 可覆盖）；EC2 .env 变更：enablement→zhonghuang、suspension+verification→suhrid.das、fraud assignee→suhrid.das (31116644140308)。"
         }
       ],
       "legacy_refs": [],
@@ -9016,10 +9036,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production Automation 分类邮件通知",
       "status": "done",
       "owner": "codex",
-      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 xieziling@agora.io 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；各流程内部 review 邮件使用独立收件人配置）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
+      "summary": "Production 中每个满足 active Automation 执行条件的 Account Case，在分类结果持久化事务内幂等创建独立邮件 outbox，仅向 [email redacted] 发送可信 Zendesk Case 链接、客户问题和 canonical classification path（owner 通知，不路由、不 cc；各流程内部 review 邮件使用独立收件人配置）；staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不触发。",
       "next_action": "",
       "acceptance_criteria": [
-        "Production active Automation Case 只创建一条分类邮件通知，收件人固定为 xieziling@agora.io，不按分类路由、不 cc；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
+        "Production active Automation Case 只创建一条分类邮件通知，收件人固定为 [email redacted]，不按分类路由、不 cc；内容包含可信 Zendesk Case 链接、原始客户问题和 canonical classification path。",
         "重复保存、重复分类、worker 重启和并发 claim 不产生重复邮件；通知创建与 Case upsert 在同一事务内完成。",
         "staging、非 active Automation、detailed_invoice、quota、unregistered 和缺少可信 Zendesk source 的 Case 不发送错误邮件，并保留可审计失败状态。",
         "Graph 200/202 标记 delivered；明确错误标记 failed；网络或 5xx 结果未知标记 outcome_unknown，禁止自动盲目重发。",
@@ -9049,7 +9069,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Revert deploy + controlled acceptance (PR#965)",
           "command": "ssh zacbot 'cd ~/SupportPortal && bash scripts/ops/deploy_surfaces_ec2.sh --branch main --skip-split'；psql production outbox 查询；POST /automation-test/tickets（建单）+ /tickets/4/refresh",
-          "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=xieziling@agora.io delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
+          "result": "EC2 build 24122e67364b 公网 health ok、Prompt Release pr-c9b3a291ecf1 保持；Zendesk 13026 分类邮件 recipient=[email redacted] delivered（同事务创建于 03:06:29）；测试单已 solved。错发的 13017 通知（zhonghuang）为无害噪音不回收。"
         }
       ],
       "source_refs": [
@@ -9081,17 +9101,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-26",
           "event": "recipient_routing_reverted",
-          "summary": "用户上线验证指出 PR#961 把内部 review 邮件的路由契约（suspension/fraud→suhrid、enablement→emmazhong、cc xieziling）误套到分类通知邮件：13017 的分类邮件被发到 zhonghuang@agora.io（无害噪音，已送达不回收）。内部邮件链路经核实本就正确（13007 实证 to=suhrid.das+cc xieziling）。回退收件人路由与 worker cc，恢复仅发 xieziling；保留 account_billing eligibility 与 automation_status=automation 门槛（原始缺陷的正确修复）。"
+          "summary": "用户上线验证指出 PR#961 把内部 review 邮件的路由契约（suspension/fraud→suhrid、enablement→emmazhong、cc xieziling）误套到分类通知邮件：13017 的分类邮件被发到 [email redacted]（无害噪音，已送达不回收）。内部邮件链路经核实本就正确（13007 实证 to=suhrid.das+cc xieziling）。回退收件人路由与 worker cc，恢复仅发 xieziling；保留 account_billing eligibility 与 automation_status=automation 门槛（原始缺陷的正确修复）。"
         },
         {
           "at": "2026-08-26",
           "event": "completed",
-          "summary": "PR#965（24122e6）回退收件人路由并部署 EC2；受控验收 Zendesk 13026（suspension 新案）：分类邮件 outbox recipient=xieziling@agora.io、无 cc、delivered、零失败；已关闭存量 case（13011）未因重保存迟发（automation_status 门槛实证）。elibility 修复（account_billing+active 门槛）保留并经 13026 复验。"
+          "summary": "PR#965（24122e6）回退收件人路由并部署 EC2；受控验收 Zendesk 13026（suspension 新案）：分类邮件 outbox recipient=[email redacted]、无 cc、delivered、零失败；已关闭存量 case（13011）未因重保存迟发（automation_status 门槛实证）。elibility 修复（account_billing+active 门槛）保留并经 13026 复验。"
         },
         {
           "at": "2026-09-04",
           "event": "enablement_internal_recipient_confirmed",
-          "summary": "用户明确确认Enablement内部review邮件继续发送zhonghuang@agora.io；ECS Worker revision 26的SSM只读回读已匹配To=1和owner Cc=1，无需修改参数或重启。该决定不改变本任务分类通知始终仅发owner、无cc的合同。"
+          "summary": "用户明确确认Enablement内部review邮件继续发送[email redacted]；ECS Worker revision 26的SSM只读回读已匹配To=1和owner Cc=1，无需修改参数或重启。该决定不改变本任务分类通知始终仅发owner、无cc的合同。"
         }
       ],
       "legacy_refs": [],
@@ -10287,10 +10307,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "放宽 suspension 联系邮箱确认：客户任何非空回复即确认，不再因多邮箱/无邮箱转人工",
       "status": "active",
       "owner": "zac",
-      "summary": "Case 13225（account_suspension）实测：AI 追问联系邮箱后客户回复 'My agora account email is business@kira.art. you can contact me with owen@kira.art'——语义清晰指定了联系邮箱，但 suspension_contact_confirmation（account_suspension_automation.py:66-78）的去重邮箱数>1 即无条件转人工（multiple_contact_emails），另有 conflicting_email_confirmation/different_email_required/ambiguous_contact_confirmation 三个熔断分支同样过于保守，导致语义清晰的确认被转人工（后经 reconciliation 兜底退队列+人工接手）。用户决策：放宽为任何非空客户回复即确认（fail-closed 改为 confirm-on-reply），联系邮箱按优先级自动取值（第一个不等于工单邮箱的邮箱 → 第一个邮箱 → 工单邮箱），不再要求回复必须恰好包含一个邮箱或特定肯定句式。空消息仍等待（awaiting），非 awaiting 状态仍 ignored，状态机与幂等不变；closing reply + handoff + close 消费链零改动（confirmed_email 的空值兜底已存在于消费侧）。",
+      "summary": "Case 13225（account_suspension）实测：AI 追问联系邮箱后客户回复 'My agora account email is [email redacted]. you can contact me with [email redacted]'——语义清晰指定了联系邮箱，但 suspension_contact_confirmation（account_suspension_automation.py:66-78）的去重邮箱数>1 即无条件转人工（multiple_contact_emails），另有 conflicting_email_confirmation/different_email_required/ambiguous_contact_confirmation 三个熔断分支同样过于保守，导致语义清晰的确认被转人工（后经 reconciliation 兜底退队列+人工接手）。用户决策：放宽为任何非空客户回复即确认（fail-closed 改为 confirm-on-reply），联系邮箱按优先级自动取值（第一个不等于工单邮箱的邮箱 → 第一个邮箱 → 工单邮箱），不再要求回复必须恰好包含一个邮箱或特定肯定句式。空消息仍等待（awaiting），非 awaiting 状态仍 ignored，状态机与幂等不变；closing reply + handoff + close 消费链零改动（confirmed_email 的空值兜底已存在于消费侧）。",
       "next_action": "实现与目标测试已完成,待 finalize 合并与用户侧 EC2 部署后由下一单 suspension 工单自然复测。",
       "acceptance_criteria": [
-        "13225 同款回复（双邮箱，账号邮箱=工单邮箱）→ confirmed 且联系邮箱取 owen@kira.art，走 closing reply + handoff + close，不再转人工。",
+        "13225 同款回复（双邮箱，账号邮箱=工单邮箱）→ confirmed 且联系邮箱取 [email redacted]，走 closing reply + handoff + close，不再转人工。",
         "无邮箱纯文本回复（如 yes please）→ confirmed，联系邮箱回落工单邮箱。",
         "单邮箱回复 → confirmed 用该邮箱（既有行为不变）。",
         "空消息 → 仍 awaiting；非 awaiting 状态 → 仍 ignored。",
@@ -10495,7 +10515,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Live acceptance on production ticket AC-13254 (EC2 /production, main 3760b44, 2026-09-03)",
           "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13254",
-          "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email(xieziling97@163.com)；内部 handoff 邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
+          "details": "受控工单 AC-13254 全链通过：intake 06:26:48 判 route=account_suspension；direct workflow 落库 intake_mode=direct_handoff、confirmed_email=ticket_email([email redacted])；内部 handoff 邮件 sent（to=[email redacted]，delivery_key=account_suspension:AC-13254:v1）先于唯一 reply job（顶层与嵌套 intent 均 account_suspension_handoff_and_close，无 pre-email job）；渲染 v23 一次通过（persona_contract_repair=None）；06:36:31 公开回复发布 'Hi Ziling, I've received your account suspension request...within 24 hours'（问候带逗号、已收到+24h、无问邮箱、无 close/reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case automation_status=human_review_required、workflow=closed、reviewer_notify_email=sent（p2-141 项一并 readback）。对照单 AC-13253（标题为测试式短语+纯图片正文）被 intent 判 conversation 掉人工，属预期 fail-safe。"
         },
         {
           "type": "test",
@@ -10655,7 +10675,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Live acceptance on production ticket AC-13258 (EC2 /production, main 29dd57d, 2026-09-03)",
           "command": "Zendesk API + production DB readback (support_account_cases / support_account_reply_jobs) for ticket 13258",
-          "details": "受控工单 AC-13258 全链通过：intake 08:25:59 判 route=account_suspension、direct workflow（intake_mode=direct_handoff）；内部邮件 sent（to=suhrid.das@agora.io，delivery_key=account_suspension:AC-13258:v1）先于唯一 job（intent=account_suspension_handoff_and_close）；渲染 automation-persona-v24 一次通过（repair=None）；08:36:54 公开回复 'Hi Ziling, Thank you for submitting this account suspension request. I've sent it for internal review, and we will get back to you within 24 hours.'（三要素齐/两短句/无 relevant-team/无 close-reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case human_review_required、workflow=closed、reviewer_notify_email=sent。另：AC-13257 未被 n8n 转发（无 case，可忽略）。"
+          "details": "受控工单 AC-13258 全链通过：intake 08:25:59 判 route=account_suspension、direct workflow（intake_mode=direct_handoff）；内部邮件 sent（to=[email redacted]，delivery_key=account_suspension:AC-13258:v1）先于唯一 job（intent=account_suspension_handoff_and_close）；渲染 automation-persona-v24 一次通过（repair=None）；08:36:54 公开回复 'Hi Ziling, Thank you for submitting this account suspension request. I've sent it for internal review, and we will get back to you within 24 hours.'（三要素齐/两短句/无 relevant-team/无 close-reopen）；assignee=Suhrid(31116644140308)、Zendesk status=pending 不关单；case human_review_required、workflow=closed、reviewer_notify_email=sent。另：AC-13257 未被 n8n 转发（无 case，可忽略）。"
         },
         {
           "type": "deployment",
@@ -14100,7 +14120,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "fraud_account 公开回复发布后将 Zendesk 工单 handoff 给 xieziling 复审",
       "status": "done",
       "owner": "zac",
-      "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 xieziling@agora.io；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
+      "summary": "fraud_account 自动化流程的首次公开回复（\"已转相关团队，24 小时内联系\"）发布后，工单需要人工复审。新增：worker 在 production fraud_account 案的 public 评论投递成功后，用现有 AI agent 凭证把 Zendesk 工单 assign 给 ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID（=31116634341396 即 [email redacted]；assign 权限 PUT 200 已实测，但该 token 无按 email 搜索用户的权限，users/search 403、show_many 空，GET /users/{id}.json 可用，故按数字 id 配置）。权限试探在 12895 上先行验证通过；handoff 失败不回滚已发布回复，记录 zendesk_fraud_review_handoff 事件（assigned/already_assigned/failed/skipped）+ 日志。",
       "next_action": "",
       "acceptance_criteria": [
         "worker：仅 production + fraud_account + is_public 的投递成功后触发 handoff；internal 投递与非 fraud 案不触发。",
@@ -14348,10 +14368,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Production route-back 操作邮件通知",
       "status": "done",
       "owner": "zac",
-      "summary": "Production 管理员执行 Route back to queue 后，通过现有 Microsoft Graph Mail 给 xieziling@agora.io 发送状态通知。通知覆盖 Zendesk queued、assigned、already_human_owned、failed 与 outcome_unknown 终态，不包含客户正文或凭据。邮件失败不得回滚或诱发重复 Zendesk 写入，结果必须进入 API 响应与审计。",
-      "next_action": "由用户使用新的 Production case 执行 Route back to queue，确认 Zendesk routing 与 xieziling@agora.io 收件同时成功。",
+      "summary": "Production 管理员执行 Route back to queue 后，通过现有 Microsoft Graph Mail 给 [email redacted] 发送状态通知。通知覆盖 Zendesk queued、assigned、already_human_owned、failed 与 outcome_unknown 终态，不包含客户正文或凭据。邮件失败不得回滚或诱发重复 Zendesk 写入，结果必须进入 API 响应与审计。",
+      "next_action": "由用户使用新的 Production case 执行 Route back to queue，确认 Zendesk routing 与 [email redacted] 收件同时成功。",
       "acceptance_criteria": [
-        "通过 Production/admin/numeric-ticket 前置校验并开始 route-back 后，每个 Zendesk 终态都尝试向 xieziling@agora.io 发送一封 Graph Mail。",
+        "通过 Production/admin/numeric-ticket 前置校验并开始 route-back 后，每个 Zendesk 终态都尝试向 [email redacted] 发送一封 Graph Mail。",
         "邮件包含 Account Case ID、Zendesk ticket 链接、route-back 状态、group/assignee、取消 reply-job 数和触发时间，不包含客户问题正文或 secret。",
         "Zendesk 成功但邮件失败时保持 route-back 成功，不重试 Zendesk；API 与审计明确记录 notification_email_status=failed。",
         "Zendesk route-back 失败或 outcome_unknown 时仍尝试发送失败状态邮件，并保留原有 HTTP/fail-closed 语义。",
@@ -14383,7 +14403,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-21",
           "event": "created",
-          "summary": "用户要求执行 Production Route back to queue 时同时给 xieziling@agora.io 发送邮件。"
+          "summary": "用户要求执行 Production Route back to queue 时同时给 [email redacted] 发送邮件。"
         },
         {
           "at": "2026-08-21",
@@ -15280,7 +15300,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "/automation/test 生产工单回归测试控制台与 Runbook",
       "status": "done",
       "owner": "zac",
-      "summary": "新增 /automation/test 控制台（由 api_production 服务，复用 workspace 登录）：三个自动化分类各一键创建测试工单邮件（模板可编辑，主题默认带 [zac test] 前缀），通过专用测试邮箱（AUTOMATION_TEST_MAIL_* 独立 Graph 凭据，未配置 fail-closed）发送到 support@agoraio.zendesk.com；新表 supportportal.automation_test_tickets 追踪每次发送并按标题+时间窗自动关联 production case，快照路由/自动化/内部邮件/回复 job/Zendesk 状态；配套回归测试 Runbook（含步骤 0 基线探测与三类预期信号）。",
+      "summary": "新增 /automation/test 控制台（由 api_production 服务，复用 workspace 登录）：三个自动化分类各一键创建测试工单邮件（模板可编辑，主题默认带 [zac test] 前缀），通过专用测试邮箱（AUTOMATION_TEST_MAIL_* 独立 Graph 凭据，未配置 fail-closed）发送到 [email redacted]；新表 supportportal.automation_test_tickets 追踪每次发送并按标题+时间窗自动关联 production case，快照路由/自动化/内部邮件/回复 job/Zendesk 状态；配套回归测试 Runbook（含步骤 0 基线探测与三类预期信号）。",
       "next_action": "用户侧跟进：① EC2/本地 .env 配置专用测试邮箱凭据（AUTOMATION_TEST_MAIL_* + token cache）并重启 api_production；② 按 runbook 步骤 0 用 enablement 模板做基线探测（验证新 requester 能进 n8n→production 管线）；③ 之后每轮大改动按 runbook 三类回归。",
       "acceptance_criteria": [
         "GET /api/automation-test/templates 返回三类模板（主题已应用 [zac test] 前缀）与测试邮箱配置状态；未登录 401。",
@@ -15345,8 +15365,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "测试控制台发信通道支持 SMTP（163 专用邮箱）",
       "status": "done",
       "owner": "zac",
-      "summary": "/automation/test 的专用测试邮箱从 Graph 单通道扩展为 transport 可选（AUTOMATION_TEST_MAIL_TRANSPORT=graph|smtp，默认 graph 不变）：smtp 通道走 SMTP_SSL（163：smtp.163.com:465+授权码；QQ 同理），缺 host/username/password 任一项 fail-closed 报缺失键名；页面横幅与 templates 接口的 configured/missing_config_keys 自动随通道切换；graph 通道行为与 p2-97 完全不变。选型过程：用户原想的 QQ AI 邮箱（unabletodisplay@agent.qq.com）是 Agent Mail 产品，仅有 CLI/OAuth 无 SMTP，不可用作服务端发件通道；确认改用 .env 中已有完整凭据的 163 专用邮箱 xieziling97@163.com。",
-      "next_action": "用户侧跟进：EC2 与本地 .env 填 AUTOMATION_TEST_MAIL_TRANSPORT=smtp + SMTP_HOST=smtp.163.com + USERNAME=xieziling97@163.com + PASSWORD=\u003c163 授权码>，部署/重启 api_production 后按 runbook 步骤 0 做 enablement 基线探测。",
+      "summary": "/automation/test 的专用测试邮箱从 Graph 单通道扩展为 transport 可选（AUTOMATION_TEST_MAIL_TRANSPORT=graph|smtp，默认 graph 不变）：smtp 通道走 SMTP_SSL（163：smtp.163.com:465+授权码；QQ 同理），缺 host/username/password 任一项 fail-closed 报缺失键名；页面横幅与 templates 接口的 configured/missing_config_keys 自动随通道切换；graph 通道行为与 p2-97 完全不变。选型过程：用户原想的 QQ AI 邮箱（[email redacted]）是 Agent Mail 产品，仅有 CLI/OAuth 无 SMTP，不可用作服务端发件通道；确认改用 .env 中已有完整凭据的 163 专用邮箱 [email redacted]。",
+      "next_action": "用户侧跟进：EC2 与本地 .env 填 AUTOMATION_TEST_MAIL_TRANSPORT=smtp + SMTP_HOST=smtp.163.com + USERNAME=[email redacted] + PASSWORD=\u003c163 授权码>，部署/重启 api_production 后按 runbook 步骤 0 做 enablement 基线探测。",
       "acceptance_criteria": [
         "AUTOMATION_TEST_MAIL_TRANSPORT=smtp 时：配置齐全正常发送（SMTP_SSL+login+send_message，From=登录邮箱）；缺 host/username/password 任一项时 configured=false、missing_config_keys 列出对应 env 键、发送抛 AutomationTestMailError 且不落 sent。",
         "transport 非法值被拒绝并给出明确错误；graph 通道（默认）行为与 p2-97 完全不变（既有 18 个用例不改动仍通过）。",
@@ -15379,7 +15399,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-08-23",
           "event": "implemented",
-          "summary": "重启后找回 agently 授权邮箱=unabletodisplay@agent.qq.com，确认为 Agent Mail（独立 AI 邮箱产品，仅 CLI/OAuth、无 SMTP、日限 50 封），不适合服务端发件；用户确认改用 .env 现成 163 专用邮箱（xieziling97@163.com）。SMTP transport 补丁按 worktree 流程应用，23 用例全过。"
+          "summary": "重启后找回 agently 授权邮箱=[email redacted]，确认为 Agent Mail（独立 AI 邮箱产品，仅 CLI/OAuth、无 SMTP、日限 50 封），不适合服务端发件；用户确认改用 .env 现成 163 专用邮箱（[email redacted]）。SMTP transport 补丁按 worktree 流程应用，23 用例全过。"
         }
       ],
       "legacy_refs": [

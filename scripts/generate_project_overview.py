@@ -28,6 +28,7 @@ TASK_STATUSES = {"planned", "active", "review", "blocked", "done"}
 EVIDENCE_TYPES = {"pr", "test", "deployment", "document", "decision"}
 PR_FIELDS = {"number", "title", "state", "isDraft", "createdAt", "updatedAt", "mergedAt", "url", "headRefName"}
 TASK_ID_RE = re.compile(r"^p[123]-\d{2,}$")
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHASE_ORDER = {"phase-1": 0, "phase-2": 1, "phase-3": 2}
 
 
@@ -251,8 +252,19 @@ def digest(payload):
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def sanitize_public_value(value):
+    if isinstance(value, str):
+        return EMAIL_RE.sub("[email redacted]", value)
+    if isinstance(value, list):
+        return [sanitize_public_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_public_value(item) for key, item in value.items()}
+    return value
+
+
 def write_data(payload, registry_digest):
-    output = {"schema_version": 2, "generated_at": utc_now(), "source_base_commit": git_revision(), "registry_digest": registry_digest, **payload}
+    public_payload = sanitize_public_value(payload)
+    output = {"schema_version": 2, "generated_at": utc_now(), "source_base_commit": git_revision(), "registry_digest": registry_digest, **public_payload}
     encoded = json.dumps(output, ensure_ascii=False, indent=2).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     DATA_JS.write_text("window.SUPPORTPORTAL_PROJECT_DATA = " + encoded + "\n", encoding="utf-8")
 
