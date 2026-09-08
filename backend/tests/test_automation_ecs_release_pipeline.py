@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from backend.scripts import automation_ecs_release_pipeline as pipeline
 from backend.scripts.automation_ecs_release_pipeline import (
     DEFAULT_PREFLIGHT_TTL_SECONDS,
     PipelineState,
@@ -379,7 +380,7 @@ def test_formal_pipeline_wrapper_uses_repository_runtime() -> None:
     assert "--codebuild-direct-production" in result.stdout
 
 
-def test_direct_production_mode_rejects_preproduction_and_hermes_combinations() -> None:
+def test_direct_production_parser_keeps_default_preproduction_target() -> None:
     parser = __import__(
         "backend.scripts.automation_ecs_release_pipeline",
         fromlist=["build_parser"],
@@ -389,6 +390,66 @@ def test_direct_production_mode_rejects_preproduction_and_hermes_combinations() 
     )
     assert args.through == "preproduction"
     assert args.codebuild_direct_production is True
+
+
+@pytest.mark.parametrize(
+    ("direct_production", "message"),
+    [
+        (False, "--through production keeps Hermes Persona disabled"),
+        (True, "CodeBuild direct Production keeps Production Hermes disabled"),
+    ],
+)
+def test_pipeline_rejects_production_persona_before_release_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, direct_production: bool, message: str
+) -> None:
+    arguments = [
+        "run", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1",
+        "--through", "production", "--hermes-persona-enabled",
+    ]
+    if direct_production:
+        arguments.append("--codebuild-direct-production")
+    args = pipeline.build_parser().parse_args(arguments)
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    git = MagicMock(side_effect=AssertionError("release source must not be resolved"))
+    state = MagicMock(side_effect=AssertionError("checkpoint must not be created"))
+    command = MagicMock(side_effect=AssertionError("release command must not run"))
+    stage = MagicMock(side_effect=AssertionError("release stage must not run"))
+    monkeypatch.setattr(pipeline, "_git", git)
+    monkeypatch.setattr(pipeline, "PipelineState", state)
+    monkeypatch.setattr(pipeline.subprocess, "run", command)
+    monkeypatch.setattr(pipeline, "_run_stage", stage)
+
+    with pytest.raises(ValueError, match=message):
+        pipeline.run_pipeline(args)
+
+    for operation in (git, state, command, stage):
+        operation.assert_not_called()
+    assert not (tmp_path / ".deployments").exists()
+
+
+@pytest.mark.parametrize(
+    "mode_arguments",
+    [
+        ["--through", "preproduction", "--hermes-persona-enabled"],
+        ["--through", "production", "--hermes-case-workflow-mode", "mock"],
+    ],
+)
+def test_pipeline_preserves_allowed_persona_and_mock_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode_arguments: list[str]
+) -> None:
+    args = pipeline.build_parser().parse_args(
+        ["run", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1", *mode_arguments]
+    )
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    git = MagicMock(side_effect=RuntimeError("release source reached"))
+    monkeypatch.setattr(pipeline, "_git", git)
+
+    with pytest.raises(RuntimeError, match="release source reached"):
+        pipeline.run_pipeline(args)
+
+    git.assert_called_once()
 
 
 def test_direct_production_branch_skips_preproduction_ecs_and_reuses_production_preflight() -> None:

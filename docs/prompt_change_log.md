@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-08 - Preproduction Prompt 对齐与 Hermes Persona 恢复 (p1-53, p2-146)
+
+- 版本：Preproduction 从 `pr-c9b3a291ecf1` 切换到 Production 当前的 `pr-ef75242faa67`，复用 `r20260907-3adc2c9` 原始三角色镜像；不编辑 Prompt 内容或重新构建镜像。
+- 原因：缺少 `--hermes-persona-enabled` 的部署移除了 API/Worker 的 Persona endpoint secret 引用；pipeline 已支持透传，但普通 `--through production` 缺少禁止 Persona 的入口守卫。
+- 行为：仅恢复 Preproduction API/Worker 的 Persona 配置，Route 不注入；两环境 typed Case Workflow 继续 disabled。pipeline 普通/direct Production 均拒绝 Persona flag，普通 Production mock 合同保留，文档 Preproduction 示例补 flag。
+- 验证：Preproduction Prompt 数据库读回 active，三角色运行 digest 与 Production 完全相同；live/release/ready、新鲜 heartbeat、部署前后 Terraform zero drift 通过。新 API definition 的 authenticated `GET /v1/models` 返回200、exit0；70项定向 pipeline/deploy 测试通过。
+- 边界：Hermes 镜像、Production、EC2 和 n8n 配置不变；未调用 Responses、投递工单、发送邮件或 Slack。实际 Persona Account 回复仍待用户受控工单验收。
+
 ## 2026-09-07 - ECS conversation context and Astra profiles (p2-110)
 
 - Versions: Enablement fields v4, Fraud fields v5, Suspension fields v3, Account Persona v31. The four profiles `account_route`, `account_extractor`, `ragflow_answer`, and `enablement_completion_classifier` now default to Astra/low Responses without temperature; Persona remains Astra/low. Other profiles and Engineer-specific prompts are unchanged.

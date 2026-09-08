@@ -23,7 +23,8 @@ PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
   --release-commit <full-origin-main-sha> \
   --prompt-release-id <active-prompt-release-id> \
   --through preproduction \
-  --hermes-case-workflow-mode disabled
+  --hermes-case-workflow-mode disabled \
+  --hermes-persona-enabled
 ```
 
 pipeline依次执行冻结commit、CodeBuild、Preproduction preflight、deploy、统一collector；
@@ -123,6 +124,35 @@ TICKET_DB_DSN=<source-dsn> \
 三角色 tag/digest、平台、Prompt build ref/content fingerprint、CodeBuild ARN 与 S3
 object version 必须全部一致。第一次冷构建只记录耗时；warm-cache目标从下一次真实
 release测量，不为测速重复构建同一 release。
+
+### 2026-09-08 Preproduction 同镜像对齐与 Persona 恢复
+
+Preproduction API/Route/Worker 已复用 Production 的 `r20260907-3adc2c9`，
+commit 为 `3adc2c9d48661dc52844e540a9fce8ba2e806ec2`，Prompt Release 为
+`pr-ef75242faa67`。三角色 revision 均为 `:10`，实际运行 digest 逐角色等于
+Production 与原 Manifest；Hermes 保持原 `:10` 和原镜像，typed Case Workflow
+保持 `disabled`。API/Worker 恢复 Preproduction Persona secret 引用，Route 不注入。
+
+本次是复用既有 CodeBuild release 的定向部署，不是新版本构建：发布材料来自
+`.deployments/ecs-pipeline-r20260907-3adc2c9/release/`，使用正式
+`deploy_automation_ecs_release.sh --environment preproduction`，同时传入
+`--hermes-case-workflow-mode disabled --hermes-persona-enabled`，先执行
+`--check-only`，再用同一组模式参数和生成的 `--preflight-evidence` 正式部署。
+底层 deploy 的目标 DSN 使用 `PROMPT_RELEASE_TARGET_DSN` 环境变量。本次先部署、
+后合并 pipeline 守卫修复，避免新代码提交使旧 release 无法通过 source 校验；
+没有重建镜像、修改既有 pipeline checkpoint 或放宽 release-source 校验。
+
+正式 check-only 为 `105.713s`，deploy 命令墙钟时间为 `910.743s`；所有部署门禁通过，
+目标数据库 Prompt 状态独立读回为 `active`。新 API definition 的短生命周期探针仅执行
+authenticated `GET /v1/models`，返回 `200`、退出码 `0`；配置中的 Hermes base URL
+是服务 origin，探针追加 `/v1/models`。未调用 Responses 或 `/v1/turns`。
+运行证据位于 `.deployments/ecs-deploy-preproduction-r20260907-3adc2c9-disabled-persona/evidence.json`。
+Production revision `43/37/41`、Production Hermes `:3` 与原 release/Prompt 未变；
+未创建工单、发送邮件或 Slack，实际 Persona 回复仍待用户受控工单验收。
+
+本机 Preproduction provider lockfile 对应 Linux ARM64 解压校验和，复用现有
+Terraform `1.9.8` Linux ARM64 容器通过部署前后 zero-drift 检查；AWS 凭证仅在
+每次调用时由宿主机 provider 导出并经子进程环境传递。未改 lockfile 或执行 Terraform apply。
 
 ## One-time Preproduction Bootstrap
 
@@ -398,6 +428,12 @@ Investigation Runtime：
 Preproduction approval和Prompt target DSN。ECS Production在本阶段不传该参数，
 保持 Persona和Case Workflow均 disabled；EC2 `/production`不属于此命令的修改范围。
 
+正式 pipeline 将 `--hermes-persona-enabled` 透传给 Preproduction 的 preflight 和
+deploy；`--through production`（含 `--codebuild-direct-production`）显式拒绝
+该 flag，并在创建 release worktree、checkpoint 或执行发布阶段前终止。
+该 Persona 守卫不禁止普通 Production pipeline 既有的 `mock` Case Workflow；
+direct Production 仍保留其原有的 Hermes disabled 限制。
+
 ## Promote To Production
 
 Preproduction真实验收与外部 readback完成后，由用户执行：
@@ -639,6 +675,12 @@ Header: Content-Type: application/json
 ```
 
 Body使用 `automation-intake-v1`，不能继续发送旧 `/production/account`的五字段 form body。`event_id`由 Zendesk event稳定生成；retry必须复用完全相同的 event ID和 payload。
+
+Production 上线后的受控测试工单发送到
+`POST https://supportcenter.stellarix.space/automation/preproduction/v1/intake`，
+使用 Preproduction 专用 `AUTOMATION_INTAKE_SHARED_TOKEN` 的 Bearer 鉴权及同一
+`automation-intake-v1` JSON 合同。投单与 n8n 路由调整由用户执行；环境隔离不代表
+禁止外部业务副作用，技术部署验收不会自动投单。
 
 在切流前依次验证：
 
