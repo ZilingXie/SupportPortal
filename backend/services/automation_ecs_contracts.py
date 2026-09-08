@@ -21,7 +21,7 @@ HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
 REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
 PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
-SCHEMA_REVISION = "automation-ecs-003"
+SCHEMA_REVISION = "automation-ecs-004"
 
 DEFAULT_ZENDESK_INSTANCE = "agoraio.zendesk.com"
 
@@ -64,10 +64,34 @@ class JobKind(StrEnum):
 class AgentTurnStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    CANCEL_REQUESTED = "cancel_requested"
+    SUPERSEDED = "superseded"
     COMPLETED = "completed"
+    HUMAN_REVIEW = "human_review"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
     OUTCOME_UNKNOWN = "outcome_unknown"
+
+    @classmethod
+    def active_statuses(cls) -> frozenset[str]:
+        return frozenset({cls.PENDING.value, cls.RUNNING.value, cls.CANCEL_REQUESTED.value})
+
+
+class HermesTurnKind(StrEnum):
+    NORMAL = "normal"
+    INVESTIGATION_FEEDBACK = "investigation_feedback"
+
+
+class HermesTurnPhase(StrEnum):
+    ROUTE = "route"
+    WORK = "work"
+    PERSONA = "persona"
+
+    @classmethod
+    def phases_for(cls, turn_kind: str) -> tuple["HermesTurnPhase", ...]:
+        if turn_kind == HermesTurnKind.INVESTIGATION_FEEDBACK.value:
+            return (cls.WORK, cls.PERSONA)
+        return (cls.ROUTE, cls.WORK, cls.PERSONA)
 
 
 class HermesCaseDirection(StrEnum):
