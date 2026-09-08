@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-08T05:49:04Z",
-  "source_base_commit": "3adc2c9d48661dc52844e540a9fce8ba2e806ec2",
-  "registry_digest": "0c2298bd127dc88029a5d47097110d89e03ccfd46974536fd329cbc8658f8506",
+  "generated_at": "2026-09-08T09:59:38Z",
+  "source_base_commit": "f0df3c4c4c4f18004ec4a218e265b23099b2d9d1",
+  "registry_digest": "c3ccd3a9d9dc59084574803e26cc36e937e2eb8b1049852a37e2c9edf6b45f6d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2985,6 +2985,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "2026-09-08 Preproduction 三角色 :10 对齐 r20260907-3adc2c9 / pr-ef75242faa67；API/Worker 的 ENGINEER_INVESTIGATION_REPLY_BASE_URL 与 ENGINEER_INVESTIGATION_REPLY_API_KEY 均引用 Preproduction SSM，Route 无注入且没有 callback token。Hermes 服务保持 :10、1/1/0 和原镜像，Hermes/memory-core 双容器 HEALTHY。复用新 API task definition 的短生命周期探针 authenticated GET /v1/models 返回200、exit0；未调用 Responses 或 /v1/turns。首次探针因错误假定 base URL 带 /v1 在发请求前退出，核对配置为 origin 后修正探针路径，未修改服务配置。两环境三角色实际 digest、live/release/ready、目标 release 新鲜 heartbeat 及 Production 原 revision 独立读回通过。技术验收不代表实际 Persona 回复或真实调查链业务验收。"
         },
         {
+          "type": "decision",
+          "label": "Approved revised implementation plan",
+          "details": "2026-09-08 用户批准修订版计划：/v1/runs 不回传压缩旋转后的 session id，后台固定使用 admission session_id 并依赖 lineage；知识写入无人工审核 gate 由 Hermes 直接写入（幂等）；调查工具接受现状（无检索源），验收按保存进展+待审草稿判定。执行中三路只读核实修正了插件无写工具、幂等存储静默内存回退、UI 双环境共用 bundle 等计划偏差。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted unit and tool coverage",
+          "details": "test_hermes_zendesk_agent.py 21 项（hand_off 复用 binding、one-running 冲突、turn 完成推进版本并 stale 草稿、manual/auto 草稿链、processor 幂等重放/冲突 defer/gateway failed/超时 outcome_unknown、route worker 分叉不触碰旧 route LLM）与 test_hermes_zendesk_agent_tools.py 15 项（上下文、方向、guardrail 阻断、auto 入队 ledger 参数、审批绑定版本、mirror 缺失 fail-closed）全部通过。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration on disposable schema",
+          "details": "test_hermes_zendesk_agent_postgres.py（RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN + test_hermes_zendesk_preproduction_\u003cuuid> schema 随建随删）7 项通过：hand_off 原子性、one-running 由 partial unique index 强制、草稿审批/stale、review 读取与 run 提交被拒时 turn 立即 failed。期间修复 processor start_run 异常未捕获会把 turn 挂死在 running 并阻塞该案例后续 turn 的缺陷。"
+        },
+        {
+          "type": "test",
+          "label": "Release surface regression",
+          "details": "test_automation_ecs_store/worker/route_worker/api/deploy/release_pipeline/terraform 全绿；deploy_mode_args 锁定测试更新为包含 --automation-case-engine legacy 默认与 hermes 转发组合；agent_config catalog 测试更新包含 hermes-support-agent。"
+        },
+        {
+          "type": "decision",
+          "label": "Cross-repo baselines committed",
+          "details": "hermes-agent 与 TencentDB-Agent-Memory 各自 codex/hermes-zendesk-agent 分支收编未提交基线（Dockerfile chmod、OpenAI embedding provider 启用）；Tencent 插件补丁（25c271e，插件测试 7 项）；hermes-deploy 1a30abd（support_agent_enabled 可选接线 + fresh-init 播种 support profile）；agent-infra/deploy-ecs 为未跟踪构建输入（Dockerfile.hermes、hermes-config.yaml v40 multiplex、hermes-support-config.yaml、supportportal_agent_tools 薄插件），以最终镜像 digest 固定可复现性。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -3328,7 +3353,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 23,
+      "task_count": 24,
       "done_count": 10,
       "blocked_count": 0
     },
@@ -10982,7 +11007,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-05",
       "updated_at": "2026-09-08",
       "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。canonical SupportPortal Runtime已进入镜像，但当前ECS Production与Preproduction的typed Case Workflow均为disabled；Preproduction仅启用Hermes Persona/Responses endpoint，真实Hermes/AgentRelay调查链尚未激活。",
-      "next_action": "保持 active。Preproduction Persona endpoint 配置已恢复，并通过新 API definition 的 authenticated GET /v1/models（200、exit 0）；待用户向 /automation/preproduction/v1/intake 投递全新受控工单验收 Persona Account 回复。两环境 typed Case Workflow 仍 disabled；真实 Hermes/AgentRelay 调查、Slack/Zendesk 闭环与知识 promotion 仍需另行确认。",
+      "next_action": "保持 active。真实调查链已由 p2-148 承接：Preproduction 新 Case 可经 Hermes 原生会话引擎（Zendesk ticket 绑定逻辑会话、零 Engineer Case、真实结果审核）处理；本任务的 typed Case Workflow/Engineer Case Slack 链继续服务既有 Production mock 与旧 Case，真实 Hermes/AgentRelay 调查验收改在 p2-148 的受控工单流程执行。",
       "acceptance_criteria": [
         "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
         "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -11090,6 +11115,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-08",
           "event": "preproduction_persona_endpoint_restored",
           "summary": "恢复被未带 flag 部署移除的 API/Worker Persona secret 引用，并以 authenticated GET /v1/models 验证；Hermes 镜像不变，typed workflow disabled，继续等待用户受控工单验收。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "superseded_scope_for_real_investigation",
+          "summary": "真实调查链（Zendesk 绑定 + 真实结果人工审核）移交 p2-148 的 hermes 原生会话引擎；本任务保留 typed workflow 与既有 Engineer Case 链的维护职责。"
         }
       ],
       "legacy_ids": [],
@@ -11171,6 +11201,89 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "source_refs": [
         "ui/workspace-ui/admin/app.js",
         "backend/tests/test_workspace_admin_ui_contract.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-148",
+      "title": "Hermes 原生会话 Zendesk Case 引擎（Preproduction）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "created_at": "2026-09-08",
+      "updated_at": "2026-09-08",
+      "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
+      "next_action": "代码与本地/PG 验证已完成（单测 36+25、PG 集成 7、发布三测回归绿）。剩余上线步骤：构建新 Hermes 镜像（agent-infra codex/hermes-zendesk-agent + 插件补丁）并推 ECR digest；创建 /supportportal/preproduction 下 hermes-supportportal-api-base-url 与 hermes-agent-tool-token SSM；重跑 fresh-init 播种 multiplex 配置与 support profile；以 --automation-case-engine hermes --hermes-agent-enabled 走 release pipeline --through preproduction；受控工单验收后置 done。",
+      "acceptance_criteria": [
+        "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
+        "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
+        "自动化草稿仅 direction=automation 且 guardrail pass 时自动发布；调查草稿必须 dashboard 人工批准且绑定当前 conversation_version，新客户 comment 使旧草稿/批准失效。",
+        "发布走 support_account_zendesk_comment_deliveries source='hermes'，发布前核对 comments_revision，入队/发送/读回分别记录。",
+        "Production 任务定义硬拒 AUTOMATION_CASE_ENGINE=hermes 与 hermes agent secrets。",
+        "Tencent 原始对话采集默认禁用（插件 opt-in），team/agent 身份缺失时 fail-closed 不落 default；整理知识经 memory_tencentdb_write_knowledge 以稳定 knowledge_id 幂等写入并可召回。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "Approved revised implementation plan",
+          "details": "2026-09-08 用户批准修订版计划：/v1/runs 不回传压缩旋转后的 session id，后台固定使用 admission session_id 并依赖 lineage；知识写入无人工审核 gate 由 Hermes 直接写入（幂等）；调查工具接受现状（无检索源），验收按保存进展+待审草稿判定。执行中三路只读核实修正了插件无写工具、幂等存储静默内存回退、UI 双环境共用 bundle 等计划偏差。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted unit and tool coverage",
+          "details": "test_hermes_zendesk_agent.py 21 项（hand_off 复用 binding、one-running 冲突、turn 完成推进版本并 stale 草稿、manual/auto 草稿链、processor 幂等重放/冲突 defer/gateway failed/超时 outcome_unknown、route worker 分叉不触碰旧 route LLM）与 test_hermes_zendesk_agent_tools.py 15 项（上下文、方向、guardrail 阻断、auto 入队 ledger 参数、审批绑定版本、mirror 缺失 fail-closed）全部通过。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration on disposable schema",
+          "details": "test_hermes_zendesk_agent_postgres.py（RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN + test_hermes_zendesk_preproduction_\u003cuuid> schema 随建随删）7 项通过：hand_off 原子性、one-running 由 partial unique index 强制、草稿审批/stale、review 读取与 run 提交被拒时 turn 立即 failed。期间修复 processor start_run 异常未捕获会把 turn 挂死在 running 并阻塞该案例后续 turn 的缺陷。"
+        },
+        {
+          "type": "test",
+          "label": "Release surface regression",
+          "details": "test_automation_ecs_store/worker/route_worker/api/deploy/release_pipeline/terraform 全绿；deploy_mode_args 锁定测试更新为包含 --automation-case-engine legacy 默认与 hermes 转发组合；agent_config catalog 测试更新包含 hermes-support-agent。"
+        },
+        {
+          "type": "decision",
+          "label": "Cross-repo baselines committed",
+          "details": "hermes-agent 与 TencentDB-Agent-Memory 各自 codex/hermes-zendesk-agent 分支收编未提交基线（Dockerfile chmod、OpenAI embedding provider 启用）；Tencent 插件补丁（25c271e，插件测试 7 项）；hermes-deploy 1a30abd（support_agent_enabled 可选接线 + fresh-init 播种 support profile）；agent-infra/deploy-ecs 为未跟踪构建输入（Dockerfile.hermes、hermes-config.yaml v40 multiplex、hermes-support-config.yaml、supportportal_agent_tools 薄插件），以最终镜像 digest 固定可复现性。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-08",
+          "event": "created",
+          "summary": "承接修订版计划的实施：Preproduction Hermes 原生会话引擎。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "implementation_verified",
+          "summary": "SupportPortal 侧引擎、工具端点、审核区与发布接线完成（0550b971/774bc89f/f0df3c4c），单测+PG 集成+发布回归全绿；等待镜像构建、SSM、发布与受控工单验收。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-146"
+      ],
+      "source_refs": [
+        "backend/services/automation_ecs_contracts.py",
+        "backend/services/automation_ecs_store.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/automation_hermes_delivery.py",
+        "backend/services/hermes_agent_runtime.py",
+        "backend/services/prompts/hermes_support_agent.py",
+        "backend/automation_ecs_route_worker.py",
+        "backend/automation_ecs_worker.py",
+        "backend/automation_ecs_api.py",
+        "backend/worker.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/scripts/automation_ecs_deploy.py",
+        "deployment/deploy_automation_ecs_release.sh",
+        "ui/automation-ecs-production/app.js"
       ]
     },
     {
@@ -16491,6 +16604,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [
+        "Hermes 原生会话引擎在 Preproduction 以 Zendesk ticket 绑定唯一逻辑会话处理 Automation 与调查（零 Engineer Case），调查回复经 Case 页人工批准后走既有 delivery 链发布，Tencent 记忆只收整理知识不收原始对话。",
         "Enablement 的 Media Relay 请求会通过 Archer 自动开启跨频道连麦，并根据执行结果回复客户或转 Human Review。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

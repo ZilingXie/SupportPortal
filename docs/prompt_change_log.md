@@ -1,5 +1,17 @@
 # Prompt Change Log
 
+## 2026-09-08 - Hermes support agent system prompt 上线 managed catalog (p2-148)
+
+**版本**：hermes-support-agent-system / hermes-support-agent-v1（新增 prompt key，进入 managed catalog 与 Prompt Release）。
+
+**原因**：Hermes 原生会话引擎需要可通过 Prompt Release 管理的 support profile 指令，避免提示词只存在于可变 EFS 配置。
+
+**行为变化**：Preproduction 的 agent turn 以该 system prompt 作为 POST /v1/runs 的 instructions；内容约定每轮单事件、先 record direction 再行动、自动化缺字段只追问缺失项、调查结论必须落 save_investigation_progress、草稿发布政策（automation=auto / investigation=manual）、新客户 comment 使旧草稿失效、closed 工单不重开、所有动作与回复必须经工具记录。代码 fallback 与 catalog 内容同源（backend/services/prompts/hermes_support_agent.py）。
+
+**验证**：agent_config catalog 测试更新（hermes-support-agent 注册）通过；test_hermes_zendesk_agent 21 项 + tools 15 项 + PG 集成 7 项通过；release pipeline 参数集测试覆盖 --automation-case-engine。
+
+**边界**：仅在 AUTOMATION_CASE_ENGINE=hermes 的 Preproduction 生效；旧 legacy 引擎与 Production 不受影响；Production 任务定义硬拒该引擎。
+
 ## 2026-09-08 - Preproduction Prompt 对齐与 Hermes Persona 恢复 (p1-53, p2-146)
 
 - 版本：Preproduction 从 `pr-c9b3a291ecf1` 切换到 Production 当前的 `pr-ef75242faa67`，复用 `r20260907-3adc2c9` 原始三角色镜像；不编辑 Prompt 内容或重新构建镜像。
