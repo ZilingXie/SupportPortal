@@ -118,7 +118,7 @@ def test_postgres_migrate_upgrades_legacy_revision_after_creating_contract() -> 
                 "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=%s AND table_name LIKE %s",
                 (schema, "automation_%"),
             )
-            assert cursor.fetchone()[0] == 10
+            assert cursor.fetchone()[0] == 11  # 004 adds automation_hermes_turn_runs
     finally:
         _drop_schema(schema)
 

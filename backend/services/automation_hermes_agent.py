@@ -66,6 +66,8 @@ PHASE_TOOLSETS = {
     HermesTurnPhase.WORK.value: ["supportportal_work"],
     HermesTurnPhase.PERSONA.value: ["supportportal_persona"],
 }
+# The gateway currently narrows within the api_server platform toolsets;
+# the plugin's phase toolsets ride along until the gateway learns them.
 
 _WORKSPACE_KEY_RE = re.compile(r"[^a-z0-9_-]+")
 

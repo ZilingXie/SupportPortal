@@ -1,5 +1,17 @@
 # Prompt Change Log
 
+## 2026-09-08 - Hermes 支持代理拆分为核心不变量与七份阶段手册 (p2-148)
+
+**版本**：hermes-support-agent-system 收缩为不变量核心；新增 hermes-route-manual-v1、hermes-investigation-manual-v1、hermes-persona-manual-v1、hermes-automation-{enablement,verification,fraud,suspension}-manual-v1（共 7 个新 managed key）。
+
+**原因**：第二阶段把单次 run 拆为 route/work/persona 三阶段，每阶段需要独立、可单独迭代的操作手册；核心 prompt 只保留 Session/Case/revision/安全不变量。
+
+**行为变化**：每个阶段 run 收到完整 Case Snapshot JSON 与 核心不变量+对应阶段手册 的组合 instructions；Route 手册约束唯一 direction 记录与注册 route 校验；Investigation 手册约束证据来源与知识写入；Persona 手册约束确定性称呼（服务端投影 Hi <Name>,）与单轮回复；四份 Automation 手册约束各自 route 的工具调用与结果复述。publish_policy 由服务端按 direction 推导，模型不再选择。
+
+**验证**：agent_config catalog 测试覆盖 8 个 hermes key 注册；259 项定向测试 + PG 集成（7+6+8）通过；称呼投影在 tools 测试断言 Hi Customer, 前缀。
+
+**边界**：仅在 AUTOMATION_CASE_ENGINE=hermes 的环境生效；旧 legacy 引擎不受影响。
+
 ## 2026-09-08 - Hermes support agent system prompt 上线 managed catalog (p2-148)
 
 **版本**：hermes-support-agent-system / hermes-support-agent-v1（新增 prompt key，进入 managed catalog 与 Prompt Release）。
