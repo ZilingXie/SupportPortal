@@ -1034,6 +1034,20 @@ class InMemoryAutomationEcsStore:
         with self._lock:
             return self._binding_row(zendesk_ticket_id)
 
+    def get_case_mirror(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._cases.get(zendesk_ticket_id)
+            return copy.deepcopy(row) if row is not None else None
+
+    def list_case_comments(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [
+                copy.deepcopy(comment)
+                for (ticket_id, _comment_id), comment in self._comments.items()
+                if ticket_id == zendesk_ticket_id
+            ]
+            return sorted(rows, key=lambda row: str((row.get("comment") or {}).get("created_at") or ""))
+
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._hermes_turns.get(turn_id)
@@ -2900,6 +2914,29 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
         return dict(row) if row is not None else None
+
+    def get_case_mirror(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s"
+                    ).format(self._table("automation_cases")),
+                    (self.settings.job_namespace, zendesk_ticket_id),
+                )
+                row = cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def list_case_comments(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s ORDER BY comment->>'created_at'"
+                    ).format(self._table("automation_case_comments")),
+                    (self.settings.job_namespace, zendesk_ticket_id),
+                )
+                return [dict(row) for row in cursor.fetchall()]
 
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:

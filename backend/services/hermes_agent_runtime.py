@@ -106,6 +106,8 @@ class HermesAgentClient:
         instructions: str,
         input_text: str,
         idempotency_key: str,
+        workspace_key: str | None = None,
+        enabled_toolsets: list[str] | None = None,
     ) -> dict[str, Any]:
         if not self.settings.configured():
             raise HermesAgentError(
@@ -123,6 +125,10 @@ class HermesAgentClient:
         body: dict[str, Any] = {"input": input_text, "session_id": session_id}
         if instructions:
             body["instructions"] = instructions
+        if workspace_key:
+            body["workspace_key"] = workspace_key
+        if enabled_toolsets:
+            body["enabled_toolsets"] = list(enabled_toolsets)
         status, payload = _request(
             self.settings,
             method="POST",
@@ -136,6 +142,29 @@ class HermesAgentClient:
                 f"Hermes gateway returned HTTP {status} without a run_id",
                 retryable=False,
             )
+        return payload
+
+    def stop_run(self, run_id: str) -> dict[str, Any]:
+        """Idempotently request a cooperative stop for a run."""
+        if not self.settings.configured():
+            raise HermesAgentError(
+                "hermes_agent_not_configured",
+                "Hermes agent gateway is not configured",
+                retryable=False,
+            )
+        normalized = str(run_id or "").strip()
+        if not normalized:
+            raise HermesAgentError(
+                "hermes_agent_run_id_missing",
+                "run_id is required",
+                retryable=False,
+            )
+        _, payload = _request(
+            self.settings,
+            method="POST",
+            path=f"/v1/runs/{normalized}/stop",
+            body={},
+        )
         return payload
 
     def get_run(self, run_id: str) -> dict[str, Any]:

@@ -28,7 +28,6 @@ from backend.services.automation_ecs_store import (
 from backend.services.automation_hermes_agent import (
     HermesAgentTurnProcessor,
     HermesTurnDeferred,
-    build_agent_input,
 )
 from backend.services.hermes_agent_runtime import HermesAgentError
 
@@ -212,103 +211,173 @@ class TestDraftApproval:
             store.approve_hermes_case_draft(draft["draft_id"], approver="admin")
 
 
+
+
 @dataclass
 class FakeHermesClient:
-    run_id: str = "run-xyz"
-    final_status: str = "completed"
-    output: Any = None
-    calls: list[dict[str, Any]] = field(default_factory=list)
-    wait_calls: list[str] = field(default_factory=list)
+    run_counter: int = 0
+    terminal_status: str = "completed"
+    on_run_completed: Any = None
+    submissions: list[dict[str, Any]] = field(default_factory=list)
+    stopped: list[str] = field(default_factory=list)
+    fail_submit: bool = False
 
-    def start_run(self, *, session_id: str, instructions: str, input_text: str, idempotency_key: str) -> dict[str, Any]:
-        self.calls.append(
-            {"session_id": session_id, "instructions": instructions, "input_text": input_text, "idempotency_key": idempotency_key}
+    def start_run(self, *, session_id, instructions, input_text, idempotency_key,
+                  workspace_key=None, enabled_toolsets=None):
+        if self.fail_submit:
+            raise HermesAgentError("hermes_agent_rejected", "HTTP 500", retryable=False)
+        self.run_counter += 1
+        run_id = f"run-{self.run_counter}"
+        self.submissions.append(
+            {
+                "session_id": session_id,
+                "instructions": instructions,
+                "idempotency_key": idempotency_key,
+                "workspace_key": workspace_key,
+                "enabled_toolsets": list(enabled_toolsets or []),
+            }
         )
-        return {"run_id": self.run_id, "status": "started", "replayed": False}
+        if self.on_run_completed is not None:
+            self.on_run_completed(run_id, idempotency_key)
+        return {"run_id": run_id, "status": "started", "replayed": False}
 
-    def wait_for_run(self, run_id: str, *, timeout_seconds=None, sleep=None) -> dict[str, Any]:
-        self.wait_calls.append(run_id)
-        return {"run_id": run_id, "status": self.final_status, "output": self.output}
+    def get_run(self, run_id):
+        status = "cancelled" if run_id in self.stopped else self.terminal_status
+        return {"run_id": run_id, "status": status, "output": "ok"}
+
+    def stop_run(self, run_id):
+        self.stopped.append(run_id)
+        return {"run_id": run_id, "status": "stopping"}
+
+    def wait_for_run(self, run_id, **kwargs):
+        return self.get_run(run_id)
 
 
 class TestAgentTurnProcessor:
-    def _processor(self, store: InMemoryAutomationEcsStore, client: FakeHermesClient) -> HermesAgentTurnProcessor:
-        return HermesAgentTurnProcessor(store, client=client, environment="preproduction", repository=None)
+    def _processor(self, store, client, **kwargs):
+        return HermesAgentTurnProcessor(
+            store, client=client, environment="preproduction", repository=None,
+            poll_interval_seconds=0.01, **kwargs,
+        )
 
-    def test_completed_run_completes_turn_and_passes_session(self) -> None:
+    def _hand_off_claim(self, store, event, *, claim_agent=True):
+        receipt = store.accept_intake(event, _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert job is not None and job.execution_id == receipt.execution_id
+        handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job = None
+        if claim_agent:
+            agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+            assert agent_job is not None
+        return handoff, agent_job
+
+    def test_full_turn_runs_route_work_persona_with_phase_runs(self) -> None:
         store = _store()
-        handoff = _accept_and_hand_off(store, _event())
-        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
-        assert agent_job is not None
-        client = FakeHermesClient()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        seen_phases: list[str] = []
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            seen_phases.append(phase)
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
         outcome = self._processor(store, client).process(agent_job)
-        assert outcome["status"] == "completed" and outcome["run_id"] == "run-xyz"
-        assert client.calls[0]["session_id"] == handoff["hermes_session_id"]
-        assert client.calls[0]["idempotency_key"] == handoff["request_id"]
+        assert outcome["status"] == "completed"
+        assert seen_phases == ["route", "work", "persona"]
+        assert len(client.submissions) == 3
+        # per-phase stable request ids + workspace + narrowed toolsets
+        assert [s["idempotency_key"] for s in client.submissions] == [
+            f"hmreq:{handoff['turn_id']}:route",
+            f"hmreq:{handoff['turn_id']}:work",
+            f"hmreq:{handoff['turn_id']}:persona",
+        ]
+        assert all(s["workspace_key"] == "supportportal_automation-preproduction_123" for s in client.submissions)
+        assert client.submissions[0]["enabled_toolsets"] == ["supportportal_route"]
         turn = store.get_hermes_turn(handoff["turn_id"])
-        assert turn["status"] == "completed" and turn["run_id"] == "run-xyz"
-        assert store.get_hermes_case_binding("123")["conversation_version"] == 1
+        assert turn["status"] == "completed" and turn["phase"] == "persona"
+        for phase in ("route", "work", "persona"):
+            run = store.get_or_create_hermes_turn_run(handoff["turn_id"], phase)
+            assert run["status"] == "completed" and run["run_id"]
 
-    def test_retry_after_run_submission_polls_without_resubmitting(self) -> None:
+    def test_route_direction_human_short_circuits_before_work(self) -> None:
         store = _store()
-        handoff = _accept_and_hand_off(store, _event())
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            store.record_hermes_turn_direction(handoff["turn_id"], direction="human", route=None)
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "human_review"
+        assert len(client.submissions) == 1  # route only
+
+    def test_missing_direction_parks_turn_in_human_review(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = FakeHermesClient()  # completes route without recording direction
+        outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "human_review" and outcome["error_code"] == "missing_direction"
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "failed"
+
+    def test_completed_phase_recovery_skips_resubmission(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
         store.start_hermes_agent_turn(handoff["turn_id"], run_id=None)
-        store.set_hermes_turn_run_id(handoff["turn_id"], run_id="run-existing")
-        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
-        assert agent_job is not None
+        run = store.get_or_create_hermes_turn_run(handoff["turn_id"], "route")
+        store.start_hermes_turn_run(handoff["turn_id"], "route", run_id="run-old")
+        store.complete_hermes_turn_run(handoff["turn_id"], "route", output={"done": True})
+        store.record_hermes_turn_direction(handoff["turn_id"], direction="investigation", route=None)
         client = FakeHermesClient()
         outcome = self._processor(store, client).process(agent_job)
         assert outcome["status"] == "completed"
-        assert client.calls == []
-        assert client.wait_calls == ["run-existing"]
+        assert [s["idempotency_key"] for s in client.submissions] == [
+            f"hmreq:{handoff['turn_id']}:work",
+            f"hmreq:{handoff['turn_id']}:persona",
+        ]
 
-    def test_completed_turn_replay_is_idempotent(self) -> None:
+    def test_submission_rejection_fails_turn(self) -> None:
         store = _store()
-        handoff = _accept_and_hand_off(store, _event())
-        store.start_hermes_agent_turn(handoff["turn_id"], run_id="run-1")
-        store.complete_hermes_agent_turn(handoff["turn_id"], result={"status": "completed"})
-        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
-        assert agent_job is not None
-        client = FakeHermesClient()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = FakeHermesClient(fail_submit=True)
         outcome = self._processor(store, client).process(agent_job)
-        assert outcome["idempotent_replay"] is True
-        assert client.calls == []
+        assert outcome["status"] == "failed"
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "failed"
 
     def test_conflict_defers(self) -> None:
         store = _store()
-        first = _accept_and_hand_off(store, _event())
-        first_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
-        assert first_job is not None
-        store.start_hermes_agent_turn(first["turn_id"], run_id="run-1")
+        first_handoff, first_job = self._hand_off_claim(store, _event())
+        store.start_hermes_agent_turn(first_handoff["turn_id"], run_id=None)
         second = _accept_and_hand_off(store, _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED))
         second_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
         assert second_job is not None and second_job.payload["turn_id"] == second["turn_id"]
         with pytest.raises(HermesTurnDeferred):
             self._processor(store, FakeHermesClient()).process(second_job)
 
-    def test_gateway_failure_marks_turn_failed(self) -> None:
+    def test_new_comment_cancels_and_supersedes_running_turn(self) -> None:
         store = _store()
-        handoff = _accept_and_hand_off(store, _event())
-        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
-        assert agent_job is not None
-        client = FakeHermesClient(final_status="failed")
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        cancelled = {"stop_called": False}
+
+        def on_run_completed(run_id, idempotency_key):
+            if not cancelled["stop_called"] and idempotency_key.endswith(":route"):
+                # a newer customer comment arrives while the route run polls
+                cancelled["stop_called"] = True
+                store.accept_intake(
+                    _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED),
+                    _settings().provenance(),
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
         outcome = self._processor(store, client).process(agent_job)
-        assert outcome["status"] == "failed" and outcome["error_code"] == "hermes_run_failed"
-        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "failed"
-
-    def test_transport_timeout_is_outcome_unknown(self) -> None:
-        store = _store()
-        handoff = _accept_and_hand_off(store, _event())
-
-        class TimeoutClient(FakeHermesClient):
-            def wait_for_run(self, run_id: str, *, timeout_seconds=None, sleep=None) -> dict[str, Any]:
-                raise HermesAgentError("hermes_agent_turn_timeout", "timeout", retryable=True)
-
-        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
-        assert agent_job is not None
-        outcome = self._processor(store, TimeoutClient()).process(agent_job)
-        assert outcome["status"] == "outcome_unknown"
-        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "outcome_unknown"
+        assert outcome["status"] == "superseded"
+        assert client.stopped  # stop_run was invoked on the live run
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["status"] == "superseded"
+        assert turn["cancel_reason"] == "superseded_by_revision"
 
 
 class TestExpiryRecovery:
@@ -318,7 +387,6 @@ class TestExpiryRecovery:
         job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
         assert job is not None
         store.mark_processing_external_started(job)
-        # Simulate the lease lapsing with the worker gone.
         with store._lock:
             store._jobs[job.job_id]["lease_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
         recovered = store.claim_job(JobKind.PROCESSING, worker_id="worker-2", lease_seconds=60)
@@ -369,7 +437,7 @@ class TestRouteWorkerHandOff:
             route_decider=_boom,
             default_case_engine="legacy",
         )
-        assert worker.process_once() is True  # route job failed, but no hermes hand-off
+        assert worker.process_once() is True
         assert store.get_hermes_case_binding("123") is None
         execution = store.get_execution(receipt.execution_id)
         assert execution is not None and execution["status"] == "human_review"
@@ -391,19 +459,34 @@ class TestRouteWorkerHandOff:
             _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED),
             _settings("route").provenance(),
         )
-        assert worker.process_once() is True  # hands off instead of routing
+        assert worker.process_once() is True
         turns = store.list_hermes_case_turns("123")
         assert len(turns) == 2
 
+    def test_ticket_updated_ignores_turn_creation(self) -> None:
+        store = _store()
+        _accept_and_hand_off(store, _event())
+        store.accept_intake(
+            _event("zendesk:ticket:123:updated", event_type="ticket.updated"),
+            _settings("route").provenance(),
+        )
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert job is not None
+        result = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        assert result["ignored"] == "ticket_updated_no_turn"
+        assert store.list_hermes_case_turns("123").__len__() == 1
 
-class TestAgentInput:
-    def test_new_ticket_input_includes_description(self) -> None:
-        text = build_agent_input(_event())
-        assert "New ticket" in text and "Please enable Media Relay" in text and "123" in text
-
-    def test_comment_input_includes_trigger_body(self) -> None:
-        text = build_agent_input(_event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED))
-        assert "New customer comment" in text and "app-123" in text
+    def test_agent_comment_does_not_advance_or_turn(self) -> None:
+        store = _store()
+        _accept_and_hand_off(store, _event())
+        mirror_before = store.get_case_mirror("123")["case_revision"]
+        store.accept_intake(
+            _agent_comment_event(), _settings("route").provenance()
+        )
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        result = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        assert result["ignored"] == "comment_not_customer_event"
+        assert store.get_case_mirror("123")["case_revision"] == mirror_before
 
 
 class TestWorkerAgentTurnLoop:
@@ -411,14 +494,20 @@ class TestWorkerAgentTurnLoop:
         from backend.automation_ecs_worker import AutomationWorker
 
         store = _store()
-        handoff = _accept_and_hand_off(store, _event())
+        handoff, _unused = TestAgentTurnProcessor._hand_off_claim(TestAgentTurnProcessor, store, _event(), claim_agent=False)
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.endswith(":route"):
+                store.record_hermes_turn_direction(handoff["turn_id"], direction="automation", route="enablement")
+
         settings = _settings("worker")
         worker = AutomationWorker(
             settings=settings,
             store=store,
             processor=None,
             agent_processor=HermesAgentTurnProcessor(
-                store, client=FakeHermesClient(), environment="preproduction", repository=None
+                store, client=FakeHermesClient(on_run_completed=on_run_completed),
+                environment="preproduction", repository=None, poll_interval_seconds=0.01,
             ),
             background_cycle=None,
         )
@@ -434,7 +523,7 @@ class TestWorkerAgentTurnLoop:
 
         store = _store()
         first = _accept_and_hand_off(store, _event())
-        store.start_hermes_agent_turn(first["turn_id"], run_id="run-1")
+        store.start_hermes_agent_turn(first["turn_id"], run_id=None)
         _accept_and_hand_off(store, _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED))
         settings = _settings("worker")
         worker = AutomationWorker(
@@ -442,7 +531,8 @@ class TestWorkerAgentTurnLoop:
             store=store,
             processor=None,
             agent_processor=HermesAgentTurnProcessor(
-                store, client=FakeHermesClient(), environment="preproduction", repository=None
+                store, client=FakeHermesClient(), environment="preproduction",
+                repository=None, poll_interval_seconds=0.01,
             ),
             background_cycle=None,
         )
@@ -451,3 +541,36 @@ class TestWorkerAgentTurnLoop:
         jobs = store.get_execution(second_turn["execution_id"])["jobs"]
         deferred = [job for job in jobs if job["kind"] == "agent_turn"]
         assert deferred and deferred[0]["status"] == JobStatus.PENDING.value
+
+
+def _agent_comment_event() -> Any:
+    payload: dict[str, Any] = {
+        "schema_version": INTAKE_CONTRACT_VERSION,
+        "event_id": "zendesk:ticket:123:agent-comment",
+        "event_type": "comment.created",
+        "occurred_at": "2026-09-08T10:06:00Z",
+        "ticket": {
+            "id": "123",
+            "status": "open",
+            "subject": "Enable Media Relay",
+            "description": "Please enable Media Relay for app 123.",
+            "requester": {"email": "cx@example.com", "name": "Customer"},
+        },
+        "comment_snapshot": {
+            "source_updated_at": "2026-09-08T10:06:00Z",
+            "snapshot_complete": True,
+            "trigger_comment_id": "77",
+            "comments": [
+                {
+                    "id": "77",
+                    "public": True,
+                    "author": {"email": "agent@agora.io", "role": "agent", "is_agent": True},
+                    "body": "Internal-looking public agent note.",
+                    "created_at": "2026-09-08T10:06:00Z",
+                }
+            ],
+        },
+    }
+    from backend.services.automation_ecs_contracts import AutomationIntakeEvent
+
+    return AutomationIntakeEvent.model_validate(payload)
