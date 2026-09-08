@@ -806,7 +806,6 @@ def create_app(    *,
                 tool_execute_automation_action,
                 tool_get_case_context,
                 tool_record_direction,
-                tool_request_publish,
                 tool_save_investigation_progress,
                 tool_save_reply_draft,
             )
@@ -873,16 +872,6 @@ def create_app(    *,
                         basis=body.get("basis"),
                         publish_policy=str(body.get("publish_policy") or ""),
                     )
-                if tool_name == "request_publish":
-                    return await asyncio.to_thread(
-                        tool_request_publish,
-                        coordination_store,
-                        repository,
-                        turn_id=turn_id,
-                        draft_id=str(body.get("draft_id") or ""),
-                        environment=runtime.environment,
-                        zendesk_side_effects_enabled=side_effects,
-                    )
                 if tool_name == "escalate_human":
                     return await asyncio.to_thread(
                         tool_escalate_human,
@@ -910,6 +899,12 @@ def create_app(    *,
             review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
             if review is None:
                 raise HTTPException(status_code=404, detail="hermes case review not found")
+            mirror = coordination_store.get_case_mirror(zendesk_ticket_id) or {}
+            review["case"] = {
+                "case_revision": mirror.get("case_revision"),
+                "active_customer": mirror.get("active_customer"),
+                "latest_customer_event_id": mirror.get("latest_customer_event_id"),
+            }
             return JSONResponse(
                 content=jsonable_encoder(review),
                 headers={"Cache-Control": "no-store"},
@@ -950,12 +945,18 @@ def create_app(    *,
             )
 
         @app.post(
-            f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}/hermes-review/feedback",
+            f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}/hermes-review/drafts/{{draft_id}}/request-changes",
             dependencies=[Depends(require_dashboard_session)],
         )
-        async def dashboard_hermes_review_feedback(
-            zendesk_ticket_id: str, http_request: Request
+        async def dashboard_request_hermes_changes(
+            zendesk_ticket_id: str, draft_id: str, http_request: Request
         ) -> JSONResponse:
+            from backend.services.automation_ecs_store import (
+                HermesDraftStateError,
+                HermesTurnConflictError,
+                HermesTurnStateError,
+            )
+
             body = await http_request.json()
             feedback = str((body or {}).get("feedback") or "").strip() if isinstance(body, dict) else ""
             if not feedback:
@@ -963,28 +964,51 @@ def create_app(    *,
             review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
             if review is None:
                 raise HTTPException(status_code=404, detail="hermes case review not found")
-            repository = _engineer_ticket_repository()
-            account_case = repository.get_account_case_by_ticket_id(zendesk_ticket_id)
-            if not isinstance(account_case, dict):
-                raise HTTPException(status_code=404, detail="account case mirror not found")
-            context = dict(account_case.get("automation_context") or {})
-            agent_context = dict(context.get("hermes_agent") or {})
-            notes = list(agent_context.get("review_feedback") or [])
-            notes.append(
-                {
-                    "feedback": feedback[:4000],
-                    "at": datetime.now(timezone.utc).isoformat(),
-                    "conversation_version": int(
-                        (review.get("binding") or {}).get("conversation_version") or 0
-                    ),
-                }
+            mirror = coordination_store.get_case_mirror(zendesk_ticket_id) or {}
+            current_revision = int(mirror.get("case_revision") or 0)
+            draft = next(
+                (
+                    item
+                    for item in review.get("drafts") or []
+                    if str(item.get("draft_id") or "") == draft_id
+                ),
+                None,
             )
-            agent_context["review_feedback"] = notes[-20:]
-            context["hermes_agent"] = agent_context
-            account_case["automation_context"] = context
-            repository.save_account_case(account_case)
+            if draft is None:
+                raise HTTPException(status_code=404, detail="draft not found for this case")
+            if str(draft.get("status")) != "awaiting_approval":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"draft is {draft.get('status')}; only awaiting_approval drafts accept changes",
+                )
+            draft_revision = int(draft.get("case_revision") or draft.get("conversation_version") or 0)
+            if current_revision and draft_revision and draft_revision != current_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"stale_case_revision: draft {draft_revision} != case {current_revision}",
+                )
+            try:
+                created = coordination_store.create_investigation_feedback_turn(
+                    zendesk_ticket_id,
+                    feedback=feedback,
+                    base_event={"provenance": {"service_role": "api", "environment": runtime.environment}},
+                    prompt_release_id=str(
+                        (review.get("binding") or {}).get("prompt_release_id") or ""
+                    )
+                    or None,
+                )
+            except HermesTurnConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except HermesTurnStateError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            coordination_store.supersede_hermes_draft(draft_id)
             return JSONResponse(
-                content={"saved": True, "feedback_count": len(notes[-20:])},
+                content={
+                    "requested_changes": True,
+                    "superseded_draft_id": draft_id,
+                    "feedback_turn_id": created["turn_id"],
+                    "case_revision": created["case_revision"],
+                },
                 headers={"Cache-Control": "no-store"},
             )
 

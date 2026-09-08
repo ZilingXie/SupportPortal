@@ -40,6 +40,14 @@ def queue_hermes_draft_delivery(
         raise HermesDraftStateError(draft_id, "draft not found")
     if str(draft.get("status")) != "approved":
         raise HermesDraftStateError(draft_id, f"draft is {draft.get('status')}")
+    mirror = store.get_case_mirror(str(draft["zendesk_ticket_id"]))
+    expected_revision = int((mirror or {}).get("case_revision") or 0)
+    draft_revision = int(draft.get("case_revision") or draft.get("conversation_version") or 0)
+    if expected_revision and draft_revision and draft_revision != expected_revision:
+        raise HermesDraftStateError(
+            draft_id,
+            f"stale_case_revision: draft {draft_revision} != case {expected_revision}",
+        )
     ticket_id = str(draft["zendesk_ticket_id"])
     account_case = repository.get_account_case_by_ticket_id(ticket_id)
     if not isinstance(account_case, dict):

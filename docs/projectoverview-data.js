@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-08T11:55:54Z",
-  "source_base_commit": "1e743017658f7816e9cab9d11ae064eba6169d60",
-  "registry_digest": "7dc629f84068865bf3923d8f2e897d772a1f02ec97a86e31dc1fcd636eee477e",
+  "generated_at": "2026-09-08T16:07:52Z",
+  "source_base_commit": "8a0c13d4401ff0d039b3517a44edc32ad74898f3",
+  "registry_digest": "02b16ccfcdc0bb5c9af5f1ecbabf800c2a6882dd0db4b5e9b03fea497f8b4de3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3019,6 +3019,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Intake token reused for agent tools (known security debt)",
           "details": "2026-09-08 用户决定暂不新建专用工具 token：工具端点移入 {base}/v1/agent/tools 由 intake Bearer middleware 保护，Hermes 容器 SUPPORTPORTAL_AGENT_TOOL_TOKEN 引用 automation-intake-shared-token。已知隐患：持有方可伪造 intake 工单事件（权限面大于工具调用）；拆分最小权限专用 token 作为 p2-148 后置项。hermes-supportportal-api-base-url SSM 已创建（https://supportcenter.stellarix.space/automation/preproduction）。"
+        },
+        {
+          "type": "test",
+          "label": "Phase-2 orchestration implemented and verified",
+          "details": "2026-09-08 第二阶段实施：automation-ecs-004（case_revision/active_customer/latest_customer_event_id、turns 新列与 one-active fence 覆盖 running+cancel_requested、automation_hermes_turn_runs 阶段级幂等）；有效客户 comment 在 intake 事务内推进 revision 并 supersede/cancel 旧 turn 与未发送草稿；hand_off 拒绝落后 revision（route superseded）与 ticket.updated/非客户 comment（ignored）；快照全量无静默截断、超预算转 human_review；processor 三阶段编排带取消恢复与幂等重放（idempotency_key_conflict→outcome_unknown）；publish_policy 服务端推导、称呼确定性投影、guardrail 编排侧 gate；request-changes 端点开 investigation_feedback turn；发送门禁加 expected_case_revision；网关 workspace_key/enabled_toolsets 落地；7 份手册入 catalog；插件按 route/work/persona 拆 toolset 并收编 hermes-deploy build/。"
         },
         {
           "type": "test",
@@ -11240,7 +11245,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-08",
       "updated_at": "2026-09-08",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "代码与本地/PG 验证完成；hermes-supportportal-api-base-url SSM 已创建，token 复用 intake shared token（无新 SSM）。剩余上线步骤：构建新 Hermes 镜像（agent-infra codex/hermes-zendesk-agent + 插件补丁 + 薄插件）并推 ECR digest；重跑 fresh-init 播种 multiplex 配置与 support profile（support_agent_enabled=1 渲染）；以 --automation-case-engine hermes --hermes-agent-enabled 走 release pipeline --through preproduction；阶段 A 实机检查与受控工单验收后置 done（后置项：专用最小权限工具 token）。",
+      "next_action": "第二阶段（case_revision 权威化、route/work/persona 多阶段编排、取消与恢复、per-run workspace 与 toolset 收窄、审批 request-changes、唯一发送门禁、7 份阶段手册、插件拆分 toolset 并入库）代码与测试已完成：SupportPortal 259 tests + 4 subtests 绿；PG 集成 7+6+8 项通过；hermes-agent 网关 3 套测试零回归并新增 5 项 workspace/toolset 测试。待用户完成 aws login 后走 review-implemented-plan 与 finalize（PR 合并 main），后续与镜像重建一起部署 Preproduction 并做受控工单验收。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -11280,6 +11285,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Intake token reused for agent tools (known security debt)",
           "details": "2026-09-08 用户决定暂不新建专用工具 token：工具端点移入 {base}/v1/agent/tools 由 intake Bearer middleware 保护，Hermes 容器 SUPPORTPORTAL_AGENT_TOOL_TOKEN 引用 automation-intake-shared-token。已知隐患：持有方可伪造 intake 工单事件（权限面大于工具调用）；拆分最小权限专用 token 作为 p2-148 后置项。hermes-supportportal-api-base-url SSM 已创建（https://supportcenter.stellarix.space/automation/preproduction）。"
+        },
+        {
+          "type": "test",
+          "label": "Phase-2 orchestration implemented and verified",
+          "details": "2026-09-08 第二阶段实施：automation-ecs-004（case_revision/active_customer/latest_customer_event_id、turns 新列与 one-active fence 覆盖 running+cancel_requested、automation_hermes_turn_runs 阶段级幂等）；有效客户 comment 在 intake 事务内推进 revision 并 supersede/cancel 旧 turn 与未发送草稿；hand_off 拒绝落后 revision（route superseded）与 ticket.updated/非客户 comment（ignored）；快照全量无静默截断、超预算转 human_review；processor 三阶段编排带取消恢复与幂等重放（idempotency_key_conflict→outcome_unknown）；publish_policy 服务端推导、称呼确定性投影、guardrail 编排侧 gate；request-changes 端点开 investigation_feedback turn；发送门禁加 expected_case_revision；网关 workspace_key/enabled_toolsets 落地；7 份手册入 catalog；插件按 route/work/persona 拆 toolset 并收编 hermes-deploy build/。"
         }
       ],
       "history": [
@@ -11297,6 +11307,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-08",
           "event": "auth_simplified",
           "summary": "工具端点鉴权改为复用 intake shared token（移入 /v1 由 middleware 保护），base-url 落 SSM；权限面扩大隐患已记录为后置项。"
+        },
+        {
+          "at": "2026-09-08",
+          "event": "phase2_implemented",
+          "summary": "按用户批准的修订版计划完成第二阶段全部代码与测试；等待 aws login 后 finalize。"
         }
       ],
       "legacy_ids": [],
@@ -16639,7 +16654,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。"
       ],
       "planned": [
-        "Hermes 原生会话引擎在 Preproduction 以 Zendesk ticket 绑定唯一逻辑会话处理 Automation 与调查（零 Engineer Case），调查回复经 Case 页人工批准后走既有 delivery 链发布，Tencent 记忆只收整理知识不收原始对话。",
+        "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
         "Enablement 的 Media Relay 请求会通过 Archer 自动开启跨频道连麦，并根据执行结果回复客户或转 Human Review。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

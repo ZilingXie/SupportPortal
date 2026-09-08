@@ -1922,6 +1922,38 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         return
 
     if status == "queued":
+        from backend.services.automation_ecs_store import create_automation_ecs_store
+        from backend.services.automation_ecs_runtime import AutomationEcsSettings
+
+        try:
+            coordination = create_automation_ecs_store(
+                AutomationEcsSettings.from_env("worker")  # type: ignore[arg-type]
+            )
+            case_mirror = coordination.get_case_mirror(zendesk_ticket_id)
+        except Exception:
+            case_mirror = None
+        if isinstance(case_mirror, dict):
+            expected_case_revision = int(case_mirror.get("case_revision") or 0)
+            draft_case_revision = int(delivery.get("draft_version") or 0)
+            if expected_case_revision and draft_case_revision and draft_case_revision != expected_case_revision:
+                ticket_repository.complete_account_zendesk_comment_delivery(
+                    account_case_id=account_case_id,
+                    message_id=message_id,
+                    status="failed",
+                    zendesk_comment_id=None,
+                    failure_code="stale_case_revision",
+                    completed_at=now_iso(),
+                )
+                LOGGER.warning(
+                    "hermes_zendesk_delivery_stale_case ticket_id=%s account_case_id=%s message_id=%s "
+                    "draft_revision=%s case_revision=%s",
+                    zendesk_ticket_id,
+                    account_case_id,
+                    message_id,
+                    draft_case_revision,
+                    expected_case_revision,
+                )
+                return
         account_case = ticket_repository.get_account_case(account_case_id)
         sync_state = ticket_repository.get_account_case_comment_sync(
             str((account_case or {}).get("client_ticket_id") or "")

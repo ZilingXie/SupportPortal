@@ -17,10 +17,12 @@ from backend.services.automation_hermes_delivery import (
 )
 from backend.services.automation_hermes_tools import (
     HermesToolError,
+    apply_greeting_projection,
+    derive_publish_policy,
+    publication_decision_for_turn,
     tool_escalate_human,
     tool_get_case_context,
     tool_record_direction,
-    tool_request_publish,
     tool_save_investigation_progress,
     tool_save_reply_draft,
 )
@@ -189,14 +191,15 @@ class TestDraftTools:
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=_guardrail_pass,
         ):
-            with pytest.raises(HermesToolError) as excinfo:
-                tool_save_reply_draft(
-                    store, repository, turn_id=turn_id, content="Hello", basis={}, publish_policy="auto"
-                )
-        assert excinfo.value.code == "policy_direction_mismatch"
+            store._hermes_turns[turn_id]["phase"] = "persona"
+            draft = tool_save_reply_draft(
+                store, repository, turn_id=turn_id, content="Hello", basis={}
+            )
+        assert draft["publish_policy"] == "manual"  # server derives from direction
 
     def test_manual_draft_saves_guardrail_result(self) -> None:
         store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=_guardrail_pass,
@@ -207,80 +210,61 @@ class TestDraftTools:
                 turn_id=turn_id,
                 content="We are looking into this and will reply within 24 hours.",
                 basis={"summary": "investigating"},
-                publish_policy="manual",
             )
         assert draft["publish_policy"] == "manual" and draft["guardrail_decision"] == "approved_for_final_engineer_review"
 
-    def test_request_publish_blocks_auto_when_guardrail_fails(self) -> None:
+    def _persona_draft(self, store, repository, turn_id, *, content="Draft", guardrail=None):
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=guardrail or _guardrail_pass,
+        ):
+            return tool_save_reply_draft(
+                store, repository, turn_id=turn_id, content=content, basis={}
+            )
+
+    def test_publication_gate_blocks_auto_when_guardrail_fails(self) -> None:
         store, repository, turn_id = _setup_case()
         tool_record_direction(store, repository, turn_id=turn_id, direction="automation", reason="enablement")
         blocked = {"decision": "blocked", "blockers": ["No draft customer reply provided."]}
-        with patch(
-            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-            return_value=blocked,
-        ):
-            draft = tool_save_reply_draft(
-                store, repository, turn_id=turn_id, content="Draft", basis={}, publish_policy="auto"
-            )
+        draft = self._persona_draft(store, repository, turn_id, guardrail=lambda *a, **k: blocked)
         assert draft["guardrail_decision"] == "blocked"
-        with pytest.raises(HermesToolError) as excinfo:
-            tool_request_publish(
-                store, repository, turn_id=turn_id, draft_id=draft["draft_id"], environment="preproduction"
-            )
-        assert excinfo.value.code == "guardrail_blocked"
+        result = publication_decision_for_turn(
+            store, repository, turn_id=turn_id, environment="preproduction"
+        )
+        assert result["status"] == "human_review" and result["reason"] == "guardrail_blocked"
+        assert store.get_hermes_turn(turn_id)["status"] == "failed"
 
-    def test_request_publish_auto_queues_ledger_delivery(self) -> None:
+    def test_publication_gate_auto_queues_ledger_delivery(self) -> None:
         store, repository, turn_id = _setup_case()
-        tool_record_direction(store, repository, turn_id=turn_id, direction="automation", reason="enablement", route="enablement")
-        with patch(
-            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-            side_effect=_guardrail_pass,
-        ):
-            draft = tool_save_reply_draft(
-                store,
-                repository,
-                turn_id=turn_id,
-                content="Please share your App ID.",
-                basis={},
-                publish_policy="auto",
-            )
-        result = tool_request_publish(
-            store, repository, turn_id=turn_id, draft_id=draft["draft_id"], environment="preproduction"
+        tool_record_direction(
+            store, repository, turn_id=turn_id, direction="automation", reason="enablement", route="enablement"
+        )
+        draft = self._persona_draft(store, repository, turn_id, content="Please share your App ID.")
+        result = publication_decision_for_turn(
+            store, repository, turn_id=turn_id, environment="preproduction"
         )
         assert result["queued"] is True
         assert len(repository.deliveries) == 1
         delivery = repository.deliveries[0]
         assert delivery["source"] == "hermes"
         assert delivery["is_public"] is True
-        assert delivery["immutable_content"] == "Please share your App ID."
+        assert delivery["immutable_content"].startswith("Hi Customer,")
         assert delivery["comments_revision"] == "rev-1"
-        assert delivery["draft_version"] == 1
         assert store.get_hermes_draft(draft["draft_id"])["status"] == "queued"
 
-    def test_manual_draft_waits_for_approval(self) -> None:
+    def test_publication_gate_manual_waits_for_approval(self) -> None:
         store, repository, turn_id = _setup_case()
-        with patch(
-            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-            side_effect=_guardrail_pass,
-        ):
-            draft = tool_save_reply_draft(
-                store, repository, turn_id=turn_id, content="Draft", basis={}, publish_policy="manual"
-            )
-        result = tool_request_publish(
-            store, repository, turn_id=turn_id, draft_id=draft["draft_id"], environment="preproduction"
+        self._persona_draft(store, repository, turn_id)
+        result = publication_decision_for_turn(
+            store, repository, turn_id=turn_id, environment="preproduction"
         )
         assert result["status"] == "awaiting_approval" and result["queued"] is False
         assert repository.deliveries == []
 
     def test_approve_and_queue_binds_version(self) -> None:
         store, repository, turn_id = _setup_case()
-        with patch(
-            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-            side_effect=_guardrail_pass,
-        ):
-            draft = tool_save_reply_draft(
-                store, repository, turn_id=turn_id, content="Draft", basis={}, publish_policy="manual"
-            )
+        draft = self._persona_draft(store, repository, turn_id)
         store.request_hermes_draft_publish(draft["draft_id"])
         result = approve_and_queue_hermes_draft(
             store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
@@ -292,24 +276,26 @@ class TestDraftTools:
 class TestDeliveryQueue:
     def test_queue_requires_approved_draft(self) -> None:
         store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=_guardrail_pass,
         ):
             draft = tool_save_reply_draft(
-                store, repository, turn_id=turn_id, content="Draft", basis={}, publish_policy="manual"
+                store, repository, turn_id=turn_id, content="Draft", basis={}
             )
         with pytest.raises(Exception):
             queue_hermes_draft_delivery(store, repository, draft_id=draft["draft_id"], environment="preproduction")
 
     def test_queue_missing_mirror_fails_closed(self) -> None:
         store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=_guardrail_pass,
         ):
             draft = tool_save_reply_draft(
-                store, repository, turn_id=turn_id, content="Draft", basis={}, publish_policy="manual"
+                store, repository, turn_id=turn_id, content="Draft", basis={}
             )
         store.request_hermes_draft_publish(draft["draft_id"])
         repository.account_cases.pop("123")

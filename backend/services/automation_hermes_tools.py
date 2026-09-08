@@ -124,11 +124,23 @@ def tool_record_direction(
     if not normalized_reason:
         raise HermesToolError("reason_required", "a direction reason is required")
     context = _resolve_turn_context(store, repository, turn_id)
-    binding = store.record_hermes_case_direction(
-        turn_id, direction=normalized_direction, reason=normalized_reason
+    turn = context["turn"]
+    if str(turn.get("phase") or "route") != "route":
+        raise HermesToolError(
+            "phase_mismatch", "direction may only be recorded during the route phase"
+        )
+    normalized_route = str(route or "").strip() or None
+    if normalized_direction == "automation":
+        from backend.services.account_automation_handlers import account_automation_handler
+
+        if normalized_route and account_automation_handler(normalized_route) is None:
+            raise HermesToolError(
+                "invalid_route", f"route {normalized_route} has no registered automation handler"
+            )
+    store.record_hermes_turn_direction(
+        turn_id, direction=normalized_direction, route=normalized_route
     )
     account_case = _require_account_case(context)
-    normalized_route = str(route or "").strip() or None
     if normalized_direction == "automation":
         account_case["route"] = normalized_route or account_case.get("route")
         account_case["execution_action"] = normalized_route or account_case.get("execution_action")
@@ -138,9 +150,9 @@ def tool_record_direction(
     if repository is not None:
         repository.save_account_case(account_case)
     return {
-        "direction": binding["direction"],
-        "conversation_version": int(binding["conversation_version"]),
-        "route": account_case.get("route"),
+        "direction": normalized_direction,
+        "case_revision": int(turn["case_revision"]),
+        "route": normalized_route,
     }
 
 
@@ -411,6 +423,22 @@ def tool_save_investigation_progress(
     return {"saved": True, "summary": normalized_summary}
 
 
+def derive_publish_policy(turn: dict[str, Any]) -> str:
+    """The model never chooses publication policy; the server derives it."""
+    return "auto" if str(turn.get("direction") or "") == "automation" else "manual"
+
+
+def apply_greeting_projection(content: str, greeting_name: str) -> str:
+    """Ensure English drafts open with the deterministic Hi <Name>, greeting."""
+    normalized = str(content or "").strip()
+    if not normalized:
+        return normalized
+    expected = f"Hi {greeting_name},"
+    if normalized.lower().startswith("hi ") and normalized.split(",", 1)[0].rstrip().lower() == expected.lower():
+        return normalized
+    return f"{expected}\n\n{normalized}"
+
+
 def tool_save_reply_draft(
     store: AutomationEcsStore,
     repository: Any,
@@ -418,21 +446,23 @@ def tool_save_reply_draft(
     turn_id: str,
     content: str,
     basis: dict[str, Any] | None = None,
-    publish_policy: str,
 ) -> dict[str, Any]:
-    normalized_policy = str(publish_policy or "").strip().lower()
-    if normalized_policy not in {"auto", "manual"}:
-        raise HermesToolError("invalid_publish_policy", "publish_policy must be auto or manual")
     context = _resolve_turn_context(store, repository, turn_id)
+    turn = context["turn"]
+    if str(turn.get("phase") or "") != "persona":
+        raise HermesToolError(
+            "phase_mismatch", "drafts may only be saved during the persona phase"
+        )
     binding = context["binding"]
+    normalized_policy = derive_publish_policy(turn)
     normalized_content = str(content or "").strip()
     if not normalized_content:
         raise HermesToolError("content_required", "draft content is required")
-    if normalized_policy == "auto" and str(binding["direction"]) != "automation":
-        raise HermesToolError(
-            "policy_direction_mismatch",
-            "auto publication is only allowed for direction=automation cases",
-        )
+    greeting_name = "Customer"
+    snapshot = turn.get("input_snapshot") or {}
+    if isinstance(snapshot, dict) and snapshot.get("greeting_name"):
+        greeting_name = str(snapshot["greeting_name"])
+    normalized_content = apply_greeting_projection(normalized_content, greeting_name)
     guardrail = run_engineer_guardrail_final(
         draft_customer_reply=normalized_content,
         reply_readiness={"summary": str((binding.get("investigation") or {}).get("summary") or "")},
@@ -448,49 +478,56 @@ def tool_save_reply_draft(
         "draft_id": draft["draft_id"],
         "conversation_version": int(draft["conversation_version"]),
         "publish_policy": draft["publish_policy"],
+        "greeting_name": greeting_name,
         "guardrail_decision": str((guardrail or {}).get("decision") or ""),
         "guardrail_blockers": list((guardrail or {}).get("blockers") or []),
     }
 
 
-def tool_request_publish(
+def publication_decision_for_turn(
     store: AutomationEcsStore,
     repository: Any,
     *,
     turn_id: str,
-    draft_id: str,
     environment: str,
     zendesk_side_effects_enabled: bool = True,
 ) -> dict[str, Any]:
+    """Orchestrator-side publication gate after the persona phase.
+
+    Automation drafts that pass the guardrail queue automatically;
+    investigation drafts wait for human approval; blocked drafts park the
+    turn in human review. The model has no publication tool.
+    """
     context = _resolve_turn_context(store, repository, turn_id)
     turn = context["turn"]
-    draft_row = store.get_hermes_case_review(str(turn["zendesk_ticket_id"]))
-    draft = next(
-        (item for item in (draft_row or {}).get("drafts", []) if item.get("draft_id") == draft_id),
-        None,
-    )
+    review = store.get_hermes_case_review(str(turn["zendesk_ticket_id"])) or {}
+    draft = None
+    for item in review.get("drafts") or []:
+        if item.get("turn_id") == turn_id and item.get("status") == "draft":
+            draft = item
+            break
     if draft is None:
-        raise HermesDraftStateError(draft_id, "draft not found")
+        return {"status": "no_draft", "queued": False}
     guardrail = draft.get("guardrail") if isinstance(draft.get("guardrail"), dict) else {}
-    if str(guardrail.get("decision")) == "blocked" and str(draft.get("publish_policy")) == "auto":
-        raise HermesToolError(
-            "guardrail_blocked",
-            f"deterministic guardrail blocked the draft: {guardrail.get('decision')}",
+    if str(guardrail.get("decision")) == "blocked":
+        store.fail_hermes_agent_turn(
+            turn_id,
+            status="failed",
+            error_code="guardrail_blocked",
+            error_message=str(guardrail.get("blockers") or "guardrail blocked the draft"),
         )
-    updated = store.request_hermes_draft_publish(draft_id)
+        return {"status": "human_review", "queued": False, "reason": "guardrail_blocked"}
+    updated = store.request_hermes_draft_publish(draft["draft_id"])
     if str(updated.get("publish_policy")) != "auto":
-        return {"draft_id": draft_id, "status": "awaiting_approval", "queued": False}
+        return {"status": "awaiting_approval", "queued": False, "draft_id": draft["draft_id"]}
     if not zendesk_side_effects_enabled:
-        return {"draft_id": draft_id, "status": "approved", "queued": False, "reason": "zendesk_side_effects_disabled"}
+        return {"status": "approved", "queued": False, "reason": "zendesk_side_effects_disabled"}
     from backend.services.automation_hermes_delivery import queue_hermes_draft_delivery
 
     queue_hermes_draft_delivery(
-        store,
-        repository,
-        draft_id=updated["draft_id"],
-        environment=environment,
+        store, repository, draft_id=updated["draft_id"], environment=environment
     )
-    return {"draft_id": draft_id, "status": "queued", "queued": True}
+    return {"status": "queued", "queued": True, "draft_id": draft["draft_id"]}
 
 
 def tool_escalate_human(
