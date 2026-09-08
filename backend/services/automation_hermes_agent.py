@@ -179,12 +179,17 @@ class HermesAgentTurnProcessor:
             if before_external is not None:
                 before_external()
             instructions = resolve_system_prompt(SUPPORT_AGENT_PROMPT_KEY, SUPPORT_AGENT_PROMPT_FALLBACK)
-            started = self.client.start_run(
-                session_id=str(binding["hermes_session_id"]),
-                instructions=instructions,
-                input_text=build_agent_input(payload.event, turn_id=payload.turn_id),
-                idempotency_key=str(turn["request_id"]),
-            )
+            try:
+                started = self.client.start_run(
+                    session_id=str(binding["hermes_session_id"]),
+                    instructions=instructions,
+                    input_text=build_agent_input(payload.event, turn_id=payload.turn_id),
+                    idempotency_key=str(turn["request_id"]),
+                )
+            except HermesAgentError as exc:
+                # A rejected submission must fail the durable turn here, or the
+                # one-running fence would block every later turn of this case.
+                return self._fail_from_transport(payload, turn, exc)
             run_id = str(started["run_id"])
             replayed = bool(started.get("replayed"))
             turn = self.store.set_hermes_turn_run_id(payload.turn_id, run_id=run_id)
