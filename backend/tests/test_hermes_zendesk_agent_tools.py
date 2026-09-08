@@ -117,7 +117,7 @@ def _setup_case() -> tuple[InMemoryAutomationEcsStore, FakeRepository, str]:
 
 
 def _guardrail_pass(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    return {"decision": "pass", "blockers": []}
+    return {"decision": "approved_for_final_engineer_review", "blockers": []}
 
 
 class TestCaseContext:
@@ -209,7 +209,7 @@ class TestDraftTools:
                 basis={"summary": "investigating"},
                 publish_policy="manual",
             )
-        assert draft["publish_policy"] == "manual" and draft["guardrail_decision"] == "pass"
+        assert draft["publish_policy"] == "manual" and draft["guardrail_decision"] == "approved_for_final_engineer_review"
 
     def test_request_publish_blocks_auto_when_guardrail_fails(self) -> None:
         store, repository, turn_id = _setup_case()

@@ -314,7 +314,25 @@ async def tool_execute_automation_action(
             "executed_actions": [],
         }
 
-    if attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
+    suspension_handoff_payload = dict(attempt.get("internal_email_payload") or {}) or None
+    if (
+        normalized_route == "account_suspension"
+        and suspension_handoff_payload
+        and not missing_fields
+        and zendesk_side_effects_enabled
+    ):
+        delivery_result, account_case = await _run_internal_email_delivery(
+            repository=repository,
+            account_case=account_case,
+            ticket_id=ticket_id,
+            handler=automation_handler or "billing",
+            payload=suspension_handoff_payload,
+            sender=send_billing_internal_email,
+        )
+        executed_actions.append("internal_email_submitted")
+        internal_email_status = str(delivery_result.status)
+        internal_email_reason = str(delivery_result.reason)
+    elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
         if automation_handler == "enablement":
             archer_result, account_case, _reply_job = await _run_enablement_archer_workflow(
                 repository=repository,
@@ -454,10 +472,10 @@ def tool_request_publish(
     if draft is None:
         raise HermesDraftStateError(draft_id, "draft not found")
     guardrail = draft.get("guardrail") if isinstance(draft.get("guardrail"), dict) else {}
-    if str(guardrail.get("decision")) != "pass" and str(draft.get("publish_policy")) == "auto":
+    if str(guardrail.get("decision")) == "blocked" and str(draft.get("publish_policy")) == "auto":
         raise HermesToolError(
             "guardrail_blocked",
-            f"deterministic guardrail did not pass: {guardrail.get('decision')}",
+            f"deterministic guardrail blocked the draft: {guardrail.get('decision')}",
         )
     updated = store.request_hermes_draft_publish(draft_id)
     if str(updated.get("publish_policy")) != "auto":

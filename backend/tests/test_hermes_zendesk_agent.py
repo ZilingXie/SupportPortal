@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import patch
@@ -308,6 +309,26 @@ class TestAgentTurnProcessor:
         outcome = self._processor(store, TimeoutClient()).process(agent_job)
         assert outcome["status"] == "outcome_unknown"
         assert store.get_hermes_turn(handoff["turn_id"])["status"] == "outcome_unknown"
+
+
+class TestExpiryRecovery:
+    def test_expired_external_agent_turn_job_marks_outcome_unknown(self) -> None:
+        store = _store()
+        handoff = _accept_and_hand_off(store, _event())
+        job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert job is not None
+        store.mark_processing_external_started(job)
+        # Simulate the lease lapsing with the worker gone.
+        with store._lock:
+            store._jobs[job.job_id]["lease_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+        recovered = store.claim_job(JobKind.PROCESSING, worker_id="worker-2", lease_seconds=60)
+        assert recovered is None
+        execution = store.get_execution(job.execution_id)
+        assert execution is not None
+        agent_jobs = [item for item in execution["jobs"] if item["kind"] == "agent_turn"]
+        assert agent_jobs[0]["status"] == JobStatus.OUTCOME_UNKNOWN.value
+        assert execution["status"] == "outcome_unknown"
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "pending"
 
 
 class TestRouteWorkerHandOff:

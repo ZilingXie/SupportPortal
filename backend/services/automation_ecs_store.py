@@ -372,7 +372,7 @@ class InMemoryAutomationEcsStore:
         for job in self._jobs.values():
             expires_at = job.get("lease_expires_at")
             if (
-                job["kind"] == JobKind.PROCESSING.value
+                job["kind"] in {JobKind.PROCESSING.value, JobKind.AGENT_TURN.value}
                 and job["status"] == JobStatus.CLAIMED.value
                 and expires_at is not None
                 and expires_at <= now_value
@@ -1723,12 +1723,16 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         SELECT job_id,execution_id,attempt,claimed_by FROM {}
-                        WHERE namespace=%s AND kind=%s AND status=%s
+                        WHERE namespace=%s AND kind = ANY(%s) AND status=%s
                           AND lease_expires_at < NOW() AND external_started_at IS NOT NULL
-                        FOR UPDATE SKIP LOCKED
+                          FOR UPDATE SKIP LOCKED
                         """
                     ).format(self._table("automation_jobs")),
-                    (namespace, JobKind.PROCESSING.value, JobStatus.CLAIMED.value),
+                    (
+                        namespace,
+                        [JobKind.PROCESSING.value, JobKind.AGENT_TURN.value],
+                        JobStatus.CLAIMED.value,
+                    ),
                 )
                 for expired in cursor.fetchall():
                     cursor.execute(
