@@ -43,12 +43,10 @@ HERMES_SECRET_SUFFIXES = {
 HERMES_AGENT_SECRET_NAMES = {
     "HERMES_AGENT_BASE_URL",
     "HERMES_AGENT_API_TOKEN",
-    "HERMES_AGENT_TOOL_TOKEN",
 }
 HERMES_AGENT_SECRET_SUFFIXES = {
     "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
     "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
-    "HERMES_AGENT_TOOL_TOKEN": "hermes-agent-tool-token",
 }
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
@@ -476,16 +474,13 @@ def render_initial_task_definition(
         )
     if role == "api" and hermes_case_workflow_mode != "disabled":
         secret_names[role]["HERMES_CALLBACK_TOKEN"] = "hermes-callback-token"
-    if hermes_agent_enabled:
-        if role == "worker":
-            secret_names[role].update(
-                {
-                    "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
-                    "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
-                }
-            )
-        if role == "api":
-            secret_names[role]["HERMES_AGENT_TOOL_TOKEN"] = "hermes-agent-tool-token"
+    if hermes_agent_enabled and role == "worker":
+        secret_names[role].update(
+            {
+                "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
+                "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
+            }
+        )
     container: dict[str, Any] = {
         "name": role,
         "image": (
@@ -708,11 +703,8 @@ def render_task_definition(
             else environment_values.get("AUTOMATION_CASE_ENGINE") == "hermes"
         )
         agent_required: set[str] = set()
-        if effective_agent_enabled:
-            if role == "worker":
-                agent_required.update({"HERMES_AGENT_BASE_URL", "HERMES_AGENT_API_TOKEN"})
-            if role == "api":
-                agent_required.add("HERMES_AGENT_TOOL_TOKEN")
+        if effective_agent_enabled and role == "worker":
+            agent_required.update({"HERMES_AGENT_BASE_URL", "HERMES_AGENT_API_TOKEN"})
         _remove_secret_references(container, HERMES_AGENT_SECRET_NAMES)
         if agent_required:
             prefix_arn = _parameter_prefix_arn(container, environment=environment)

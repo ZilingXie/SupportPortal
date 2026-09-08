@@ -285,13 +285,6 @@ def _require_hermes_callback_token(
         raise HTTPException(status_code=401, detail="invalid Hermes callback token")
 
 
-def _require_hermes_agent_tool_token(
-    tool_token: str | None = Header(default=None, alias="X-Hermes-Agent-Tool-Token"),
-) -> None:
-    expected = str(os.getenv("HERMES_AGENT_TOOL_TOKEN") or "").strip()
-    if not expected or not hmac.compare_digest(str(tool_token or ""), expected):
-        raise HTTPException(status_code=401, detail="invalid Hermes agent tool token")
-
 
 def create_app(    *,
     settings: AutomationEcsSettings | None = None,
@@ -795,15 +788,17 @@ def create_app(    *,
 
     if runtime.environment != "production":
 
-        @app.post(
-            f"{base}/api/integrations/hermes-agent/tools/{{tool_name}}",
-            dependencies=[Depends(_require_hermes_agent_tool_token)],
-        )
+        # NOTE(security-debt, p2-148): these tool calls are authenticated by the
+        # shared intake token instead of a dedicated least-privilege token, per
+        # owner decision on 2026-09-08. A holder of this token can therefore
+        # also forge intake events — tracked as a follow-up on p2-148.
+        @app.post(f"{base}/v1/agent/tools/{{tool_name}}")
         async def ecs_hermes_agent_tool(tool_name: str, http_request: Request) -> dict[str, Any]:
             """Business tool endpoint invoked by the Hermes support profile.
 
-            The turn id binds every call to one durable case context; the model
-            never selects which ticket it operates on.
+            Protected by the intake Bearer middleware. The turn id binds every
+            call to one durable case context; the model never selects which
+            ticket it operates on.
             """
             from backend.services.automation_hermes_tools import (
                 HermesToolError,

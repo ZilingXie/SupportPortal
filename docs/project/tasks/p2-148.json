@@ -10,7 +10,7 @@
   "created_at": "2026-09-08",
   "updated_at": "2026-09-08",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "代码与本地/PG 验证已完成（单测 36+25、PG 集成 7、发布三测回归绿）。剩余上线步骤：构建新 Hermes 镜像（agent-infra codex/hermes-zendesk-agent + 插件补丁）并推 ECR digest；创建 /supportportal/preproduction 下 hermes-supportportal-api-base-url 与 hermes-agent-tool-token SSM；重跑 fresh-init 播种 multiplex 配置与 support profile；以 --automation-case-engine hermes --hermes-agent-enabled 走 release pipeline --through preproduction；受控工单验收后置 done。",
+  "next_action": "代码与本地/PG 验证完成；hermes-supportportal-api-base-url SSM 已创建，token 复用 intake shared token（无新 SSM）。剩余上线步骤：构建新 Hermes 镜像（agent-infra codex/hermes-zendesk-agent + 插件补丁 + 薄插件）并推 ECR digest；重跑 fresh-init 播种 multiplex 配置与 support profile（support_agent_enabled=1 渲染）；以 --automation-case-engine hermes --hermes-agent-enabled 走 release pipeline --through preproduction；阶段 A 实机检查与受控工单验收后置 done（后置项：专用最小权限工具 token）。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -45,6 +45,11 @@
       "type": "decision",
       "label": "Cross-repo baselines committed",
       "details": "hermes-agent 与 TencentDB-Agent-Memory 各自 codex/hermes-zendesk-agent 分支收编未提交基线（Dockerfile chmod、OpenAI embedding provider 启用）；Tencent 插件补丁（25c271e，插件测试 7 项）；hermes-deploy 1a30abd（support_agent_enabled 可选接线 + fresh-init 播种 support profile）；agent-infra/deploy-ecs 为未跟踪构建输入（Dockerfile.hermes、hermes-config.yaml v40 multiplex、hermes-support-config.yaml、supportportal_agent_tools 薄插件），以最终镜像 digest 固定可复现性。"
+    },
+    {
+      "type": "decision",
+      "label": "Intake token reused for agent tools (known security debt)",
+      "details": "2026-09-08 用户决定暂不新建专用工具 token：工具端点移入 {base}/v1/agent/tools 由 intake Bearer middleware 保护，Hermes 容器 SUPPORTPORTAL_AGENT_TOOL_TOKEN 引用 automation-intake-shared-token。已知隐患：持有方可伪造 intake 工单事件（权限面大于工具调用）；拆分最小权限专用 token 作为 p2-148 后置项。hermes-supportportal-api-base-url SSM 已创建（https://supportcenter.stellarix.space/automation/preproduction）。"
     }
   ],
   "history": [
@@ -57,6 +62,11 @@
       "at": "2026-09-08",
       "event": "implementation_verified",
       "summary": "SupportPortal 侧引擎、工具端点、审核区与发布接线完成（0550b971/774bc89f/f0df3c4c），单测+PG 集成+发布回归全绿；等待镜像构建、SSM、发布与受控工单验收。"
+    },
+    {
+      "at": "2026-09-08",
+      "event": "auth_simplified",
+      "summary": "工具端点鉴权改为复用 intake shared token（移入 /v1 由 middleware 保护），base-url 落 SSM；权限面扩大隐患已记录为后置项。"
     }
   ],
   "legacy_ids": [],
