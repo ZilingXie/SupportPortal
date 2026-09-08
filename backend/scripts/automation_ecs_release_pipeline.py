@@ -386,6 +386,9 @@ def deploy_mode_args(args: argparse.Namespace) -> list[str]:
         values.extend(["--hermes-case-workflow-mode", args.hermes_case_workflow_mode])
     if args.hermes_persona_enabled:
         values.append("--hermes-persona-enabled")
+    values.extend(["--automation-case-engine", str(getattr(args, "automation_case_engine", "legacy") or "legacy")])
+    if getattr(args, "hermes_agent_enabled", False):
+        values.append("--hermes-agent-enabled")
     return values
 
 
@@ -569,6 +572,10 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("CodeBuild direct Production keeps Production Hermes disabled")
     if args.through == "production" and args.hermes_persona_enabled:
         raise ValueError("--through production keeps Hermes Persona disabled")
+    if args.through == "production" and args.automation_case_engine != "legacy":
+        raise ValueError("--through production keeps the automation case engine on legacy")
+    if args.through == "production" and args.hermes_agent_enabled:
+        raise ValueError("--through production keeps the Hermes agent disabled")
     release_commit = args.release_commit or _git(project_root, "rev-parse", "origin/main")
     release_commit = _git(project_root, "rev-parse", f"{release_commit}^{{commit}}")
     release_id = f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"
@@ -593,6 +600,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "schema_bootstrap": bool(args.bootstrap_account_schema),
                 "hermes_case_workflow": args.hermes_case_workflow_mode or "",
                 "hermes_persona_enabled": bool(args.hermes_persona_enabled),
+                "automation_case_engine": args.automation_case_engine,
+                "hermes_agent_enabled": bool(args.hermes_agent_enabled),
                 "codebuild_direct_production": direct_production,
             },
         }
@@ -827,6 +836,8 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--bootstrap-account-schema", action="store_true")
     pipeline.add_argument("--hermes-case-workflow-mode", choices=("disabled", "mock", "real"))
     pipeline.add_argument("--hermes-persona-enabled", action="store_true")
+    pipeline.add_argument("--automation-case-engine", choices=("legacy", "hermes"), default="legacy")
+    pipeline.add_argument("--hermes-agent-enabled", action="store_true")
     pipeline.add_argument("--resume", action="store_true")
     pipeline.add_argument("--keep-release-worktree", action="store_true", help=argparse.SUPPRESS)
     return parser

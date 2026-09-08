@@ -10,7 +10,7 @@
   "created_at": "2026-09-05",
   "updated_at": "2026-09-08",
   "summary": "为 technical Account Case 复用既有 Engineer Case，建立 PostgreSQL-only 调查账本、持久 conversation/session、canonical Runtime producer/callback、Summary Guardrail、Persona/Approve 版本围栏和 solved/reopen/closed promotion 生命周期；调查期间关闭 L0，仅允许读取已晋升 Case Knowledge。canonical SupportPortal Runtime已进入镜像，但当前ECS Production与Preproduction的typed Case Workflow均为disabled；Preproduction仅启用Hermes Persona/Responses endpoint，真实Hermes/AgentRelay调查链尚未激活。",
-  "next_action": "保持 active。Preproduction Persona endpoint 配置已恢复，并通过新 API definition 的 authenticated GET /v1/models（200、exit 0）；待用户向 /automation/preproduction/v1/intake 投递全新受控工单验收 Persona Account 回复。两环境 typed Case Workflow 仍 disabled；真实 Hermes/AgentRelay 调查、Slack/Zendesk 闭环与知识 promotion 仍需另行确认。",
+  "next_action": "保持 active。真实调查链已由 p2-148 承接：Preproduction 新 Case 可经 Hermes 原生会话引擎（Zendesk ticket 绑定逻辑会话、零 Engineer Case、真实结果审核）处理；本任务的 typed Case Workflow/Engineer Case Slack 链继续服务既有 Production mock 与旧 Case，真实 Hermes/AgentRelay 调查验收改在 p2-148 的受控工单流程执行。",
   "acceptance_criteria": [
     "technical intake 只复用一个 Engineer Case，Slack 同一 thread 依次出现 Case 根消息与精确文本 Investigation result: test，只有 Hermes output 带 Summarize。",
     "同一 Case 持久绑定 hermes_conversation_key/current hermes_session_id，turn claim 与 session rotation 使用 PostgreSQL 串行/CAS，feedback 和新客户输入立即废弃旧 Summary、Guardrail、Draft 与 Approve。",
@@ -118,6 +118,11 @@
       "at": "2026-09-08",
       "event": "preproduction_persona_endpoint_restored",
       "summary": "恢复被未带 flag 部署移除的 API/Worker Persona secret 引用，并以 authenticated GET /v1/models 验证；Hermes 镜像不变，typed workflow disabled，继续等待用户受控工单验收。"
+    },
+    {
+      "at": "2026-09-08",
+      "event": "superseded_scope_for_real_investigation",
+      "summary": "真实调查链（Zendesk 绑定 + 真实结果人工审核）移交 p2-148 的 hermes 原生会话引擎；本任务保留 typed workflow 与既有 Engineer Case 链的维护职责。"
     }
   ],
   "legacy_ids": [],

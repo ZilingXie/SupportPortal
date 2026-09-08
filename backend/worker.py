@@ -1740,6 +1740,9 @@ def _drain_production_zendesk_comment_deliveries(*, limit: int = 20) -> None:
         if str(delivery.get("source") or "account").strip().lower() == "engineer":
             _deliver_engineer_approved_zendesk_comment(delivery)
             continue
+        if str(delivery.get("source") or "account").strip().lower() == "hermes":
+            _deliver_hermes_zendesk_comment(delivery)
+            continue
         account_case_id = str(delivery.get("account_case_id") or "").strip()
         message_id = str(delivery.get("message_id") or "").strip()
         delivery_status = str(delivery.get("status") or "").strip().lower()
@@ -1899,6 +1902,117 @@ def _complete_engineer_delivery_round(delivery: dict[str, Any], *, comment_id: s
         engineer_case,
         new_messages=[delivery_message],
         slack_events=[slack_event],
+    )
+
+
+def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
+    """Deliver a Hermes agent draft through the immutable ledger.
+
+    Same fence as engineer deliveries: a queued draft is canceled when a newer
+    customer comment exists (comments_revision mismatch), the public write goes
+    through the shared Zendesk comment API, and outcomes are recorded on the
+    ledger for the reconciliation drain.
+    """
+    account_case_id = str(delivery.get("account_case_id") or "").strip()
+    message_id = str(delivery.get("message_id") or "").strip()
+    status = str(delivery.get("status") or "").strip().lower()
+    content = str(delivery.get("immutable_content") or "").strip()
+    zendesk_ticket_id = str(delivery.get("zendesk_ticket_id") or "").strip()
+    if not all((account_case_id, message_id, content, zendesk_ticket_id)):
+        return
+
+    if status == "queued":
+        account_case = ticket_repository.get_account_case(account_case_id)
+        sync_state = ticket_repository.get_account_case_comment_sync(
+            str((account_case or {}).get("client_ticket_id") or "")
+        )
+        current_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        if not current_revision:
+            try:
+                current_revision = str(
+                    read_ticket_ownership_snapshot(
+                        ticket_id=zendesk_ticket_id,
+                    ).comments_revision
+                    or ""
+                ).strip()
+            except ZendeskCommentError as exc:
+                LOGGER.warning(
+                    "hermes_zendesk_revision_verify_failed ticket_id=%s account_case_id=%s "
+                    "message_id=%s failure_code=%s",
+                    zendesk_ticket_id,
+                    account_case_id,
+                    message_id,
+                    exc.error_code,
+                )
+                return
+        if current_revision != str(delivery.get("comments_revision") or "").strip():
+            ticket_repository.complete_account_zendesk_comment_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                status="failed",
+                zendesk_comment_id=None,
+                failure_code="stale_comments_revision",
+                completed_at=now_iso(),
+            )
+            LOGGER.info(
+                "hermes_zendesk_delivery_stale ticket_id=%s account_case_id=%s message_id=%s",
+                zendesk_ticket_id,
+                account_case_id,
+                message_id,
+            )
+            return
+        claimed = ticket_repository.claim_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            claimed_at=now_iso(),
+        )
+        if not bool(claimed.get("claimed")):
+            return
+        try:
+            result = add_ticket_comment(
+                ticket_id=zendesk_ticket_id,
+                body=content,
+                public=True,
+                solve=False,
+            )
+        except ZendeskCommentError as exc:
+            next_status = "outcome_unknown" if exc.category == "outcome_unknown" else "failed"
+            ticket_repository.complete_account_zendesk_comment_delivery(
+                account_case_id=account_case_id,
+                message_id=message_id,
+                status=next_status,
+                zendesk_comment_id=None,
+                failure_code=exc.error_code,
+                completed_at=now_iso(),
+            )
+            return
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=message_id,
+            status="delivered",
+            zendesk_comment_id=result.comment_id,
+            failure_code=None,
+            completed_at=now_iso(),
+        )
+        return
+
+    try:
+        result, _solved_seen = read_ticket_comment_audit(
+            ticket_id=zendesk_ticket_id,
+            body=content,
+            public=True,
+        )
+    except ZendeskCommentError:
+        return
+    if result is None:
+        return
+    ticket_repository.complete_account_zendesk_comment_delivery(
+        account_case_id=account_case_id,
+        message_id=message_id,
+        status="delivered",
+        zendesk_comment_id=result.comment_id,
+        failure_code=None,
+        completed_at=now_iso(),
     )
 
 

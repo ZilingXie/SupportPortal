@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass
@@ -17,9 +18,14 @@ from backend.services.automation_ecs_heartbeat import JobLeaseHeartbeat, WorkerH
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_schema import check_account_runtime_schema
 from backend.services.automation_ecs_store import AutomationEcsStore, create_automation_ecs_store
-from backend.services.prompt_runtime import initialize_prompt_runtime
+from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info
 
 LOGGER = logging.getLogger("supportportal.automation_ecs_route_worker")
+
+
+def default_case_engine_from_env() -> str:
+    value = str(os.getenv("AUTOMATION_CASE_ENGINE") or "").strip().lower()
+    return value if value in {"legacy", "hermes"} else "legacy"
 
 
 def _comment_role(comment: Any) -> str | None:
@@ -105,6 +111,13 @@ class RouteWorker:
     route_decider: Callable[..., Any] = decide_account_route
     lease_seconds: int = 120
     case_loader: Callable[[str], dict[str, Any] | None] | None = None
+    default_case_engine: str = "legacy"
+
+    def resolve_case_engine(self, ticket_id: str) -> str:
+        binding = self.store.get_hermes_case_binding(ticket_id)
+        if binding is not None:
+            return str(binding.get("engine") or "legacy")
+        return self.default_case_engine
 
     def process_once(self) -> bool:
         self.store.heartbeat(
@@ -123,6 +136,15 @@ class RouteWorker:
         try:
             payload = RouteJobPayload.model_validate(job.payload)
             event = payload.event
+            if self.resolve_case_engine(event.ticket.id) == "hermes":
+                # The case is bound to a Hermes native session: hand off before
+                # the legacy route LLM runs and never enter the old harness.
+                lease.stop()
+                self.store.hand_off_to_hermes_agent(
+                    job,
+                    prompt_release_id=str(prompt_runtime_info().get("release_id") or "") or None,
+                )
+                return True
             context = _ticket_context(payload)
             case = self.case_loader(event.ticket.id) if self.case_loader else None
             context = understanding_messages(build_automation_context({"ticket_id": event.ticket.id,
@@ -171,6 +193,7 @@ def run_route_worker() -> int:
         store=store,
         persona_resolver=repository.resolve_account_persona,
         case_loader=repository.get_billing_ticket_by_client_ticket_id,
+        default_case_engine=default_case_engine_from_env(),
     )
     stopping = Event()
     heartbeat = WorkerHeartbeat(

@@ -488,6 +488,21 @@ def test_pipeline_uses_identical_mode_arguments_for_preflight_and_deploy() -> No
         "--hermes-case-workflow-mode",
         "mock",
         "--hermes-persona-enabled",
+        "--automation-case-engine",
+        "legacy",
+    ]
+    assert deploy_mode_args(
+        argparse.Namespace(
+            bootstrap_account_schema=False,
+            hermes_case_workflow_mode="",
+            hermes_persona_enabled=False,
+            automation_case_engine="hermes",
+            hermes_agent_enabled=True,
+        )
+    ) == [
+        "--automation-case-engine",
+        "hermes",
+        "--hermes-agent-enabled",
     ]
 
 

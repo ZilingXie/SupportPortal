@@ -87,6 +87,8 @@ const state = {
   selectedAuditExecutionId: "",
   detail: null,
   audit: null,
+  hermesReview: null,
+  hermesReviewLoading: false,
   runtime: null,
   filterOpen: false,
   advancedOpen: false,
@@ -249,6 +251,7 @@ async function loadCaseDetail(ticketId, matchedExecutionId = "") {
   state.selectedMatchedExecutionId = matchedExecutionId;
   state.detail = null;
   state.audit = null;
+  state.hermesReview = null;
   state.detailLoading = true;
   state.showMobileDetail = true;
   render();
@@ -258,10 +261,54 @@ async function loadCaseDetail(ticketId, matchedExecutionId = "") {
     state.detail = detail;
     const executionId = matchedExecutionId || detail.current_execution_id || detail.executions?.[0]?.execution_id || "";
     await loadExecutionAudit(executionId, false);
+    await loadHermesReview(ticketId, false);
   } catch (error) {
     state.error = error.message;
   } finally {
     if (state.selectedTicketId === ticketId) state.detailLoading = false;
+    render();
+  }
+}
+
+async function loadHermesReview(ticketId, shouldRender = true) {
+  if (state.selectedTicketId !== ticketId) return;
+  state.hermesReviewLoading = true;
+  if (shouldRender) render();
+  try {
+    const review = await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review`);
+    if (state.selectedTicketId === ticketId) state.hermesReview = review;
+  } catch (error) {
+    if (state.selectedTicketId === ticketId) state.hermesReview = null;
+  } finally {
+    state.hermesReviewLoading = false;
+    if (shouldRender) render();
+  }
+}
+
+async function approveHermesDraft(ticketId, draftId) {
+  state.error = "";
+  try {
+    await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review/drafts/${encodeURIComponent(draftId)}/approve`, {
+      method: "POST",
+      body: "{}",
+    });
+    await loadHermesReview(ticketId);
+  } catch (error) {
+    state.error = error.message;
+    render();
+  }
+}
+
+async function submitHermesFeedback(ticketId, feedback) {
+  state.error = "";
+  try {
+    await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review/feedback`, {
+      method: "POST",
+      body: JSON.stringify({ feedback }),
+    });
+    await loadHermesReview(ticketId);
+  } catch (error) {
+    state.error = error.message;
     render();
   }
 }
@@ -562,6 +609,61 @@ function renderExecutionHistory(executions) {
   return `<div class="execution-history">${executions.map((execution) => `<button type="button" data-audit-execution-id="${escapeHtml(execution.execution_id)}" aria-pressed="${execution.execution_id === state.selectedAuditExecutionId}"><span><strong>${escapeHtml(execution.execution_id)}</strong><small>${escapeHtml(execution.event_type || "Event unavailable")} / ${escapeHtml(formatTime(execution.created_at))}</small></span>${statusMarkup(execution.status, true)}</button>`).join("")}</div>`;
 }
 
+function renderHermesReview() {
+  if (!state.hermesReview) return "";
+  const review = state.hermesReview;
+  const binding = review.binding || {};
+  const investigation = binding.investigation || null;
+  const activeTurn = review.active_turn || null;
+  const drafts = review.drafts || [];
+  const canAct = environmentMatch[1] === "preproduction";
+  const turnStatus = activeTurn
+    ? `Turn ${activeTurn.status}${activeTurn.run_id ? ` / run ${String(activeTurn.run_id).slice(0, 14)}` : ""}`
+    : "No active turn";
+  const investigationBlock = investigation
+    ? `<div class="hermes-investigation">
+        ${investigation.summary ? `<p class="message-body">${escapeHtml(investigation.summary)}</p>` : ""}
+        ${investigation.evidence?.length ? `<h5>Evidence</h5><ul>${investigation.evidence.map((item) => `<li>${escapeHtml(typeof item === "string" ? item : JSON.stringify(item))}</li>`).join("")}</ul>` : ""}
+        ${investigation.blockers?.length ? `<h5>Blockers</h5><ul>${investigation.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+        ${investigation.next_steps?.length ? `<h5>Next steps</h5><ul>${investigation.next_steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      </div>`
+    : `<p class="section-empty">No investigation summary yet.</p>`;
+  const draftBlock = drafts.length
+    ? drafts.map((draft) => {
+        const guardrail = draft.guardrail || {};
+        const approveButton = canAct && draft.status === "awaiting_approval"
+          ? `<button class="button button-secondary" data-hermes-approve-draft-id="${escapeHtml(draft.draft_id)}" type="button">Approve &amp; send</button>`
+          : "";
+        return `<article class="message message-support hermes-draft">
+          <header><strong>Draft ${escapeHtml(String(draft.draft_id).slice(0, 18))}</strong><span>${escapeHtml(draft.publish_policy)}</span>${statusMarkup(draft.status)}</header>
+          <p class="message-body">${escapeHtml(draft.content)}</p>
+          <footer>Guardrail: ${escapeHtml(String(guardrail.decision || "not run"))}${guardrail.blockers?.length ? ` — ${escapeHtml(guardrail.blockers.join("; "))}` : ""}${draft.approved_by ? ` / approved by ${escapeHtml(draft.approved_by)}` : ""}</footer>
+          ${approveButton}
+        </article>`;
+      }).join("")
+    : `<p class="section-empty">No reviewable drafts.</p>`;
+  const feedbackForm = canAct
+    ? `<form class="hermes-feedback-form" data-hermes-feedback-ticket="${escapeHtml(binding.zendesk_ticket_id || "")}">
+        <textarea name="feedback" rows="2" placeholder="Feedback for the next agent turn" required></textarea>
+        <button class="button button-secondary" type="submit">Submit feedback</button>
+      </form>`
+    : "";
+  return `<section class="detail-section hermes-review-section">
+    <div class="section-heading"><h3>Hermes agent review</h3><span>${escapeHtml(turnStatus)}</span></div>
+    ${renderFacts([
+      ["Direction", null, statusMarkup(binding.direction || "pending")],
+      ["Conversation version", binding.conversation_version],
+      ["Case status", binding.status],
+      ["Direction reason", binding.direction_reason],
+    ])}
+    <h4>Investigation</h4>
+    ${investigationBlock}
+    <h4>Reply drafts</h4>
+    ${draftBlock}
+    ${feedbackForm}
+  </section>`;
+}
+
 function renderDetail() {
   if (!state.selectedTicketId) return `<section class="detail-pane detail-empty"><div><strong>Select a ticket</strong><span>Case details will appear here.</span></div></section>`;
   if (state.detailLoading || !state.detail) return `<section class="detail-pane detail-empty"><div><span class="spinner" aria-hidden="true"></span><strong>Loading case</strong></div></section>`;
@@ -582,6 +684,7 @@ function renderDetail() {
     <section class="detail-section tonal-section"><h3>Collected fields</h3>${renderCollectedFields(detail.collected_fields)}</section>
     <section class="detail-section conversation-section"><div class="section-heading"><h3>Conversation</h3><span>${escapeHtml(detail.conversation?.length || 0)} messages</span></div>${renderConversation(detail.conversation)}</section>
     <section class="detail-section pending-section"><div class="section-heading"><h3>Pending reply preview</h3></div>${renderPendingReply(detail.pending_reply)}</section>
+    ${renderHermesReview()}
     <details class="runtime-audit" ${state.auditOpen ? "open" : ""}>
       <summary><span><strong>Runtime audit</strong><small>${escapeHtml(detail.executions?.length || 0)} executions</small></span><span class="audit-chevron" aria-hidden="true">+</span></summary>
       <div class="runtime-audit-content"><section><h3>Execution history</h3>${renderExecutionHistory(detail.executions)}</section>${renderExecutionAudit()}<section><h3>Runtime heartbeat</h3>${renderRuntimeAudit()}</section></div>
@@ -631,6 +734,21 @@ function bindEvents() {
   document.getElementById("close-filters")?.addEventListener("click", () => { state.filterOpen = false; render(); });
   document.getElementById("filter-overlay")?.addEventListener("click", () => { state.filterOpen = false; render(); });
   document.getElementById("mobile-back")?.addEventListener("click", () => { state.showMobileDetail = false; render(); });
+
+  document.querySelectorAll("[data-hermes-approve-draft-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const draftId = String(button.dataset.hermesApproveDraftId || "");
+      const ticketId = state.selectedTicketId;
+      if (draftId && ticketId) await approveHermesDraft(ticketId, draftId);
+    });
+  });
+  document.querySelector(".hermes-feedback-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const ticketId = String(form.dataset.hermesFeedbackTicket || state.selectedTicketId || "");
+    const feedback = String(new FormData(form).get("feedback") || "").trim();
+    if (ticketId && feedback) await submitHermesFeedback(ticketId, feedback);
+  });
 
   const filterForm = document.getElementById("filters-form");
   filterForm?.addEventListener("submit", async (event) => {

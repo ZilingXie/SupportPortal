@@ -285,6 +285,7 @@ def _require_hermes_callback_token(
         raise HTTPException(status_code=401, detail="invalid Hermes callback token")
 
 
+
 def create_app(    *,
     settings: AutomationEcsSettings | None = None,
     store: AutomationEcsStore | None = None,
@@ -784,6 +785,208 @@ def create_app(    *,
             _engineer_ticket_repository(),
             output,
         )
+
+    if runtime.environment != "production":
+
+        # NOTE(security-debt, p2-148): these tool calls are authenticated by the
+        # shared intake token instead of a dedicated least-privilege token, per
+        # owner decision on 2026-09-08. A holder of this token can therefore
+        # also forge intake events — tracked as a follow-up on p2-148.
+        @app.post(f"{base}/v1/agent/tools/{{tool_name}}")
+        async def ecs_hermes_agent_tool(tool_name: str, http_request: Request) -> dict[str, Any]:
+            """Business tool endpoint invoked by the Hermes support profile.
+
+            Protected by the intake Bearer middleware. The turn id binds every
+            call to one durable case context; the model never selects which
+            ticket it operates on.
+            """
+            from backend.services.automation_hermes_tools import (
+                HermesToolError,
+                tool_escalate_human,
+                tool_execute_automation_action,
+                tool_get_case_context,
+                tool_record_direction,
+                tool_request_publish,
+                tool_save_investigation_progress,
+                tool_save_reply_draft,
+            )
+            from backend.services.automation_ecs_store import (
+                HermesDraftStateError,
+                HermesTurnStateError,
+            )
+
+            body = await http_request.json()
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=422, detail="tool request body must be an object")
+            turn_id = str(body.get("turn_id") or "").strip()
+            if not turn_id:
+                raise HTTPException(status_code=422, detail="turn_id is required")
+            repository = _engineer_ticket_repository()
+            side_effects = (
+                str(os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or "").strip() == "1"
+            )
+            try:
+                if tool_name == "get_case_context":
+                    return await asyncio.to_thread(
+                        tool_get_case_context,
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                    )
+                if tool_name == "record_direction":
+                    return await asyncio.to_thread(
+                        tool_record_direction,
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                        direction=str(body.get("direction") or ""),
+                        reason=str(body.get("reason") or ""),
+                        route=body.get("route"),
+                    )
+                if tool_name == "execute_automation_action":
+                    return await tool_execute_automation_action(
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                        route=str(body.get("route") or ""),
+                        environment=runtime.environment,
+                        zendesk_side_effects_enabled=side_effects,
+                    )
+                if tool_name == "save_investigation_progress":
+                    return await asyncio.to_thread(
+                        tool_save_investigation_progress,
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                        summary=str(body.get("summary") or ""),
+                        evidence=body.get("evidence"),
+                        blockers=body.get("blockers"),
+                        next_steps=body.get("next_steps"),
+                    )
+                if tool_name == "save_reply_draft":
+                    return await asyncio.to_thread(
+                        tool_save_reply_draft,
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                        content=str(body.get("content") or ""),
+                        basis=body.get("basis"),
+                        publish_policy=str(body.get("publish_policy") or ""),
+                    )
+                if tool_name == "request_publish":
+                    return await asyncio.to_thread(
+                        tool_request_publish,
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                        draft_id=str(body.get("draft_id") or ""),
+                        environment=runtime.environment,
+                        zendesk_side_effects_enabled=side_effects,
+                    )
+                if tool_name == "escalate_human":
+                    return await asyncio.to_thread(
+                        tool_escalate_human,
+                        coordination_store,
+                        repository,
+                        turn_id=turn_id,
+                        reason=str(body.get("reason") or ""),
+                    )
+                raise HTTPException(status_code=404, detail=f"unknown tool: {tool_name}")
+            except HermesToolError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            except (HermesTurnStateError, HermesDraftStateError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        @app.get(
+            f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}/hermes-review",
+            dependencies=[Depends(require_dashboard_session)],
+        )
+        async def dashboard_hermes_review(zendesk_ticket_id: str) -> JSONResponse:
+            if not zendesk_ticket_id.isdigit() or len(zendesk_ticket_id) > 128:
+                raise HTTPException(status_code=422, detail="Zendesk ticket id must be numeric")
+            review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
+            if review is None:
+                raise HTTPException(status_code=404, detail="hermes case review not found")
+            return JSONResponse(
+                content=jsonable_encoder(review),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.post(
+            f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}/hermes-review/drafts/{{draft_id}}/approve",
+            dependencies=[Depends(require_dashboard_session)],
+        )
+        async def dashboard_approve_hermes_draft(
+            zendesk_ticket_id: str, draft_id: str
+        ) -> JSONResponse:
+            from backend.services.automation_ecs_store import HermesDraftStateError
+            from backend.services.automation_hermes_delivery import approve_and_queue_hermes_draft
+
+            review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
+            if review is None:
+                raise HTTPException(status_code=404, detail="hermes case review not found")
+            if not any(
+                str(item.get("draft_id") or "") == draft_id for item in review.get("drafts") or []
+            ):
+                raise HTTPException(status_code=404, detail="draft not found for this case")
+            try:
+                result = await asyncio.to_thread(
+                    approve_and_queue_hermes_draft,
+                    coordination_store,
+                    _engineer_ticket_repository(),
+                    draft_id=draft_id,
+                    approver="dashboard-admin",
+                    environment=runtime.environment,
+                )
+            except HermesDraftStateError as exc:
+                status_code = 409 if "stale" in str(exc) else 422
+                raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+            return JSONResponse(
+                content=jsonable_encoder(result),
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.post(
+            f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}/hermes-review/feedback",
+            dependencies=[Depends(require_dashboard_session)],
+        )
+        async def dashboard_hermes_review_feedback(
+            zendesk_ticket_id: str, http_request: Request
+        ) -> JSONResponse:
+            body = await http_request.json()
+            feedback = str((body or {}).get("feedback") or "").strip() if isinstance(body, dict) else ""
+            if not feedback:
+                raise HTTPException(status_code=422, detail="feedback text is required")
+            review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
+            if review is None:
+                raise HTTPException(status_code=404, detail="hermes case review not found")
+            repository = _engineer_ticket_repository()
+            account_case = repository.get_account_case_by_ticket_id(zendesk_ticket_id)
+            if not isinstance(account_case, dict):
+                raise HTTPException(status_code=404, detail="account case mirror not found")
+            context = dict(account_case.get("automation_context") or {})
+            agent_context = dict(context.get("hermes_agent") or {})
+            notes = list(agent_context.get("review_feedback") or [])
+            notes.append(
+                {
+                    "feedback": feedback[:4000],
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "conversation_version": int(
+                        (review.get("binding") or {}).get("conversation_version") or 0
+                    ),
+                }
+            )
+            agent_context["review_feedback"] = notes[-20:]
+            context["hermes_agent"] = agent_context
+            account_case["automation_context"] = context
+            repository.save_account_case(account_case)
+            return JSONResponse(
+                content={"saved": True, "feedback_count": len(notes[-20:])},
+                headers={"Cache-Control": "no-store"},
+            )
 
     ui_root = FilePath(__file__).resolve().parents[1] / "ui"
     if admin_data_reader is not None:

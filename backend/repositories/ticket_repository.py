@@ -7998,7 +7998,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         normalized_source = str(source or "account").strip().lower()
         if normalized_target_status not in (None, "solved"):
             raise ValueError("invalid Zendesk comment delivery target status")
-        if normalized_source not in {"account", "engineer"}:
+        if normalized_source not in {"account", "engineer", "hermes"}:
             raise ValueError("invalid Zendesk comment delivery source")
         normalized_engineer_case_id = str(engineer_case_id or "").strip() or None
         normalized_investigation_id = str(investigation_id or "").strip() or None
@@ -8015,6 +8015,14 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             )
         ):
             raise ValueError("Engineer Zendesk delivery metadata is required")
+        if normalized_source == "hermes" and not all(
+            (
+                normalized_draft_version and normalized_draft_version > 0,
+                normalized_comments_revision,
+                normalized_content,
+            )
+        ):
+            raise ValueError("Hermes Zendesk delivery metadata is required")
         if not all((normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key)):
             raise ValueError("account case, message, Zendesk ticket, and idempotency key are required")
 

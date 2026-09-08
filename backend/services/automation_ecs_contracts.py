@@ -15,12 +15,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 INTAKE_CONTRACT_VERSION = "automation-intake-v1"
 ROUTE_CONTRACT_VERSION = "automation-route-v1"
 PROCESSING_CONTRACT_VERSION = "automation-processing-v1"
+AGENT_TURN_CONTRACT_VERSION = "automation-agent-turn-v1"
 EXECUTION_CONTRACT_VERSION = "automation-execution-v1"
 HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
 REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
 PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
-SCHEMA_REVISION = "automation-ecs-002"
+SCHEMA_REVISION = "automation-ecs-003"
+
+DEFAULT_ZENDESK_INSTANCE = "agoraio.zendesk.com"
 
 _NUMERIC_ID_RE = re.compile(r"^\d{1,128}$")
 _EVENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]{0,239}$")
@@ -55,6 +58,32 @@ class StepStatus(StrEnum):
 class JobKind(StrEnum):
     ROUTE = "route"
     PROCESSING = "processing"
+    AGENT_TURN = "agent_turn"
+
+
+class AgentTurnStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    OUTCOME_UNKNOWN = "outcome_unknown"
+
+
+class HermesCaseDirection(StrEnum):
+    PENDING = "pending"
+    AUTOMATION = "automation"
+    INVESTIGATION = "investigation"
+    HUMAN = "human"
+
+
+class HermesDraftStatus(StrEnum):
+    DRAFT = "draft"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    QUEUED = "queued"
+    STALE = "stale"
+    SUPERSEDED = "superseded"
 
 
 class JobStatus(StrEnum):
@@ -227,6 +256,16 @@ class ProcessingJobPayload(BaseModel):
     route: dict[str, Any]
     persona: dict[str, Any] | None = None
     prompt_snapshots: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTurnJobPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal[AGENT_TURN_CONTRACT_VERSION] = AGENT_TURN_CONTRACT_VERSION
+    execution_id: str
+    turn_id: str
+    conversation_key: str
+    event: AutomationIntakeEvent
 
 
 class RuntimeProvenance(BaseModel):

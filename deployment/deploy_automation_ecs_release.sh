@@ -24,6 +24,8 @@ RESUME=0
 BOOTSTRAP_ACCOUNT_SCHEMA=0
 HERMES_CASE_WORKFLOW_MODE=""
 HERMES_PERSONA_ENABLED=0
+AUTOMATION_CASE_ENGINE="legacy"
+HERMES_AGENT_ENABLED=0
 SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-}"
 PROMPT_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-}"
 TEMP_DIR=""
@@ -203,6 +205,8 @@ parse_args() {
       --bootstrap-account-schema) BOOTSTRAP_ACCOUNT_SCHEMA=1; shift ;;
       --hermes-case-workflow-mode) [[ $# -ge 2 ]] || fail "--hermes-case-workflow-mode requires a value"; HERMES_CASE_WORKFLOW_MODE="$2"; shift 2 ;;
       --hermes-persona-enabled) HERMES_PERSONA_ENABLED=1; shift ;;
+      --automation-case-engine) [[ $# -ge 2 ]] || fail "--automation-case-engine requires a value"; AUTOMATION_CASE_ENGINE="$2"; shift 2 ;;
+      --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; shift ;;
       --check-only) CHECK_ONLY=1; shift ;;
       --resume) RESUME=1; shift ;;
       --preflight-evidence) [[ $# -ge 2 ]] || fail "--preflight-evidence requires a value"; PREFLIGHT_EVIDENCE="$2"; shift 2 ;;
@@ -432,6 +436,9 @@ prepare_deploy_workspace() {
   fi
   if [[ "${HERMES_PERSONA_ENABLED}" = "1" ]]; then
     operation_suffix="${operation_suffix}-persona"
+  fi
+  if [[ "${AUTOMATION_CASE_ENGINE}" != "legacy" ]]; then
+    operation_suffix="${operation_suffix}-${AUTOMATION_CASE_ENGINE}"
   fi
   STATE_DIR="${AUTOMATION_ECS_DEPLOY_STATE_DIR:-${PROJECT_ROOT}/.deployments/ecs-deploy-${ENVIRONMENT}-${RELEASE_ID}${operation_suffix}}"
   if [[ "${RESUME}" = "1" ]]; then
@@ -762,6 +769,13 @@ render_role_task_definition() {
   fi
   if [[ "${HERMES_PERSONA_ENABLED}" = "1" ]]; then
     args+=(--hermes-persona-enabled)
+  fi
+  if [[ "${ENVIRONMENT}" = "production" && "${AUTOMATION_CASE_ENGINE}" != "legacy" ]]; then
+    fail "the hermes case engine is not allowed in Production"
+  fi
+  args+=(--automation-case-engine "${AUTOMATION_CASE_ENGINE}")
+  if [[ "${HERMES_AGENT_ENABLED}" = "1" ]]; then
+    args+=(--hermes-agent-enabled)
   fi
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
     render-task-definition "${args[@]}" >/dev/null
