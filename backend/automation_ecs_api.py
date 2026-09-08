@@ -899,6 +899,12 @@ def create_app(    *,
             review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
             if review is None:
                 raise HTTPException(status_code=404, detail="hermes case review not found")
+            mirror = coordination_store.get_case_mirror(zendesk_ticket_id) or {}
+            review["case"] = {
+                "case_revision": mirror.get("case_revision"),
+                "active_customer": mirror.get("active_customer"),
+                "latest_customer_event_id": mirror.get("latest_customer_event_id"),
+            }
             return JSONResponse(
                 content=jsonable_encoder(review),
                 headers={"Cache-Control": "no-store"},

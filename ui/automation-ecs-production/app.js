@@ -299,20 +299,6 @@ async function approveHermesDraft(ticketId, draftId) {
   }
 }
 
-async function submitHermesFeedback(ticketId, feedback) {
-  state.error = "";
-  try {
-    await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review/feedback`, {
-      method: "POST",
-      body: JSON.stringify({ feedback }),
-    });
-    await loadHermesReview(ticketId);
-  } catch (error) {
-    state.error = error.message;
-    render();
-  }
-}
-
 async function loadCases({ selectFirst = false } = {}) {
   state.casesLoading = true;
   state.error = "";
@@ -634,25 +620,27 @@ function renderHermesReview() {
         const approveButton = canAct && draft.status === "awaiting_approval"
           ? `<button class="button button-secondary" data-hermes-approve-draft-id="${escapeHtml(draft.draft_id)}" type="button">Approve &amp; send</button>`
           : "";
+        const changesButton = canAct && draft.status === "awaiting_approval" && draft.publish_policy === "manual"
+          ? `<button class="button button-quiet" data-hermes-changes-draft-id="${escapeHtml(draft.draft_id)}" type="button">Request changes</button>`
+          : "";
         return `<article class="message message-support hermes-draft">
           <header><strong>Draft ${escapeHtml(String(draft.draft_id).slice(0, 18))}</strong><span>${escapeHtml(draft.publish_policy)}</span>${statusMarkup(draft.status)}</header>
           <p class="message-body">${escapeHtml(draft.content)}</p>
           <footer>Guardrail: ${escapeHtml(String(guardrail.decision || "not run"))}${guardrail.blockers?.length ? ` — ${escapeHtml(guardrail.blockers.join("; "))}` : ""}${draft.approved_by ? ` / approved by ${escapeHtml(draft.approved_by)}` : ""}</footer>
-          ${approveButton}
+          ${approveButton}${changesButton}
         </article>`;
       }).join("")
     : `<p class="section-empty">No reviewable drafts.</p>`;
-  const feedbackForm = canAct
-    ? `<form class="hermes-feedback-form" data-hermes-feedback-ticket="${escapeHtml(binding.zendesk_ticket_id || "")}">
-        <textarea name="feedback" rows="2" placeholder="Feedback for the next agent turn" required></textarea>
-        <button class="button button-secondary" type="submit">Submit feedback</button>
-      </form>`
-    : "";
+  const feedbackForm = "";
+  const caseInfo = review.case || {};
+  const activeCustomer = caseInfo.active_customer || {};
+  const customerLabel = activeCustomer.name || activeCustomer.email || "Customer";
   return `<section class="detail-section hermes-review-section">
     <div class="section-heading"><h3>Hermes agent review</h3><span>${escapeHtml(turnStatus)}</span></div>
     ${renderFacts([
       ["Direction", null, statusMarkup(binding.direction || "pending")],
-      ["Conversation version", binding.conversation_version],
+      ["Case revision", caseInfo.case_revision ?? binding.conversation_version],
+      ["Active customer", customerLabel],
       ["Case status", binding.status],
       ["Direction reason", binding.direction_reason],
     ])}
@@ -742,12 +730,25 @@ function bindEvents() {
       if (draftId && ticketId) await approveHermesDraft(ticketId, draftId);
     });
   });
-  document.querySelector(".hermes-feedback-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const ticketId = String(form.dataset.hermesFeedbackTicket || state.selectedTicketId || "");
-    const feedback = String(new FormData(form).get("feedback") || "").trim();
-    if (ticketId && feedback) await submitHermesFeedback(ticketId, feedback);
+  document.querySelectorAll("[data-hermes-changes-draft-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const draftId = String(button.dataset.hermesChangesDraftId || "");
+      const ticketId = state.selectedTicketId;
+      const feedback = window.prompt("What should change in this draft?") || "";
+      if (draftId && ticketId && feedback.trim()) {
+        state.error = "";
+        try {
+          await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review/drafts/${encodeURIComponent(draftId)}/request-changes`, {
+            method: "POST",
+            body: JSON.stringify({ feedback: feedback.trim() }),
+          });
+          await loadHermesReview(ticketId);
+        } catch (error) {
+          state.error = error.message;
+          render();
+        }
+      }
+    });
   });
 
   const filterForm = document.getElementById("filters-form");
