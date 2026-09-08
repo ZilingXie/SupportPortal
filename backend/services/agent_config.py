@@ -28,6 +28,10 @@ from backend.services.prompts.rag_answer import (
     INSUFFICIENT_EVIDENCE_REPLY,
     build_rag_answer_system_prompt,
 )
+from backend.services.prompts.hermes_support_agent import (
+    HERMES_SUPPORT_AGENT_PROMPT_VERSION,
+    build_hermes_support_agent_system_prompt,
+)
 from backend.services.prompts.rag_context_compression import build_rag_context_compression_system_prompt
 from backend.services.prompts.rag_sufficiency import build_rag_sufficiency_system_prompt
 from backend.services.prompts.request_body_evidence import (
@@ -558,6 +562,28 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                 _component("review-agent", "Client Review Agent", "Checks answer sufficiency and investigation readiness."),
             ],
             "prompts": _client_prompts(),
+            "skills": [],
+            "mcp_servers": [],
+        },
+        {
+            "key": "hermes-support-agent",
+            "kind": "agent",
+            "name": "Hermes Support Agent",
+            "description": "Drives Zendesk account cases in a Hermes native session: routes direction, executes verified automation actions, investigates, and prepares reviewed replies.",
+            "status": "active",
+            "components": [
+                _component("hermes-support-session", "Support Session Engine", "Binds one Zendesk ticket to one persistent Hermes conversation with durable turns."),
+                _component("hermes-agent-tools", "Support Business Tools", "Case context, direction, automation execution, investigation, drafts, publication, and escalation."),
+            ],
+            "prompts": [
+                _prompt(
+                    "hermes-support-agent-system",
+                    "Hermes support agent",
+                    "hermes-support-session",
+                    build_hermes_support_agent_system_prompt(),
+                    version=HERMES_SUPPORT_AGENT_PROMPT_VERSION,
+                )
+            ],
             "skills": [],
             "mcp_servers": [],
         },

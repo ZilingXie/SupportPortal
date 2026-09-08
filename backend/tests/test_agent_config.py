@@ -43,7 +43,13 @@ class AgentConfigTests(unittest.TestCase):
 
         self.assertEqual(
             [agent["key"] for agent in payload["agents"]],
-            ["route-agent", "client-agent", "engineer-agent", "guardrail-agent"],
+            [
+                "route-agent",
+                "client-agent",
+                "hermes-support-agent",
+                "engineer-agent",
+                "guardrail-agent",
+            ],
         )
         self.assertTrue(all(agent["kind"] == "agent" for agent in payload["agents"]))
         self.assertNotIn("related_services", payload)

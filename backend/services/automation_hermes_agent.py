@@ -28,35 +28,25 @@ from backend.services.prompt_runtime import resolve_system_prompt
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_agent")
 
-SUPPORT_AGENT_PROMPT_KEY = "hermes_support_agent_system"
+from backend.services.prompts.hermes_support_agent import (
+    build_hermes_support_agent_system_prompt,
+)
 
-SUPPORT_AGENT_PROMPT_FALLBACK = """You are the Agora support agent for Zendesk account cases.
+SUPPORT_AGENT_PROMPT_KEY = "hermes-support-agent-system"
 
-For each turn you receive one new event (a new ticket or a new customer comment).
-Use the case tools to read context, decide the handling direction, execute
-verified automation actions, save investigation progress, and prepare the
-customer reply draft. Never invent business state: every action and reply must
-be recorded through the provided tools.
-
-Rules:
-- Decide the direction first (automation, investigation, or human) and record
-  it with the direction tool before acting.
-- Only request auto publication for direction=automation replies; investigation
-  replies always require human approval.
-- When required fields are missing, ask the customer for exactly the missing
-  fields and nothing else.
-- Never promise actions you did not execute through a tool.
-- Reply in the customer's language, concise and factual."""
+SUPPORT_AGENT_PROMPT_FALLBACK = build_hermes_support_agent_system_prompt()
 
 
 class HermesTurnDeferred(RuntimeError):
     """The case already has a running turn; retry this job later."""
 
 
-def build_agent_input(event: Any) -> str:
+def build_agent_input(event: Any, *, turn_id: str = "") -> str:
     """Render the per-turn event text passed to the Hermes session."""
     ticket = event.ticket
     header = f"Zendesk ticket {ticket.id} (status: {ticket.status})"
+    if turn_id:
+        header = f"{header} | current turn_id: {turn_id}"
     subject = str(ticket.subject or "").strip()
     if event.event_type == IntakeEventType.COMMENT_CREATED:
         snapshot = event.comment_snapshot
@@ -192,7 +182,7 @@ class HermesAgentTurnProcessor:
             started = self.client.start_run(
                 session_id=str(binding["hermes_session_id"]),
                 instructions=instructions,
-                input_text=build_agent_input(payload.event),
+                input_text=build_agent_input(payload.event, turn_id=payload.turn_id),
                 idempotency_key=str(turn["request_id"]),
             )
             run_id = str(started["run_id"])
