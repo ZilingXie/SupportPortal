@@ -806,7 +806,6 @@ def create_app(    *,
                 tool_execute_automation_action,
                 tool_get_case_context,
                 tool_record_direction,
-                tool_request_publish,
                 tool_save_investigation_progress,
                 tool_save_reply_draft,
             )
@@ -872,16 +871,6 @@ def create_app(    *,
                         content=str(body.get("content") or ""),
                         basis=body.get("basis"),
                         publish_policy=str(body.get("publish_policy") or ""),
-                    )
-                if tool_name == "request_publish":
-                    return await asyncio.to_thread(
-                        tool_request_publish,
-                        coordination_store,
-                        repository,
-                        turn_id=turn_id,
-                        draft_id=str(body.get("draft_id") or ""),
-                        environment=runtime.environment,
-                        zendesk_side_effects_enabled=side_effects,
                     )
                 if tool_name == "escalate_human":
                     return await asyncio.to_thread(
