@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-09 - ECS deployment authorization as the highest-priority agent rule
+
+- Area/version: Repository agent instructions in `AGENTS.md` and `docs/agent_workflow_details.md`; no runtime prompt or model version change.
+- Reason: The user requires ECS deployments to target Preproduction first and direct Production deployments to be limited to explicitly authorized urgent Production hotfixes.
+- Behavior: The top-priority rule overrides repository workflow/release/completion instructions. Normal Production promotion requires Preproduction validation and explicit user authorization. Any uncertainty requires stopping before deployment and asking the user; scripts, defaults, prior deployments, and passing checks do not supply authorization.
+- Consolidation: Removed `CLAUDE.md` and `REASONIX.md` at the user's request and removed their entry-point references from current workflow rules. `AGENTS.md` is the single repository agent-rule entry point.
+- Verification: Direct wording and diff review, confirmation that the retired files and their active workflow references are absent, and `git diff --check`. Documentation-only change; no deployment or live-stack verification required.
+
 ## 2026-09-09 - Persona 单次读取超时统一为 120 秒 (p2-144)
 
 **版本**：无 Prompt 正文或模型变化；仅调用配置。`AUTOMATION_PERSONA_TIMEOUT_SECONDS` 默认值统一为 120（llm_profiles.py 代码默认 30→120、docker-compose.single-host.yml 三服务块 30→120、.env.example 8→120）。模型仍为 gpt-6-astra/low Responses 不发 temperature。
