@@ -8,6 +8,7 @@ PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 REPOSITORY="${AUTOMATION_PREPRODUCTION_REPOSITORY:-supportportal/preproduction}"
 CACHE_REPOSITORY="${AUTOMATION_CODEBUILD_CACHE_REPOSITORY:-supportportal/build-cache}"
+PYTHON_BASE_IMAGE="public.ecr.aws/docker/library/python@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0"
 EVIDENCE_BUCKET="${AUTOMATION_RELEASE_EVIDENCE_BUCKET:-}"
 RELEASE_ID="${AUTOMATION_RELEASE_ID:-}"
 GIT_COMMIT="${AUTOMATION_RELEASE_GIT_COMMIT:-}"
@@ -65,6 +66,7 @@ build_and_push_role() {
     --provenance=false \
     --pull \
     --build-arg "AUTOMATION_IMAGE_ROLE=ecs-${role}" \
+    --build-arg "PYTHON_BASE_IMAGE=${PYTHON_BASE_IMAGE}" \
     --build-arg "APP_BUILD_REF=${GIT_COMMIT}" \
     --build-arg "APP_BUILD_TIME=${BUILD_TIME}" \
     --cache-from "type=registry,ref=${registry}/${CACHE_REPOSITORY}:automation" \

@@ -169,6 +169,11 @@ def test_codebuild_build_emits_registry_manifest_and_publish_record(tmp_path: Pa
     assert all("linux/amd64" in call for call in builds)
     assert all("--push" in call for call in builds)
     assert all(any(value.startswith("type=registry") for value in call) for call in builds)
+    expected_base = (
+        "PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python@sha256:"
+        "d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0"
+    )
+    assert all(expected_base in call for call in builds)
     release_tool_calls = [call for call in docker_calls if call and call[0] == "run"]
     assert len(release_tool_calls) == 3
     assert all("--entrypoint" in call and "python" in call for call in release_tool_calls)
