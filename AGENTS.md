@@ -1,7 +1,12 @@
 # SupportPortal Agent Rules
 
+## Top Priority: ECS Deployment
+1. Deploy ECS changes to **Preproduction first**. This rule takes precedence over other repository workflow, release, and completion instructions.
+2. Deploy directly to **Production** only when the user explicitly identifies the current deployment as an **urgent Production hotfix**. A generic request to deploy, release, fix, or finalize is not this authorization. Normal promotion to Production requires Preproduction validation and explicit user authorization; passing checks does not authorize automatic promotion.
+3. If there is any uncertainty about the target environment, authorization, hotfix exception, or conflicting instructions, **stop before deployment and ask the user to confirm**. Do not infer Production authorization from scripts, defaults, or prior deployments.
+
 ## Source Of Truth
-1. `AGENTS.md` is the short hot-path rule file. `CLAUDE.md` mirrors it for Claude Code; `REASONIX.md` defines the Reasonix exception.
+1. `AGENTS.md` is the single repository agent-rule entry point.
 2. Read `docs/agent_workflow_details.md` only for workflow edge cases, worker handoff, stack verification, Project Overview/feature-list maintenance, RAG/prompt/model changes, or local single-host changes.
 3. `docs/agent.md` is a legacy UI redirect. The UI source of truth is `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
 4. `docs/project/phases/*.json`, `docs/project/modules/*.json`, `docs/project/functions/*.json`, and `docs/project/tasks/*.json` are the canonical project-progress registry. `docs/projectoverview-data.js` is a generated view consumed by `docs/projectoverview.html`; `docs/roadmap.html` and its phase/meeting pages are historical references, not the current progress source.
@@ -29,7 +34,7 @@
 
 ## Verification And Records
 1. First classify the tracked diff as either a `文档改动` or a `代码改动`. A code change may additionally be described as a `修复类` or `功能类/重大行为变更`, but that business classification does not replace the documentation-versus-code execution boundary.
-2. A documentation change is limited to `docs/**`, `AGENTS.md`, `CLAUDE.md`, `REASONIX.md`, or tests that only validate those files. It does not require automated tests, container rebuilds, stack restarts, or live-stack verification. Confirm the changed wording and any applicable document-generation or format check directly.
+2. A documentation change is limited to `docs/**`, `AGENTS.md`, or tests that only validate those files. It does not require automated tests, container rebuilds, stack restarts, or live-stack verification. Confirm the changed wording and any applicable document-generation or format check directly.
 3. A code change requires targeted verification that proves the changed behavior. Runtime-relevant code changes require the post-merge official-stack restart and live verification from root `main`; follow the health/build-marker checks in `docs/agent_workflow_details.md`. Project Overview files remain documentation even when the backend serves them. For mixed diffs, decide the restart requirement from the runtime changes only.
 4. Code-change final reports must separate `主要变更` from `验证结果` and use only the three completion states defined in `docs/agent_workflow_details.md`. List verification that actually ran, and list each required check that did not run with its reason.
 5. RAG changes update `docs/rag_change_log.md`; prompt/model/tooling behavior changes update `docs/prompt_change_log.md`.
