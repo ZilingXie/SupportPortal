@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, datetime
 from typing import Any
 
 from backend.services.automation_ecs_store import AutomationEcsStore
@@ -40,6 +41,10 @@ def normalize_customer_greeting_name(customer: dict[str, Any] | None) -> str:
     return first[:1].upper() + first[1:] if first else "Customer"
 
 
+def _snapshot_timestamp(value: Any) -> Any:
+    return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+
 def build_case_snapshot(
     store: AutomationEcsStore,
     repository: Any,
@@ -64,7 +69,7 @@ def build_case_snapshot(
             "public": (item.get("comment") or {}).get("public"),
             "author": (item.get("comment") or {}).get("author"),
             "body": (item.get("comment") or {}).get("body"),
-            "created_at": (item.get("comment") or {}).get("created_at"),
+            "created_at": _snapshot_timestamp((item.get("comment") or {}).get("created_at")),
         }
         for item in comments
     ]
@@ -87,7 +92,7 @@ def build_case_snapshot(
                 "draft_id": item.get("draft_id"),
                 "status": item.get("status"),
                 "publish_policy": item.get("publish_policy"),
-                "created_at": item.get("created_at"),
+                "created_at": _snapshot_timestamp(item.get("created_at")),
             }
             for item in review.get("drafts") or []
         ],
@@ -100,7 +105,7 @@ def build_case_snapshot(
                 "direction": item.get("direction"),
                 "route": item.get("route"),
                 "status": item.get("status"),
-                "created_at": item.get("created_at"),
+                "created_at": _snapshot_timestamp(item.get("created_at")),
             }
             for item in review.get("turns") or []
         ],

@@ -242,8 +242,12 @@ class AutomationWorker:
         lease = JobLeaseHeartbeat(self.store, job=job, lease_seconds=self.lease_seconds)
         lease.start()
         action_key = f"{self.settings.environment}:{job.execution_id}:hermes_agent_turn"
+        external_started = False
 
         def before_external() -> None:
+            nonlocal external_started
+            if external_started:
+                return
             self.store.mark_processing_external_started(job)
             self.store.record_delivery(
                 execution_id=job.execution_id,
@@ -252,21 +256,24 @@ class AutomationWorker:
                 target_identity=None,
                 status=DeliveryStatus.IN_PROGRESS,
             )
+            external_started = True
 
         try:
             outcome = self.agent_processor.process(job, before_external=before_external)
             normalized = jsonable_encoder(outcome)
             lease.stop()
-            if str(normalized.get("status") or "") in {"failed", "interrupted", "outcome_unknown"}:
-                self.store.record_delivery(
-                    execution_id=job.execution_id,
-                    action_type="hermes_agent_turn",
-                    idempotency_key=action_key,
-                    target_identity=None,
-                    status=DeliveryStatus.OUTCOME_UNKNOWN,
-                    result=normalized,
-                    error_code=str(normalized.get("error_code") or "hermes_agent_turn_failed"),
-                )
+            outcome_status = str(normalized.get("status") or "")
+            if outcome_status in {"failed", "interrupted", "outcome_unknown"}:
+                if external_started:
+                    self.store.record_delivery(
+                        execution_id=job.execution_id,
+                        action_type="hermes_agent_turn",
+                        idempotency_key=action_key,
+                        target_identity=None,
+                        status=DeliveryStatus.OUTCOME_UNKNOWN,
+                        result=normalized,
+                        error_code=str(normalized.get("error_code") or "hermes_agent_turn_failed"),
+                    )
                 self.store.fail_job(
                     job,
                     failure_stage="agent.turn",
@@ -278,16 +285,19 @@ class AutomationWorker:
             binding_ticket_id = str((job.payload.get("event") or {}).get("ticket", {}).get("id") or "")
             binding = self.store.get_hermes_case_binding(binding_ticket_id) if binding_ticket_id else None
             status = ExecutionStatus.COMPLETED
-            if isinstance(binding, dict) and str(binding.get("direction")) == "human":
+            if outcome_status == "human_review" or (
+                isinstance(binding, dict) and str(binding.get("direction")) == "human"
+            ):
                 status = ExecutionStatus.HUMAN_REVIEW
-            self.store.record_delivery(
-                execution_id=job.execution_id,
-                action_type="hermes_agent_turn",
-                idempotency_key=action_key,
-                target_identity=None,
-                status=DeliveryStatus.CONFIRMED,
-                result=normalized,
-            )
+            if external_started:
+                self.store.record_delivery(
+                    execution_id=job.execution_id,
+                    action_type="hermes_agent_turn",
+                    idempotency_key=action_key,
+                    target_identity=None,
+                    status=DeliveryStatus.CONFIRMED,
+                    result=normalized,
+                )
             self.store.complete_processing(job, outcome=normalized, status=status)
             self._run_background_cycle()
             return True

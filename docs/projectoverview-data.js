@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-09T02:47:19Z",
-  "source_base_commit": "d4d55a1f0692586b33a9ff4fcc90d19e0c3c099e",
-  "registry_digest": "73d4fa57e9e67c726d2c6cb19f65e17fca866af491ad03b530203339d23f222e",
+  "generated_at": "2026-09-09T06:54:54Z",
+  "source_base_commit": "a57348234a6f4499c2976e93db37e8050abbf037",
+  "registry_digest": "e8493a8d63fc66862e399132c2285ac3f81c6d9dcbd266d24a9551b0b14544c3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3030,6 +3030,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Phase-2 orchestration implemented and verified",
           "details": "2026-09-08 第二阶段实施：automation-ecs-004（case_revision/active_customer/latest_customer_event_id、turns 新列与 one-active fence 覆盖 running+cancel_requested、automation_hermes_turn_runs 阶段级幂等）；有效客户 comment 在 intake 事务内推进 revision 并 supersede/cancel 旧 turn 与未发送草稿；hand_off 拒绝落后 revision（route superseded）与 ticket.updated/非客户 comment（ignored）；快照全量无静默截断、超预算转 human_review；processor 三阶段编排带取消恢复与幂等重放（idempotency_key_conflict→outcome_unknown）；publish_policy 服务端推导、称呼确定性投影、guardrail 编排侧 gate；request-changes 端点开 investigation_feedback turn；发送门禁加 expected_case_revision；网关 workspace_key/enabled_toolsets 落地；7 份手册入 catalog；插件按 route/work/persona 拆 toolset 并收编 hermes-deploy build/。"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge acceptance fixes and PostgreSQL rerun",
+          "details": "2026-09-09 review 发现 PostgreSQL 行中的 datetime 会使 Case Snapshot 写 JSONB 失败，以及 Hermes stop 未确认时 worker 会误完成 agent_turn job 并永久保留 cancel_requested 围栏；修复为显式 ISO 时间投影、取消未终态时 defer 重试、pre-external human_review 不记录虚假外部 delivery。快速回归 491 passed + 103 subtests；一次性 PostgreSQL schema 验证新 Hermes Zendesk 引擎 7/7、ECS store 6/6、旧 Hermes repository 7/7 通过。"
         },
         {
           "type": "test",
@@ -11265,9 +11270,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-08",
-      "updated_at": "2026-09-08",
+      "updated_at": "2026-09-09",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "第二阶段（case_revision 权威化、route/work/persona 多阶段编排、取消与恢复、per-run workspace 与 toolset 收窄、审批 request-changes、唯一发送门禁、7 份阶段手册、插件拆分 toolset 并入库）代码与测试已完成：SupportPortal 259 tests + 4 subtests 绿；PG 集成 7+6+8 项通过；hermes-agent 网关 3 套测试零回归并新增 5 项 workspace/toolset 测试。待用户完成 aws login 后走 review-implemented-plan 与 finalize（PR 合并 main），后续与镜像重建一起部署 Preproduction 并做受控工单验收。",
+      "next_action": "第二阶段代码已完成 review-implemented-plan 验收并修复真实 PostgreSQL Snapshot 时间字段序列化、未确认取消需 defer 重试、pre-external human_review 状态及两处 PG 测试漂移；待从修复后的 main 走 CodeBuild 构建并部署 Preproduction，完成技术运行态验收后再安排受控工单业务验收。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -11312,6 +11317,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Phase-2 orchestration implemented and verified",
           "details": "2026-09-08 第二阶段实施：automation-ecs-004（case_revision/active_customer/latest_customer_event_id、turns 新列与 one-active fence 覆盖 running+cancel_requested、automation_hermes_turn_runs 阶段级幂等）；有效客户 comment 在 intake 事务内推进 revision 并 supersede/cancel 旧 turn 与未发送草稿；hand_off 拒绝落后 revision（route superseded）与 ticket.updated/非客户 comment（ignored）；快照全量无静默截断、超预算转 human_review；processor 三阶段编排带取消恢复与幂等重放（idempotency_key_conflict→outcome_unknown）；publish_policy 服务端推导、称呼确定性投影、guardrail 编排侧 gate；request-changes 端点开 investigation_feedback turn；发送门禁加 expected_case_revision；网关 workspace_key/enabled_toolsets 落地；7 份手册入 catalog；插件按 route/work/persona 拆 toolset 并收编 hermes-deploy build/。"
+        },
+        {
+          "type": "test",
+          "label": "Post-merge acceptance fixes and PostgreSQL rerun",
+          "details": "2026-09-09 review 发现 PostgreSQL 行中的 datetime 会使 Case Snapshot 写 JSONB 失败，以及 Hermes stop 未确认时 worker 会误完成 agent_turn job 并永久保留 cancel_requested 围栏；修复为显式 ISO 时间投影、取消未终态时 defer 重试、pre-external human_review 不记录虚假外部 delivery。快速回归 491 passed + 103 subtests；一次性 PostgreSQL schema 验证新 Hermes Zendesk 引擎 7/7、ECS store 6/6、旧 Hermes repository 7/7 通过。"
         }
       ],
       "history": [
@@ -11334,6 +11344,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-08",
           "event": "phase2_implemented",
           "summary": "按用户批准的修订版计划完成第二阶段全部代码与测试；等待 aws login 后 finalize。"
+        },
+        {
+          "at": "2026-09-09",
+          "event": "post_merge_review_fixed",
+          "summary": "验收修复真实 PostgreSQL Snapshot 序列化、取消恢复 job defer、pre-external human_review delivery 状态及 PG 测试漂移；等待新 CodeBuild release 部署 Preproduction。"
         }
       ],
       "legacy_ids": [],
