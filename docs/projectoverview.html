@@ -166,39 +166,13 @@
     .architecture-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
     .architecture-legend { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 2px; }
     .architecture-legend .chip { border: 1px solid var(--line); }
-    .workflow-shell { display: grid; gap: 18px; }
-    .workflow-sequence { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 28px; }
-    .workflow-step { position: relative; min-width: 0; min-height: 148px; padding: 14px; border: 1px solid var(--line); border-top: 3px solid var(--blue); border-radius: var(--radius); background: rgba(255, 249, 238, .82); }
-    .workflow-step::after { position: absolute; top: 50%; right: -22px; width: 16px; color: var(--orange); content: "→"; font-size: 21px; font-weight: 800; line-height: 1; text-align: center; transform: translateY(-50%); }
-    .workflow-step:last-child::after { content: none; }
-    .workflow-step.persist { border-top-color: var(--green); }
-    .workflow-step.cancel { border-top-color: var(--red); }
-    .workflow-step.session { border-top-color: var(--violet); }
-    .workflow-step.route { border-top-color: var(--orange); }
-    .workflow-step-number { display: block; margin-bottom: 9px; color: var(--muted); font: 10px/1.3 var(--mono); text-transform: uppercase; }
-    .workflow-step strong { display: block; margin-bottom: 7px; font-size: 14px; line-height: 1.35; }
-    .workflow-step p { margin: 0; color: #50483d; font-size: 12px; line-height: 1.55; }
-    .workflow-branches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-    .workflow-branch { padding: 16px; border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: var(--radius); background: rgba(255, 249, 238, .8); }
-    .workflow-branch.investigation { border-left-color: var(--violet); }
-    .workflow-branch.human { border-left-color: var(--orange); }
-    .workflow-branch h3 { margin-bottom: 4px; }
-    .workflow-branch > p { margin-bottom: 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-    .workflow-branch ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: workflow-branch-step; }
-    .workflow-branch li { position: relative; min-height: 38px; padding: 9px 10px 9px 34px; background: var(--surface-soft); color: #40382e; font-size: 12px; line-height: 1.5; counter-increment: workflow-branch-step; }
-    .workflow-branch li::before { position: absolute; top: 9px; left: 10px; color: var(--muted); content: counter(workflow-branch-step, decimal-leading-zero); font: 10px/1.5 var(--mono); }
-    .workflow-loop { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--violet); background: rgba(117, 96, 181, .08); color: #51426f; font-size: 12px; line-height: 1.55; }
-    .workflow-send { display: grid; grid-template-columns: minmax(0, .85fr) 28px minmax(0, 1fr) 28px minmax(0, 1.15fr); align-items: stretch; gap: 8px; }
-    .workflow-send-step { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .82); }
-    .workflow-send-step.gate { border-color: rgba(185, 75, 56, .38); background: rgba(185, 75, 56, .06); }
-    .workflow-send-step strong { display: block; margin-bottom: 6px; font-size: 14px; }
-    .workflow-send-step p { margin: 0; color: #50483d; font-size: 12px; line-height: 1.5; }
-    .workflow-send-arrow { display: grid; place-items: center; color: var(--orange); font-size: 21px; font-weight: 800; }
-    .workflow-outcomes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-    .workflow-outcome { padding: 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
-    .workflow-outcome strong { font-size: 12px; }
-    .workflow-outcome.success { border-color: rgba(47, 139, 87, .3); background: rgba(47, 139, 87, .08); }
-    .workflow-outcome.stale { border-color: rgba(185, 75, 56, .28); background: rgba(185, 75, 56, .07); }
+    .workflow-shell { display: grid; gap: 15px; }
+    .mermaid-frame { overflow-x: auto; padding: 18px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 249, 238, .82); }
+    .mermaid-frame .mermaid { min-width: 900px; margin: 0; text-align: center; }
+    .mermaid-frame svg { display: block; width: 100%; min-width: 900px; height: auto; margin: 0 auto; }
+    .mermaid-fallback { margin: 0; color: var(--ink); font: 11px/1.6 var(--mono); text-align: left; white-space: pre-wrap; }
+    .workflow-legend { display: flex; flex-wrap: wrap; gap: 7px; }
+    .workflow-legend .chip { border: 1px solid var(--line); }
     .workflow-contracts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .workflow-contract { padding: 12px; border-top: 2px solid var(--line-strong); background: rgba(255, 249, 238, .55); }
     .workflow-contract strong { display: block; margin-bottom: 5px; font-size: 12px; }
@@ -240,9 +214,6 @@
     @media (max-width: 1050px) {
       .map-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .architecture-support { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .workflow-sequence { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .workflow-step:nth-child(3)::after { content: none; }
-      .workflow-step:nth-child(4)::before { position: absolute; top: -23px; left: 50%; color: var(--orange); content: "↓"; font-size: 21px; font-weight: 800; transform: translateX(-50%); }
     }
     @media (max-width: 720px) {
       .project-head { padding: 18px 15px 0; }
@@ -261,14 +232,8 @@
       .architecture-services, .architecture-support, .deployment-status-grid { grid-template-columns: 1fr; }
       .architecture-target-head { display: block; }
       .architecture-target-head code { display: block; margin-top: 5px; text-align: left; }
-      .workflow-sequence, .workflow-branches, .workflow-contracts { grid-template-columns: 1fr; }
-      .workflow-step { min-height: 0; }
-      .workflow-step::after, .workflow-step:nth-child(3)::after { top: auto; right: auto; bottom: -24px; left: 50%; content: "↓"; transform: translateX(-50%); }
-      .workflow-step:last-child::after { content: none; }
-      .workflow-step:nth-child(4)::before { content: none; }
-      .workflow-send { grid-template-columns: 1fr; }
-      .workflow-send-arrow { min-height: 24px; transform: rotate(90deg); }
-      .workflow-outcomes { grid-template-columns: 1fr; }
+      .workflow-contracts { grid-template-columns: 1fr; }
+      .mermaid-frame { padding: 12px 8px; }
       .meeting-row { align-items: flex-start; flex-direction: column; gap: 9px; }
       .meeting-row-meta { justify-content: flex-start; }
       .meeting-task-button { grid-template-columns: 1fr; gap: 5px; }
@@ -321,6 +286,7 @@
         <section class="tab-panel" id="panel-system-map" role="tabpanel" aria-labelledby="tab-system-map"></section>
         <section class="tab-panel" id="panel-deployment-architecture" role="tabpanel" aria-labelledby="tab-deployment-architecture"></section>
         <section class="tab-panel" id="panel-workflow" role="tabpanel" aria-labelledby="tab-workflow"></section>
+        <section class="tab-panel" id="panel-investigation-workflow" role="tabpanel" aria-labelledby="tab-investigation-workflow"></section>
         <section class="tab-panel" id="panel-manual" role="tabpanel" aria-labelledby="tab-manual"></section>
         <section class="tab-panel" id="panel-report" role="tabpanel" aria-labelledby="tab-report"></section>
         <footer class="footer">
@@ -343,6 +309,7 @@
     <div class="dialog-inner" id="functionDialogContent"></div>
   </dialog>
 
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
   <script src="./projectoverview-data.js"></script>
   <script>
     (() => {
@@ -361,7 +328,8 @@
         { id: "functions", label: "功能模块" },
         { id: "system-map", label: "系统地图" },
         { id: "deployment-architecture", label: "部署架构" },
-        { id: "workflow", label: "工作流程" },
+        { id: "workflow", label: "Hermes 流程" },
+        { id: "investigation-workflow", label: "调查 Agent" },
         { id: "manual", label: "用户手册" },
         { id: "report", label: "汇报模式" }
       ];
@@ -515,14 +483,95 @@
 
       function renderWorkflow() {
         const panel = document.getElementById("panel-workflow");
-        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Workflow</div><h2>工作流程</h2><p>Zendesk Case 进入 Hermes 后的目标处理流程。Automation 与 Investigation 复用同一个 Case Session，并以持久化 Case Snapshot 作为每轮权威上下文。</p></div><button class="ghost-button" type="button" data-task-id="p2-148">查看 #p2-148</button></div><div class="notice"><strong>设计状态：</strong>这是当前确认的目标流程，先在 Preproduction 验证；不代表 Production 已启用。每个 Zendesk Case 绑定一个 Hermes Session 和独立 Workspace，同一 Case 同时只允许一个运行中的 Turn。</div><div class="workflow-shell"><div class="workflow-sequence" aria-label="Case intake and routing"><article class="workflow-step"><span class="workflow-step-number">01 / Event</span><strong>新 Case 或客户 Comment</strong><p>接收 <code>ticket.created</code> 或有效的公开客户 <code>comment.created</code>。</p></article><article class="workflow-step persist"><span class="workflow-step-number">02 / Persist</span><strong>先持久化，再处理</strong><p>保存事件；更新当前客户身份；Case revision + 1。新 Case 使用 Requester，新 Comment 使用 Comment Author。</p></article><article class="workflow-step cancel"><span class="workflow-step-number">03 / Single Run</span><strong>取消旧 Turn 并串行化</strong><p>若已有运行中的 Turn，先标记 <code>superseded / cancel_requested</code>，取消旧 Hermes Run，并等待释放 Case 运行锁。</p></article><article class="workflow-step session"><span class="workflow-step-number">04 / Context</span><strong>生成完整 Snapshot</strong><p>从 PostgreSQL 读取最新 revision。新 Case 创建 Session；新 Comment 恢复原 Session，并提交完整 Snapshot。</p></article><article class="workflow-step route"><span class="workflow-step-number">05 / Route</span><strong>Hermes 重新 Route</strong><p>根据当前完整上下文确认一个 Route：Automation、Investigation 或 Human Review。</p></article></div><div class="workflow-branches" aria-label="Route branches"><section class="workflow-branch"><div class="section-kicker">Automation</div><h3>自动化处理</h3><p>明确、可自动执行且满足现有业务边界的 Case。</p><ol><li>加载对应的 Automation 操作手册</li><li>Hermes 在同一 Session 中按手册执行</li><li>加载 Persona Prompt，使用当前客户名字生成回复</li><li>调用 Zendesk 回复工具并携带 expected revision</li></ol></section><section class="workflow-branch investigation"><div class="section-kicker">Investigation</div><h3>调查处理</h3><p>需要调查、收集证据或形成技术结论的 Case。</p><ol><li>加载对应的 Investigation 操作手册</li><li>Hermes 调查并整理结论</li><li>加载 Persona Prompt，生成客户回复草稿</li><li>执行 Guardrail 检查并提交人工审批</li><li>审批通过后调用 Zendesk 回复工具</li></ol><div class="workflow-loop"><strong>审批拒绝或要求修改 ↺</strong><br>把具体意见交回同一个 Hermes Session，根据要求继续调查或重新调查，再生成草稿并重新审批。这一轮不重新 Route。</div></section><section class="workflow-branch human"><div class="section-kicker">Human Review</div><h3>转人工处理</h3><p>无法确认单一路由、多意图或不满足自动处理边界的 Case。</p><ol><li>记录 Human Review 状态和原因</li><li>停止当前自动处理，不生成客户公开回复</li><li>释放 Case 运行锁，等待人工处理或新客户输入</li></ol></section></div><div class="workflow-send" aria-label="Zendesk send gate"><div class="workflow-send-step"><span class="workflow-step-number">06 / Reply Tool</span><strong>进入唯一发送入口</strong><p>Automation 和审批通过的 Investigation 都通过同一个 Zendesk 回复工具发送。</p></div><div class="workflow-send-arrow" aria-hidden="true">→</div><div class="workflow-send-step gate"><span class="workflow-step-number">07 / Final Gate</span><strong>发送前唯一检查</strong><p>确认 Turn 未取消，并且 Case revision 未变化。检查后不再重复检查。</p></div><div class="workflow-send-arrow" aria-hidden="true">→</div><div class="workflow-outcomes"><div class="workflow-outcome success"><strong>检查通过</strong><p>立即发送 Zendesk 公开回复，读取回执并记录结果。</p></div><div class="workflow-outcome stale"><strong>检查失败</strong><p>废弃旧草稿与审批结果，停止旧 Turn；新 Comment 已触发新流程。</p></div></div></div><div class="workflow-contracts"><div class="workflow-contract"><strong>Session 与 Workspace</strong><span>一个 Case 固定绑定一个 Hermes Session 和独立 Workspace；同一 Case 的 Turn 严格串行。</span></div><div class="workflow-contract"><strong>上下文与客户身份</strong><span>PostgreSQL 是事实来源；每轮使用最新完整 Snapshot。回复名字跟随最近一位有效客户 Comment Author。</span></div><div class="workflow-contract"><strong>新 Comment 优先</strong><span>新 Comment 先持久化并推进 revision，再取消旧 Turn。连续输入只处理最新完整 Snapshot，并重新 Route。</span></div></div></div>`;
+        const source = `flowchart TD
+    A["Zendesk ticket.created<br/>或有效客户 comment.created"] --> B["持久化 Case / Comment"]
+    B --> C["更新当前客户身份<br/>新 Case 使用 Requester<br/>新 Comment 使用 Comment Author"]
+    C --> D["Case revision + 1"]
+    D --> E{"存在运行中的旧 Turn"}
+    E -- "是" --> F["旧 Turn 标记为<br/>superseded / cancel_requested"]
+    F --> G["请求取消旧 Hermes Run"]
+    G --> H["等待旧 Run 退出<br/>并释放 Case 运行锁"]
+    E -- "否" --> I["获取 Case 单运行锁"]
+    H --> I
+    I --> J["创建当前 Turn<br/>绑定最新 Case revision"]
+    J --> K["从 PostgreSQL 生成<br/>完整 Case Snapshot"]
+    K --> L{"是否已有 Hermes Session"}
+    L -- "没有" --> M["创建主 Hermes Session<br/>绑定 Case 与独立 Workspace"]
+    L -- "已有" --> N["恢复该 Case 的<br/>主 Hermes Session"]
+    M --> O["Route Phase<br/>提交 Snapshot + Route Prompt"]
+    N --> O
+    O --> P["Hermes 根据完整上下文<br/>确认一个 Route"]
+    P --> Q{"Route 结果"}
+    Q -- "Human Review" --> R["记录转人工原因<br/>停止自动处理"]
+    R --> Z["结束当前 Turn<br/>释放 Case 运行锁"]
+    Q -- "Automation" --> S["Work Phase<br/>加载 Automation 操作手册"]
+    S --> T["Hermes 调用受控业务工具<br/>执行并保存结果"]
+    Q -- "Investigation" --> U["Work Phase<br/>进入调查流程黑盒"]
+    U --> V["保存调查进展和结论"]
+    T --> W["Persona Phase<br/>同一 Session 加载 Persona Prompt"]
+    V --> W
+    W --> X["根据 Snapshot、工作结果<br/>和当前客户身份生成回复草稿"]
+    X --> Y["执行现有 Response Guardrail"]
+    Y --> AA{"满足现有发布条件"}
+    AA -- "否" --> AB["记录阻塞原因<br/>进入人工处理"]
+    AB --> Z
+    AA -- "是" --> AC{"当前 Route"}
+    AC -- "Automation" --> AD["进入统一发送流程"]
+    AC -- "Investigation" --> AE["提交人工审批"]
+    AE -- "批准" --> AD
+    AE -- "修改回复" --> AF["审批意见交回同一 Session"]
+    AF --> W
+    AE -- "继续调查" --> U
+    AE -- "停止" --> R
+    AD --> AG["准备 Zendesk 回复<br/>携带 Turn ID 和 expected revision"]
+    AG --> AH{"发送前最终检查<br/>Turn 未取消且 revision 未变化"}
+    AH -- "失败" --> AI["废弃旧草稿和审批结果<br/>停止旧 Turn"]
+    AI --> Z
+    AH -- "通过" --> AJ["写入待发送记录"]
+    AJ --> AK["Sender 调用 Zendesk 前<br/>再次检查 revision"]
+    AK --> AL{"revision 仍有效"}
+    AL -- "否" --> AI
+    AL -- "是" --> AM["发送 Zendesk 公开回复"]
+    AM --> AN["读取 Zendesk 回执<br/>记录发送结果"]
+    AN --> Z`;
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Hermes Workflow</div><h2>Hermes 当前主流程</h2><p>只描述 Case 从 Zendesk 进入 Hermes 到回复发布的主链。调查内部暂时作为黑盒，单独记录在“调查 Agent”tab。</p></div><button class="ghost-button" type="button" data-task-id="p2-148">查看 #p2-148</button></div><div class="notice"><strong>设计状态：</strong>这是当前确认、在 Preproduction 验证的 Hermes Case 主流程，不代表 Production 已启用。每个 Case 固定绑定一个主 Session 和独立 Workspace，同一 Case 同时只允许一个运行中的 Turn。</div><div class="workflow-shell"><div class="mermaid-frame"><pre class="mermaid" aria-label="Hermes Case 主流程">${escapeHtml(source)}</pre></div><div class="workflow-legend"><span class="chip">Route Phase：选择唯一处理方向</span><span class="chip">Work Phase：按 Route 执行工作</span><span class="chip">Persona Phase：生成客户回复</span><span class="chip">SupportPortal：控制执行与发布</span></div><div class="workflow-contracts"><div class="workflow-contract"><strong>Session 与 Workspace</strong><span>一个 Case 固定绑定一个 Hermes Session 和独立 Workspace；同一 Case 的 Turn 严格串行。</span></div><div class="workflow-contract"><strong>上下文与客户身份</strong><span>PostgreSQL 是事实来源；每轮使用最新完整 Snapshot。回复名字跟随最近一位有效客户 Comment Author。</span></div><div class="workflow-contract"><strong>新 Comment 优先</strong><span>新 Comment 先持久化并推进 revision，再取消旧 Turn。连续输入只处理最新完整 Snapshot，并重新 Route。</span></div></div></div>`;
         bindTriggers(panel);
+      }
+
+      function renderInvestigationWorkflow() {
+        const panel = document.getElementById("panel-investigation-workflow");
+        const source = `flowchart TD
+    A["主流程 Route = Investigation"] --> B["加载对应 Investigation 操作手册"]
+    B --> C["Evidence Guardrail<br/>按本任务手册检查必要信息"]
+    C --> D{"必要信息是否满足"}
+    D -- "否" --> E{"缺失信息是否已经问过"}
+    E -- "没有问过" --> F["合并未询问的缺失项<br/>生成一次补充信息请求"]
+    F --> G["回到主流程 Persona、审批与发送<br/>等待客户新 Comment"]
+    E -- "已经问过" --> H["不重复追问<br/>调查可行部分或记录阻塞并转人工"]
+    D -- "是" --> I["Coordinator 制定调查计划<br/>明确问题、证据需求和完成条件"]
+    J["调查能力注册表<br/>Agent 职责 + Tools + Skills"] -. "提供可用能力" .-> I
+    I --> K{"是否存在多个独立调查方向"}
+    K -- "否" --> L["创建一个调查子任务"]
+    K -- "是" --> M["创建多个调查子任务<br/>限制并发数和执行时间"]
+    L --> N["Workflow Runtime<br/>登记父 Turn、任务归属和执行状态"]
+    M --> N
+    N --> O["调查 Agent A<br/>任务范围 + Tools + Skills"]
+    N --> P["调查 Agent B<br/>任务范围 + Tools + Skills"]
+    O --> Q["提交自己的发现、证据引用<br/>阻塞项和完成状态"]
+    P --> Q
+    Q --> R{"父 Turn 与 Case revision<br/>是否仍有效"}
+    R -- "否" --> S["拒绝过期结果<br/>不进入当前回复依据"]
+    R -- "是" --> T["Runtime 按子任务独立保存结果"]
+    T --> U["Coordinator 收敛全部结果<br/>核对冲突与证据缺口"]
+    U --> V["保存统一调查结论<br/>保留各子任务来源"]
+    V --> W["返回主流程 Persona Phase<br/>生成客户回复"]`;
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">08 / Investigation Workflow</div><h2>调查 Agent Workflow</h2><p>记录后续单独实施的调查设计：按任务检查证据，制定计划，启动一个或多个调查 Agent，再由 Coordinator 汇总结果。</p></div></div><div class="notice"><strong>后续设计：</strong>本 tab 是调查流程的设计记录，尚未作为当前 Hermes 主流程的已落地能力。第一版只设计一层调查子任务，不允许调查 Agent 递归启动其他 Agent。</div><div class="workflow-shell"><div class="mermaid-frame"><pre class="mermaid" aria-label="调查 Agent Workflow">${escapeHtml(source)}</pre></div><div class="workflow-legend"><span class="chip">同一信息项不重复询问；整个 Case 的回问次数待确认</span><span class="chip">简单问题默认使用一个调查 Agent</span><span class="chip">并行只用于相互独立的调查方向</span><span class="chip">子 Agent 无客户发送权限</span></div><div class="workflow-contracts"><div class="workflow-contract"><strong>Evidence Guardrail</strong><span>必要信息由对应操作手册定义，不给所有客服问题套同一份必填清单。</span></div><div class="workflow-contract"><strong>Runtime 的职责</strong><span>管理父 Turn、子任务归属、状态和结果；每个 Agent 只写自己的结果，Coordinator 才能生成统一结论。</span></div><div class="workflow-contract"><strong>取消与过期结果</strong><span>新 Comment 推进 revision 后，父 Turn 和全部子任务失效；迟到结果不得进入新一轮回复依据。</span></div></div></div>`;
       }
 
       function renderManual() {
         const sections = (DATA.manual?.sections || []).map((section) => `<article class="manual-card"><div class="section-kicker">${escapeHtml(section.audience || "项目使用")}</div><h3>${escapeHtml(section.title)}</h3><p><strong>入口：</strong><code>${escapeHtml(section.entrypoint || "")}</code></p><ul>${(section.steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul><p style="margin-top:10px"><strong>依据：</strong>${(section.source_refs || []).map(sourceMarkup).join(" · ")}</p></article>`).join("");
         const features = (DATA.features || []).map((section) => `<details class="aggregate-card"><summary><strong>${escapeHtml(section.title)}</strong><span class="chip">已完成 ${(section.completed || []).length} · 未完成 ${(section.planned || []).length}</span></summary><div class="aggregate-body"><h4>已完成能力</h4><ul>${(section.completed || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul><h4 style="margin-top:12px">未完成能力</h4><ul>${(section.planned || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>暂无</li>"}</ul></div></details>`).join("");
-        document.getElementById("panel-manual").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">08 / Handbook</div><h2>用户手册</h2><p>这里回答“怎么使用项目”和“AI 下一步怎么开工”。产品能力继续从 feature list 读取，维护规则从 registry README 和项目规则读取。</p></div></div><div class="manual-grid">${sections}</div><h3 style="margin-top:25px">产品能力目录</h3><div class="aggregate-list">${features}</div>`;
+        document.getElementById("panel-manual").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">09 / Handbook</div><h2>用户手册</h2><p>这里回答“怎么使用项目”和“AI 下一步怎么开工”。产品能力继续从 feature list 读取，维护规则从 registry README 和项目规则读取。</p></div></div><div class="manual-grid">${sections}</div><h3 style="margin-top:25px">产品能力目录</h3><div class="aggregate-list">${features}</div>`;
       }
 
       function renderReport() {
@@ -533,7 +582,7 @@
         const recentTasks = phaseTasks().filter((task) => new Date(task.updated_at || 0).getTime() >= cutoff);
         const blocked = phaseTasks().filter((task) => task.status === "blocked");
         const active = phaseTasks().filter((task) => ["active", "review"].includes(task.status));
-        document.getElementById("panel-report").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">09 / Briefing</div><h2>汇报模式</h2><p>这是从当前 Phase 的 Function、Task、PR 和 Meeting 派生的汇报视图。</p></div><div class="panel-tools"><button class="filter-button ${days === 7 ? "active" : ""}" data-report-days="7" type="button">最近 7 天</button><button class="filter-button ${days === 30 ? "active" : ""}" data-report-days="30" type="button">最近 30 天</button></div></div><div class="report-grid"><article class="report-card"><strong class="report-number">${prs.length}</strong><p class="report-copy">窗口内 PR</p><p class="freshness">${prs.slice(0, 3).map((pr) => `#${escapeHtml(pr.number)} ${escapeHtml(pr.title)}`).join("<br>") || "暂无"}</p></article><article class="report-card"><strong class="report-number">${recentTasks.length}</strong><p class="report-copy">窗口内更新 Task</p><p class="freshness">${recentTasks.filter((task) => task.status === "done").length} 个完成 · ${recentTasks.filter((task) => task.status !== "done").length} 个未完成</p></article><article class="report-card ${blocked.length ? "risk" : ""}"><strong class="report-number">${blocked.length}</strong><p class="report-copy">当前阻塞 Task</p><p class="freshness">${blocked.slice(0, 3).map((task) => `${escapeHtml(idLabel(task.task_id))} ${escapeHtml(task.title)}`).join("<br>") || "当前没有阻塞 Task"}</p></article></div><article class="report-card" style="margin-top:12px"><div class="report-head"><div><h3>Phase 健康度</h3><p class="report-copy">当前阶段：${escapeHtml(phase?.title || state.phase)}</p></div><span class="chip status-${escapeHtml(phase?.status || "active")}">${escapeHtml(phase?.status === "done" ? "完成" : phase?.status === "active" ? "进行中" : "未开始")}</span></div><ul class="edge-list">${(phase?.exit_criteria || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p class="freshness">汇报窗口：${days} 天 · 数据生成：${escapeHtml(DATA.generated_at || "未记录")}</p></article><article class="report-card" style="margin-top:12px"><h3>下一步</h3><ul class="edge-list">${active.slice(0, 8).map((task) => `<li><strong>${escapeHtml(idLabel(task.task_id))}</strong> ${escapeHtml(task.next_action || task.title)}</li>`).join("") || "<li>暂无进行中或验收中 Task。</li>"}</ul></article>`;
+        document.getElementById("panel-report").innerHTML = `<div class="panel-intro"><div><div class="section-kicker">10 / Briefing</div><h2>汇报模式</h2><p>这是从当前 Phase 的 Function、Task、PR 和 Meeting 派生的汇报视图。</p></div><div class="panel-tools"><button class="filter-button ${days === 7 ? "active" : ""}" data-report-days="7" type="button">最近 7 天</button><button class="filter-button ${days === 30 ? "active" : ""}" data-report-days="30" type="button">最近 30 天</button></div></div><div class="report-grid"><article class="report-card"><strong class="report-number">${prs.length}</strong><p class="report-copy">窗口内 PR</p><p class="freshness">${prs.slice(0, 3).map((pr) => `#${escapeHtml(pr.number)} ${escapeHtml(pr.title)}`).join("<br>") || "暂无"}</p></article><article class="report-card"><strong class="report-number">${recentTasks.length}</strong><p class="report-copy">窗口内更新 Task</p><p class="freshness">${recentTasks.filter((task) => task.status === "done").length} 个完成 · ${recentTasks.filter((task) => task.status !== "done").length} 个未完成</p></article><article class="report-card ${blocked.length ? "risk" : ""}"><strong class="report-number">${blocked.length}</strong><p class="report-copy">当前阻塞 Task</p><p class="freshness">${blocked.slice(0, 3).map((task) => `${escapeHtml(idLabel(task.task_id))} ${escapeHtml(task.title)}`).join("<br>") || "当前没有阻塞 Task"}</p></article></div><article class="report-card" style="margin-top:12px"><div class="report-head"><div><h3>Phase 健康度</h3><p class="report-copy">当前阶段：${escapeHtml(phase?.title || state.phase)}</p></div><span class="chip status-${escapeHtml(phase?.status || "active")}">${escapeHtml(phase?.status === "done" ? "完成" : phase?.status === "active" ? "进行中" : "未开始")}</span></div><ul class="edge-list">${(phase?.exit_criteria || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p class="freshness">汇报窗口：${days} 天 · 数据生成：${escapeHtml(DATA.generated_at || "未记录")}</p></article><article class="report-card" style="margin-top:12px"><h3>下一步</h3><ul class="edge-list">${active.slice(0, 8).map((task) => `<li><strong>${escapeHtml(idLabel(task.task_id))}</strong> ${escapeHtml(task.next_action || task.title)}</li>`).join("") || "<li>暂无进行中或验收中 Task。</li>"}</ul></article>`;
         document.querySelectorAll("[data-report-days]").forEach((button) => button.addEventListener("click", () => { state.reportDays = Number(button.dataset.reportDays); renderReport(); }));
       }
 
@@ -615,12 +664,49 @@
         setTab(raw || "dynamic");
       }
 
+      function renderMermaidDiagrams() {
+        const diagrams = Array.from(document.querySelectorAll("pre.mermaid"));
+        if (!diagrams.length) return;
+        const sources = new Map(diagrams.map((diagram) => [diagram, diagram.textContent]));
+        const showSourceFallback = () => diagrams.forEach((diagram) => {
+          diagram.textContent = sources.get(diagram) || diagram.textContent;
+          diagram.classList.remove("mermaid");
+          diagram.classList.add("mermaid-fallback");
+        });
+        if (!window.mermaid) {
+          showSourceFallback();
+          return;
+        }
+        window.mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "loose",
+          theme: "base",
+          themeVariables: {
+            background: "#fff9ee",
+            primaryColor: "#edf4fa",
+            primaryTextColor: "#17130d",
+            primaryBorderColor: "#2368a2",
+            lineColor: "#6f675b",
+            secondaryColor: "#f1ecfb",
+            tertiaryColor: "#fff2d8",
+            clusterBkg: "#fff9ee",
+            clusterBorder: "#d8cdb9",
+            edgeLabelBackground: "#fff9ee",
+            fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans SC, sans-serif",
+            fontSize: "14px"
+          },
+          flowchart: { htmlLabels: true, curve: "basis", nodeSpacing: 28, rankSpacing: 42, useMaxWidth: true }
+        });
+        window.mermaid.run({ nodes: diagrams }).catch(showSourceFallback);
+      }
+
       function boot() {
         if (!DATA || !DATA.project) {
           document.body.innerHTML = `<div class="notice error" style="margin:30px">Project Overview 数据缺失。请先运行 <code>python3 scripts/generate_project_overview.py --write</code>。</div>`;
           return;
         }
-        renderHeader(); renderPhaseSwitch(); renderTabs(); renderDynamic(); renderBoard(); renderMeetings(); renderFunctions(); renderSystemMap(); renderDeploymentArchitecture(); renderWorkflow(); renderManual(); renderReport();
+        renderHeader(); renderPhaseSwitch(); renderTabs(); renderDynamic(); renderBoard(); renderMeetings(); renderFunctions(); renderSystemMap(); renderDeploymentArchitecture(); renderWorkflow(); renderInvestigationWorkflow(); renderManual(); renderReport();
+        renderMermaidDiagrams();
         document.getElementById("reportButton").addEventListener("click", () => { location.hash = "#report"; routeHash(); });
         window.addEventListener("hashchange", routeHash);
         routeHash();
