@@ -1,4 +1,4 @@
 interface:
   display_name: "Review Implemented Plan"
-  short_description: "Review and finalize completed implementation handoffs."
-  default_prompt: "实现了计划，你来review一下"
+  short_description: "Review implementations; fix or finalize only when authorized."
+  default_prompt: "使用 $review-implemented-plan 只读 review 已完成的实现，报告问题和验证缺口。"

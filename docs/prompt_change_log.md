@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-09 - Read-only review default and explicit finalization responsibilities
+
+- Area/version: Repository review skill and workflow instructions; no application prompt or model version change.
+- Reason: Review requests previously implied authority to fix and merge, while workflow rules claimed CodeGraph synchronization that the finalization script did not perform.
+- Behavior: Review defaults to read-only. Explicit implementation/finalization authorization for the current scope persists across turns, subject to later user limits. The skill UI and repository rules use the same boundary.
+- Finalization: After root main advances, the script synchronizes an existing CodeGraph index before cleanup. Sync errors or a missing CLI stop cleanup and preserve the task workspace/branch. An unindexed checkout is explicitly skipped without initialization. Application live-stack verification remains the agent's separate completion responsibility.
+- Files: `AGENTS.md`, `.codex/skills/review-implemented-plan/SKILL.md`, its `agents/openai.yaml`, `docs/agent_workflow_details.md`, `scripts/workflow/finalize_task_to_main.sh`, and `backend/tests/test_workflow_scripts.py`.
+- Verification: Finalization tests passed (12 passed, 46 deselected), including synchronization on merged root main before cleanup, failure retaining the workspace/branch, and no-index skip. Skill validation, authorization-scenario review, shell syntax, and diff checks passed. The ECS top-priority rule is unchanged. No application runtime behavior or deployment changes.
+
 ## 2026-09-09 - ECS deployment authorization as the highest-priority agent rule
 
 - Area/version: Repository agent instructions in `AGENTS.md` and `docs/agent_workflow_details.md`; no runtime prompt or model version change.
