@@ -1,5 +1,17 @@
 # Prompt Change Log
 
+## 2026-09-09 - Persona 单次读取超时统一为 120 秒 (p2-144)
+
+**版本**：无 Prompt 正文或模型变化；仅调用配置。`AUTOMATION_PERSONA_TIMEOUT_SECONDS` 默认值统一为 120（llm_profiles.py 代码默认 30→120、docker-compose.single-host.yml 三服务块 30→120、.env.example 8→120）。模型仍为 gpt-6-astra/low Responses 不发 temperature。
+
+**原因**：Case 13379 中 Archer 开通已成功，随后 Persona 请求在约 30.06 秒被 socket 读取超时截断（默认 30 秒），任务转 manual_attention；人工已回复，该工单不重放。上游模型偶发慢响应被过短默认值误伤。
+
+**行为变化**：仅超时上限。每轮仍 max_attempts=1、Account 调用层无重试与 fallback；读取超时立即失败（attempt_count=1）并原子转人工，安全校验失败的整段改写一次合同不变。显式正数环境变量覆盖有效，空值/非法值回退默认（_safe_positive_float_env 既有规则）。
+
+**验证**：worktree codex/persona-timeout-120s 定向回归——profiles/factory/account-execution/persona/compose 五文件 156 passed + 82 subtests；test_worker.py persona/failure-transition 选择器 26 passed + 8 subtests。断言覆盖默认 120、HTTP 边界 timeout=120、超时单次调用 attempt_count=1、prepare/publish 两入口转 manual_attention 且 archer_outcome=enabled 保留、无客户投递、compose 三服务块与 .env.example 对齐。
+
+**边界**：120 秒为 socket 读取超时而非整任务时限；安全改写可能产生第二次调用；不引入网络重试、并发调度或自动重试。Production ECS 发布与配置生效验证单独执行；本地栈重启验证为合并后门禁。
+
 ## 2026-09-07 - ECS conversation context and Astra profiles (p2-110)
 
 - Versions: Enablement fields v4, Fraud fields v5, Suspension fields v3, Account Persona v31. The four profiles `account_route`, `account_extractor`, `ragflow_answer`, and `enablement_completion_classifier` now default to Astra/low Responses without temperature; Persona remains Astra/low. Other profiles and Engineer-specific prompts are unchanged.

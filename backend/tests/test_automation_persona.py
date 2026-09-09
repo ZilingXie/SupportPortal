@@ -19,6 +19,7 @@ from backend.services.automation_persona import (
 from backend.services.account_suspension_automation import closing_reply_facts
 from backend.services.detailed_invoice_field_extractor import extract_detailed_invoice_fields
 from backend.services.billing_automation import build_billing_automation_result
+from backend.services.llm_factory import LlmInvocationError
 
 
 class AutomationPersonaTests(unittest.TestCase):
@@ -115,6 +116,25 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm"}},
                 account_scope=True,
             )
+
+    def test_read_timeout_fails_once_with_single_attempt_count(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text",
+            side_effect=LlmInvocationError("read timeout after 120 seconds"),
+        ) as generate, self.assertRaisesRegex(
+            AutomationPersonaError, "automation_persona_generation_failed"
+        ) as raised:
+            render_automation_reply(
+                reply_facts={"behavior": "quota", "reply_intent": "resolution_update"},
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+        self.assertEqual(generate.call_count, 1)
+        self.assertEqual(generate.call_args.kwargs["max_attempts"], 1)
+        self.assertEqual(raised.exception.attempt_count, 1)
 
     def _archer_facts(self, intent: str, outcome: str) -> dict:
         facts = build_automation_reply_facts(

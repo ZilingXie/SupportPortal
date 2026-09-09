@@ -5453,6 +5453,64 @@ class WorkerResilienceTests(unittest.TestCase):
             self.assertNotIn("generated_content", payload)
             repository.publish_account_reply.assert_not_called()
 
+    def test_archer_enabled_persona_read_timeout_moves_both_render_paths_to_manual_attention(self) -> None:
+        # Case 13379 shape: Archer enablement already succeeded, then the pinned
+        # Persona model read-times-out. The worker must fail over to human review
+        # after a single render attempt, keep the Archer outcome, and publish no
+        # customer reply.
+        diagnostics = ({"attempt": 1, "safety_issue_codes": ["automation_persona_generation_failed"],
+                        "expected_field_count": 0, "list_item_count": 0, "list_type": "none",
+                        "layout_issue_codes": []},)
+        archer_enabled_facts = worker.build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="enablement_archer_enabled",
+            known_information={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+                "archer_outcome": "enabled",
+            },
+            missing_information=[],
+            performed_actions=["Enabled Media Relay through Archer."],
+            resolution_status="enabled",
+            customer_name="Taylor",
+        )
+        for status, run in (("preparing", worker._prepare_account_reply_job),
+                            ("publishing", worker._publish_account_reply_job)):
+            job = {"job_id": "archer-timeout-job", "ticket_id": "archer-timeout-ticket", "status": status,
+                   "trigger_message_created_at": "2026-09-08T00:00:00+00:00",
+                   "payload": {"reply_facts": copy.deepcopy(archer_enabled_facts),
+                               "persona_key": "sid-precise", "persona_version": 1,
+                               "effective_prompt": {"instruction": "Precise"}}}
+            repository = Mock()
+            repository.get_account_reply_job.return_value = job
+            repository.get_ticket.return_value = {"ticket_id": job["ticket_id"], "messages": [{
+                "role": "customer", "content": "Please enable Media Relay.",
+                "created_at": job["trigger_message_created_at"]}]}
+            captured = []
+
+            def transition(value, **kwargs):
+                captured.append(copy.deepcopy(value))
+                transitioned = dict(value)
+                transitioned["status"] = "manual_attention"
+                return transitioned
+
+            repository.transition_claimed_account_reply_to_human_review.side_effect = transition
+            with self.subTest(status=status), patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "render_automation_reply", side_effect=worker.AutomationPersonaError(
+                    "automation_persona_generation_failed", "read timeout after 120 seconds",
+                    attempt_count=1, generation_diagnostics=diagnostics)
+            ) as render:
+                run(job)
+            self.assertEqual(render.call_count, 1)
+            self.assertEqual(len(captured), 1)
+            self.assertEqual(job["status"], "manual_attention")
+            payload = captured[0]["payload"]
+            self.assertEqual(payload["persona_generation_attempts"], 1)
+            self.assertEqual(payload["persona_generation_diagnostics"], list(diagnostics))
+            self.assertNotIn("generated_content", payload)
+            self.assertEqual(payload["reply_facts"]["known_information"]["archer_outcome"], "enabled")
+            repository.publish_account_reply.assert_not_called()
+
     def test_reply_facts_prepare_pins_persisted_persona_assignment(self) -> None:
         job = {
             "job_id": "account-reply-persona-pin",
