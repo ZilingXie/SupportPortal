@@ -41,9 +41,11 @@ class LlmFactoryTests(unittest.TestCase):
         from backend.services.account_ai_execution import invoke_account_responses_text
 
         requests = []
+        timeouts = []
 
         def respond(request, timeout):
             requests.append(json.loads(request.data))
+            timeouts.append(timeout)
             return _FakeResponse({"output_text": "Please share your office address."})
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
@@ -56,6 +58,7 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(requests[0]["model"], "gpt-6-astra")
         self.assertEqual(requests[0]["reasoning"]["effort"], "low")
         self.assertNotIn("temperature", requests[0])
+        self.assertEqual(timeouts, [120])
 
     def test_automation_profiles_send_astra_low_responses_without_temperature(self) -> None:
         for scenario in ("account_route", "account_extractor", "ragflow_answer", "enablement_completion_classifier"):

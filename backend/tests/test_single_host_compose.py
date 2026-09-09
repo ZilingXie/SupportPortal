@@ -301,6 +301,17 @@ class SingleHostComposeTests(unittest.TestCase):
         )
         self.assertIn("RAG_REQUEST_TIMEOUT_SECONDS=600.0", env_example)
 
+    def test_automation_persona_read_timeout_defaults_to_120_seconds(self) -> None:
+        env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+
+        for service_name in ("automation_production_worker", "worker_aux", "worker_aux_production"):
+            with self.subTest(service=service_name):
+                self.assertIn(
+                    "AUTOMATION_PERSONA_TIMEOUT_SECONDS: ${AUTOMATION_PERSONA_TIMEOUT_SECONDS:-120}",
+                    self._service_block(service_name),
+                )
+        self.assertIn("AUTOMATION_PERSONA_TIMEOUT_SECONDS=120", env_example)
+
     def test_client_ack_and_async_query_defaults_are_present(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")
 
