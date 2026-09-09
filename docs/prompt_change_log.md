@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-09 - Preserve authorization through routine Preproduction rebuilds
+
+- Area/version: Repository deployment instructions in `AGENTS.md` and `docs/agent_workflow_details.md`; no application prompt or model version change.
+- Reason: A known concurrent workflow-only merge caused the conservative release gate to reject an older release, and the agent requested authorization again to rebuild for an already authorized Preproduction deployment.
+- Behavior: Existing Preproduction authorization covers routine CodeBuild rebuilds, new releases, deployment, and verification within the same approved scope. Inspect concurrent commit diffs and their actual deployment impact before continuing; report source/release changes without turning each rebuild into a new approval checkpoint.
+- Boundaries: Explicit user commit/release/image pins remain binding. Unapproved behavior, migrations, configuration changes, external side effects, and unresolved authorization or workspace uncertainty still require confirmation. Existing immutable-release, Prompt, Terraform, credential, and rollback gates remain intact; Production authorization is unchanged.
+- Verification: Direct wording and scenario review plus `git diff --check`; this is a documentation-only change with no deployment, runtime code change, or live-stack verification requirement.
+
 ## 2026-09-09 - Read-only review default and explicit finalization responsibilities
 
 - Area/version: Repository review skill and workflow instructions; no application prompt or model version change.
