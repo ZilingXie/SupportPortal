@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from backend.services.automation_ecs_contracts import (
+    ExecutionStatus,
     INTAKE_CONTRACT_VERSION,
     IntakeEventType,
     JobKind,
@@ -379,6 +380,30 @@ class TestAgentTurnProcessor:
         assert turn["status"] == "superseded"
         assert turn["cancel_reason"] == "superseded_by_revision"
 
+    def test_unconfirmed_cancellation_defers_for_recovery(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        store.start_hermes_agent_turn(handoff["turn_id"], run_id=None)
+        store.get_or_create_hermes_turn_run(handoff["turn_id"], "route")
+        store.start_hermes_turn_run(handoff["turn_id"], "route", run_id="run-live")
+        store.accept_intake(
+            _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED),
+            _settings().provenance(),
+        )
+
+        class _StuckCancellationClient(FakeHermesClient):
+            def get_run(self, run_id):
+                return {"run_id": run_id, "status": "running"}
+
+        processor = self._processor(
+            store,
+            _StuckCancellationClient(),
+            turn_timeout_seconds=0,
+        )
+        with pytest.raises(HermesTurnDeferred):
+            processor.process(agent_job)
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "cancel_requested"
+
 
 class TestExpiryRecovery:
     def test_expired_external_agent_turn_job_marks_outcome_unknown(self) -> None:
@@ -541,6 +566,33 @@ class TestWorkerAgentTurnLoop:
         jobs = store.get_execution(second_turn["execution_id"])["jobs"]
         deferred = [job for job in jobs if job["kind"] == "agent_turn"]
         assert deferred and deferred[0]["status"] == JobStatus.PENDING.value
+
+    def test_worker_parks_pre_external_human_review_without_delivery(self) -> None:
+        from backend.automation_ecs_worker import AutomationWorker
+
+        store = _store()
+        handoff, _unused = TestAgentTurnProcessor._hand_off_claim(
+            TestAgentTurnProcessor, store, _event(), claim_agent=False
+        )
+
+        class _HumanReviewProcessor:
+            defer_seconds = 1
+
+            def process(self, job, *, before_external=None):
+                return {"status": "human_review", "error_code": "snapshot_too_large"}
+
+        worker = AutomationWorker(
+            settings=_settings("worker"),
+            store=store,
+            processor=None,
+            agent_processor=_HumanReviewProcessor(),
+            background_cycle=None,
+        )
+        assert worker.process_once() is True
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        execution = store.get_execution(turn["execution_id"])
+        assert execution["status"] == ExecutionStatus.HUMAN_REVIEW.value
+        assert execution["deliveries"] == []
 
 
 def _agent_comment_event() -> Any:

@@ -450,12 +450,7 @@ class HermesAgentTurnProcessor:
             turn_id,
             [str(run["run_id"]) for _, run in runs],
         )
-        return {
-            "engine": "hermes",
-            "turn_id": turn_id,
-            "status": "cancel_pending",
-            "remaining_runs": [str(run["run_id"]) for _, run in runs],
-        }
+        raise HermesTurnDeferred(f"Hermes cancellation is still pending for turn {turn_id}")
 
     # ----------------------------------------------------------------- mirror
 

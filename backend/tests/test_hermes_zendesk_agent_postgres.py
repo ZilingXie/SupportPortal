@@ -63,7 +63,7 @@ def store() -> Any:
     postgres_store = PostgresAutomationEcsStore(settings)
     try:
         postgres_store.migrate()
-        assert SCHEMA_REVISION == "automation-ecs-003"
+        assert SCHEMA_REVISION == "automation-ecs-004"
         yield postgres_store
     finally:
         with psycopg.connect(_DSN, autocommit=True) as connection:
@@ -143,7 +143,8 @@ class TestPostgresOneRunningFence:
         second = _hand_off(store, _event("zendesk:ticket:123:comment", event_type="comment.created"))
         with pytest.raises(HermesTurnConflictError):
             store.start_hermes_agent_turn(second["turn_id"], run_id="run-2")
-        store.complete_hermes_agent_turn(first["turn_id"], result={"status": "completed"})
+        assert store.get_hermes_turn(first["turn_id"])["status"] == "cancel_requested"
+        store.supersede_hermes_turn(first["turn_id"], reason="superseded_by_revision")
         store.start_hermes_agent_turn(second["turn_id"], run_id="run-2b")
         assert store.get_hermes_turn(second["turn_id"])["status"] == "running"
 
@@ -214,3 +215,4 @@ class TestPostgresWorkerOutcome:
         assert outcome["error_code"] == "hermes_agent_rejected"
         turn = store.get_hermes_turn(handoff["turn_id"])
         assert turn["status"] == "failed"
+        assert isinstance(turn["input_snapshot"]["turns"][0]["created_at"], str)
