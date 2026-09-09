@@ -249,7 +249,7 @@ class WorkflowScriptTests(unittest.TestCase):
         exclude_path = repo / ".git" / "info" / "exclude"
         exclude_path.parent.mkdir(parents=True, exist_ok=True)
         with exclude_path.open("a", encoding="utf-8") as handle:
-            handle.write(".worktrees/\n.planning/\n")
+            handle.write(".worktrees/\n.planning/\n.codegraph/\n")
         return bare, seed, repo
 
     def _init_remote_repo_on_main(self) -> tuple[Path, Path, Path]:
@@ -886,6 +886,32 @@ class WorkflowScriptTests(unittest.TestCase):
         if not calls_path.exists():
             return []
         return [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines() if line]
+
+    def _install_fake_codegraph(self, bin_dir: Path, task_worktree: Path, *, exit_code: int = 0) -> Path:
+        call_path = self.root / "codegraph-call.json"
+        self._write_executable(
+            bin_dir / "codegraph",
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env python3
+                import json
+                import subprocess
+                import sys
+                from pathlib import Path
+
+                Path({str(call_path)!r}).write_text(json.dumps({{
+                    "cwd": str(Path.cwd().resolve()),
+                    "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                    "task_exists": Path({str(task_worktree)!r}).exists(),
+                    "args": sys.argv[1:],
+                }}))
+                if {exit_code}:
+                    print("CodeGraph test failure", file=sys.stderr)
+                sys.exit({exit_code})
+                """
+            ),
+        )
+        return call_path
 
     def _advance_origin_main(self, seed: Path, relative_path: str = "main.txt") -> None:
         _git(["switch", "main"], cwd=seed)
@@ -2253,6 +2279,8 @@ class WorkflowScriptTests(unittest.TestCase):
         task_worktree = self._add_task_worktree(repo)
         self._write(task_worktree, "README.md", "task change\n")
         fake_bin, state_dir = self._install_fake_gh(bare)
+        (repo / ".codegraph").mkdir()
+        sync_call_path = self._install_fake_codegraph(fake_bin, task_worktree)
 
         result = self._run_workflow(
             "finalize_task_to_main.sh",
@@ -2280,6 +2308,62 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("--match-head-commit", merge_call)
         self.assertNotIn("--auto", merge_call)
         self.assertNotIn("--delete-branch", merge_call)
+        sync_call = self._read_json(sync_call_path)
+        self.assertEqual(sync_call["args"], ["sync"])
+        self.assertEqual(sync_call["cwd"], str(repo.resolve()))
+        self.assertEqual(sync_call["head"], _git(["rev-parse", "HEAD"], cwd=repo).stdout.strip())
+        self.assertTrue(sync_call["task_exists"])
+
+    def test_finalize_task_to_main_skips_codegraph_without_existing_index(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "task change\n")
+        fake_bin, state_dir = self._install_fake_gh(bare)
+        sync_call_path = self._install_fake_codegraph(fake_bin, task_worktree, exit_code=1)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Skipping CodeGraph sync: no existing index", result.stdout)
+        self.assertFalse(sync_call_path.exists())
+        self.assertFalse((repo / ".codegraph").exists())
+        self.assertFalse(task_worktree.exists())
+
+    def test_finalize_task_to_main_retains_workspace_when_codegraph_sync_fails(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "task change\n")
+        fake_bin, state_dir = self._install_fake_gh(bare)
+        (repo / ".codegraph").mkdir()
+        sync_call_path = self._install_fake_codegraph(fake_bin, task_worktree, exit_code=1)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CodeGraph test failure", result.stderr)
+        self.assertIn("already merged, but CodeGraph sync failed", result.stderr)
+        self.assertIn("cleanup is pending", result.stderr)
+        self.assertNotIn("Removed task workspace", result.stdout)
+        self.assertTrue(sync_call_path.exists())
+        self.assertTrue(task_worktree.exists())
+        self.assertTrue(_git(["branch", "--list", "codex/example-task"], cwd=repo).stdout.strip())
+        self.assertEqual(self._read_fake_gh_state(state_dir)["prs"]["codex/example-task"]["state"], "MERGED")
+        self.assertEqual((repo / "README.md").read_text(encoding="utf-8"), "task change\n")
+        self.assertEqual(_git(["status", "--porcelain"], cwd=repo).stdout, "")
 
     def test_finalize_task_to_main_falls_back_to_auto_merge_when_immediate_merge_rejected(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()

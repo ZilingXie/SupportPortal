@@ -233,6 +233,15 @@ if ! git -C "$root_workspace" merge-base --is-ancestor "$merge_commit" main; the
   die "Local main at $root_workspace does not yet contain merged PR commit $merge_commit."
 fi
 
+if [[ -d "$root_workspace/.codegraph" ]]; then
+  info "Synchronizing existing CodeGraph index from root main at $root_workspace."
+  if ! (cd "$root_workspace" && codegraph sync); then
+    die "PR $pr_url is already merged, but CodeGraph sync failed. Task workspace $(repo_root) and branch $expected_branch are retained; cleanup is pending."
+  fi
+else
+  info "Skipping CodeGraph sync: no existing index at $root_workspace/.codegraph; no index was initialized."
+fi
+
 task_worktree="$(repo_root)"
 git -C "$root_workspace" worktree remove "$task_worktree"
 
