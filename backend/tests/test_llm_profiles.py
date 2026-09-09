@@ -46,6 +46,19 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(route.model, "gpt-6-astra")
         self.assertEqual(extractor.model, "gpt-6-astra")
 
+    def test_persona_read_timeout_defaults_to_120_seconds_and_keeps_override_rules(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            default = resolve_model_profile("automation_persona")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
+                                    "AUTOMATION_PERSONA_TIMEOUT_SECONDS": "45.5"}, clear=True):
+            overridden = resolve_model_profile("automation_persona")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key",
+                                    "AUTOMATION_PERSONA_TIMEOUT_SECONDS": "not-a-number"}, clear=True):
+            invalid = resolve_model_profile("automation_persona")
+        self.assertEqual(default.timeout_seconds, 120.0)
+        self.assertEqual(overridden.timeout_seconds, 45.5)
+        self.assertEqual(invalid.timeout_seconds, 120.0)
+
     def test_account_route_profile_uses_astra_defaults_without_changing_legacy_router(self) -> None:
         with patch.dict(os.environ, {
             "OPENAI_API_KEY": "test-key",

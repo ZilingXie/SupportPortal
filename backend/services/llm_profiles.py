@@ -434,7 +434,7 @@ def resolve_model_profile(
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("AUTOMATION_PERSONA_REASONING_EFFORT")) or "low",
             temperature=None if persona_model == "gpt-6-astra" else _safe_float_env("AUTOMATION_PERSONA_TEMPERATURE", 0.4),
-            timeout_seconds=_safe_positive_float_env("AUTOMATION_PERSONA_TIMEOUT_SECONDS", 30.0),
+            timeout_seconds=_safe_positive_float_env("AUTOMATION_PERSONA_TIMEOUT_SECONDS", 120.0),
             max_retries=_safe_int_env("AUTOMATION_PERSONA_MAX_RETRIES", 1),
             fallback_models=(),
         ))

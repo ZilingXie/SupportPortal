@@ -8,9 +8,9 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "created_at": "2026-09-05",
-  "updated_at": "2026-09-07",
-  "summary": "Persona 保持唯一正文作者，无独立 Reviewer 或代码补句。13326 排版拦截调查与真实合成样本发现共享 Responses 解析会压平换行；v30 修复两种正文返回路径的换行保留，排版降为非阻断诊断，明确一项单句、两项 and、多项 bullet 的 prompt 优先级，Persona profile 切为 Astra/low 且不发送 temperature。硬安全失败最多整段重写一次；Worker 两个生成入口保存内容无关逐轮诊断。13326 原始模型正文未留存，不推断其具体原稿。",
-  "next_action": "保持 active。完成 v30 合成样本门禁、正式合并、本地栈验证与直接 Production 发布后，等待用户全新 Fraud 工单验收；不创建、修改或重放历史工单，包括13326。",
+  "updated_at": "2026-09-09",
+  "summary": "Persona 保持唯一正文作者，无独立 Reviewer 或代码补句。13326 排版拦截调查与真实合成样本发现共享 Responses 解析会压平换行；v30 修复两种正文返回路径的换行保留，排版降为非阻断诊断，明确一项单句、两项 and、多项 bullet 的 prompt 优先级，Persona profile 切为 Astra/low 且不发送 temperature。硬安全失败最多整段重写一次；Worker 两个生成入口保存内容无关逐轮诊断。13326 原始模型正文未留存，不推断其具体原稿。2026-09-09 追加：Case 13379（Archer 开通成功后 Persona 约 30.06 秒读取超时转 manual_attention）修复——AUTOMATION_PERSONA_TIMEOUT_SECONDS 默认统一 120 秒，调用次数、安全校验与失败转人工合同不变。",
+  "next_action": "保持 active。完成 v30 合成样本门禁、正式合并、本地栈验证与直接 Production 发布后，等待用户全新 Fraud 工单验收；2026-09-09 追加的 Persona 读取超时 120 秒修复已实施并通过定向回归，待正式合并与本地栈验证后随下次 Production 发布生效，发布前复查 ECS 任务定义无与 120 秒冲突的超时覆盖；不创建、修改或重放历史工单，包括13326与13379。",
   "acceptance_criteria": [
     "Persona 通过稿正文原样持久化和发布；Worker 不再执行 missing-information、Enablement SLA/工作日或 Suspension 24h 的确定性文案拼装，也不再 strip greeting。",
     "正常路径只调用一次 pinned Persona，底层 max_attempts=1，所有 Account、RAG fallback、Engineer-guided 与 Engineer Investigation 路径均不调用独立 LLM Reviewer；Engineer 人工批准边界不变。",
@@ -18,10 +18,17 @@
     "代码安全地板保留空正文、签名、敏感值、来源值、误导性状态和 Suspension 肯定关闭/重开检查；常见 apostrophe 在临时 validation copy 中等价，最终正文不被改写。",
     "Worker payload 停止写 persona_contract_repair 与 persona_review_*，改写 generation_attempts/safety_status/safety_issue_codes；RAG 引用、greeting、附件及 transport formatting 外壳保持。",
     "一项单句、两项 and、多项 bullet 由 Persona prompt 指导；Responses 解析保留换行，同义标签和其他列表布局不阻断，布局诊断与安全检查分离，Worker不得组装bullet。",
+    "Persona 单次读取超时默认 120 秒且三个配置入口（llm_profiles.py 代码默认、docker-compose.single-host.yml 三服务块、.env.example）一致；显式正数覆盖有效，空值/非法值回退默认；读取超时仅一次调用、attempt_count=1 并原子转人工，不引入网络重试，不改安全改写合同。",
     "ECS Production 发布 v30 后通过正式 release、runtime、heartbeat、CloudWatch、Terraform、Provider probe和backup门禁；Persona 使用 gpt-6-astra/low，不发送 temperature，无 Reviewer，真实业务验收只使用用户新工单。"
   ],
   "blockers": [],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Persona read timeout 120s unified regression",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_llm_profiles.py backend/tests/test_llm_factory.py backend/tests/test_account_ai_execution.py backend/tests/test_automation_persona.py backend/tests/test_single_host_compose.py; 同解释器 -m pytest -q backend/tests/test_worker.py -k 'persona or stale_customer_revision or claim_is_lost or human_review_transition'",
+      "details": "156 passed + 82 subtests 与 26 passed + 8 subtests（worktree codex/persona-timeout-120s）。Case 13379（Archer 已 enabled 后 Persona 约 30.06 秒读取超时转 manual_attention，人工已回复，不重放）驱动：AUTOMATION_PERSONA_TIMEOUT_SECONDS 默认统一 120 秒（llm_profiles.py、docker-compose.single-host.yml automation_production_worker/worker_aux/worker_aux_production 三服务块、.env.example 8→120 对齐）；profile 仍 Astra/low 无 temperature，Account 调用层到 HTTP 边界 timeout=120；读取超时仅一次调用、attempt_count=1、失败原因保留；Worker prepare/publish 两个生成入口原子转 manual_attention，archer_outcome=enabled 保留、无 AI 回复或客户投递；显式正数覆盖与无效值回退默认经 _safe_positive_float_env 既有规则验证。"
+    },
     {
       "type": "test",
       "label": "Astra v30 fixed synthetic evaluation",
@@ -94,6 +101,11 @@
   ],
   "history": [
     {
+      "at": "2026-09-09",
+      "event": "persona_read_timeout_unified_to_120s",
+      "summary": "Case 13379 根因为 Persona 默认读取超时过短：Archer 开通成功后 gpt-6-astra 响应在约 30.06 秒被 socket 读取超时截断，任务转 manual_attention。将 AUTOMATION_PERSONA_TIMEOUT_SECONDS 三个入口默认统一为 120 秒（代码默认 30、compose 三服务块 30、.env.example 8），显式覆盖与无效值回退规则不变；超时仍单次调用并原子转人工，不引入网络重试。定向回归全过，待正式合并与本地栈验证，Production 发布单独授权。"
+    },
+    {
       "at": "2026-09-06",
       "event": "persona_v29_ecs_release_verified",
       "summary": "Persona v29已随r20260906-734fb77部署到ECS Production并通过正式门禁与独立readback；任务保持active，等待用户全新Fraud工单验证bullet、单次Persona和无Reviewer。"
@@ -144,9 +156,13 @@
   "source_refs": [
     "backend/services/account_ai_execution.py",
     "backend/services/automation_persona.py",
+    "backend/services/llm_profiles.py",
     "backend/services/customer_reply_composer.py",
     "backend/worker.py",
     "backend/tests/test_automation_persona.py",
+    "backend/tests/test_llm_profiles.py",
+    "backend/tests/test_llm_factory.py",
+    "backend/tests/test_single_host_compose.py",
     "backend/tests/test_worker.py"
   ]
 }
