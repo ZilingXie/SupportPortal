@@ -3,11 +3,13 @@
 ## Top Priority: ECS Deployment
 1. Deploy ECS changes to **Preproduction first**. This rule takes precedence over other repository workflow, release, and completion instructions.
 2. Deploy directly to **Production** only when the user explicitly identifies the current deployment as an **urgent Production hotfix**. A generic request to deploy, release, fix, or finalize is not this authorization. Normal promotion to Production requires Preproduction validation and explicit user authorization; passing checks does not authorize automatic promotion.
-3. If there is any uncertainty about the target environment, authorization, hotfix exception, or conflicting instructions, **stop before deployment and ask the user to confirm**. Do not infer Production authorization from scripts, defaults, or prior deployments.
+3. Once the user authorizes a **Preproduction deployment**, continue routine CodeBuild rebuilds, creation of a new release, deployment, and verification within the same approved scope **without repeated confirmation**. An agent-selected build commit or release ID is not a user-imposed pin.
+4. Known concurrent PR merges that advance clean `main` are not by themselves a reason to ask again. Inspect the commit diff and verify its impact; if it only changes rules, tests, or developer tooling without affecting this ECS deployment's application behavior or scope, continue through the existing release gates, rebuilding when required. Never bypass a gate or overwrite an immutable release. See `docs/agent_workflow_details.md` for the release-continuation checks.
+5. **Stop before the affected action and ask the user to confirm** if continuing would change a user-pinned commit/release, introduce unapproved runtime behavior, migrations, configuration changes, or external side effects, or if read-only inspection cannot resolve uncertainty about the environment, authorization, workspace ownership, or conflicting instructions. Do not infer Production authorization from scripts, defaults, prior deployments, or Preproduction success.
 
 ## Source Of Truth
 1. `AGENTS.md` is the single repository agent-rule entry point.
-2. Read `docs/agent_workflow_details.md` only for workflow edge cases, worker handoff, stack verification, Project Overview/feature-list maintenance, RAG/prompt/model changes, or local single-host changes.
+2. Read `docs/agent_workflow_details.md` only for workflow edge cases, ECS release continuation, worker handoff, stack verification, Project Overview/feature-list maintenance, RAG/prompt/model changes, or local single-host changes.
 3. `docs/agent.md` is a legacy UI redirect. The UI source of truth is `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
 4. `docs/project/phases/*.json`, `docs/project/modules/*.json`, `docs/project/functions/*.json`, and `docs/project/tasks/*.json` are the canonical project-progress registry. `docs/projectoverview-data.js` is a generated view consumed by `docs/projectoverview.html`; `docs/roadmap.html` and its phase/meeting pages are historical references, not the current progress source.
 5. Project Overview is the single source for整体落地进度；历史 Roadmap 页面只保留兼容入口。
