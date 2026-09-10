@@ -128,8 +128,10 @@ from backend.services.account_automation_reconciliation import (
 )
 from backend.services.account_automation_delivery import (
     AccountAutomationDeliveryResult,
+    DELIVERY_AWAITING_PUBLIC_REPLY,
     deliver_account_internal_email_async,
     ensure_account_delivery_key,
+    prepare_account_internal_email,
 )
 from backend.services.internal_email_payload import (
     InternalEmailRecipientResolutionError,
@@ -174,6 +176,7 @@ from backend.services.enablement_automation import (
     build_enablement_automation_result_from_fields,
     send_enablement_internal_email,
 )
+from backend.services.automation_account_intake import _start_enablement_manual_review
 from backend.services.enablement_field_extractor import (
     EnablementFieldExtraction,
     extract_enablement_fields,
@@ -6069,70 +6072,49 @@ async def _create_account_intake_impl(
                     )
                     await async_to_thread(ticket_repository.save_account_case, billing_ticket)
     if enablement_email_attempt and enablement_email_attempt.get("internal_email_to_send"):
-        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
-            account_case=billing_ticket,
-            ticket_id=ticket_id,
-            handler="enablement",
-            payload=dict(enablement_email_attempt["internal_email_to_send"]),
-            sender=_send_enablement_internal_email_attempt,
-        )
-        internal_email_send_status = delivery_result.status
-        internal_email_send_reason = delivery_result.reason
-        if not delivery_result.succeeded:
+        # p2-149: unified manual review flow — the customer confirmation reply
+        # job is created first and the internal email is persisted behind the
+        # public-readback gate, so no email leaves before the reply is
+        # confirmed delivered on Zendesk.
+        try:
+            billing_ticket, reply_job, _manual_outcome = await async_to_thread(
+                _start_enablement_manual_review,
+                repository=ticket_repository,
+                account_case=billing_ticket,
+                ticket_id=ticket_id,
+                email_payload=dict(enablement_email_attempt["internal_email_to_send"]),
+                persona_assignment=persona_assignment,
+                processing_profile=str(billing_ticket.get("processing_profile") or "staging"),
+                trigger_message_created_at=timestamp,
+            )
+            internal_email_send_status = str(
+                billing_ticket.get("internal_email_send_status") or "not_applicable"
+            )
+            internal_email_send_reason = str(
+                billing_ticket.get("internal_email_send_reason") or ""
+            )
+            response_status = str(billing_ticket.get("automation_status") or response_status)
+            execution_reason_code = (
+                str(billing_ticket.get("execution_reason_code") or "") or execution_reason_code
+            )
+        except Exception as exc:
+            billing_ticket = await _record_account_reply_job_failure(
+                account_case=billing_ticket,
+                ticket_id=ticket_id,
+                handler="enablement",
+                detail=exc,
+            )
             response_status = str(
                 billing_ticket.get("automation_status") or "human_review_required"
             )
             execution_reason_code = str(
                 billing_ticket.get("execution_reason_code")
-                or reconciliation_reason_code(
-                    handler="enablement",
-                    phase="internal_email",
-                    detail=delivery_result.status or "failed",
-                )
+                or "account_reply_job_creation_failed"
             )
-        if delivery_result.succeeded:
-            confirmation_facts = _automation_reply_facts(
-                handler="enablement",
-                action="enablement",
-                missing_fields=[],
-                collected_fields=collected_fields,
-                submitted=True,
-                customer_name=customer_name,
-                account_scope=True,
-            )
-            try:
-                reply_job = await async_to_thread(
-                    _create_account_reply_job,
-                    ticket_id=ticket_id,
-                    trigger_message_created_at=timestamp,
-                    draft_content="",
-                    reply_facts=confirmation_facts,
-                    asked_field_keys=[],
-                    persona_assignment=persona_assignment,
-                    automation_delivery_key=str(
-                        (billing_ticket.get("internal_email_payload") or {}).get("delivery_key") or ""
-                    ),
-                )
-            except Exception as exc:
-                billing_ticket = await _record_account_reply_job_failure(
-                    account_case=billing_ticket,
-                    ticket_id=ticket_id,
-                    handler="enablement",
-                    detail=exc,
-                )
-                response_status = str(
-                    billing_ticket.get("automation_status") or "human_review_required"
-                )
-                execution_reason_code = str(
-                    billing_ticket.get("execution_reason_code")
-                    or "account_reply_job_creation_failed"
-                )
-            else:
-                billing_ticket.setdefault("internal_email_payload", {})[
-                    "customer_confirmation_queued"
-                ] = True
-        billing_ticket["updated_at"] = now_iso()
-        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        else:
+            billing_ticket["updated_at"] = now_iso()
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+        enablement_email_attempt = None
     if quota_email_attempt and quota_email_attempt.get("internal_email_to_send"):
         delivery_result, billing_ticket = await _run_account_internal_email_delivery(
             account_case=billing_ticket,
@@ -7457,8 +7439,44 @@ async def _run_account_rerun_post_commit_side_effects(
     effective_reply_kind = str(
         reply_kind or automation_context.get("rerun_reply_kind") or ""
     ).strip() or None
+    account_handler = str(account_case.get("automation_handler") or "").strip().lower()
     email_result: dict[str, Any] | None = None
-    if normalized_retry == "email" or (not normalized_retry and send_internal_email):
+    if account_handler == "enablement" and (
+        normalized_retry == "email" or (not normalized_retry and send_internal_email)
+    ):
+        # p2-149: enablement follows the manual review order on rerun too —
+        # the confirmation reply is scheduled first and the internal email is
+        # persisted behind the public-readback gate instead of being sent.
+        gated_payload = account_case.get("internal_email_payload")
+        gated_payload = gated_payload if isinstance(gated_payload, dict) else {}
+        gated_payload = ensure_account_delivery_key(
+            dict(gated_payload),
+            handler="enablement",
+            account_case_id=account_case_id,
+        )
+        gated_payload["customer_confirmation_queued"] = True
+        prepared = await _account_rerun_storage_call(
+            prepare_account_internal_email,
+            ticket_repository,
+            account_case_id=account_case_id,
+            payload=gated_payload,
+            target_status=DELIVERY_AWAITING_PUBLIC_REPLY,
+        )
+        if prepared:
+            account_case = dict(account_case)
+            account_case["internal_email_payload"] = dict(gated_payload)
+            account_case["internal_email_send_status"] = DELIVERY_AWAITING_PUBLIC_REPLY
+            account_case["internal_email_send_reason"] = "enablement_manual_review"
+            account_case["updated_at"] = now_iso()
+            await _account_rerun_storage_call(
+                ticket_repository.save_account_case,
+                account_case,
+            )
+        email_result = {
+            "status": DELIVERY_AWAITING_PUBLIC_REPLY if prepared else "failed",
+            "reason": "" if prepared else "enablement_manual_email_prepare_conflict",
+        }
+    elif normalized_retry == "email" or (not normalized_retry and send_internal_email):
         try:
             email_result = await _resume_account_rerun_side_effect(
                 account_case_id,
@@ -7474,7 +7492,13 @@ async def _run_account_rerun_post_commit_side_effects(
         "suspension_contact_confirmation",
     }
     if effective_reply_kind in {"submission_confirmation", "suspension_closing_reply"} and email_result is not None:
-        should_schedule_reply = email_result.get("status") in {"sent", "already_sent"}
+        # A gated enablement email still means the confirmation reply must go
+        # out — the reply IS the precondition for the later send.
+        should_schedule_reply = email_result.get("status") in {
+            "sent",
+            "already_sent",
+            DELIVERY_AWAITING_PUBLIC_REPLY,
+        }
 
     reply_result: dict[str, Any] | None = None
     if should_schedule_reply:
@@ -9012,7 +9036,8 @@ async def _run_account_full_reroute_job(
                     reply_result = side_effects.get("reply") or {}
                     if (
                         result.internal_email_to_send
-                        and email_result.get("status") not in {"sent", "already_sent"}
+                        and email_result.get("status")
+                        not in {"sent", "already_sent", DELIVERY_AWAITING_PUBLIC_REPLY}
                     ):
                         raise _AccountRerunSideEffectError(
                             "internal_email",
@@ -10857,40 +10882,77 @@ async def _process_account_customer_reply_impl(
 
     if should_send_internal_email and automation_attempt and automation_attempt.get("internal_email_to_send"):
         active_handler = str(billing_ticket.get("automation_handler") or "").strip()
-        send_attempt = {
-            "billing": _send_billing_internal_email_attempt,
-            "enablement": _send_enablement_internal_email_attempt,
-            "quota": _send_quota_internal_email_attempt,
-        }.get(active_handler)
-        if send_attempt is None:
-            raise HTTPException(status_code=409, detail="account case has no registered automation sender")
-        delivery_result, billing_ticket = await _run_account_internal_email_delivery(
-            account_case=billing_ticket,
-            ticket_id=client_ticket_id,
-            handler=active_handler,
-            payload=dict(automation_attempt["internal_email_to_send"]),
-            sender=send_attempt,
-        )
-        internal_email_send_status = delivery_result.status
-        internal_email_send_reason = delivery_result.reason
-        if delivery_result.succeeded:
-            assistant_reply_facts = _automation_reply_facts(
-                handler=active_handler or "billing",
-                action=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or active_handler),
-                missing_fields=[],
-                collected_fields=collected_fields,
-                submitted=True,
-                customer_name=resolve_customer_greeting_name(
-                    latest_customer_author_name=customer_name_hint,
-                    case_customer_name=billing_ticket.get("customer_name"),
-                ),
-                account_scope=True,
-            )
-            reply_ready = True
+        if active_handler == "enablement":
+            # p2-149: unified manual review flow for the comment path too.
+            try:
+                billing_ticket, reply_job, _manual_outcome = await async_to_thread(
+                    _start_enablement_manual_review,
+                    repository=ticket_repository,
+                    account_case=billing_ticket,
+                    ticket_id=client_ticket_id,
+                    email_payload=dict(automation_attempt["internal_email_to_send"]),
+                    persona_assignment=persona_assignment,
+                    processing_profile=str(billing_ticket.get("processing_profile") or "staging"),
+                    trigger_message_created_at=timestamp,
+                )
+                internal_email_send_status = str(
+                    billing_ticket.get("internal_email_send_status") or "not_applicable"
+                )
+                internal_email_send_reason = str(
+                    billing_ticket.get("internal_email_send_reason") or ""
+                )
+            except Exception as exc:
+                billing_ticket = await _record_account_reply_job_failure(
+                    account_case=billing_ticket,
+                    ticket_id=client_ticket_id,
+                    handler="enablement",
+                    detail=exc,
+                )
+                internal_email_send_status = str(
+                    billing_ticket.get("internal_email_send_status") or "failed"
+                )
+                internal_email_send_reason = str(
+                    billing_ticket.get("internal_email_send_reason") or ""
+                )
+                reply_job = None
+            automation_attempt = None
+            billing_ticket["updated_at"] = now_iso()
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
         else:
-            reply_ready = False
-        billing_ticket["updated_at"] = now_iso()
-        await async_to_thread(ticket_repository.save_account_case, billing_ticket)
+            send_attempt = {
+                "billing": _send_billing_internal_email_attempt,
+                "enablement": _send_enablement_internal_email_attempt,
+                "quota": _send_quota_internal_email_attempt,
+            }.get(active_handler)
+            if send_attempt is None:
+                raise HTTPException(status_code=409, detail="account case has no registered automation sender")
+            delivery_result, billing_ticket = await _run_account_internal_email_delivery(
+                account_case=billing_ticket,
+                ticket_id=client_ticket_id,
+                handler=active_handler,
+                payload=dict(automation_attempt["internal_email_to_send"]),
+                sender=send_attempt,
+            )
+            internal_email_send_status = delivery_result.status
+            internal_email_send_reason = delivery_result.reason
+            if delivery_result.succeeded:
+                assistant_reply_facts = _automation_reply_facts(
+                    handler=active_handler or "billing",
+                    action=str(billing_ticket.get("execution_action") or billing_ticket.get("route") or active_handler),
+                    missing_fields=[],
+                    collected_fields=collected_fields,
+                    submitted=True,
+                    customer_name=resolve_customer_greeting_name(
+                        latest_customer_author_name=customer_name_hint,
+                        case_customer_name=billing_ticket.get("customer_name"),
+                    ),
+                    account_scope=True,
+                )
+                reply_ready = True
+            else:
+                reply_ready = False
+            billing_ticket["updated_at"] = now_iso()
+            await async_to_thread(ticket_repository.save_account_case, billing_ticket)
 
     reply_job = None
     if automation_attempt is not None and (requested_field_keys or reply_ready):

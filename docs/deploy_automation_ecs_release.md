@@ -283,52 +283,40 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。
 
-## Enablement Archer Worker 发布门禁
+## Enablement 人工开通流程发布门禁（p2-149 起）
 
-包含 `p2-134` 的 Worker 通过 `ARCHER_OAUTH_COOKIE` secret 直连 Archer：
+`p2-149` 起 Enablement 回退为人工开通流程，Worker **不再持有任何 Archer 凭证**：
+task definition 不再注入 `ARCHER_OAUTH_COOKIE`，Provider 探针不再检查 Archer，
+`archer-oauth-cookie` SSM 参数仅作为历史凭证保留（不删除、不再消费）。
+
+目标流程（回复在先、邮件在后）：
 
 ```text
-secret ARCHER_OAUTH_COOKIE <- SSM SecureString /supportportal/production/archer-oauth-cookie
+信息齐全（本地 32 位 hex 格式校验）
+ → 客户收到 submission_confirmation 回复（"已收到、将与内部团队 review、最多 24 小时、周一至周五"）
+ → 公开回复经 Zendesk readback 确认 delivered 后，内部开通邮件才被释放并发送（一次）
+ → 人工在 Archer 开通后直接回复该邮件 enabled（仅限本次邮件 To/Cc 个人收件人）
+ → AI 生成 enablement_completed_and_close 最终公开回复
+ → 公开回复读回确认后 Zendesk solved + 本地关闭
 ```
 
-SSM 参数值是一整串 SSO cookie 头：`oauth2-token=<值>; oauth2-token.sig=<值>`。
-该 cookie 对来自 `oauth.agoralab.co`（有浏览器者登录 `archer.agora.io` 后在该域下导出），
-是唯一需要人工维护的凭证。Archer API 使用的 `archer_token_jwt_202003` JWT（24 小时）
-由 Worker 自动续期：`GET oauth/authorize`（带 SSO cookie）→ 302 `handleSSO?code=` →
-Set-Cookie 新 JWT；全程纯 HTTP，无需 Pilot 二进制、pilot-creds EFS 卷或 pilot-server。
-p2-139 起镜像不再安装 Pilot 二进制（下载源无签名且轮换二进制，运行时也不使用）。
+机制要点：
 
-SSO 会话失效的特征：authorize 不再返回 302（返回登录页 200）→ Worker 按既有
-`enable_failed` 契约降级（escalate + 兜底内部邮件，工单转人工 queue）。恢复方式：
-人工重新登录 Archer 后更新 SSM 参数并 force new deployment。cookie 值不得进入
-ECS command override、task definition 明文、环境变量清单、日志、shell history、
-仓库或发布记录。
+- 内部邮件先以 `awaiting_public_reply` 状态持久化（prepare 协议），claim 协议
+  在该状态下不可领取；Zendesk 公开回复 readback 事务内条件释放为 `pending`，
+  Worker 周期中的有界兜底步覆盖钩子丢失与进程重启。
+- 回信处理执行三重校验：发件人精确匹配本次邮件 To/Cc 快照（不扩展组员）、
+  Case 处于等待人工确认态（`sent`/`delivery_unknown`）、完成识别只看未引用正文段；
+  任一不过即终止自动处理并留 `enablement_reply_processing_stopped` 事件。
+- 等待人工开通是正常流程状态，不标记自动化失败、不提前关 Case。
+- 首个新工单验收顺序（全部使用全新工单）：
+  1. 非法格式 App ID：零网络调用，公开回复要求正确的 32 位 App ID，Case 保持 open。
+  2. 有效 App ID：客户确认回复公开送达 **早于** 内部邮件发送时间；内部收件人收到
+     申请邮件；人工回复 `enabled` 后 Persona 发布最终公开回复，Zendesk solved。
+  3. 反例：非 To/Cc 收件人、引用段中的 enabled、等待前回信均不得触发完成；
+     重复 enabled 邮件只产生一次最终回复。
 
-正式发布命令会只读回读当前 Production Worker task definition，基于当前最新
-revision 生成新 revision，完整保留既有 environment、secret、Graph EFS
-volume/mount、role、CPU/memory/network/logging 配置，并保存现有 revision 作为
-rollback 目标。Worker 中如出现 Pilot 环境、pilot-creds volume/mount，或缺少
-Suspension 收件人 secret，发布会在 register 前 fail closed。
-
-首个新工单验收顺序（同时充当 ECS 侧网络/认证探针，全部使用全新工单）：
-
-1. 非法格式 App ID：只触发只读 GET（check-simple-vendor 前的本地校验直接拒绝，
-   零网络调用），公开回复要求正确的 32 位 App ID，Case 保持 open。
-2. 查无项目：只触发只读 GET；公开回复要求核对/重发 App ID，Case 保持 open。
-3. 有效 App ID：Archer 写后读回为 `status=1, region=2, maxSubscribeLoad=50`；Persona
-   发布公开成功回复，Zendesk solved，execution completed，且没有 Enablement 内部邮件。
-
-业务验收只使用全新工单：
-
-1. 有效 App ID：Archer 写后读回为 `status=1, region=2, maxSubscribeLoad=50`；Persona
-   发布公开成功回复，Zendesk solved，execution completed，且没有 Enablement 内部邮件。
-2. 非法格式：公开回复要求正确的 32 位 App ID，Case 保持 open；客户提交更正值后
-   使用新值重新执行。
-3. 查无项目：公开回复要求核对/重发 App ID，Case 保持 open；客户提交更正值后使用
-   新值重新执行。
-
-失败路径仅在自然发生时观察，不得人为破坏 Archer 凭证。生产验收不得重放或
-修改历史 Case。
+失败路径仅在自然发生时观察。生产验收不得重放或修改历史 Case。
 
 ## Schema Bootstrap
 

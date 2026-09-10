@@ -56,7 +56,7 @@
 - Summary Agent 会在升级工程师工单前生成结构化上下文摘要包。
 
 ### 未完成
-- Enablement 的 Media Relay 请求会通过 Archer 自动开启跨频道连麦，并根据执行结果回复客户或转 Human Review。
+- Enablement 的 Media Relay 请求走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）。
 - 对话支持上传图片和 txt/log/md 文件。
 - 对话支持流式输出。
 

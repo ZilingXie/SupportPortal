@@ -2669,7 +2669,17 @@ class TicketRepository(Protocol):
             "pending",
             "retry",
             "failed",
+            "awaiting_public_reply",
         ),
+        target_status: str = "pending",
+    ) -> bool:
+        ...
+
+    def release_account_internal_email_after_public_reply(
+        self,
+        account_case_id: str,
+        *,
+        released_at: str,
     ) -> bool:
         ...
 
@@ -3022,10 +3032,13 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             "pending",
             "retry",
             "failed",
+            "awaiting_public_reply",
         ),
+        target_status: str = "pending",
     ) -> bool:
         normalized_id = str(account_case_id or "").strip()
         normalized_key = str(delivery_key or "").strip()
+        normalized_target = str(target_status or "").strip() or "pending"
         if not normalized_id or not normalized_key:
             return False
         for billing_ticket_id, current in self._billing_tickets.items():
@@ -3047,12 +3060,58 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
                 return False
             updated = copy.deepcopy(current)
             updated["internal_email_payload"] = copy.deepcopy(payload)
-            updated["internal_email_send_status"] = "pending"
+            updated["internal_email_send_status"] = normalized_target
             updated["internal_email_send_reason"] = "delivery_prepared"
             updated["updated_at"] = prepared_at
             self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
             return True
         return False
+
+    def release_account_internal_email_after_public_reply(
+        self,
+        account_case_id: str,
+        *,
+        released_at: str,
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        if not normalized_id:
+            return False
+        for billing_ticket_id, current in self._billing_tickets.items():
+            current_id = str(
+                current.get("account_case_id") or current.get("billing_ticket_id") or ""
+            ).strip()
+            if current_id != normalized_id:
+                continue
+            if str(current.get("internal_email_send_status") or "").strip() != "awaiting_public_reply":
+                return False
+            updated = copy.deepcopy(current)
+            updated["internal_email_send_status"] = "pending"
+            updated["internal_email_send_reason"] = "public_reply_confirmed"
+            updated["updated_at"] = released_at
+            self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
+            return True
+        return False
+
+    def list_account_zendesk_comment_deliveries_for_case(
+        self,
+        account_case_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_id = str(account_case_id or "").strip()
+        if not normalized_id:
+            return []
+        with self._assignment_lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._account_zendesk_comment_deliveries.values()
+                if str(row.get("account_case_id") or "").strip() == normalized_id
+            ]
+        rows.sort(
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("message_id") or ""),
+            )
+        )
+        return rows
 
     def claim_account_internal_email_delivery(
         self,
@@ -6583,6 +6642,12 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
                             and str(slack_delivery.get("status") or "") == "waiting_zendesk"
                         ):
                             slack_delivery.update(status="queued", updated_at=recorded_at)
+                    # Mirror of the Postgres readback hook: release the manual
+                    # enablement review email gate once the public reply is
+                    # confirmed delivered (idempotent via status precondition).
+                    self.release_account_internal_email_after_public_reply(
+                        normalized_case_id, released_at=recorded_at
+                    )
             if (
                 close_local_ticket
                 and normalized_status == "added"
@@ -7851,10 +7916,13 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             "pending",
             "retry",
             "failed",
+            "awaiting_public_reply",
         ),
+        target_status: str = "pending",
     ) -> bool:
         normalized_id = str(account_case_id or "").strip()
         normalized_key = str(delivery_key or "").strip()
+        normalized_target = str(target_status or "").strip() or "pending"
         if not normalized_id or not normalized_key:
             return False
         prepared_payload = copy.deepcopy(payload)
@@ -7866,7 +7934,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                         """
                         UPDATE {}
                         SET internal_email_payload = %s,
-                            internal_email_send_status = 'pending',
+                            internal_email_send_status = %s,
                             internal_email_send_reason = 'delivery_prepared',
                             updated_at = %s
                         WHERE (billing_ticket_id = %s OR account_case_id = %s)
@@ -7876,6 +7944,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                     ).format(self._table("support_account_cases")),
                     (
                         Json(prepared_payload),
+                        normalized_target,
                         prepared_at,
                         normalized_id,
                         normalized_id,
@@ -7887,6 +7956,39 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
 
         return self._run_with_connection_retry(
             "prepare_account_internal_email_delivery",
+            _operation,
+        )
+
+    def release_account_internal_email_after_public_reply(
+        self,
+        account_case_id: str,
+        *,
+        released_at: str,
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        if not normalized_id:
+            return False
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET internal_email_send_status = 'pending',
+                            internal_email_send_reason = 'public_reply_confirmed',
+                            updated_at = %s
+                        WHERE (billing_ticket_id = %s OR account_case_id = %s)
+                          AND automation_handler = 'enablement'
+                          AND internal_email_send_status = 'awaiting_public_reply'
+                        """
+                    ).format(self._table("support_account_cases")),
+                    (released_at, normalized_id, normalized_id),
+                )
+                return cur.rowcount == 1
+
+        return self._run_with_connection_retry(
+            "release_account_internal_email_after_public_reply",
             _operation,
         )
 
@@ -8262,6 +8364,36 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
 
         return self._run_with_connection_retry(
             "list_account_zendesk_comment_deliveries", _operation
+        )
+
+    def list_account_zendesk_comment_deliveries_for_case(
+        self,
+        account_case_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_id = str(account_case_id or "").strip()
+        if not normalized_id:
+            return []
+        columns = ", ".join(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + columns + " FROM {} "
+                        "WHERE account_case_id = %s "
+                        "ORDER BY created_at, message_id LIMIT 100"
+                    ).format(self._table("support_account_zendesk_comment_deliveries")),
+                    (normalized_id,),
+                )
+                return [
+                    record
+                    for row in cur.fetchall()
+                    for record in [_account_zendesk_comment_delivery_from_row(row)]
+                    if record is not None
+                ]
+
+        return self._run_with_connection_retry(
+            "list_account_zendesk_comment_deliveries_for_case", _operation
         )
 
     def complete_account_zendesk_comment_delivery(
@@ -14442,6 +14574,20 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                             "WHERE account_case_id=%s AND message_id=%s AND status='waiting_zendesk'"
                         ).format(self._table("support_account_slack_deliveries")),
                         (recorded_at, normalized_case_id, normalized_message_id),
+                    )
+                    # Manual enablement review gate: the customer-facing
+                    # confirmation reply is now confirmed delivered, so the
+                    # gated internal email becomes claimable in the same
+                    # transaction. Idempotent by the status precondition.
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET internal_email_send_status='pending', "
+                            "internal_email_send_reason='public_reply_confirmed', updated_at=%s "
+                            "WHERE (billing_ticket_id=%s OR account_case_id=%s) "
+                            "AND automation_handler='enablement' "
+                            "AND internal_email_send_status='awaiting_public_reply'"
+                        ).format(self._table("support_account_cases")),
+                        (recorded_at, normalized_case_id, normalized_case_id),
                     )
                 if (
                     close_local_ticket
