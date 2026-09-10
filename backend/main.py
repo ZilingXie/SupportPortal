@@ -7510,6 +7510,38 @@ async def _run_account_rerun_post_commit_side_effects(
             )
         except Exception as exc:
             raise _AccountRerunSideEffectError("reply", exc) from exc
+    if (
+        account_handler == "enablement"
+        and isinstance(reply_result, dict)
+        and isinstance(reply_result.get("reply_job"), dict)
+        and str((reply_result.get("reply_job") or {}).get("job_id") or "").strip()
+    ):
+        # Persist the manual workflow context so the readback release path can
+        # bind the gate to THIS rerun's confirmation reply job (fail-closed
+        # without the linkage evidence).
+        reply_job_id = str(reply_result["reply_job"]["job_id"]).strip()
+        context_case = await _account_rerun_storage_call(
+            ticket_repository.get_account_case,
+            account_case_id,
+        )
+        if isinstance(context_case, dict):
+            gated_payload = context_case.get("internal_email_payload")
+            gated_payload = gated_payload if isinstance(gated_payload, dict) else {}
+            context = dict(context_case.get("automation_context") or {})
+            context["enablement_manual_workflow"] = {
+                "version": 1,
+                "state": "awaiting_public_reply",
+                "reply_job_id": reply_job_id,
+                "delivery_key": str(gated_payload.get("delivery_key") or "").strip(),
+                "prepared_at": str(context_case.get("updated_at") or "") or now_iso(),
+                "updated_at": now_iso(),
+            }
+            context_case["automation_context"] = context
+            context_case["updated_at"] = now_iso()
+            await _account_rerun_storage_call(
+                ticket_repository.save_account_case,
+                context_case,
+            )
     return {"email": email_result, "reply": reply_result}
 
 
@@ -8983,10 +9015,16 @@ async def _run_account_full_reroute_job(
                     }
                     result.route_execution["internal_email_recipient"] = recipient_audit
                     updated_case["internal_email_payload"] = dict(rerun_email_payload)
-                    updated_case["internal_email_send_status"] = "pending"
-                    updated_case["internal_email_send_reason"] = (
-                        "full_rerun_requested" if is_full_rerun else "rerun_requested"
-                    )
+                    if email_handler == "enablement":
+                        # First durable write of a manual enablement rerun is
+                        # already the unclaimable gate (p2-149 review fix).
+                        updated_case["internal_email_send_status"] = "awaiting_public_reply"
+                        updated_case["internal_email_send_reason"] = "enablement_manual_review"
+                    else:
+                        updated_case["internal_email_send_status"] = "pending"
+                        updated_case["internal_email_send_reason"] = (
+                            "full_rerun_requested" if is_full_rerun else "rerun_requested"
+                        )
                     updated_case["automation_context"] = {
                         **dict(updated_case.get("automation_context") or {}),
                         "internal_email_recipient": recipient_audit,

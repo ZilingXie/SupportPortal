@@ -2323,6 +2323,15 @@ class TicketRepository(Protocol):
         audit_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def save_account_reply_job(self, job: dict[str, Any]) -> dict[str, Any]: ...
+
+    def claim_enablement_manual_completion(
+        self,
+        account_case_id: str,
+        *,
+        job: dict[str, Any],
+        completed_at: str,
+    ) -> bool:
+        ...
     def update_claimed_account_reply_job(
         self,
         job: dict[str, Any],
@@ -2949,6 +2958,15 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]]:
         ...
 
+    def list_enablement_cases_by_email_status(
+        self,
+        statuses: tuple[str, ...],
+        *,
+        processing_profile: str = "staging",
+        limit: int = 25,
+    ) -> list[dict[str, Any]]:
+        ...
+
     def count_billing_tickets(
         self,
         review_status: str | None = None,
@@ -3073,6 +3091,7 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
         *,
         released_at: str,
     ) -> bool:
+        """Binding-aware InMemory twin of the Postgres release method."""
         normalized_id = str(account_case_id or "").strip()
         if not normalized_id:
             return False
@@ -3084,9 +3103,59 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
                 continue
             if str(current.get("internal_email_send_status") or "").strip() != "awaiting_public_reply":
                 return False
+            if str(current.get("automation_handler") or "").strip() != "enablement":
+                return False
+            workflow = (current.get("automation_context") or {}).get(
+                "enablement_manual_workflow"
+            )
+            reply_job_id = (
+                str(workflow.get("reply_job_id") or "").strip()
+                if isinstance(workflow, dict)
+                else ""
+            )
+            client_ticket_id = str(current.get("client_ticket_id") or "").strip()
+            if not reply_job_id or not client_ticket_id:
+                return False
+            ticket = self._tickets.get(client_ticket_id)
+            confirmation_message_ids = set()
+            if isinstance(ticket, dict) and isinstance(ticket.get("messages"), list):
+                for message in ticket["messages"]:
+                    if not isinstance(message, dict):
+                        continue
+                    meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+                    if str(meta.get("account_reply_job_id") or "") == reply_job_id:
+                        for candidate in (
+                            message.get("message_id"),
+                            message.get("id"),
+                        ):
+                            if str(candidate or "").strip():
+                                confirmation_message_ids.add(str(candidate).strip())
+            if not confirmation_message_ids:
+                return False
+            delivered = False
+            with self._assignment_lock:
+                for delivery in self._account_zendesk_comment_deliveries.values():
+                    if str(delivery.get("account_case_id") or "").strip() != normalized_id:
+                        continue
+                    if not bool(delivery.get("is_public")):
+                        continue
+                    if str(delivery.get("status") or "").strip().lower() != "delivered":
+                        continue
+                    if str(delivery.get("message_id") or "").strip() in confirmation_message_ids:
+                        delivered = True
+                        break
+            if not delivered:
+                return False
             updated = copy.deepcopy(current)
             updated["internal_email_send_status"] = "pending"
             updated["internal_email_send_reason"] = "public_reply_confirmed"
+            context = dict(updated.get("automation_context") or {})
+            manual_workflow = context.get("enablement_manual_workflow")
+            if isinstance(manual_workflow, dict):
+                manual_workflow = dict(manual_workflow)
+                manual_workflow.update({"state": "email_released", "updated_at": released_at})
+                context["enablement_manual_workflow"] = manual_workflow
+                updated["automation_context"] = context
             updated["updated_at"] = released_at
             self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
             return True
@@ -4501,6 +4570,61 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
         with self._assignment_lock:
             self._account_reply_jobs[str(saved["job_id"])] = saved
         return copy.deepcopy(saved)
+
+    def claim_enablement_manual_completion(
+        self,
+        account_case_id: str,
+        *,
+        job: dict[str, Any],
+        completed_at: str,
+    ) -> bool:
+        """Atomically mark the manual enablement application completed and
+        insert its one completion reply job. Returns False when the case is
+        not awaiting confirmation or a completion was already claimed."""
+        normalized_id = str(account_case_id or "").strip()
+        job_id = str((job or {}).get("job_id") or "").strip()
+        if not normalized_id or not job_id:
+            return False
+        with self._assignment_lock:
+            for billing_ticket_id, current in self._billing_tickets.items():
+                current_id = str(
+                    current.get("account_case_id")
+                    or current.get("billing_ticket_id")
+                    or ""
+                ).strip()
+                if current_id != normalized_id:
+                    continue
+                if str(current.get("automation_handler") or "").strip() != "enablement":
+                    return False
+                if str(current.get("internal_email_send_status") or "").strip() not in {
+                    "sent",
+                    "delivery_unknown",
+                }:
+                    return False
+                workflow = (current.get("automation_context") or {}).get(
+                    "enablement_manual_workflow"
+                )
+                if (
+                    isinstance(workflow, dict)
+                    and str(workflow.get("state") or "").strip() == "completed"
+                ):
+                    return False
+                updated = copy.deepcopy(current)
+                context = dict(updated.get("automation_context") or {})
+                if isinstance(workflow, dict):
+                    completed_workflow = dict(workflow)
+                    completed_workflow.update({"state": "completed", "updated_at": completed_at})
+                    context["enablement_manual_workflow"] = completed_workflow
+                updated["automation_context"] = context
+                updated["updated_at"] = completed_at
+                self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
+                saved_job = copy.deepcopy(dict(job))
+                saved_job["created_at"] = saved_job.get("created_at") or completed_at
+                saved_job["updated_at"] = saved_job.get("updated_at") or completed_at
+                saved_job["attempt_count"] = int(saved_job.get("attempt_count") or 0)
+                self._account_reply_jobs[job_id] = saved_job
+                return True
+        return False
 
     def update_claimed_account_reply_job(
         self,
@@ -7495,6 +7619,34 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
                 return copy.deepcopy(ticket)
         return None
 
+    def list_enablement_cases_by_email_status(
+        self,
+        statuses: tuple[str, ...],
+        *,
+        processing_profile: str = "staging",
+        limit: int = 25,
+    ) -> list[dict[str, Any]]:
+        normalized_statuses = {
+            str(status or "").strip() for status in statuses if str(status or "").strip()
+        }
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
+        if not normalized_statuses:
+            return []
+        safe_limit = _safe_positive_int(limit, 25)
+        with self._assignment_lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._billing_tickets.values()
+                if str(row.get("automation_handler") or "").strip() == "enablement"
+                and str(row.get("internal_email_send_status") or "").strip() in normalized_statuses
+                and str(row.get("processing_profile") or "staging").strip().lower()
+                == normalized_profile
+            ]
+        rows.sort(key=lambda row: str(row.get("updated_at") or ""))
+        return rows[:safe_limit]
+
     def list_billing_tickets(
         self,
         limit: int = 30,
@@ -7512,8 +7664,7 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             raise ValueError("processing_profile must be staging, preproduction, or production")
         items = sorted(
             self._billing_tickets.values(),
-            key=lambda item: str(item.get("created_at") or ""),
-            reverse=True,
+            key=lambda item: str(item.get("created_at") or ""),            reverse=True,
         )
         items = [
             item
@@ -7965,6 +8116,13 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         *,
         released_at: str,
     ) -> bool:
+        """Release the manual enablement email gate, bound to THIS application.
+
+        Fail-closed: only releases when the case is gated, carries a
+        ``enablement_manual_workflow.reply_job_id``, and the Zendesk ledger
+        confirms that exact submission_confirmation job's assistant message as
+        a delivered public reply. Anything else keeps the gate.
+        """
         normalized_id = str(account_case_id or "").strip()
         if not normalized_id:
             return False
@@ -7973,10 +8131,58 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
+                        "SELECT client_ticket_id, internal_email_send_status, "
+                        "automation_context FROM {} "
+                        "WHERE (billing_ticket_id = %s OR account_case_id = %s) "
+                        "AND automation_handler = 'enablement' FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_id, normalized_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return False
+                client_ticket_id, status, context = row
+                if str(status or "").strip() != "awaiting_public_reply":
+                    return False
+                workflow = (
+                    context.get("enablement_manual_workflow")
+                    if isinstance(context, dict)
+                    else None
+                )
+                reply_job_id = (
+                    str(workflow.get("reply_job_id") or "").strip()
+                    if isinstance(workflow, dict)
+                    else ""
+                )
+                if not reply_job_id or not str(client_ticket_id or "").strip():
+                    return False
+                cur.execute(
+                    sql.SQL(
+                        "SELECT 1 FROM {} d WHERE d.account_case_id = %s "
+                        "AND d.is_public = TRUE AND d.status = 'delivered' "
+                        "AND EXISTS ("
+                        "  SELECT 1 FROM {} m WHERE m.id = d.message_id "
+                        "  AND m.ticket_id = %s AND m.role = 'assistant' "
+                        "  AND COALESCE(m.meta->>'account_reply_job_id','') = %s"
+                        ") LIMIT 1"
+                    ).format(
+                        self._table("support_account_zendesk_comment_deliveries"),
+                        self._table("support_ticket_messages"),
+                    ),
+                    (normalized_id, str(client_ticket_id).strip(), reply_job_id),
+                )
+                if cur.fetchone() is None:
+                    return False
+                cur.execute(
+                    sql.SQL(
                         """
                         UPDATE {}
                         SET internal_email_send_status = 'pending',
                             internal_email_send_reason = 'public_reply_confirmed',
+                            automation_context = jsonb_set(
+                                COALESCE(automation_context, '{{}}'::jsonb),
+                                '{{enablement_manual_workflow,state}}',
+                                '"email_released"'::jsonb, true),
                             updated_at = %s
                         WHERE (billing_ticket_id = %s OR account_case_id = %s)
                           AND automation_handler = 'enablement'
@@ -14575,19 +14781,45 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                         ).format(self._table("support_account_slack_deliveries")),
                         (recorded_at, normalized_case_id, normalized_message_id),
                     )
-                    # Manual enablement review gate: the customer-facing
-                    # confirmation reply is now confirmed delivered, so the
-                    # gated internal email becomes claimable in the same
-                    # transaction. Idempotent by the status precondition.
+                    # Manual enablement review gate: release ONLY when this
+                    # delivered public message belongs to the current
+                    # application's submission_confirmation reply job
+                    # (assistant message meta carries the job id). Any other
+                    # public reply keeps the gate. Idempotent by the status
+                    # precondition.
                     cur.execute(
                         sql.SQL(
                             "UPDATE {} SET internal_email_send_status='pending', "
-                            "internal_email_send_reason='public_reply_confirmed', updated_at=%s "
+                            "internal_email_send_reason='public_reply_confirmed', "
+                            "automation_context = jsonb_set("
+                            "  COALESCE(automation_context, '{{}}'::jsonb), "
+                            "  '{{enablement_manual_workflow,state}}', '\"email_released\"'::jsonb, true), "
+                            "updated_at=%s "
                             "WHERE (billing_ticket_id=%s OR account_case_id=%s) "
                             "AND automation_handler='enablement' "
-                            "AND internal_email_send_status='awaiting_public_reply'"
-                        ).format(self._table("support_account_cases")),
-                        (recorded_at, normalized_case_id, normalized_case_id),
+                            "AND internal_email_send_status='awaiting_public_reply' "
+                            "AND COALESCE(automation_context->'enablement_manual_workflow'"
+                            "->>'reply_job_id','') <> '' "
+                            "AND EXISTS ("
+                            "  SELECT 1 FROM {} m "
+                            "  WHERE m.id = %s AND m.ticket_id = %s "
+                            "  AND m.role = 'assistant' "
+                            "  AND COALESCE(m.meta->>'account_reply_job_id','') = "
+                            "      COALESCE({}.automation_context"
+                            "->'enablement_manual_workflow'->>'reply_job_id','')"
+                            ")"
+                        ).format(
+                            self._table("support_account_cases"),
+                            self._table("support_ticket_messages"),
+                            self._table("support_account_cases"),
+                        ),
+                        (
+                            recorded_at,
+                            normalized_case_id,
+                            normalized_case_id,
+                            normalized_message_id,
+                            normalized_ticket_id,
+                        ),
                     )
                 if (
                     close_local_ticket
@@ -16509,6 +16741,51 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
 
         return self._run_with_connection_retry("list_billing_tickets", _operation)
 
+    def list_enablement_cases_by_email_status(
+        self,
+        statuses: tuple[str, ...],
+        *,
+        processing_profile: str = "staging",
+        limit: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Filtered, starvation-free listing for the manual review drain.
+
+        Filters handler + internal email status in SQL BEFORE the LIMIT and
+        orders oldest-updated first so stale gated/released todos always make
+        progress even when newer unrelated cases exist.
+        """
+        normalized_statuses = tuple(
+            dict.fromkeys(
+                str(status or "").strip() for status in statuses if str(status or "").strip()
+            )
+        )
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
+        if not normalized_statuses:
+            return []
+        safe_limit = _safe_positive_int(limit, 25)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT bt.* FROM {} bt "
+                        "WHERE bt.automation_handler = 'enablement' "
+                        "AND bt.internal_email_send_status = ANY(%s) "
+                        "AND bt.processing_profile = %s "
+                        "ORDER BY bt.updated_at ASC "
+                        "LIMIT %s"
+                    ).format(self._table("support_account_cases")),
+                    (list(normalized_statuses), normalized_profile, safe_limit),
+                )
+                col_names = [desc[0] for desc in cur.description]
+                return [dict(zip(col_names, row)) for row in cur.fetchall()]
+
+        return self._run_with_connection_retry(
+            "list_enablement_cases_by_email_status", _operation
+        )
+
     def count_billing_tickets(
         self,
         review_status: str | None = None,
@@ -17744,6 +18021,88 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             return copy.deepcopy({**saved, "payload": payload})
 
         return self._run_with_connection_retry("save_account_reply_job", _operation)
+
+    def claim_enablement_manual_completion(
+        self,
+        account_case_id: str,
+        *,
+        job: dict[str, Any],
+        completed_at: str,
+    ) -> bool:
+        """Atomically claim "application completed" and insert the completion
+        reply job (PostgreSQL twin). Fail-closed: only succeeds when the case
+        is an enablement case awaiting human confirmation (sent or
+        delivery_unknown) whose manual workflow is not already completed."""
+        normalized_id = str(account_case_id or "").strip()
+        job_id = str((job or {}).get("job_id") or "").strip()
+        if not normalized_id or not job_id:
+            return False
+        saved = copy.deepcopy(dict(job))
+        saved["created_at"] = saved.get("created_at") or completed_at
+        saved["updated_at"] = saved.get("updated_at") or completed_at
+        saved["attempt_count"] = int(saved.get("attempt_count") or 0)
+        payload = dict(saved.get("payload") or {})
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT internal_email_send_status, automation_context FROM {} "
+                        "WHERE (billing_ticket_id = %s OR account_case_id = %s) "
+                        "AND automation_handler = 'enablement' FOR UPDATE"
+                    ).format(self._table("support_account_cases")),
+                    (normalized_id, normalized_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return False
+                status, context = row
+                if str(status or "").strip() not in {"sent", "delivery_unknown"}:
+                    return False
+                workflow = (
+                    context.get("enablement_manual_workflow")
+                    if isinstance(context, dict)
+                    else None
+                )
+                if (
+                    isinstance(workflow, dict)
+                    and str(workflow.get("state") or "").strip() == "completed"
+                ):
+                    return False
+                updated_context = dict(context) if isinstance(context, dict) else {}
+                if isinstance(workflow, dict):
+                    completed_workflow = dict(workflow)
+                    completed_workflow.update({"state": "completed", "updated_at": completed_at})
+                    updated_context["enablement_manual_workflow"] = completed_workflow
+                cur.execute(
+                    sql.SQL(
+                        "UPDATE {} SET automation_context=%s::jsonb, updated_at=%s "
+                        "WHERE (billing_ticket_id = %s OR account_case_id = %s)"
+                    ).format(self._table("support_account_cases")),
+                    (Json(updated_context), completed_at, normalized_id, normalized_id),
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            job_id, ticket_id, trigger_message_created_at, status, scheduled_for,
+                            payload, attempt_count, claimed_at, published_at, created_at, updated_at
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (job_id) DO NOTHING
+                        """
+                    ).format(self._table("support_account_reply_jobs")),
+                    (
+                        saved["job_id"], saved["ticket_id"], saved["trigger_message_created_at"],
+                        saved["status"], saved["scheduled_for"], Json(payload),
+                        saved["attempt_count"], saved.get("claimed_at"),
+                        saved.get("published_at"), saved["created_at"], saved["updated_at"],
+                    ),
+                )
+                return True
+
+        return self._run_with_connection_retry(
+            "claim_enablement_manual_completion", _operation
+        )
 
     def update_claimed_account_reply_job(
         self,

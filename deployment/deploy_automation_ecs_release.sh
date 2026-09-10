@@ -1401,6 +1401,15 @@ main() {
   unset suspension_recipients_json
   SUSPENSION_RECIPIENTS_STATUS="passed"
 
+  # p2-149: Enablement runs the manual review flow — the rendered Worker must
+  # not carry the retired Archer credential into the new revision.
+  if jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
+      "${TEMP_DIR}/worker.register.json" >/dev/null; then
+    fail "Rendered Worker task definition still references ARCHER_OAUTH_COOKIE"
+    return 1
+  fi
+  RETIRED_ARCHER_SECRET_STATUS="passed"
+
   collect_secret_metadata
   write_preflight_context
   if [[ "${CHECK_ONLY}" = "1" ]]; then

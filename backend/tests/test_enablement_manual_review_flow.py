@@ -66,6 +66,14 @@ APP_ID = "0123456789abcdef0123456789abcdef"
 SENDER = "reviewer@example.com"
 
 
+def _ensure_ticket(repository, ticket_id: str) -> dict:
+    ticket = repository.get_ticket(ticket_id)
+    if not isinstance(ticket, dict):
+        ticket = {"ticket_id": ticket_id, "status": "open", "messages": []}
+        repository.save_ticket(ticket)
+    return ticket
+
+
 def _base_case(*, ticket_id: str = "TK-MANUAL-1", app_id: str | None = APP_ID) -> dict:
     collected = {"requested_feature": "media_relay", "requested_feature_label": "Media Relay"}
     if app_id:
@@ -162,6 +170,19 @@ class ManualReviewWorkflowTests(unittest.TestCase):
         repository.save_account_case(_base_case())
         case, _job, _outcome = self._run(repository, _base_case(), _email_payload())
         account_case_id = case["account_case_id"]
+        confirmation_job_id = str(
+            case["automation_context"]["enablement_manual_workflow"]["reply_job_id"]
+        )
+        ticket = _ensure_ticket(repository, case["client_ticket_id"])
+        ticket.setdefault("messages", []).append(
+            {
+                "role": "assistant",
+                "content": "We received your request.",
+                "message_id": "assistant-msg-1",
+                "meta": {"account_reply_job_id": confirmation_job_id},
+            }
+        )
+        repository.save_ticket(ticket)
         repository.create_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
             message_id="assistant-msg-1",
@@ -188,6 +209,54 @@ class ManualReviewWorkflowTests(unittest.TestCase):
         self.assertEqual(refreshed["internal_email_send_status"], "pending")
         self.assertEqual(
             refreshed["internal_email_send_reason"], "public_reply_confirmed"
+        )
+        self.assertEqual(
+            refreshed["automation_context"]["enablement_manual_workflow"]["state"],
+            "email_released",
+        )
+
+    def test_unrelated_public_reply_does_not_release_the_gate(self):
+        repository = InMemoryTicketRepository()
+        repository.save_account_case(_base_case())
+        case, _job, _outcome = self._run(repository, _base_case(), _email_payload())
+        account_case_id = case["account_case_id"]
+        # A public reply that belongs to a DIFFERENT job (e.g. an older
+        # follow-up) must not release the current application's gate.
+        ticket = _ensure_ticket(repository, case["client_ticket_id"])
+        ticket.setdefault("messages", []).append(
+            {
+                "role": "assistant",
+                "content": "Unrelated update.",
+                "message_id": "assistant-msg-other",
+                "meta": {"account_reply_job_id": "job-some-other"},
+            }
+        )
+        repository.save_ticket(ticket)
+        repository.create_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id="assistant-msg-other",
+            zendesk_ticket_id=case["client_ticket_id"],
+            idempotency_key=f"zd:{account_case_id}:assistant-msg-other",
+            created_at="2026-09-10T01:01:30Z",
+            is_public=True,
+            target_status=None,
+        )
+        repository.begin_idempotent_request(
+            "account_zendesk_internal_comment",
+            f"zd:{account_case_id}:assistant-msg-other",
+            created_at="2026-09-10T01:01:45Z",
+        )
+        repository.record_account_zendesk_internal_comment_result(
+            account_case_id=account_case_id,
+            ticket_id=case["client_ticket_id"],
+            message_id="assistant-msg-other",
+            idempotency_key=f"zd:{account_case_id}:assistant-msg-other",
+            result_payload={"status": "added", "comment_id": "zc-other"},
+            recorded_at="2026-09-10T01:02:00Z",
+        )
+        refreshed = repository.get_account_case(account_case_id)
+        self.assertEqual(
+            refreshed["internal_email_send_status"], "awaiting_public_reply"
         )
 
 
@@ -216,6 +285,16 @@ class DrainReleaseTests(unittest.TestCase):
             "updated_at": prepared_at,
         }
         if delivered_at:
+            ticket = _ensure_ticket(repository, case["client_ticket_id"])
+            ticket.setdefault("messages", []).append(
+                {
+                    "role": "assistant",
+                    "content": "We received your request.",
+                    "message_id": "assistant-msg-1",
+                    "meta": {"account_reply_job_id": "job-1"},
+                }
+            )
+            repository.save_ticket(ticket)
             repository.create_account_zendesk_comment_delivery(
                 account_case_id=case["account_case_id"],
                 message_id="assistant-msg-1",
@@ -292,19 +371,41 @@ class DrainReleaseTests(unittest.TestCase):
         refreshed = repository.get_account_case("AC-MANUAL-1")
         self.assertEqual(refreshed["internal_email_send_status"], DELIVERY_AWAITING_PUBLIC_REPLY)
 
-    def test_drain_ignores_deliveries_from_before_the_gate(self):
+    def test_drain_keeps_gate_without_confirmation_linkage(self):
+        # Fail-closed: a gated case whose workflow context lacks the
+        # confirmation reply_job_id (e.g. an interrupted legacy write) must
+        # never release, even when unrelated public deliveries exist.
         repository = InMemoryTicketRepository()
-        self._seed_gated_case(
+        case = _base_case()
+        case["created_at"] = "2026-09-10T00:00:00Z"
+        case["updated_at"] = "2026-09-01T00:00:00Z"
+        repository.save_account_case(case)
+        payload = _email_payload()
+        payload["customer_confirmation_queued"] = True
+        prepare_account_internal_email(
             repository,
-            prepared_at="2026-09-10T02:00:00Z",
-            delivered_at="2026-09-10T01:00:00Z",
+            account_case_id=case["account_case_id"],
+            payload=payload,
+            prepared_at="2026-09-10T01:00:00Z",
+            target_status=DELIVERY_AWAITING_PUBLIC_REPLY,
         )
+        refreshed = dict(repository.get_account_case(case["account_case_id"]))
+        refreshed["automation_context"] = {
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "awaiting_public_reply",
+                "delivery_key": payload["delivery_key"],
+            }
+        }
+        repository.save_account_case(refreshed)
         with patch.object(worker_module, "ticket_repository", repository):
             counts = worker_module._drain_enablement_manual_review_emails(
                 limit=10, processing_profile="production"
             )
         self.assertEqual(counts["still_gated"], 1)
         self.assertEqual(counts["released"], 0)
+        stored = repository.get_account_case(case["account_case_id"])
+        self.assertEqual(stored["internal_email_send_status"], DELIVERY_AWAITING_PUBLIC_REPLY)
 
 
 class ReplyIdentityTests(unittest.TestCase):
@@ -395,3 +496,187 @@ class ReplyIdentityTests(unittest.TestCase):
         self.assertTrue(
             any(event["event_type"] == "enablement_reply_processing_stopped" for event in events)
         )
+
+class OutlookQuoteBoundaryTests(unittest.TestCase):
+    def test_reviewer_repro_keeps_only_thanks(self):
+        body = (
+            "Thanks.\n"
+            "From: Engineer Name <engineer@example.com>\n"
+            "Sent: Yesterday\n"
+            "Subject: Old request\n"
+            "Media Relay has been enabled."
+        )
+        segment = worker_module._unquoted_enablement_reply_segment(body)
+        self.assertEqual(segment, "Thanks.")
+        self.assertFalse(
+            worker_module._enablement_reply_explicitly_confirms_completion(segment)
+        )
+
+    def test_outlook_header_run_is_boundary(self):
+        body = "Checked, all good.\nSent: Monday 10:00\nTo: someone\nSubject: re\nenabled"
+        self.assertEqual(
+            worker_module._unquoted_enablement_reply_segment(body),
+            "Checked, all good.",
+        )
+
+    def test_inline_from_header_cuts_tail(self):
+        body = "Thanks. From: Engineer <engineer@example.com> Media Relay has been enabled."
+        self.assertEqual(
+            worker_module._unquoted_enablement_reply_segment(body),
+            "Thanks.",
+        )
+
+    def test_valid_unquoted_completion_still_passes(self):
+        body = "Media Relay has been enabled for the project.\n> old: enabled yesterday"
+        segment = worker_module._unquoted_enablement_reply_segment(body)
+        self.assertTrue(
+            worker_module._enablement_reply_explicitly_confirms_completion(segment)
+        )
+
+
+class CompletionIdempotencyTests(unittest.TestCase):
+    def _seed_sent_case(self, repository):
+        case = _base_case()
+        case["internal_email_send_status"] = "sent"
+        case["internal_email_payload"] = {
+            "delivery_key": "enablement:AC-MANUAL-1:v1",
+            "to_addresses": [SENDER],
+        }
+        case["automation_context"] = {
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "awaiting_human_confirmation",
+                "reply_job_id": "job-1",
+                "delivery_key": "enablement:AC-MANUAL-1:v1",
+            }
+        }
+        repository.save_ticket(
+            {"ticket_id": case["client_ticket_id"], "status": "open", "messages": []}
+        )
+        repository.save_account_case(case)
+        return case
+
+    def _enabled_reply(self, message_id):
+        return types.SimpleNamespace(
+            message_id=message_id,
+            sender=SENDER,
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-MANUAL-1",
+            body_text="Media Relay has been enabled.",
+        )
+
+    def test_second_confirmation_creates_no_second_completion_job(self):
+        repository = InMemoryTicketRepository()
+        self._seed_sent_case(repository)
+        with patch.object(worker_module, "ticket_repository", repository):
+            first = worker_module.handle_enablement_request_reply(
+                self._enabled_reply("enabled-msg-1")
+            )
+            second = worker_module.handle_enablement_request_reply(
+                self._enabled_reply("enabled-msg-2")
+            )
+        self.assertEqual(first, "completed")
+        self.assertEqual(second, "completed")
+        completion_jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job["payload"].get("reply_intent") == "enablement_completed_and_close"
+        ]
+        self.assertEqual(len(completion_jobs), 1)
+        events = repository.list_ticket_events("TK-MANUAL-1")
+        stopped = [
+            event
+            for event in events
+            if event["event_type"] == "enablement_reply_processing_stopped"
+        ]
+        self.assertTrue(
+            any(
+                event["payload"].get("reason") == "enablement_reply_already_completed"
+                for event in stopped
+            )
+        )
+        stored = repository.get_account_case("AC-MANUAL-1")
+        self.assertEqual(
+            stored["automation_context"]["enablement_manual_workflow"]["state"],
+            "completed",
+        )
+
+
+class DrainScopeTests(unittest.TestCase):
+    def test_legacy_pending_without_context_is_never_taken_over(self):
+        repository = InMemoryTicketRepository()
+        case = _base_case()
+        case["created_at"] = "2026-09-10T00:00:00Z"
+        case["updated_at"] = "2026-09-01T00:00:00Z"
+        case["internal_email_send_status"] = "pending"
+        case["internal_email_payload"] = _email_payload()
+        repository.save_account_case(case)
+        with patch.object(worker_module, "ticket_repository", repository), patch.object(
+            worker_module,
+            "_send_claimed_enablement_delivery",
+            side_effect=AssertionError("legacy todo must not be taken over"),
+        ) as send:
+            counts = worker_module._drain_enablement_manual_review_emails(
+                limit=10, processing_profile="production"
+            )
+        send.assert_not_called()
+        self.assertEqual(counts, {"released": 0, "sent": 0, "send_retried": 0, "still_gated": 0})
+
+    def test_released_state_required_before_send(self):
+        repository = InMemoryTicketRepository()
+        case = _base_case()
+        case["created_at"] = "2026-09-10T00:00:00Z"
+        case["updated_at"] = "2026-09-01T00:00:00Z"
+        case["internal_email_send_status"] = "pending"
+        case["internal_email_payload"] = _email_payload()
+        case["automation_context"] = {
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "awaiting_human_confirmation",
+                "reply_job_id": "job-1",
+                "delivery_key": "enablement:AC-MANUAL-1:v1",
+            }
+        }
+        repository.save_account_case(case)
+        with patch.object(worker_module, "ticket_repository", repository), patch.object(
+            worker_module,
+            "_send_claimed_enablement_delivery",
+            side_effect=AssertionError("only email_released may send"),
+        ) as send:
+            counts = worker_module._drain_enablement_manual_review_emails(
+                limit=10, processing_profile="production"
+            )
+        send.assert_not_called()
+        self.assertEqual(counts["sent"], 0)
+
+    def test_filtered_query_is_not_starved_by_newer_unrelated_cases(self):
+        repository = InMemoryTicketRepository()
+        old_gated = _base_case(ticket_id="TK-OLD")
+        old_gated["account_case_id"] = "AC-OLD"
+        old_gated["billing_ticket_id"] = "AC-OLD"
+        old_gated["created_at"] = "2026-09-01T00:00:00Z"
+        old_gated["updated_at"] = "2026-09-01T00:00:00Z"
+        old_gated["internal_email_send_status"] = "awaiting_public_reply"
+        old_gated["internal_email_payload"] = _email_payload()
+        old_gated["automation_context"] = {
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "awaiting_public_reply",
+                "reply_job_id": "job-old",
+                "delivery_key": "enablement:AC-OLD:v1",
+            }
+        }
+        repository.save_account_case(old_gated)
+        for index in range(30):
+            newer = _base_case(ticket_id=f"TK-NEW-{index}")
+            newer["account_case_id"] = f"AC-NEW-{index}"
+            newer["billing_ticket_id"] = f"AC-NEW-{index}"
+            newer["automation_handler"] = "billing"
+            newer["route"] = "detailed_invoice"
+            newer["execution_action"] = "detailed_invoice"
+            newer["created_at"] = f"2026-09-02T00:{index:02d}:00Z"
+            newer["updated_at"] = f"2026-09-02T00:{index:02d}:00Z"
+            repository.save_account_case(newer)
+        listed = repository.list_enablement_cases_by_email_status(
+            ("awaiting_public_reply",), processing_profile="production", limit=5
+        )
+        self.assertEqual([case["account_case_id"] for case in listed], ["AC-OLD"])

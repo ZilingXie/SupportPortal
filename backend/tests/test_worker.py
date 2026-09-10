@@ -3398,6 +3398,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
         repository.resolve_account_persona.return_value = None
+        repository.claim_enablement_manual_completion.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ENABLEMENT-DONE",
             "billing_ticket_id": "AC-TK-ENABLEMENT-DONE",
@@ -3437,7 +3438,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.cancel_pending_account_reply_jobs.assert_called_once_with(
             "TK-ENABLEMENT-DONE", updated_at=unittest.mock.ANY
         )
-        saved_job = repository.save_account_reply_job.call_args.args[0]
+        saved_job = repository.claim_enablement_manual_completion.call_args.kwargs["job"]
         payload = saved_job["payload"]
         self.assertEqual(payload["reply_intent"], "enablement_completed_and_close")
         self.assertTrue(payload["close_after_publish"])
@@ -3459,6 +3460,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.claim_automation_reply.return_value = {"status": "acquired"}
         repository.commit_automation_reply_result.return_value = True
         repository.resolve_account_persona.return_value = None
+        repository.claim_enablement_manual_completion.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ENABLEMENT-FOLLOWUP",
             "billing_ticket_id": "AC-TK-ENABLEMENT-FOLLOWUP",
@@ -3497,7 +3499,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         classifier.assert_not_called()
         self.assertEqual(handled, "completed")
-        saved_job = repository.save_account_reply_job.call_args.args[0]
+        saved_job = repository.claim_enablement_manual_completion.call_args.kwargs["job"]
         self.assertEqual(
             saved_job["payload"]["reply_facts"]["completion_acknowledgement"],
             "additional_information",
@@ -3574,6 +3576,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "version": "test",
             "content": {},
         }
+        repository.claim_enablement_manual_completion.return_value = True
         repository.get_billing_ticket_by_client_ticket_id.return_value = {
             "account_case_id": "AC-TK-ENABLEMENT-CN",
             "billing_ticket_id": "AC-TK-ENABLEMENT-CN",
@@ -3611,7 +3614,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.cancel_pending_account_reply_jobs.assert_called_once_with(
             "TK-ENABLEMENT-CN", updated_at=unittest.mock.ANY
         )
-        saved_job = repository.save_account_reply_job.call_args.args[0]
+        saved_job = repository.claim_enablement_manual_completion.call_args.kwargs["job"]
         payload = saved_job["payload"]
         self.assertEqual(payload["reply_intent"], "enablement_completed_and_close")
         self.assertTrue(payload["close_after_publish"])

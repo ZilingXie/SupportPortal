@@ -39,6 +39,10 @@ HERMES_SECRET_SUFFIXES = {
     "ENGINEER_INVESTIGATION_REPLY_API_KEY": "hermes-api-server-key",
     "HERMES_CALLBACK_TOKEN": "hermes-callback-token",
 }
+# Retired Enablement runtime dependencies (p2-149): formal upgrades must strip
+# these from an observed Worker task definition instead of carrying them into
+# the new revision, and the register-time contract must fail closed on them.
+RETIRED_WORKER_SECRET_NAMES = {"ARCHER_OAUTH_COOKIE"}
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -562,6 +566,26 @@ def validate_worker_contract(task_definition: dict[str, Any]) -> None:
         raise ValueError("Worker task definition contains a pilot-creds volume")
     if "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON" not in _secret_names(container):
         raise ValueError("Worker task definition is missing the Suspension recipients secret")
+    if RETIRED_WORKER_SECRET_NAMES & _secret_names(container):
+        raise ValueError(
+            "Worker task definition contains retired Archer secrets "
+            "(manual enablement flow must not carry Archer credentials)"
+        )
+
+
+def _strip_retired_worker_secrets(task_definition: dict[str, Any]) -> dict[str, Any]:
+    """Drop retired Enablement secrets from an observed Worker definition.
+
+    Formal upgrades render from the live task definition, so an old revision
+    that still injects ARCHER_OAUTH_COOKIE would otherwise carry the secret
+    into every new revision. Strip before validation so observed legacy
+    definitions upgrade cleanly while the rendered output stays fail-closed.
+    """
+
+    container = _container(task_definition, "worker")
+    _remove_secret_references(container, RETIRED_WORKER_SECRET_NAMES)
+    _remove_environment_values(container, RETIRED_WORKER_SECRET_NAMES)
+    return task_definition
 
 
 def render_task_definition(
@@ -588,6 +612,7 @@ def render_task_definition(
     if not isinstance(task_definition, dict):
         raise ValueError("taskDefinition object is required")
     if role == "worker":
+        _strip_retired_worker_secrets(task_definition)
         validate_worker_contract(task_definition)
     if (
         hermes_case_workflow_mode is not None
@@ -683,6 +708,8 @@ def render_production_hermes_disabled_task_definition(
 
     _remove_environment_values(container, HERMES_SECRET_NAMES)
     _remove_secret_references(container, HERMES_SECRET_NAMES)
+    _remove_secret_references(container, RETIRED_WORKER_SECRET_NAMES)
+    _remove_environment_values(container, RETIRED_WORKER_SECRET_NAMES)
     _set_environment_value(container, "HERMES_CASE_WORKFLOW_MODE", "disabled")
     if role == "worker":
         validate_worker_contract(rendered)

@@ -1074,6 +1074,13 @@ async def _process_account_customer_reply_impl(
         if should_send_internal_email:
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
+            if active_handler == "enablement" and automation_attempt.get("internal_email_to_send"):
+                # The first durable write for a manual enablement application
+                # is already the unclaimable gate — the workflow below only
+                # re-affirms it, so an interruption between the two saves can
+                # never leave a claimable pending email behind.
+                billing_ticket["internal_email_send_status"] = "awaiting_public_reply"
+                billing_ticket["internal_email_send_reason"] = "enablement_manual_review"
     billing_ticket["updated_at"] = timestamp
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
     await _sync(repository.save_ticket, canonical_ticket, new_messages=new_messages)
