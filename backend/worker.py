@@ -2742,16 +2742,28 @@ def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
     return completed
 
 
+_OUTLOOK_HEADER_LINE_RE = re.compile(
+    r"^(from|sent|to|subject|date|cc)\s*:", re.IGNORECASE
+)
+_INLINE_FROM_HEADER_RE = re.compile(
+    r"from:\s+(?:\S+.*<\S+@\S+>|\S+@\S+)", re.IGNORECASE
+)
+
+
 def _unquoted_enablement_reply_segment(note: str) -> str:
     """Return only the newly authored part of an enablement reply.
 
-    Quoted history (``>`` lines, ``-----Original Message-----`` blocks,
-    ``On ... wrote:`` markers, or forwarded ``From:`` headers) must never
-    satisfy the completion detection on its own. When no unquoted segment
-    can be isolated the caller must not auto-judge completion at all.
+    Quoted history must never satisfy the completion detection on its own:
+    ``>`` lines, ``-----Original Message-----`` blocks, ``On ... wrote:``
+    markers, Outlook header runs (``From:``/``Sent:``/``To:``/``Subject:``
+    lines — including the display-name ``From: Engineer <e@x.com>`` form),
+    and inline ``From: ... <e@x.com>`` headers that survive HTML flattening.
+    When no unquoted segment can be isolated the caller must not auto-judge
+    completion at all.
     """
+    text = str(note or "")
     kept: list[str] = []
-    for line in str(note or "").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith(">"):
             break
@@ -2759,7 +2771,11 @@ def _unquoted_enablement_reply_segment(note: str) -> str:
             break
         if re.match(r"^on\s+.+\s+wrote:\s*$", stripped, re.IGNORECASE):
             break
-        if re.match(r"^from:\s*\S+@\S+", stripped, re.IGNORECASE):
+        if _OUTLOOK_HEADER_LINE_RE.match(stripped):
+            break
+        inline = _INLINE_FROM_HEADER_RE.search(stripped)
+        if inline:
+            kept.append(stripped[: inline.start()].rstrip())
             break
         kept.append(line)
     return "\n".join(kept).strip()
@@ -3326,21 +3342,37 @@ def _enablement_public_reply_delivered(account_case: dict[str, Any]) -> bool:
     if not case_id:
         return False
     workflow = (account_case.get("automation_context") or {}).get("enablement_manual_workflow")
-    prepared_at = str(workflow.get("prepared_at") or "") if isinstance(workflow, dict) else ""
+    if not isinstance(workflow, dict):
+        return False
+    reply_job_id = str(workflow.get("reply_job_id") or "").strip()
+    client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
+    if not reply_job_id or not client_ticket_id:
+        return False
     try:
+        canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
         deliveries = ticket_repository.list_account_zendesk_comment_deliveries_for_case(case_id)
     except Exception:  # pragma: no cover - repository access is best effort here
         LOGGER.warning("enablement manual gate could not list deliveries for %s", case_id)
+        return False
+    confirmation_message_ids: set[str] = set()
+    for message in (canonical_ticket or {}).get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+        if str(meta.get("account_reply_job_id") or "") != reply_job_id:
+            continue
+        for candidate in (message.get("message_id"), message.get("id")):
+            if str(candidate or "").strip():
+                confirmation_message_ids.add(str(candidate).strip())
+    if not confirmation_message_ids:
         return False
     for delivery in deliveries:
         if not bool(delivery.get("is_public")):
             continue
         if str(delivery.get("status") or "").strip().lower() != "delivered":
             continue
-        confirmed_at = str(delivery.get("confirmed_at") or "").strip()
-        if prepared_at and confirmed_at and confirmed_at < prepared_at:
-            continue
-        return True
+        if str(delivery.get("message_id") or "").strip() in confirmation_message_ids:
+            return True
     return False
 
 
@@ -3371,30 +3403,37 @@ def _drain_enablement_manual_review_emails(
 ) -> dict[str, int]:
     """Progress the manual enablement review gate each bounded cycle.
 
-    Two jobs: (1) release ``awaiting_public_reply`` emails whose confirmation
-    reply the Zendesk readback already confirmed delivered (the readback
-    transaction hook normally did this; this belt covers missed hooks and
-    worker restarts), and (2) send released enablement emails through the
-    normal claim/send/complete protocol. Waiting for a human is a normal
-    state; nothing here marks the case failed.
+    Scope is strictly the CURRENT manual application: the case must carry an
+    ``enablement_manual_workflow`` context. (1) ``awaiting_public_reply``
+    emails are released only when THIS application's submission_confirmation
+    reply job's message is confirmed delivered (the readback transaction hook
+    normally did this; this belt covers missed hooks and worker restarts);
+    (2) only emails whose workflow state is ``email_released`` (set by the
+    release paths) are sent through the normal claim/send/complete protocol.
+    Legacy todos without the context — old pending deliveries, failed sends,
+    human-review cases — are never taken over by this drain, and waiting for
+    a human is a normal state that never marks the case failed.
     """
     counts = {"released": 0, "sent": 0, "send_retried": 0, "still_gated": 0}
-    cases = ticket_repository.list_billing_tickets(
-        limit=max(1, limit),
-        processing_profile=processing_profile,
-    )
-    for account_case in cases:
-        if str(account_case.get("automation_handler") or "").strip() != "enablement":
-            continue
-        status = str(account_case.get("internal_email_send_status") or "").strip()
-        if status not in {
+    cases = ticket_repository.list_enablement_cases_by_email_status(
+        (
             "awaiting_public_reply",
             "pending",
             "retry",
             "failed",
             "skipped_config_missing",
-        }:
+        ),
+        processing_profile=processing_profile,
+        limit=max(1, limit),
+    )
+    for account_case in cases:
+        workflow = (account_case.get("automation_context") or {}).get(
+            "enablement_manual_workflow"
+        )
+        if not isinstance(workflow, dict):
             continue
+        workflow_state = str(workflow.get("state") or "").strip()
+        status = str(account_case.get("internal_email_send_status") or "").strip()
         payload = (
             account_case.get("internal_email_payload")
             if isinstance(account_case.get("internal_email_payload"), dict)
@@ -3407,6 +3446,8 @@ def _drain_enablement_manual_review_emails(
         if not delivery_key or not case_id:
             continue
         if status == "awaiting_public_reply":
+            if workflow_state != "awaiting_public_reply":
+                continue
             if not _enablement_public_reply_delivered(account_case):
                 counts["still_gated"] += 1
                 continue
@@ -3415,8 +3456,9 @@ def _drain_enablement_manual_review_emails(
             ):
                 continue
             counts["released"] += 1
-            account_case = dict(account_case)
-            account_case["internal_email_send_status"] = "pending"
+            workflow_state = "email_released"
+        if workflow_state != "email_released":
+            continue
         updated_at = _parse_iso_datetime(str(account_case.get("updated_at") or ""))
         if updated_at is not None and (datetime.now(timezone.utc) - updated_at).total_seconds() < 30:
             continue
@@ -3947,24 +3989,42 @@ def _queue_enablement_completion_reply_job(
     ticket_repository.cancel_pending_account_reply_jobs(
         client_ticket_id, updated_at=timestamp
     )
-    job = ticket_repository.save_account_reply_job(
-        {
-            "job_id": f"account-reply-{uuid4().hex}",
-            "ticket_id": client_ticket_id,
-            "trigger_message_created_at": trigger_message_created_at,
-            "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
-            "scheduled_for": (
-                datetime.fromisoformat(timestamp).astimezone(timezone.utc)
-                + timedelta(seconds=delay_seconds)
-            ).isoformat(),
-            "payload": reply_payload,
-            "attempt_count": 0,
-            "claimed_at": None,
-            "published_at": None,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        }
-    )
+    completion_job = {
+        "job_id": f"account-reply-{uuid4().hex}",
+        "ticket_id": client_ticket_id,
+        "trigger_message_created_at": trigger_message_created_at,
+        "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        "scheduled_for": (
+            datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+            + timedelta(seconds=delay_seconds)
+        ).isoformat(),
+        "payload": reply_payload,
+        "attempt_count": 0,
+        "claimed_at": None,
+        "published_at": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    if handler == "enablement":
+        # Atomic per-application completion: persist "completed" and insert
+        # the one completion job in the same transaction, so duplicate or
+        # concurrent `enabled` confirmations cannot queue a second job.
+        completion_claimed = ticket_repository.claim_enablement_manual_completion(
+            case_id,
+            job=completion_job,
+            completed_at=timestamp,
+        )
+        if not completion_claimed:
+            return _stop_enablement_reply_processing(
+                reply_key=reply_key,
+                owner_token=owner_token,
+                client_ticket_id=client_ticket_id,
+                account_case=account_case,
+                reason="enablement_reply_already_completed",
+            )
+        job = completion_job
+    else:
+        job = ticket_repository.save_account_reply_job(completion_job)
     resolution_event = {
         "event": f"{handler}_internal_resolution_received", "account_case_id": case_id,
         "ticket_id": client_ticket_id, "note": note, "created_at": timestamp,

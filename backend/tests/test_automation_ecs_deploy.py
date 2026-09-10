@@ -185,6 +185,77 @@ def test_render_task_definition_only_changes_image_and_provenance(tmp_path: Path
     assert "revision" not in rendered
 
 
+def _worker_current_with_archer_secret(tmp_path: Path) -> Path:
+    current = _task_definition(tmp_path, "worker")
+    payload = json.loads(current.read_text())
+    secrets = payload["taskDefinition"]["containerDefinitions"][0]["secrets"]
+    secrets.append(
+        {
+            "name": "ARCHER_OAUTH_COOKIE",
+            "valueFrom": (
+                "arn:aws:ssm:us-east-1:123456789012:parameter/"
+                "supportportal/production/archer-oauth-cookie"
+            ),
+        }
+    )
+    current.write_text(json.dumps(payload))
+    return current
+
+
+def test_render_task_definition_strips_retired_archer_secret_from_observed_worker(
+    tmp_path: Path,
+) -> None:
+    # p2-149 review fix: the FORMAL upgrade path renders from the observed
+    # task definition, so a legacy Worker revision that still carries
+    # ARCHER_OAUTH_COOKIE must be upgraded WITHOUT the retired secret.
+    manifest = _manifest(tmp_path)
+    current = _worker_current_with_archer_secret(tmp_path)
+
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=manifest,
+        registry_id="123456789012",
+        region="us-east-1",
+    )
+
+    secret_names = {
+        item["name"] for item in rendered["containerDefinitions"][0]["secrets"]
+    }
+    assert "ARCHER_OAUTH_COOKIE" not in secret_names
+    assert "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON" in secret_names
+
+
+def test_render_hermes_disabled_strips_retired_archer_secret(tmp_path: Path) -> None:
+    current = _worker_current_with_archer_secret(tmp_path)
+    payload = json.loads(current.read_text())
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    container["image"] = (
+        "123456789012.dkr.ecr.us-east-1.amazonaws.com/"
+        "supportportal/production@sha256:" + "0" * 64
+    )
+    container["environment"].extend(
+        [{"name": "HERMES_CASE_WORKFLOW_MODE", "value": "mock"}]
+    )
+    current.write_text(json.dumps(payload))
+    rendered, _changed = render_production_hermes_disabled_task_definition(
+        role="worker",
+        current_path=current,
+    )
+    secret_names = {
+        item["name"] for item in rendered["containerDefinitions"][0]["secrets"]
+    }
+    assert "ARCHER_OAUTH_COOKIE" not in secret_names
+
+
+def test_deploy_script_fails_closed_on_archer_secret_in_rendered_worker() -> None:
+    # Register-time contract: the rendered Worker must not reference the
+    # retired Archer credential, asserted before task definition registration.
+    script = DEPLOY_SCRIPT.read_text()
+    assert "ARCHER_OAUTH_COOKIE" in script
+    assert 'still references ARCHER_OAUTH_COOKIE' in script
+
+
 def test_render_task_definition_explicitly_sets_hermes_mode_on_api_and_worker(
     tmp_path: Path,
 ) -> None:
