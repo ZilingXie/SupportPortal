@@ -3,9 +3,10 @@
 import asyncio
 import unittest
 from types import SimpleNamespace as NS
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import backend.services.automation_account_intake as intake_module
+from backend.services.account_automation_delivery import deliver_account_internal_email_async
 from backend.services.automation_account_intake import run_production_account_intake
 from backend.services.enablement_archer_executor import ArcherEnablementResult
 
@@ -19,6 +20,7 @@ class _FakeRepository:
         self.engineer_case_saves: list[tuple] = []
         self.comment_sync_baselines: list[dict] = []
         self.events: list[tuple] = []
+        self.prepared_deliveries: list[tuple] = []
 
     def save_ticket(self, ticket, new_messages=None):
         self.saved_tickets.append(dict(ticket))
@@ -28,6 +30,12 @@ class _FakeRepository:
 
     def save_account_case(self, case):
         self.saved_cases.append(dict(case))
+
+    def prepare_account_internal_email_delivery(
+        self, account_case_id, *, delivery_key, payload, prepared_at, allowed_statuses=()
+    ):
+        self.prepared_deliveries.append((account_case_id, delivery_key))
+        return True
 
     def save_account_route_execution(self, execution):
         self.saved_route_executions.append(dict(execution))
@@ -583,6 +591,250 @@ class AutomationAccountIntakeTest(unittest.TestCase):
 
         self.assertEqual(outcome["response_status"], "automation")
         self.assertEqual(repository.saved_route_executions[0]["stages"][0]["name"], "intent_classifier")
+
+
+class ArcherFailureNotificationDeliveryTests(unittest.TestCase):
+    """13386 regression: enable_failed must alert the owner and deliver the
+    internal fallback email through the real claim protocol.
+
+    Only external boundaries are replaced (Archer executor, Graph mail sender,
+    Zendesk escalation note/route, reply-job persistence). The failure
+    reconciliation, owner alert idempotency and the prepare/claim/complete
+    delivery protocol all run for real against the in-memory repository twin.
+    """
+
+    DELIVERY_KEY = "enablement:AC-ARCHER-FAIL:v1"
+
+    def setUp(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from backend.services.account_failure_alerts import notify_account_failure
+
+        self.repository = InMemoryTicketRepository()
+        self._seed_case()
+        self.mail = Mock()
+        self.emails: list[dict] = []
+        self.jobs: list[dict] = []
+        self.escalations: list[dict] = []
+
+        def escalate(**kwargs):
+            self.escalations.append(kwargs)
+            kwargs["account_case"]["automation_status"] = "human_review_required"
+            return NS(status="escalated")
+
+        def send_email(payload):
+            self.emails.append(payload)
+            return {"status": "sent", "reason": ""}
+
+        def create_job(**kwargs):
+            self.jobs.append(kwargs)
+            return {"job_id": f"job-{len(self.jobs)}", "status": "queued", "payload": {}}
+
+        mail = self.mail
+        patches = [
+            patch.object(intake_module, "execute_enablement_archer", side_effect=lambda app_id: ArcherEnablementResult(
+                "enable_failed", "sanitized archer failure")),
+            patch.object(intake_module, "notify_account_failure", side_effect=lambda **kw:
+                         notify_account_failure(**kw, mail_sender=mail)),
+            patch.object(intake_module, "send_enablement_internal_email", side_effect=send_email),
+            patch.object(intake_module, "escalate_account_case_to_human_review", side_effect=escalate),
+            patch.object(intake_module, "_create_reply_job", side_effect=create_job),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _seed_case(self, *, status="archer_pending", payload=None) -> None:
+        self.repository.save_account_case({
+            "account_case_id": "AC-ARCHER-FAIL",
+            "billing_ticket_id": "AC-ARCHER-FAIL",
+            "client_ticket_id": "13386",
+            "zendesk_ticket_id": "13386",
+            "processing_profile": "production",
+            "automation_status": "automation",
+            "automation_handler": "enablement",
+            "execution_action": "enablement",
+            "route": "enablement",
+            "route_family": "automated",
+            "route_classification": {"handler_binding_status": "active"},
+            "collected_fields": {
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+            },
+            "missing_fields": [],
+            "internal_email_payload": payload,
+            "internal_email_send_status": status,
+            "automation_context": {},
+        })
+
+    def _run_workflow(self):
+        return asyncio.run(intake_module._run_enablement_archer_workflow(
+            repository=self.repository,
+            account_case=self.repository.get_account_case("AC-ARCHER-FAIL"),
+            ticket_id="13386",
+            fallback_email_payload={
+                "subject": "[Enablement] manual action needed",
+                "body": "Please enable the feature manually.",
+            },
+            persona_assignment=None,
+            processing_profile="production",
+            trigger_message_created_at="2026-09-10T00:00:00+00:00",
+        ))
+
+    def test_failure_alerts_owner_and_delivers_fallback_email_once(self) -> None:
+        result, case, reply_job = self._run_workflow()
+
+        self.assertEqual(result.outcome, "enable_failed")
+        self.assertIsNone(reply_job)
+        self.assertEqual(len(self.emails), 1)
+        self.assertEqual(self.emails[0]["delivery_key"], self.DELIVERY_KEY)
+        self.assertIn("Archer failure reason: sanitized archer failure", self.emails[0]["body"])
+        self.assertEqual(self.mail.call_count, 1)
+        mail_kwargs = self.mail.call_args.kwargs
+        self.assertEqual(mail_kwargs["to_address"], "xieziling@agora.io")
+        self.assertIn("archer", mail_kwargs["subject"])
+        self.assertIn("archer_enable_failed", mail_kwargs["body"])
+
+        saved = self.repository.get_account_case("AC-ARCHER-FAIL")
+        self.assertEqual(saved["internal_email_send_status"], "sent")
+        self.assertEqual(saved["internal_email_payload"]["delivery_key"], self.DELIVERY_KEY)
+        self.assertEqual(saved["execution_reason_code"], "archer_enable_failed")
+        self.assertEqual(saved["failure_stage"], "archer")
+        self.assertEqual(
+            saved["failure_incident_id"],
+            "account-automation:AC-ARCHER-FAIL:archer:archer_enable_failed",
+        )
+        self.assertEqual(saved["alert_status"], "sent")
+        self.assertEqual(saved["automation_status"], "human_review_required")
+
+    def test_reprocessing_same_incident_neither_realerts_nor_resends(self) -> None:
+        self._run_workflow()
+        self.assertEqual(self.mail.call_count, 1)
+        self.assertEqual(len(self.emails), 1)
+
+        updated = asyncio.run(intake_module._record_execution_failure(
+            repository=self.repository,
+            account_case=self.repository.get_account_case("AC-ARCHER-FAIL"),
+            ticket_id="13386",
+            handler="enablement",
+            stage="archer",
+            reason_code="archer_enable_failed",
+            detail="sanitized archer failure",
+        ))
+        self.assertEqual(updated["alert_status"], "already_claimed")
+        self.assertEqual(self.mail.call_count, 1)
+
+        result = asyncio.run(deliver_account_internal_email_async(
+            self.repository,
+            account_case_id="AC-ARCHER-FAIL",
+            payload={"delivery_key": self.DELIVERY_KEY, "body": "retry"},
+            sender=lambda payload: self.emails.append(payload) or {"status": "sent", "reason": ""},
+        ))
+        self.assertEqual(result.status, "sent")
+        self.assertEqual(result.reason, "already sent")
+        self.assertEqual(len(self.emails), 1)
+
+    def test_reprocessing_keeps_live_delivery_states_without_resend(self) -> None:
+        # The workflow's own entry intentionally resets to archer_pending before
+        # Archer runs; these protected states matter for re-delivery actors
+        # (retry poller, repeated failure handling) that call the prepare +
+        # claim protocol directly with the stored fallback payload.
+        scenarios = (
+            (
+                "sending",
+                {"delivery_key": self.DELIVERY_KEY, "delivery_claim_token": "other-owner"},
+                "sending",
+            ),
+            ("delivery_unknown", {"delivery_key": self.DELIVERY_KEY}, "delivery_unknown"),
+            ("sent", {"delivery_key": self.DELIVERY_KEY}, "sent"),
+            (
+                "pending_conflicting_key",
+                {"delivery_key": "billing:AC-ARCHER-FAIL:v1"},
+                "pending",
+            ),
+        )
+        fallback = {
+            "delivery_key": self.DELIVERY_KEY,
+            "body": "Please enable the feature manually.",
+        }
+        for label, stored_payload, stored_status in scenarios:
+            with self.subTest(scenario=label):
+                self.setUp()
+                self.repository.save_account_case({
+                    **self.repository.get_account_case("AC-ARCHER-FAIL"),
+                    "internal_email_payload": dict(stored_payload),
+                    "internal_email_send_status": stored_status,
+                })
+
+                prepared = intake_module.prepare_account_internal_email(
+                    self.repository, account_case_id="AC-ARCHER-FAIL", payload=fallback)
+                self.assertFalse(prepared)
+
+                result = asyncio.run(deliver_account_internal_email_async(
+                    self.repository,
+                    account_case_id="AC-ARCHER-FAIL",
+                    payload=dict(fallback),
+                    sender=lambda payload: self.emails.append(payload) or {"status": "sent", "reason": ""},
+                ))
+                self.assertEqual(self.emails, [])
+                saved = self.repository.get_account_case("AC-ARCHER-FAIL")
+                if label == "sent":
+                    self.assertEqual(result.status, "sent")
+                    self.assertEqual(result.reason, "already sent")
+                    self.assertEqual(saved["internal_email_send_status"], "sent")
+                else:
+                    self.assertEqual(result.status, "delivery_unknown")
+                    self.assertIn("manual_confirmation_required", result.reason)
+                    self.assertEqual(saved["internal_email_send_status"], stored_status)
+                    self.assertEqual(
+                        saved["internal_email_payload"]["delivery_key"],
+                        stored_payload["delivery_key"],
+                    )
+
+    def test_recoverable_outcomes_do_not_send_system_failure_alert(self) -> None:
+        for outcome in ("enabled", "appid_invalid", "project_not_found"):
+            with self.subTest(outcome=outcome):
+                self.setUp()
+                self.archer_patch = patch.object(
+                    intake_module, "execute_enablement_archer",
+                    side_effect=lambda app_id: ArcherEnablementResult(outcome, outcome))
+                self.archer_patch.start()
+                self.addCleanup(self.archer_patch.stop)
+                result, case, reply_job = self._run_workflow()
+
+                self.assertEqual(self.mail.call_count, 0)
+                self.assertEqual(self.emails, [])
+                self.assertIsNotNone(reply_job)
+                saved = self.repository.get_account_case("AC-ARCHER-FAIL")
+                self.assertEqual(saved["internal_email_send_status"], "not_applicable")
+                self.assertIsNone(saved["internal_email_payload"])
+                self.assertNotIn("alert_status", saved)
+
+    def test_alert_failure_does_not_block_fallback_email_or_handoff(self) -> None:
+        self.mail.side_effect = RuntimeError("smtp down")
+        _, case, _reply_job = self._run_workflow()
+
+        self.assertEqual(len(self.emails), 1)
+        saved = self.repository.get_account_case("AC-ARCHER-FAIL")
+        self.assertEqual(saved["internal_email_send_status"], "sent")
+        self.assertEqual(saved["alert_status"], "delivery_failed")
+        self.assertEqual(saved["automation_status"], "human_review_required")
+        self.assertEqual(saved["execution_reason_code"], "archer_enable_failed")
+
+    def test_email_failure_keeps_archer_failure_reason(self) -> None:
+        self.email_patch = patch.object(
+            intake_module, "send_enablement_internal_email",
+            side_effect=lambda payload: {"status": "failed", "reason": "smtp refused"},
+        )
+        self.email_patch.start()
+        self.addCleanup(self.email_patch.stop)
+        _, case, _reply_job = self._run_workflow()
+
+        self.assertEqual(self.mail.call_count, 1)
+        saved = self.repository.get_account_case("AC-ARCHER-FAIL")
+        self.assertEqual(saved["internal_email_send_status"], "failed")
+        self.assertEqual(saved["internal_email_send_reason"], "smtp refused")
+        self.assertEqual(saved["execution_reason_code"], "archer_enable_failed")
+        self.assertEqual(saved["automation_status"], "human_review_required")
 
 
 if __name__ == "__main__":
