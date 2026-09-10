@@ -870,7 +870,6 @@ def create_app(    *,
                         turn_id=turn_id,
                         content=str(body.get("content") or ""),
                         basis=body.get("basis"),
-                        publish_policy=str(body.get("publish_policy") or ""),
                     )
                 if tool_name == "escalate_human":
                     return await asyncio.to_thread(

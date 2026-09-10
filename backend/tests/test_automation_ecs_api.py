@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import os
 import re
 from typing import Any
 from unittest.mock import patch
@@ -15,7 +16,8 @@ from backend.services.automation_ecs_dashboard_reader import (
     DashboardCaseReader,
     safe_zendesk_source,
 )
-from backend.services.automation_ecs_contracts import DeliveryStatus
+from backend.services.automation_ecs_contracts import DeliveryStatus, JobKind
+from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.tests.test_automation_ecs_store import _event, _settings
 from backend.services.automation_ecs_store import InMemoryAutomationEcsStore
 
@@ -782,3 +784,84 @@ def test_hermes_callback_uses_independent_token_and_typed_contract(monkeypatch) 
                 json={**output, "extra": True},
             )
             assert invalid.status_code == 422
+
+
+def _preproduction_settings() -> AutomationEcsSettings:
+    env = {
+        "AUTOMATION_ENVIRONMENT": "preproduction",
+        "AUTOMATION_DB_SCHEMA": "supportportal_preproduction",
+        "AUTOMATION_DB_RESOURCE_ID": "rds-preproduction",
+        "AUTOMATION_JOB_NAMESPACE": "automation.preproduction",
+        "AUTOMATION_INTAKE_SHARED_TOKEN": "secret",
+        "AUTOMATION_RUNTIME_ALLOW_MEMORY": "1",
+        "AUTOMATION_RELEASE_ID": "r1",
+        "AUTOMATION_IMAGE_DIGEST": "sha256:" + "a" * 64,
+        "APP_BUILD_REF": "abc123",
+        "PROMPT_RELEASE_ID": "prompt-1",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        return AutomationEcsSettings.from_env("api")
+
+
+class _AgentToolRepository:
+    def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any] | None:
+        return None
+
+
+def test_agent_tool_save_reply_draft_derives_publish_policy_server_side() -> None:
+    settings = _preproduction_settings()
+    store = InMemoryAutomationEcsStore(settings)
+    store.migrate()
+    store.accept_intake(_event(), settings.provenance())
+    job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=30)
+    assert job is not None
+    turn_id = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")["turn_id"]
+    store._hermes_turns[turn_id]["phase"] = "persona"
+    with patch(
+        "backend.automation_ecs_api._engineer_ticket_repository",
+        return_value=_AgentToolRepository(),
+    ), patch(
+        "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+        return_value={"decision": "approved_for_final_engineer_review", "blockers": []},
+    ):
+        client = TestClient(
+            create_app(
+                settings=settings,
+                store=store,
+                dashboard_auth=DashboardAuthConfig(
+                    session_secret="test-session-secret-that-is-long-enough"
+                ),
+            ),
+            base_url="https://supportcenter.stellarix.space",
+        )
+        path = "/automation/preproduction/v1/agent/tools/save_reply_draft"
+        headers = {"Authorization": "Bearer secret"}
+        with client:
+            with_client_policy = client.post(
+                path,
+                headers=headers,
+                json={
+                    "turn_id": turn_id,
+                    "content": "We are looking into the black screen report.",
+                    "basis": {"summary": "investigating"},
+                    "publish_policy": "auto",
+                },
+            )
+            without_client_policy = client.post(
+                path,
+                headers=headers,
+                json={
+                    "turn_id": turn_id,
+                    "content": "Could you share the product and SDK version?",
+                    "basis": {"summary": "investigating"},
+                },
+            )
+    assert with_client_policy.status_code == 200, with_client_policy.text
+    assert without_client_policy.status_code == 200, without_client_policy.text
+    assert with_client_policy.json()["publish_policy"] == "manual"
+    assert without_client_policy.json()["publish_policy"] == "manual"
+    drafts = store.get_hermes_case_review("123")["drafts"]
+    assert len(drafts) == 2
+    assert all(draft["publish_policy"] == "manual" for draft in drafts)
+    assert all(draft["status"] == "draft" for draft in drafts)
+    assert all(not draft.get("delivery_message_id") for draft in drafts)
