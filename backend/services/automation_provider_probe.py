@@ -10,14 +10,12 @@ from typing import Any
 from backend.services.account_internal_email_recipients import (
     resolve_account_internal_email_recipients,
 )
-from backend.services.archer_direct_client import DirectArcherClient
 from backend.services.graph_mail import acquire_graph_access_token, load_graph_mail_config
 from backend.services.ragflow_docs_search_skill import DEFAULT_RAGFLOW_BASE_URL
 from backend.services.zendesk_comments import zendesk_basic_auth_header
 
 
 PROBE_SCHEMA_VERSION = "automation-provider-probe-v1"
-_SYNTHETIC_MISSING_APP_ID = "00000000000000000000000000000000"
 _RAGFLOW_DATASET_IDS = (
     "c2eaf30463e511f18586e7085c4194fc",
     "d3d8e64e63ea11f18586e7085c4194fc",
@@ -82,13 +80,6 @@ def _probe_ragflow() -> None:
 def run_probe() -> dict[str, Any]:
     _probe_ragflow()
 
-    archer_payload = DirectArcherClient().call(
-        "GET",
-        f"/api/v2/check-simple-vendor?keywords={_SYNTHETIC_MISSING_APP_ID}",
-    )
-    if not isinstance(archer_payload, (dict, list)):
-        raise RuntimeError("Archer read probe returned an invalid payload")
-
     graph_token = acquire_graph_access_token(load_graph_mail_config())
     graph_payload = _read_json(
         "https://graph.microsoft.com/v1.0/me?$select=id",
@@ -116,7 +107,6 @@ def run_probe() -> dict[str, Any]:
     return {
         "schema_version": PROBE_SCHEMA_VERSION,
         "rag_health_ok": True,
-        "archer_read_get_ok": True,
         "graph_me_ok": True,
         "zendesk_identity_ok": True,
         "recipients": recipients,

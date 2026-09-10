@@ -24,6 +24,10 @@ DELIVERY_RETRY = "retry"
 DELIVERY_FAILED = "failed"
 DELIVERY_UNKNOWN = "delivery_unknown"
 DELIVERY_SKIPPED_CONFIG_MISSING = "skipped_config_missing"
+# Manual enablement review gate: the internal email is persisted but stays
+# unclaimable until the customer-facing confirmation reply is confirmed
+# delivered on Zendesk (public readback). The claim protocol never claims it.
+DELIVERY_AWAITING_PUBLIC_REPLY = "awaiting_public_reply"
 
 KNOWN_NOT_SENT_STATUSES = frozenset({
     DELIVERY_NOT_READY,
@@ -53,6 +57,13 @@ DELIVERY_PREPARABLE_STATUSES = frozenset({
     DELIVERY_PENDING,
     DELIVERY_RETRY,
     DELIVERY_FAILED,
+    DELIVERY_AWAITING_PUBLIC_REPLY,
+})
+# Targets a prepare may persist. ``pending`` is directly claimable; the manual
+# review gate is only lifted by the public-reply readback release path.
+DELIVERY_PREPARE_TARGETS = frozenset({
+    DELIVERY_PENDING,
+    DELIVERY_AWAITING_PUBLIC_REPLY,
 })
 
 
@@ -207,19 +218,26 @@ def prepare_account_internal_email(
     account_case_id: str,
     payload: dict[str, Any],
     prepared_at: str | None = None,
+    target_status: str = DELIVERY_PENDING,
 ) -> bool:
-    """Persist one claimable ``pending`` delivery without resetting live ones.
+    """Persist one claimable delivery without resetting live ones.
 
     The stored payload must be empty or already carry the same delivery key,
     so a conflicting delivery (another handler or another pending send) is
     never taken over.  Callers still run the normal claim/send/complete
     protocol afterwards; this only makes the claimable state durable first.
+    ``target_status='awaiting_public_reply'`` persists the manual-review gate
+    instead: the email stays unclaimable until the public-reply readback
+    releases it.
     """
 
     normalized_id = _clean(account_case_id)
     source_payload = copy.deepcopy(payload) if isinstance(payload, dict) else {}
     key = _delivery_key(source_payload)
+    normalized_target = _clean(target_status) or DELIVERY_PENDING
     if not normalized_id or not key:
+        return False
+    if normalized_target not in DELIVERY_PREPARE_TARGETS:
         return False
     return bool(repo.prepare_account_internal_email_delivery(
         normalized_id,
@@ -227,6 +245,7 @@ def prepare_account_internal_email(
         payload=source_payload,
         prepared_at=_clean(prepared_at) or _now_iso(),
         allowed_statuses=tuple(sorted(DELIVERY_PREPARABLE_STATUSES)),
+        target_status=normalized_target,
     ))
 
 

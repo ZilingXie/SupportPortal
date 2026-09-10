@@ -681,7 +681,7 @@ def _outcome(response_status: str, **extra):
 
 
 class UsageCaptureAndPrepareTest(unittest.TestCase):
-    def test_enablement_corrected_appid_reaches_archer_after_case_persistence(self):
+    def test_enablement_corrected_appid_reaches_manual_review_after_case_persistence(self):
         import asyncio
 
         old_app_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -751,33 +751,34 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
             "field_extraction": NS(status="ok"),
         }
 
-        async def archer_workflow(**kwargs):
+        async def manual_workflow(**kwargs):
             self.assertTrue(saved_cases)
             self.assertEqual(kwargs["account_case"]["collected_fields"]["app_id"], new_app_id)
-            self.assertIsNone(kwargs["account_case"]["internal_email_payload"])
-            self.assertEqual(kwargs["account_case"]["internal_email_send_status"], "archer_pending")
-            enabled_case = {
+            self.assertEqual(
+                kwargs["email_payload"]["delivery_key"], "enablement:AC-13200:v1"
+            )
+            gated_case = {
                 **kwargs["account_case"],
                 "missing_fields": [],
-                "internal_email_send_status": "not_applicable",
+                "internal_email_send_status": "awaiting_public_reply",
                 "automation_context": {
-                    "enablement_archer": {"outcome": "enabled", "reason_code": "archer_enabled"}
+                    "enablement_manual_workflow": {"state": "awaiting_public_reply"}
                 },
             }
-            return NS(outcome="enabled"), enabled_case, {
-                "job_id": "job-archer",
+            return gated_case, {
+                "job_id": "job-manual",
                 "status": "persona_v8_scheduled",
-                "payload": {"reply_intent": "enablement_archer_enabled"},
-            }
+                "payload": {"reply_intent": "submission_confirmation"},
+            }, "review_requested"
 
         with patch.object(reply_module, "_apply_ownership_gate", return_value=True), patch.object(
             reply_module, "_build_enablement_attempt", return_value=complete_attempt
         ) as build_attempt, patch.object(
             reply_module,
-            "_run_enablement_archer_workflow",
+            "_run_enablement_manual_workflow",
             new_callable=AsyncMock,
-            side_effect=archer_workflow,
-        ) as run_archer, patch.object(
+            side_effect=manual_workflow,
+        ) as run_manual, patch.object(
             reply_module, "decide_account_route", side_effect=AssertionError("active handler must continue")
         ):
             outcome = asyncio.run(
@@ -792,7 +793,7 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
 
         build_attempt.assert_called_once()
         self.assertNotIn("app_id", build_attempt.call_args.kwargs["existing_fields"])
-        run_archer.assert_awaited_once()
+        run_manual.assert_awaited_once()
         self.assertEqual(outcome["ai_reply_status"], "persona_v8_scheduled")
 
     def test_enablement_appid_question_obeys_authoritative_rag_route_without_retrying_old_appid(self):
@@ -885,7 +886,7 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
         ) as rag_fallback, patch.object(
             reply_module, "_create_reply_job", side_effect=create_reply_job
         ), patch.object(
-            reply_module, "_run_enablement_archer_workflow", new_callable=AsyncMock
+            reply_module, "_run_enablement_manual_workflow", new_callable=AsyncMock
         ) as run_archer, patch.object(
             reply_module,
             "decide_account_route",

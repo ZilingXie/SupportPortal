@@ -65,7 +65,6 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
             },
             clear=False,
         ),
-        patch("backend.services.automation_provider_probe.DirectArcherClient.call", return_value={"data": []}) as archer,
         patch("backend.services.automation_provider_probe.load_graph_mail_config", return_value={}),
         patch("backend.services.automation_provider_probe.acquire_graph_access_token", return_value="token"),
         patch("backend.services.automation_provider_probe.zendesk_basic_auth_header", return_value="Basic token"),
@@ -74,14 +73,9 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
     ):
         result = run_probe()
 
-    archer.assert_called_once_with(
-        "GET",
-        "/api/v2/check-simple-vendor?keywords=00000000000000000000000000000000",
-    )
     assert result == {
         "schema_version": PROBE_SCHEMA_VERSION,
         "rag_health_ok": True,
-        "archer_read_get_ok": True,
         "graph_me_ok": True,
         "zendesk_identity_ok": True,
         "recipients": {

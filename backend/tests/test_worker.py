@@ -118,7 +118,9 @@ def test_account_automation_cycle_is_public_and_does_not_start_redis_consumer():
         worker, "reconcile_account_human_review_queue_mismatches"
     ) as reconcile, patch.object(
         worker, "_drain_production_automation_classification_emails"
-    ) as classification_email, patch.dict(
+    ) as classification_email, patch.object(
+        worker, "_drain_enablement_manual_review_emails"
+    ) as enablement_gate, patch.dict(
         os.environ,
         {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "preproduction"},
         clear=False,
@@ -127,6 +129,7 @@ def test_account_automation_cycle_is_public_and_does_not_start_redis_consumer():
 
     assert replies.call_count == 2
     zendesk.assert_called_once_with(limit=20)
+    enablement_gate.assert_called_once_with(limit=25, processing_profile="preproduction")
     slack.assert_called_once_with(limit=20)
     engineer_slack.assert_called_once_with(limit=20)
     assert reconcile.call_args.kwargs["processing_profile"] == "preproduction"
@@ -3215,6 +3218,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "billing_ticket_id": "AC-TK-ACC-2",
             "client_ticket_id": "TK-ACC-2",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement-delivery-canonical", "to_addresses": ["reviewer@example.com"]},
             "collected_fields": {
                 "app_id": "7da36383d624411698e5c0bc1fda6324",
                 "requested_feature": "media_relay",
@@ -3227,6 +3232,7 @@ class WorkerResilienceTests(unittest.TestCase):
         }
         reply = types.SimpleNamespace(
             message_id="enablement-msg-canonical",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ACC-2",
             body_text="The request is complete.",
         )
@@ -3255,6 +3261,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "billing_ticket_id": "AC-TK-ACC-2",
             "client_ticket_id": "TK-ACC-2",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement-delivery-signed", "to_addresses": ["enablement@example.com"]},
             "automation_status": "automation",
             "route_status": "automated",
             "collected_fields": {
@@ -3352,6 +3360,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.record_dismissed_automation_reply.return_value = True
         reply = types.SimpleNamespace(
             message_id="cross-env-msg-2",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket 12998",
             body_text="It's enabled.",
         )
@@ -3371,6 +3380,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.get_billing_ticket_by_client_ticket_id.return_value = None
         reply = types.SimpleNamespace(
             message_id="cross-env-msg-1",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket 12999",
             body_text="It's enabled.",
         )
@@ -3393,10 +3403,11 @@ class WorkerResilienceTests(unittest.TestCase):
             "billing_ticket_id": "AC-TK-ENABLEMENT-DONE",
             "client_ticket_id": "TK-ENABLEMENT-DONE",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
             "automation_status": "automation",
             "processing_profile": "production",
             "collected_fields": {"requested_feature": "media_relay"},
-            "internal_email_payload": {"delivery_key": "enablement-delivery-1"},
+            "internal_email_payload": {"delivery_key": "enablement-delivery-1", "to_addresses": ["reviewer@example.com"]},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ENABLEMENT-DONE",
@@ -3411,6 +3422,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_account_reply_job.side_effect = lambda job: job
         reply = types.SimpleNamespace(
             message_id="enablement-msg-done",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-DONE",
             body_text="Media Relay has been enabled successfully.",
         )
@@ -3452,10 +3464,11 @@ class WorkerResilienceTests(unittest.TestCase):
             "billing_ticket_id": "AC-TK-ENABLEMENT-FOLLOWUP",
             "client_ticket_id": "TK-ENABLEMENT-FOLLOWUP",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
             "automation_status": "automation",
             "processing_profile": "production",
             "collected_fields": {"requested_feature": "media_relay"},
-            "internal_email_payload": {"delivery_key": "enablement-delivery-followup"},
+            "internal_email_payload": {"delivery_key": "enablement-delivery-followup", "to_addresses": ["reviewer@example.com"]},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ENABLEMENT-FOLLOWUP",
@@ -3472,6 +3485,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_account_reply_job.side_effect = lambda job: job
         reply = types.SimpleNamespace(
             message_id="enablement-msg-followup",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-FOLLOWUP",
             body_text="Media Relay has been enabled successfully.",
         )
@@ -3503,6 +3517,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "billing_ticket_id": "AC-TK-ENABLEMENT-NOT-DONE",
             "client_ticket_id": "TK-ENABLEMENT-NOT-DONE",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement-delivery-enablement", "to_addresses": ["reviewer@example.com"]},
             "automation_status": "automation",
             "collected_fields": {"requested_feature": "media_relay"},
         }
@@ -3512,6 +3528,7 @@ class WorkerResilienceTests(unittest.TestCase):
         }
         reply = types.SimpleNamespace(
             message_id="enablement-msg-not-done",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-NOT-DONE",
             body_text="We are unable to enable Media Relay at this time.",
         )
@@ -3564,6 +3581,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "automation_handler": "enablement",
             "automation_status": "automation",
             "processing_profile": "production",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement-delivery-cn", "to_addresses": ["reviewer@example.com"]},
             "collected_fields": {"requested_feature": "media_relay", "requested_feature_label": "Media Relay"},
         }
         repository.get_ticket.return_value = {
@@ -3572,6 +3591,7 @@ class WorkerResilienceTests(unittest.TestCase):
         }
         reply = types.SimpleNamespace(
             message_id="enablement-msg-cn",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ENABLEMENT-CN",
             body_text="已开通",
         )
@@ -3678,6 +3698,7 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.claim_automation_reply.return_value = {"status": "already_completed"}
         reply = types.SimpleNamespace(
             message_id="enablement-msg-1",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-ACC-2",
             body_text="Enabled.",
         )
@@ -3763,7 +3784,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "client_ticket_id": "99887770",
             "processing_profile": "production",
             "collected_fields": {"requested_feature": "media_relay"},
-            "internal_email_payload": {"delivery_key": "enablement:AC-PRODUCTION-CONFIRMATION:v1"},
+            "internal_email_payload": {"delivery_key": "enablement:AC-PRODUCTION-CONFIRMATION:v1", "to_addresses": ["reviewer@example.com"]},
         }
         repository = Mock()
         repository.get_ticket.return_value = {
@@ -3805,6 +3826,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "customer_confirmation_queued": True,
             },
             "internal_email_send_status": "sent",
+            "internal_email_payload": {"delivery_key": "enablement-delivery-enablement", "to_addresses": ["reviewer@example.com"]},
         }
         repository = Mock()
         repository.list_billing_tickets.return_value = [account_case]
@@ -4221,7 +4243,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "automation_handler": "billing",
             "automation_status": "automation",
             "processing_profile": "production",
-            "internal_email_payload": {"delivery_key": "billing-delivery-1"},
+            "internal_email_payload": {"delivery_key": "billing-delivery-1", "to_addresses": ["reviewer@example.com"]},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-DI-DONE",
@@ -4956,6 +4978,8 @@ class WorkerResilienceTests(unittest.TestCase):
                     "account_case_id": "AC-TK-PERSONA-ENABLEMENT",
                     "client_ticket_id": "TK-PERSONA-ENABLEMENT",
                     "automation_handler": "enablement",
+                    "internal_email_send_status": "sent",
+                    "internal_email_payload": {"delivery_key": "enablement-delivery-persona", "to_addresses": ["reviewer@example.com"]},
                     "route": "enablement",
                     "route_family": "automated",
                     "execution_action": "enablement",
@@ -5010,6 +5034,11 @@ class WorkerResilienceTests(unittest.TestCase):
                 )
                 reply = types.SimpleNamespace(
                     message_id=f"{handler}-persona-unavailable",
+                    sender=(
+                        "reviewer@example.com"
+                        if handler == "enablement"
+                        else "billing@example.com"
+                    ),
                     subject=subject,
                     body_text="The internal team completed the request.",
                 )
@@ -5162,6 +5191,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "subcategory": "enablement",
             "route_status": "automated",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
             "tooling_profile": "deterministic_enablement_intake",
             "automation_status": "automation",
             "route_classification": {
@@ -5223,6 +5253,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "subcategory": "enablement",
             "route_status": "automated",
             "automation_handler": "enablement",
+            "internal_email_send_status": "sent",
             "tooling_profile": "deterministic_enablement_intake",
             "automation_status": "automation",
             "route_classification": {
@@ -5230,7 +5261,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "automation_subcategory": "enablement",
                 "handler_binding_status": "active",
             },
-            "internal_email_payload": {"delivery_key": "enablement:AC-PERSONA-CONFIRMATION:v1"},
+            "internal_email_payload": {"delivery_key": "enablement:AC-PERSONA-CONFIRMATION:v1", "to_addresses": ["reviewer@example.com"]},
             "collected_fields": {"app_id": "alpha", "requested_feature": "media_relay"},
         }
         repository = Mock()
@@ -5852,12 +5883,15 @@ class WorkerResilienceTests(unittest.TestCase):
                 "title": "Enablement request",
                 "question": "Please enable the feature.",
                 "automation_handler": "enablement",
+                "internal_email_send_status": "sent",
+                "internal_email_payload": {"delivery_key": "enablement-delivery-reset", "to_addresses": ["reviewer@example.com"]},
                 "automation_status": "internal_processing",
                 "route_status": "automated",
             }
         )
         reply = types.SimpleNamespace(
             message_id="outlook-reset-fence",
+            sender="reviewer@example.com",
             subject=(
                 "Re: [Enablement Request] Feature - "
                 f"Ticket {ticket_id}"
@@ -5924,7 +5958,8 @@ class WorkerResilienceTests(unittest.TestCase):
                     "requested_feature": "media_relay",
                     "requested_feature_label": "media relay",
                 },
-                "internal_email_payload": {"delivery_key": "enablement:AC-FOLLOWUP-PUBLISH:v1"},
+                "internal_email_send_status": "sent",
+                "internal_email_payload": {"delivery_key": "enablement:AC-FOLLOWUP-PUBLISH:v1", "to_addresses": ["reviewer@example.com"]},
             }
         )
         submission_job = repository.save_account_reply_job(
@@ -5950,6 +5985,7 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         reply = types.SimpleNamespace(
             message_id="followup-msg-1",
+            sender="reviewer@example.com",
             subject="Re: [Enablement Request] Media Relay - Ticket TK-FOLLOWUP-PUBLISH",
             body_text="This appid is not correct, check with the cx to double check the appid",
         )
@@ -6088,7 +6124,7 @@ class WorkerResilienceTests(unittest.TestCase):
         account_case = {
             "account_case_id": "AC-PERSONA-CONFIRMATION-PIN",
             "client_ticket_id": "TK-PERSONA-CONFIRMATION-PIN",
-            "internal_email_payload": {"delivery_key": "enablement:AC-PERSONA-CONFIRMATION-PIN:v1"},
+            "internal_email_payload": {"delivery_key": "enablement:AC-PERSONA-CONFIRMATION-PIN:v1", "to_addresses": ["reviewer@example.com"]},
             "collected_fields": {"app_id": "alpha", "requested_feature": "media_relay"},
         }
         assignment = {

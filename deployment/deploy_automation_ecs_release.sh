@@ -1160,7 +1160,6 @@ run_provider_probe() {
       if ! printf '%s\n' "${probe_line}" | jq -e '
         .schema_version == "automation-provider-probe-v1"
         and .rag_health_ok == true
-        and .archer_read_get_ok == true
         and .graph_me_ok == true
         and .zendesk_identity_ok == true
         and ([.recipients.enablement,.recipients.fraud_account,.recipients.account_suspension]

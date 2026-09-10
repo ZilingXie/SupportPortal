@@ -180,7 +180,7 @@ async def tool_execute_automation_action(
         _build_suspension_contact_attempt,
         _build_suspension_direct_handoff_attempt,
         _build_verification_attempt,
-        _run_enablement_archer_workflow,
+        _run_enablement_manual_workflow,
         _run_internal_email_delivery,
         _zendesk_ticket_url,
         send_billing_internal_email,
@@ -346,16 +346,16 @@ async def tool_execute_automation_action(
         internal_email_reason = str(delivery_result.reason)
     elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
         if automation_handler == "enablement":
-            archer_result, account_case, _reply_job = await _run_enablement_archer_workflow(
+            account_case, _reply_job, manual_outcome = await _run_enablement_manual_workflow(
                 repository=repository,
                 account_case=account_case,
                 ticket_id=ticket_id,
-                fallback_email_payload=dict(attempt["internal_email_to_send"]),
+                email_payload=dict(attempt["internal_email_to_send"]),
                 persona_assignment=None,
                 processing_profile=environment,
                 trigger_message_created_at=timestamp,
             )
-            executed_actions.append(f"enablement_archer:{archer_result.outcome}")
+            executed_actions.append(f"enablement_manual:{manual_outcome}")
             internal_email_status = str(account_case.get("internal_email_send_status") or "")
             internal_email_reason = str(account_case.get("internal_email_send_reason") or "")
         else:
