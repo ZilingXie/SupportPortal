@@ -651,6 +651,7 @@
         const valid = tabs.some((tab) => tab.id === tabId) ? tabId : "dynamic";
         document.querySelectorAll(".tab").forEach((tab) => { const active = tab.dataset.tab === valid; tab.classList.toggle("active", active); tab.setAttribute("aria-selected", String(active)); });
         document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${valid}`));
+        renderMermaidDiagrams(document.getElementById(`panel-${valid}`));
         const detail = ["#task-", "#meeting-", "#function-"].some((prefix) => location.hash.startsWith(prefix));
         if (location.hash !== `#${valid}` && !detail) history.replaceState(null, "", `#${valid}`);
       }
@@ -664,9 +665,9 @@
         setTab(raw || "dynamic");
       }
 
-      function renderMermaidDiagrams() {
-        const diagrams = Array.from(document.querySelectorAll("pre.mermaid"));
-        if (!diagrams.length) return;
+      function renderMermaidDiagrams(root = document) {
+        // Mermaid 无法在 display:none 的面板内测量文本，只能等面板可见后再渲染。
+        const diagrams = Array.from(root.querySelectorAll("pre.mermaid")).filter((diagram) => !diagram.hasAttribute("data-processed"));
         const sources = new Map(diagrams.map((diagram) => [diagram, diagram.textContent]));
         const showSourceFallback = () => diagrams.forEach((diagram) => {
           diagram.textContent = sources.get(diagram) || diagram.textContent;
@@ -674,9 +675,10 @@
           diagram.classList.add("mermaid-fallback");
         });
         if (!window.mermaid) {
-          showSourceFallback();
+          if (diagrams.length) showSourceFallback();
           return;
         }
+        // 必须在页面 load 事件前执行：initialize 关闭 startOnLoad，否则 mermaid 会在隐藏面板里自动渲染出坏图。
         window.mermaid.initialize({
           startOnLoad: false,
           securityLevel: "loose",
@@ -697,6 +699,7 @@
           },
           flowchart: { htmlLabels: true, curve: "basis", nodeSpacing: 28, rankSpacing: 42, useMaxWidth: true }
         });
+        if (!diagrams.length) return;
         window.mermaid.run({ nodes: diagrams }).catch(showSourceFallback);
       }
 
@@ -706,7 +709,6 @@
           return;
         }
         renderHeader(); renderPhaseSwitch(); renderTabs(); renderDynamic(); renderBoard(); renderMeetings(); renderFunctions(); renderSystemMap(); renderDeploymentArchitecture(); renderWorkflow(); renderInvestigationWorkflow(); renderManual(); renderReport();
-        renderMermaidDiagrams();
         document.getElementById("reportButton").addEventListener("click", () => { location.hash = "#report"; routeHash(); });
         window.addEventListener("hashchange", routeHash);
         routeHash();
