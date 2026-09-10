@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-10T08:47:00Z",
-  "source_base_commit": "8d5b82c5bb04abfde48ffd64d2c8d08757d70b20",
-  "registry_digest": "1075dd6d1a14cc64e3d7de88088dfca27eaf6ec69e30c0aae686efc16d23ef11",
+  "generated_at": "2026-09-10T11:01:22Z",
+  "source_base_commit": "4e2df33df937cd7efe8c524727d21af8de4f31f9",
+  "registry_digest": "bdf8738ab00574bf6673336bd359f812288d35c49a56ff9be9f7286659fdbdf3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3071,6 +3071,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Post-merge acceptance fixes and PostgreSQL rerun",
           "details": "2026-09-09 review 发现 PostgreSQL 行中的 datetime 会使 Case Snapshot 写 JSONB 失败，以及 Hermes stop 未确认时 worker 会误完成 agent_turn job 并永久保留 cancel_requested 围栏；修复为显式 ISO 时间投影、取消未终态时 defer 重试、pre-external human_review 不记录虚假外部 delivery。快速回归 491 passed + 103 subtests；一次性 PostgreSQL schema 验证新 Hermes Zendesk 引擎 7/7、ECS store 6/6、旧 Hermes repository 7/7 通过。"
+        },
+        {
+          "type": "test",
+          "label": "13400 first ticket exposed save_reply_draft endpoint kwarg mismatch",
+          "details": "2026-09-10 Preproduction r20260909-8992c77 受控首单 13400：intake/binding/route/三阶段编排全通（58 秒），但 persona 两次调 POST /v1/agent/tools/save_reply_draft 均 500，draft 永不落库且 turn 仍绿完成（requires_human_review=false）。根因：automation_ecs_api.py save_reply_draft 分支仍向 tool_save_reply_draft 转发 publish_policy kwarg，而 PR#1116（d4d55a1f）起工具签名改为 derive_publish_policy 服务端推导，端点漏删导致任何调用必 TypeError（body 带不带该参数都挂）；main 与部署版同病，工具层测试不经过端点转发所以 CI 未拦。修复：删端点转发行；新增 test_automation_ecs_api.py 首个 /v1/agent/tools HTTP 回归测试（preproduction settings + 种子 turn，验证 body 带/不带 publish_policy 均 200 且服务端推导 manual、draft 落库未发布；修复前该测试精确复现生产 TypeError）。"
         },
         {
           "type": "test",
@@ -11339,9 +11344,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-08",
-      "updated_at": "2026-09-09",
+      "updated_at": "2026-09-10",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "第二阶段代码已完成 review-implemented-plan 验收并修复真实 PostgreSQL Snapshot 时间字段序列化、未确认取消需 defer 重试、pre-external human_review 状态及两处 PG 测试漂移；待从修复后的 main 走 CodeBuild 构建并部署 Preproduction，完成技术运行态验收后再安排受控工单业务验收。",
+      "next_action": "2026-09-10 修复 13400 首单暴露的 save_reply_draft 端点 publish_policy kwarg 错位（PR#1116 工具签名改服务端推导后端点漏删转发，任何调用必 500）并补首个 /v1/agent/tools HTTP 端点回归测试；待合入 main 后走 CodeBuild 重建部署 Preproduction（r20260909-8992c77 同病），再用 13400 注入跟进评论受控重放验证 draft 落库、人工审核门禁与同一 binding 复用。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -11391,6 +11396,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Post-merge acceptance fixes and PostgreSQL rerun",
           "details": "2026-09-09 review 发现 PostgreSQL 行中的 datetime 会使 Case Snapshot 写 JSONB 失败，以及 Hermes stop 未确认时 worker 会误完成 agent_turn job 并永久保留 cancel_requested 围栏；修复为显式 ISO 时间投影、取消未终态时 defer 重试、pre-external human_review 不记录虚假外部 delivery。快速回归 491 passed + 103 subtests；一次性 PostgreSQL schema 验证新 Hermes Zendesk 引擎 7/7、ECS store 6/6、旧 Hermes repository 7/7 通过。"
+        },
+        {
+          "type": "test",
+          "label": "13400 first ticket exposed save_reply_draft endpoint kwarg mismatch",
+          "details": "2026-09-10 Preproduction r20260909-8992c77 受控首单 13400：intake/binding/route/三阶段编排全通（58 秒），但 persona 两次调 POST /v1/agent/tools/save_reply_draft 均 500，draft 永不落库且 turn 仍绿完成（requires_human_review=false）。根因：automation_ecs_api.py save_reply_draft 分支仍向 tool_save_reply_draft 转发 publish_policy kwarg，而 PR#1116（d4d55a1f）起工具签名改为 derive_publish_policy 服务端推导，端点漏删导致任何调用必 TypeError（body 带不带该参数都挂）；main 与部署版同病，工具层测试不经过端点转发所以 CI 未拦。修复：删端点转发行；新增 test_automation_ecs_api.py 首个 /v1/agent/tools HTTP 回归测试（preproduction settings + 种子 turn，验证 body 带/不带 publish_policy 均 200 且服务端推导 manual、draft 落库未发布；修复前该测试精确复现生产 TypeError）。"
         }
       ],
       "history": [
@@ -11418,6 +11428,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-09",
           "event": "post_merge_review_fixed",
           "summary": "验收修复真实 PostgreSQL Snapshot 序列化、取消恢复 job defer、pre-external human_review delivery 状态及 PG 测试漂移；等待新 CodeBuild release 部署 Preproduction。"
+        },
+        {
+          "at": "2026-09-10",
+          "event": "draft_save_endpoint_fixed",
+          "summary": "13400 首单暴露 save_reply_draft 端点 publish_policy kwarg 错位（PR#1116 漏删转发）→ 删转发行 + 首个 agent tools HTTP 回归测试；等待合入后重建部署 Preproduction 并受控重放。"
         }
       ],
       "legacy_ids": [],
