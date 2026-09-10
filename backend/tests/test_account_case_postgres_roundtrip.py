@@ -231,6 +231,67 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             )
             gated = repository.get_account_case("AC-MANUAL-GATE")
             self.assertEqual(gated["internal_email_send_status"], "awaiting_public_reply")
+            # Bind the gate to a confirmation job and seed its delivered
+            # public readback, otherwise the release fail-closes (by design).
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-MANUAL-GATE",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:30+00:00",
+                },
+                new_messages=[
+                    {
+                        "role": "assistant",
+                        "content": "We received your request.",
+                        "created_at": "2026-09-10T00:00:31+00:00",
+                        "meta": {"account_reply_job_id": "job-gate-1"},
+                    }
+                ],
+            )
+            confirmation_id = self._confirmation_message_id(
+                dsn, schema, "T-MANUAL-GATE", "job-gate-1"
+            )
+            repository.create_account_zendesk_comment_delivery(
+                account_case_id="AC-MANUAL-GATE",
+                message_id=confirmation_id,
+                zendesk_ticket_id="T-MANUAL-GATE",
+                idempotency_key="zd-gate-confirmation",
+                created_at="2026-09-10T00:01:00+00:00",
+                is_public=True,
+            )
+            # Mark the delivery delivered WITHOUT the readback hook (direct
+            # complete), so the concurrent release below is what races.
+            repository.complete_account_zendesk_comment_delivery(
+                account_case_id="AC-MANUAL-GATE",
+                message_id=confirmation_id,
+                status="delivered",
+                zendesk_comment_id="zc-gate-1",
+                failure_code=None,
+                completed_at="2026-09-10T00:01:30+00:00",
+            )
+            # Write the workflow context (with reply_job_id) onto the gated case.
+            import json as _json
+            import psycopg as _psycopg
+            with _psycopg.connect(dsn, autocommit=True) as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(
+                        f'UPDATE "{schema}".support_account_cases '
+                        "SET automation_context = jsonb_set("
+                        "COALESCE(automation_context, '{}'::jsonb), "
+                        "'{enablement_manual_workflow}', %s::jsonb, true) "
+                        "WHERE account_case_id = 'AC-MANUAL-GATE'",
+                        (
+                            _json.dumps(
+                                {
+                                    "version": 1,
+                                    "state": "awaiting_public_reply",
+                                    "reply_job_id": "job-gate-1",
+                                    "delivery_key": payload["delivery_key"],
+                                }
+                            ),
+                        ),
+                    )
             self.assertFalse(
                 repository.claim_account_internal_email_delivery(
                     "AC-MANUAL-GATE",
@@ -343,11 +404,60 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                     payload=dict(saved["internal_email_payload"]),
                 )
             )
-            self.assertTrue(
-                repository.release_account_internal_email_after_public_reply(
-                    "AC-MANUAL-WORKFLOW",
-                    released_at="2026-09-10T00:00:02+00:00",
-                )
+            # Release requires THIS application's confirmation job message to
+            # be confirmed delivered: seed the linkage the readback hook binds
+            # on (assistant message meta.account_reply_job_id + delivered
+            # public delivery for that message).
+            confirmation_job_id = str(
+                saved["automation_context"]["enablement_manual_workflow"]["reply_job_id"]
+            )
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-MANUAL-WORKFLOW",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:30+00:00",
+                },
+                new_messages=[
+                    {
+                        "role": "assistant",
+                        "content": "We received your request.",
+                        "created_at": "2026-09-10T00:00:31+00:00",
+                        "meta": {"account_reply_job_id": confirmation_job_id},
+                    }
+                ],
+            )
+            confirmation_id = self._confirmation_message_id(
+                dsn, schema, "T-MANUAL-WORKFLOW", confirmation_job_id
+            )
+            repository.create_account_zendesk_comment_delivery(
+                account_case_id="AC-MANUAL-WORKFLOW",
+                message_id=confirmation_id,
+                zendesk_ticket_id="T-MANUAL-WORKFLOW",
+                idempotency_key="zd-manual-workflow-confirmation",
+                created_at="2026-09-10T00:01:00+00:00",
+                is_public=True,
+            )
+            repository.begin_idempotent_request(
+                "account_zendesk_internal_comment",
+                "zd-manual-workflow-confirmation",
+                created_at="2026-09-10T00:01:01+00:00",
+            )
+            repository.record_account_zendesk_internal_comment_result(
+                account_case_id="AC-MANUAL-WORKFLOW",
+                ticket_id="T-MANUAL-WORKFLOW",
+                message_id=confirmation_id,
+                idempotency_key="zd-manual-workflow-confirmation",
+                result_payload={"status": "added"},
+                recorded_at="2026-09-10T00:01:30+00:00",
+            )
+            # The readback transaction hook released the gate already; the
+            # explicit release is idempotent-false afterwards.
+            hooked = repository.get_account_case("AC-MANUAL-WORKFLOW")
+            self.assertEqual(hooked["internal_email_send_status"], "pending")
+            self.assertEqual(
+                hooked["automation_context"]["enablement_manual_workflow"]["state"],
+                "email_released",
             )
             self.assertFalse(
                 repository.release_account_internal_email_after_public_reply(

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-10T08:47:00Z",
-  "source_base_commit": "8d5b82c5bb04abfde48ffd64d2c8d08757d70b20",
-  "registry_digest": "1075dd6d1a14cc64e3d7de88088dfca27eaf6ec69e30c0aae686efc16d23ef11",
+  "generated_at": "2026-09-10T10:50:24Z",
+  "source_base_commit": "4e2df33df937cd7efe8c524727d21af8de4f31f9",
+  "registry_digest": "6a79b43964d2df6bbf843174d957324f7ea00211bf18450161a5cf9070203b11",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1099,6 +1099,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Review round-1 fixes: six-finding regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_worker.py (+11 suites); bash -n deployment/deploy_automation_ecs_release.sh",
           "details": "验收六项修复配套反例全绿（395 passed/102 subtests）：①render_task_definition/hermes-disable 剥离观测 td 中 ARCHER_OAUTH_COOKIE + validate_worker_contract fail-closed + 部署脚本 register 前 jq 断言（3 用例）；②释放绑定：无关公开回复不释放（hook 与 repo release 双路径 EXISTS 绑定 confirmation job 的 assistant message meta.account_reply_job_id）、无 reply_job_id 保持门禁、rerun 副作用补 workflow context；③claim_enablement_manual_completion 原子方法（三实现）接入完成链，第二封 enabled 留 enablement_reply_already_completed 事件且仅一个完成 job；④Outlook 引用剥离识别 From: Name \u003cemail>/Sent/To/Subject 头块与行内 From 头（reviewer 四行 repro 反例）；⑤drain 仅处理带 workflow context 且 state=email_released 的当前申请、评论与 rerun 首次落库即 awaiting_public_reply（两步间中断不可领取）；⑥list_enablement_cases_by_email_status 仓库层过滤（SQL WHERE+LIMIT 前）防饥饿，30 条更新非 enablement case 不遮挡旧待办。"
+        },
+        {
+          "type": "test",
+          "label": "Review round-3 fixes: five-finding regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py (+12 suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "五项修复配套反例全绿（13 套件 404 passed/102 subtests + PG 真库 9 passed）：①claim_enablement_manual_completion 事务内取消 pending 回复 job（排除自身 job_id），worker 级并发双确认 Barrier 测试证明唯一完成 job 存活且 submission job 被胜者取消；②HTML 引用结构在去标签前转 -----Original Message----- 哨兵（嵌套 blockquote/appendonsend/border-left/stopspelling），中文头（发件人/发送时间/收件人/主题/日期/抄送）与 -----原始邮件-----/行内中文 From 头全识别，reviewer 的 blockquote+中文反例不判完成；③转人工三层：候选 SQL automation_status\u003c>human_review_required + _send_claimed 入口守卫（case_not_automation_owned）+ claim_account_internal_email_delivery 原子 WHERE 同条件（三实现）；④list_enablement_cases_by_email_status SQL 下推 workflow state ANY + human_review 排除，drain 拆释放/发送双独立扫描，25 条 legacy pending 不遮挡 email_released（真饥饿反例）；⑤claim 在 workflow 缺失时首次合法确认原子建立 {version:1,state:completed,legacy:true}，legacy 双确认恰一个完成 job。PG：并发释放恰一胜、绑定释放（无关回复不释放）、事务内取消、过滤查询、legacy claim 全过。坑：support_ticket_messages.id 是 bigint 需 ::text cast 对账本 message_id；readback 钩子在 record_ 内即释放，测试播种用 complete_direct 绕过钩子才能测并发释放。"
         },
         {
           "type": "test",
@@ -11449,7 +11455,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "SSO 根凭证（约 7 天绝对过期 JWT）2026-09-09 运行中失效导致 13386 失败后，将 Enablement Media Relay 从 Archer 自动直连回退为人工开通流程：信息齐全后先创建客户 review 确认回复 job，内部开通邮件以 awaiting_public_reply 门禁持久化，Zendesk 公开回复 readback 确认送达后才释放发送；人工开通后回复 enabled（仅限本次邮件 To/Cc 个人收件人、等待态、未引用正文段三重校验）触发最终公开回复与关单。Worker 移除 ARCHER_OAUTH_COOKIE 注入、发布探针移除 Archer 检查；不删 SSM 历史凭证、不回退历史提交（p1-15 prepare 协议被复用）。",
-      "next_action": "修复轮（review 六项：正式渲染剥离 Archer secret、释放门禁绑定确认 job、完成确认原子化、Outlook 引用剥离、后台步收敛+首写即门禁、过滤查询防饥饿）已实施，395 定向用例全绿；PG 真库回归运行中；合并后在新 SHA 上补本地官方栈验证。Production 发布与真实闭环验收仍待用户授权（8d5b82c5 不放行的结论维持）。",
+      "next_action": "修复轮3（review 五项：完成 claim 事务内取消、HTML/中文引用哨兵、转人工三层校验、SQL 下推防饥饿、legacy 首确认建立 completed 标记）已实施：404 定向 + PG 真库回归全绿；合并后在新 SHA 上执行官方栈验证。4e2df33d 维持不部署；新部署 Prompt 等 owner 复验后生成。",
       "acceptance_criteria": [
         "所有 Enablement 执行入口（intake、客户评论、Hermes 工具、main 旧入口/评论补投、rerun/resume/内部邮件重试、full reroute）对新请求 Archer 调用次数为零；App ID 32 位 hex 本地校验保留（非法格式零网络追问正确值）。",
         "信息齐全后创建 submission_confirmation 客户回复 job 并持久化内部邮件为 awaiting_public_reply（不可领取）；公开回复经 Zendesk readback 确认 delivered 后（事务钩子+有界兜底步）释放为 pending 并经 claim/send/complete 协议发送一次；确认送达时间早于邮件发送时间；进程重启可续走。",
@@ -11480,6 +11486,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Review round-1 fixes: six-finding regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_worker.py (+11 suites); bash -n deployment/deploy_automation_ecs_release.sh",
           "details": "验收六项修复配套反例全绿（395 passed/102 subtests）：①render_task_definition/hermes-disable 剥离观测 td 中 ARCHER_OAUTH_COOKIE + validate_worker_contract fail-closed + 部署脚本 register 前 jq 断言（3 用例）；②释放绑定：无关公开回复不释放（hook 与 repo release 双路径 EXISTS 绑定 confirmation job 的 assistant message meta.account_reply_job_id）、无 reply_job_id 保持门禁、rerun 副作用补 workflow context；③claim_enablement_manual_completion 原子方法（三实现）接入完成链，第二封 enabled 留 enablement_reply_already_completed 事件且仅一个完成 job；④Outlook 引用剥离识别 From: Name \u003cemail>/Sent/To/Subject 头块与行内 From 头（reviewer 四行 repro 反例）；⑤drain 仅处理带 workflow context 且 state=email_released 的当前申请、评论与 rerun 首次落库即 awaiting_public_reply（两步间中断不可领取）；⑥list_enablement_cases_by_email_status 仓库层过滤（SQL WHERE+LIMIT 前）防饥饿，30 条更新非 enablement case 不遮挡旧待办。"
+        },
+        {
+          "type": "test",
+          "label": "Review round-3 fixes: five-finding regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py (+12 suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "五项修复配套反例全绿（13 套件 404 passed/102 subtests + PG 真库 9 passed）：①claim_enablement_manual_completion 事务内取消 pending 回复 job（排除自身 job_id），worker 级并发双确认 Barrier 测试证明唯一完成 job 存活且 submission job 被胜者取消；②HTML 引用结构在去标签前转 -----Original Message----- 哨兵（嵌套 blockquote/appendonsend/border-left/stopspelling），中文头（发件人/发送时间/收件人/主题/日期/抄送）与 -----原始邮件-----/行内中文 From 头全识别，reviewer 的 blockquote+中文反例不判完成；③转人工三层：候选 SQL automation_status\u003c>human_review_required + _send_claimed 入口守卫（case_not_automation_owned）+ claim_account_internal_email_delivery 原子 WHERE 同条件（三实现）；④list_enablement_cases_by_email_status SQL 下推 workflow state ANY + human_review 排除，drain 拆释放/发送双独立扫描，25 条 legacy pending 不遮挡 email_released（真饥饿反例）；⑤claim 在 workflow 缺失时首次合法确认原子建立 {version:1,state:completed,legacy:true}，legacy 双确认恰一个完成 job。PG：并发释放恰一胜、绑定释放（无关回复不释放）、事务内取消、过滤查询、legacy claim 全过。坑：support_ticket_messages.id 是 bigint 需 ::text cast 对账本 message_id；readback 钩子在 record_ 内即释放，测试播种用 complete_direct 绕过钩子才能测并发释放。"
         }
       ],
       "source_refs": [
@@ -11514,6 +11526,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-10",
           "event": "review_round_1_fixes",
           "summary": "owner 验收发现六项实质问题（5×P1+1×P2）全部修复：正式升级路径剥离 Archer secret、释放门禁绑定本次 submission_confirmation job、完成确认与唯一完成 job 原子提交（PostgreSQL 白名单不含 automation_context 的缺口以专用原子方法绕开）、Outlook 常见引用格式剥离、后台步收敛到当前申请且评论/rerun 首写即门禁、仓库层过滤查询防饥饿。8d5b82c5 维持不部署。"
+        },
+        {
+          "at": "2026-09-10",
+          "event": "review_round_3_fixes",
+          "summary": "owner 二轮验收发现五项（并发取消唯一完成 job/HTML中文引用漏剥/转人工仍发送/SQL遮挡饥饿/legacy 重复完成）全部修复；4e2df33d 不放行维持。"
         }
       ]
     },

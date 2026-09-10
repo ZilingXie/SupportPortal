@@ -680,3 +680,227 @@ class DrainScopeTests(unittest.TestCase):
             ("awaiting_public_reply",), processing_profile="production", limit=5
         )
         self.assertEqual([case["account_case_id"] for case in listed], ["AC-OLD"])
+
+class Round3ConcurrencyTests(unittest.TestCase):
+    def _seed_sent_case(self, repository, *, with_workflow=True):
+        case = _base_case()
+        case["internal_email_send_status"] = "sent"
+        case["internal_email_payload"] = {
+            "delivery_key": "enablement:AC-MANUAL-1:v1",
+            "to_addresses": [SENDER],
+        }
+        if with_workflow:
+            case["automation_context"] = {
+                "enablement_manual_workflow": {
+                    "version": 1,
+                    "state": "awaiting_human_confirmation",
+                    "reply_job_id": "job-1",
+                    "delivery_key": "enablement:AC-MANUAL-1:v1",
+                }
+            }
+        repository.save_ticket(
+            {"ticket_id": case["client_ticket_id"], "status": "open", "messages": []}
+        )
+        # a pending submission job that must be cancelled by the winner
+        repository.save_account_reply_job(
+            {
+                "job_id": "submission-job-1",
+                "ticket_id": case["client_ticket_id"],
+                "trigger_message_created_at": "2026-09-10T00:00:00Z",
+                "status": "persona_v8_queued",
+                "scheduled_for": "2026-09-10T00:01:00Z",
+                "payload": {"reply_intent": "submission_confirmation"},
+                "attempt_count": 0,
+                "claimed_at": None,
+                "published_at": None,
+                "created_at": "2026-09-10T00:00:00Z",
+                "updated_at": "2026-09-10T00:00:00Z",
+            }
+        )
+        repository.save_account_case(case)
+        return case
+
+    def _enabled_reply(self, message_id):
+        return types.SimpleNamespace(
+            message_id=message_id,
+            sender=SENDER,
+            subject="Re: [Enablement Request] Media Relay - Ticket TK-MANUAL-1",
+            body_text="Media Relay has been enabled.",
+        )
+
+    def test_concurrent_confirmations_keep_the_one_completion_job_alive(self):
+        import concurrent.futures
+        import threading
+
+        repository = InMemoryTicketRepository()
+        self._seed_sent_case(repository)
+        barrier = threading.Barrier(2)
+
+        def confirm(message_id):
+            def _run():
+                barrier.wait()
+                with patch.object(worker_module, "ticket_repository", repository):
+                    return worker_module.handle_enablement_request_reply(
+                        self._enabled_reply(message_id)
+                    )
+
+            return _run
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(confirm("enabled-a")), pool.submit(confirm("enabled-b"))]
+            outcomes = [future.result() for future in futures]
+        self.assertEqual(outcomes, ["completed", "completed"])
+        completion_jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job["payload"].get("reply_intent") == "enablement_completed_and_close"
+        ]
+        self.assertEqual(len(completion_jobs), 1)
+        self.assertNotEqual(completion_jobs[0]["status"], "cancelled")
+        submission = repository._account_reply_jobs.get("submission-job-1")
+        self.assertEqual(submission["status"], "cancelled")
+
+    def test_legacy_case_first_confirmation_persists_completed_marker(self):
+        repository = InMemoryTicketRepository()
+        self._seed_sent_case(repository, with_workflow=False)
+        with patch.object(worker_module, "ticket_repository", repository):
+            first = worker_module.handle_enablement_request_reply(
+                self._enabled_reply("enabled-legacy-1")
+            )
+            second = worker_module.handle_enablement_request_reply(
+                self._enabled_reply("enabled-legacy-2")
+            )
+        self.assertEqual(first, "completed")
+        self.assertEqual(second, "completed")
+        stored = repository.get_account_case("AC-MANUAL-1")
+        workflow = stored["automation_context"]["enablement_manual_workflow"]
+        self.assertEqual(workflow["state"], "completed")
+        self.assertTrue(workflow.get("legacy"))
+        completion_jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job["payload"].get("reply_intent") == "enablement_completed_and_close"
+        ]
+        self.assertEqual(len(completion_jobs), 1)
+
+
+class Round3QuoteBoundaryTests(unittest.TestCase):
+    def test_blockquote_html_never_satisfies_completion(self):
+        html = (
+            "<html><body>"
+            "<div>Thanks.</div>"
+            '<blockquote class="gmail_quote">'
+            "<div>Media Relay has been enabled.</div>"
+            "</blockquote>"
+            "</body></html>"
+        )
+        from backend.services.billing_automation import _normalize_graph_message_body
+
+        text = _normalize_graph_message_body(html, content_type="html")
+        segment = worker_module._unquoted_enablement_reply_segment(text)
+        self.assertEqual(segment, "Thanks.")
+        self.assertFalse(
+            worker_module._enablement_reply_explicitly_confirms_completion(segment)
+        )
+
+    def test_outlook_border_left_quote_div_is_boundary(self):
+        html = (
+            "<div>Checked, all good.</div>"
+            '<div style="border-left:solid #B5C4DF 1.0pt;padding-left:5pt">'
+            "<div>From: Engineer &lt;engineer@example.com&gt;</div>"
+            "<div>Media Relay has been enabled.</div>"
+            "</div>"
+        )
+        from backend.services.billing_automation import _normalize_graph_message_body
+
+        text = _normalize_graph_message_body(html, content_type="html")
+        segment = worker_module._unquoted_enablement_reply_segment(text)
+        self.assertEqual(segment, "Checked, all good.")
+
+    def test_chinese_outlook_headers_are_boundary(self):
+        body = "Thanks.\n发件人：工程师 <engineer@example.com>\n发送时间：2026年9月10日\n主题：旧请求\nMedia Relay 已经开通。"
+        segment = worker_module._unquoted_enablement_reply_segment(body)
+        self.assertEqual(segment, "Thanks.")
+
+    def test_chinese_original_message_marker_is_boundary(self):
+        body = "好的，已处理。\n-----原始邮件-----\nFrom: a@b.c\nIt has been enabled."
+        segment = worker_module._unquoted_enablement_reply_segment(body)
+        self.assertEqual(segment, "好的，已处理。")
+
+    def test_inline_chinese_from_header_cuts_tail(self):
+        body = "谢谢。发件人：工程师 <engineer@example.com> Media Relay has been enabled."
+        segment = worker_module._unquoted_enablement_reply_segment(body)
+        self.assertEqual(segment, "谢谢。")
+
+
+class Round3OwnershipTests(unittest.TestCase):
+    def test_human_review_case_is_not_sent_by_drain(self):
+        repository = InMemoryTicketRepository()
+        case = _base_case()
+        case["created_at"] = "2026-09-10T00:00:00Z"
+        case["updated_at"] = "2026-09-01T00:00:00Z"
+        case["automation_status"] = "human_review_required"
+        case["internal_email_send_status"] = "pending"
+        case["internal_email_payload"] = _email_payload()
+        case["automation_context"] = {
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "email_released",
+                "reply_job_id": "job-1",
+                "delivery_key": "enablement:AC-MANUAL-1:v1",
+            }
+        }
+        repository.save_account_case(case)
+        with patch.object(worker_module, "ticket_repository", repository):
+            listed = repository.list_enablement_cases_by_email_status(
+                ("pending",),
+                processing_profile="production",
+                limit=10,
+                workflow_states=("email_released",),
+            )
+        self.assertEqual(listed, [])
+        result = worker_module._send_claimed_enablement_delivery(
+            case, allow_rerun_owned=True
+        )
+        self.assertFalse(result.get("claimed"))
+        self.assertEqual(result.get("reason"), "case_not_automation_owned")
+        stored = repository.get_account_case("AC-MANUAL-1")
+        self.assertEqual(stored["internal_email_send_status"], "pending")
+
+    def test_hungry_legacy_pending_records_do_not_starve_released_case(self):
+        repository = InMemoryTicketRepository()
+        for index in range(25):
+            legacy = _base_case(ticket_id=f"TK-LEGACY-{index}")
+            legacy["account_case_id"] = f"AC-LEGACY-{index}"
+            legacy["billing_ticket_id"] = f"AC-LEGACY-{index}"
+            legacy["created_at"] = "2026-09-01T00:00:00Z"
+            legacy["updated_at"] = f"2026-09-01T00:{index:02d}:00Z"
+            legacy["internal_email_send_status"] = "pending"
+            legacy["internal_email_payload"] = _email_payload()
+            repository.save_account_case(legacy)
+        released = _base_case(ticket_id="TK-REL")
+        released["account_case_id"] = "AC-REL"
+        released["billing_ticket_id"] = "AC-REL"
+        released["created_at"] = "2026-08-31T00:00:00Z"
+        released["updated_at"] = "2026-08-31T00:00:00Z"
+        released["internal_email_send_status"] = "pending"
+        released["internal_email_payload"] = _email_payload()
+        released["automation_context"] = {
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "email_released",
+                "reply_job_id": "job-rel",
+                "delivery_key": "enablement:AC-REL:v1",
+            }
+        }
+        repository.save_account_case(released)
+        send_batch = repository.list_enablement_cases_by_email_status(
+            ("pending", "retry", "failed", "skipped_config_missing"),
+            processing_profile="production",
+            limit=25,
+            workflow_states=("email_released",),
+        )
+        self.assertEqual(
+            [case["account_case_id"] for case in send_batch], ["AC-REL"]
+        )
+

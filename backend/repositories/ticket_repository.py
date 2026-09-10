@@ -2330,6 +2330,7 @@ class TicketRepository(Protocol):
         *,
         job: dict[str, Any],
         completed_at: str,
+        cancel_pending_reply_jobs: bool = True,
     ) -> bool:
         ...
     def update_claimed_account_reply_job(
@@ -2964,6 +2965,7 @@ class TicketRepository(Protocol):
         *,
         processing_profile: str = "staging",
         limit: int = 25,
+        workflow_states: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         ...
 
@@ -3224,6 +3226,11 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             )
             if current_status not in set(allowed_statuses) and not same_claim_replay:
                 return False
+            if str(current.get("automation_status") or "").strip() == "human_review_required":
+                # Fail-closed: a case escalated to human review must never be
+                # auto-claimed for sending (mirrors the Postgres WHERE clause).
+                if not same_claim_replay:
+                    return False
             claimed_payload = copy.deepcopy(payload)
             claimed_payload["delivery_claim_token"] = str(claim_token or "").strip()
             updated = copy.deepcopy(current)
@@ -4571,20 +4578,35 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             self._account_reply_jobs[str(saved["job_id"])] = saved
         return copy.deepcopy(saved)
 
+    _PENDING_REPLY_JOB_STATUSES = (
+        "queued",
+        "preparing",
+        "scheduled",
+        "persona_queued",
+        "persona_preparing",
+        "persona_scheduled",
+        "persona_v8_queued",
+        "persona_v8_preparing",
+        "persona_v8_scheduled",
+    )
+
     def claim_enablement_manual_completion(
         self,
         account_case_id: str,
         *,
         job: dict[str, Any],
         completed_at: str,
+        cancel_pending_reply_jobs: bool = True,
     ) -> bool:
-        """Atomically mark the manual enablement application completed and
-        insert its one completion reply job. Returns False when the case is
-        not awaiting confirmation or a completion was already claimed."""
+        """InMemory twin: atomically mark the manual enablement application
+        completed, cancel pending reply jobs, and insert its one completion
+        reply job. Legacy cases without a workflow get a minimal completed
+        workflow persisted on the first accepted confirmation."""
         normalized_id = str(account_case_id or "").strip()
         job_id = str((job or {}).get("job_id") or "").strip()
         if not normalized_id or not job_id:
             return False
+        normalized_ticket_id = str((job or {}).get("ticket_id") or "").strip()
         with self._assignment_lock:
             for billing_ticket_id, current in self._billing_tickets.items():
                 current_id = str(
@@ -4614,10 +4636,29 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
                 if isinstance(workflow, dict):
                     completed_workflow = dict(workflow)
                     completed_workflow.update({"state": "completed", "updated_at": completed_at})
-                    context["enablement_manual_workflow"] = completed_workflow
+                else:
+                    completed_workflow = {
+                        "version": 1,
+                        "state": "completed",
+                        "legacy": True,
+                        "completed_at": completed_at,
+                    }
+                context["enablement_manual_workflow"] = completed_workflow
                 updated["automation_context"] = context
                 updated["updated_at"] = completed_at
                 self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
+                if cancel_pending_reply_jobs and normalized_ticket_id:
+                    for pending_id, pending_job in self._account_reply_jobs.items():
+                        if pending_id == job_id:
+                            continue
+                        if str(pending_job.get("ticket_id") or "") != normalized_ticket_id:
+                            continue
+                        if (
+                            str(pending_job.get("status") or "").strip()
+                            in self._PENDING_REPLY_JOB_STATUSES
+                        ):
+                            pending_job["status"] = "cancelled"
+                            pending_job["updated_at"] = completed_at
                 saved_job = copy.deepcopy(dict(job))
                 saved_job["created_at"] = saved_job.get("created_at") or completed_at
                 saved_job["updated_at"] = saved_job.get("updated_at") or completed_at
@@ -7625,9 +7666,15 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
         *,
         processing_profile: str = "staging",
         limit: int = 25,
+        workflow_states: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         normalized_statuses = {
             str(status or "").strip() for status in statuses if str(status or "").strip()
+        }
+        normalized_workflow_states = {
+            str(state or "").strip()
+            for state in workflow_states
+            if str(state or "").strip()
         }
         normalized_profile = str(processing_profile or "staging").strip().lower()
         if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
@@ -7636,14 +7683,31 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             return []
         safe_limit = _safe_positive_int(limit, 25)
         with self._assignment_lock:
-            rows = [
-                copy.deepcopy(row)
-                for row in self._billing_tickets.values()
-                if str(row.get("automation_handler") or "").strip() == "enablement"
-                and str(row.get("internal_email_send_status") or "").strip() in normalized_statuses
-                and str(row.get("processing_profile") or "staging").strip().lower()
-                == normalized_profile
-            ]
+            rows = []
+            for row in self._billing_tickets.values():
+                if str(row.get("automation_handler") or "").strip() != "enablement":
+                    continue
+                if str(row.get("internal_email_send_status") or "").strip() not in normalized_statuses:
+                    continue
+                if (
+                    str(row.get("processing_profile") or "staging").strip().lower()
+                    != normalized_profile
+                ):
+                    continue
+                if str(row.get("automation_status") or "").strip() == "human_review_required":
+                    continue
+                if normalized_workflow_states:
+                    workflow = (row.get("automation_context") or {}).get(
+                        "enablement_manual_workflow"
+                    )
+                    state = (
+                        str(workflow.get("state") or "").strip()
+                        if isinstance(workflow, dict)
+                        else ""
+                    )
+                    if state not in normalized_workflow_states:
+                        continue
+                rows.append(copy.deepcopy(row))
         rows.sort(key=lambda row: str(row.get("updated_at") or ""))
         return rows[:safe_limit]
 
@@ -8161,7 +8225,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                         "SELECT 1 FROM {} d WHERE d.account_case_id = %s "
                         "AND d.is_public = TRUE AND d.status = 'delivered' "
                         "AND EXISTS ("
-                        "  SELECT 1 FROM {} m WHERE m.id = d.message_id "
+                        "  SELECT 1 FROM {} m WHERE m.id::text = d.message_id "
                         "  AND m.ticket_id = %s AND m.role = 'assistant' "
                         "  AND COALESCE(m.meta->>'account_reply_job_id','') = %s"
                         ") LIMIT 1"
@@ -8231,6 +8295,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                             internal_email_send_reason = 'delivery_claimed',
                             updated_at = %s
                         WHERE (billing_ticket_id = %s OR account_case_id = %s)
+                          AND automation_status <> 'human_review_required'
                           AND (
                               internal_email_send_status = ANY(%s)
                               OR (
@@ -14810,7 +14875,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                             "->>'reply_job_id','') <> '' "
                             "AND EXISTS ("
                             "  SELECT 1 FROM {} m "
-                            "  WHERE m.id = %s AND m.ticket_id = %s "
+                            "  WHERE m.id::text = %s AND m.ticket_id = %s "
                             "  AND m.role = 'assistant' "
                             "  AND COALESCE(m.meta->>'account_reply_job_id','') = "
                             "      COALESCE({}.automation_context"
@@ -16755,12 +16820,16 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         *,
         processing_profile: str = "staging",
         limit: int = 25,
+        workflow_states: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         """Filtered, starvation-free listing for the manual review drain.
 
-        Filters handler + internal email status in SQL BEFORE the LIMIT and
-        orders oldest-updated first so stale gated/released todos always make
-        progress even when newer unrelated cases exist.
+        All membership conditions are in SQL BEFORE the LIMIT: handler,
+        internal email status, processing profile, workflow state (via the
+        ``enablement_manual_workflow.state`` jsonb path), and excluding cases
+        escalated to human review. Orders oldest-updated first so stale
+        gated/released todos always make progress even when newer unrelated
+        cases exist.
         """
         normalized_statuses = tuple(
             dict.fromkeys(
@@ -16772,20 +16841,42 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             raise ValueError("processing_profile must be staging, preproduction, or production")
         if not normalized_statuses:
             return []
+        normalized_workflow_states = tuple(
+            dict.fromkeys(
+                str(state or "").strip()
+                for state in workflow_states
+                if str(state or "").strip()
+            )
+        )
         safe_limit = _safe_positive_int(limit, 25)
+        clauses = [
+            sql.SQL("bt.automation_handler = 'enablement'"),
+            sql.SQL("bt.internal_email_send_status = ANY(%s)"),
+            sql.SQL("bt.processing_profile = %s"),
+            sql.SQL("bt.automation_status <> 'human_review_required'"),
+        ]
+        params: list[Any] = [list(normalized_statuses), normalized_profile]
+        if normalized_workflow_states:
+            clauses.append(
+                sql.SQL(
+                    "COALESCE(bt.automation_context"
+                    "->'enablement_manual_workflow'->>'state','') = ANY(%s)"
+                )
+            )
+            params.append(list(normalized_workflow_states))
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "SELECT bt.* FROM {} bt "
-                        "WHERE bt.automation_handler = 'enablement' "
-                        "AND bt.internal_email_send_status = ANY(%s) "
-                        "AND bt.processing_profile = %s "
+                        "SELECT bt.* FROM {} bt WHERE {} "
                         "ORDER BY bt.updated_at ASC "
                         "LIMIT %s"
-                    ).format(self._table("support_account_cases")),
-                    (list(normalized_statuses), normalized_profile, safe_limit),
+                    ).format(
+                        self._table("support_account_cases"),
+                        sql.SQL(" AND ").join(clauses),
+                    ),
+                    (*params, safe_limit),
                 )
                 col_names = [desc[0] for desc in cur.description]
                 return [dict(zip(col_names, row)) for row in cur.fetchall()]
@@ -18036,11 +18127,17 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         *,
         job: dict[str, Any],
         completed_at: str,
+        cancel_pending_reply_jobs: bool = True,
     ) -> bool:
         """Atomically claim "application completed" and insert the completion
         reply job (PostgreSQL twin). Fail-closed: only succeeds when the case
         is an enablement case awaiting human confirmation (sent or
-        delivery_unknown) whose manual workflow is not already completed."""
+        delivery_unknown) whose manual workflow is not already completed.
+        A legacy case without a workflow gets one created in the completed
+        state on its FIRST accepted confirmation, so later confirmations are
+        rejected. Pending reply jobs for the ticket are cancelled inside the
+        same transaction, so a concurrent confirmation can never cancel the
+        one completion job this claim inserts."""
         normalized_id = str(account_case_id or "").strip()
         job_id = str((job or {}).get("job_id") or "").strip()
         if not normalized_id or not job_id:
@@ -18050,6 +18147,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         saved["updated_at"] = saved.get("updated_at") or completed_at
         saved["attempt_count"] = int(saved.get("attempt_count") or 0)
         payload = dict(saved.get("payload") or {})
+        normalized_ticket_id = str(saved.get("ticket_id") or "").strip()
 
         def _operation(conn: psycopg.Connection[Any]) -> bool:
             with conn.transaction(), conn.cursor() as cur:
@@ -18081,7 +18179,14 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                 if isinstance(workflow, dict):
                     completed_workflow = dict(workflow)
                     completed_workflow.update({"state": "completed", "updated_at": completed_at})
-                    updated_context["enablement_manual_workflow"] = completed_workflow
+                else:
+                    completed_workflow = {
+                        "version": 1,
+                        "state": "completed",
+                        "legacy": True,
+                        "completed_at": completed_at,
+                    }
+                updated_context["enablement_manual_workflow"] = completed_workflow
                 cur.execute(
                     sql.SQL(
                         "UPDATE {} SET automation_context=%s::jsonb, updated_at=%s "
@@ -18089,6 +18194,21 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                     ).format(self._table("support_account_cases")),
                     (Json(updated_context), completed_at, normalized_id, normalized_id),
                 )
+                if cancel_pending_reply_jobs and normalized_ticket_id:
+                    # Same cancellation set as cancel_pending_account_reply_jobs,
+                    # inside the claim transaction: only the winner of the
+                    # completion claim may cancel, after it holds the row lock.
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='cancelled',updated_at=%s "
+                            "WHERE ticket_id=%s AND status IN "
+                            "('queued','preparing','scheduled','persona_queued',"
+                            "'persona_preparing','persona_scheduled',"
+                            "'persona_v8_queued','persona_v8_preparing',"
+                            "'persona_v8_scheduled') AND job_id <> %s"
+                        ).format(self._table("support_account_reply_jobs")),
+                        (completed_at, normalized_ticket_id, job_id),
+                    )
                 cur.execute(
                     sql.SQL(
                         """
