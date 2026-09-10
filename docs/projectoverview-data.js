@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-10T11:27:31Z",
-  "source_base_commit": "fced19ae554e7a4d9d83dea4f7a4aaba2e698bed",
-  "registry_digest": "fc64dd06ef6157979cf78fd099feba2811afc953a0cc7cae947f8fac904d0f80",
+  "generated_at": "2026-09-10T12:29:25Z",
+  "source_base_commit": "ff8777f84517e3eed6000f12b56175eaa842776b",
+  "registry_digest": "5131cab08d9f0e5f537354a63ec8dca7906961d1f0bda56eea6bec882ea0f3a0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3081,7 +3081,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "13400 first ticket exposed save_reply_draft endpoint kwarg mismatch",
-          "details": "2026-09-10 Preproduction r20260909-8992c77 受控首单 13400：intake/binding/route/三阶段编排全通（58 秒），但 persona 两次调 POST /v1/agent/tools/save_reply_draft 均 500，draft 永不落库且 turn 仍绿完成（requires_human_review=false）。根因：automation_ecs_api.py save_reply_draft 分支仍向 tool_save_reply_draft 转发 publish_policy kwarg，而 PR#1116（d4d55a1f）起工具签名改为 derive_publish_policy 服务端推导，端点漏删导致任何调用必 TypeError（body 带不带该参数都挂）；main 与部署版同病，工具层测试不经过端点转发所以 CI 未拦。修复：删端点转发行；新增 test_automation_ecs_api.py 首个 /v1/agent/tools HTTP 回归测试（preproduction settings + 种子 turn，验证 body 带/不带 publish_policy 均 200 且服务端推导 manual、draft 落库未发布；修复前该测试精确复现生产 TypeError）。"
+          "details": "2026-09-10 Preproduction r20260909-8992c77 受控首单 13400：intake/binding/route/三阶段编排全通（58 秒），但 persona 两次调 POST /v1/agent/tools/save_reply_draft 均 500，draft 永不落库且 turn 仍绿完成（requires_human_review=false）。根因：automation_ecs_api.py save_reply_draft 分支仍向 tool_save_reply_draft 转发 publish_policy kwarg，而 PR#1116（d4d55a1f）起工具签名改为 derive_publish_policy 服务端推导，端点漏删导致任何调用必 TypeError（body 带不带该参数都挂）；main 与部署版同病，工具层测试不经过端点转发所以 CI 未拦。修复：删端点转发行（PR#1130）；新增 test_automation_ecs_api.py 首个 /v1/agent/tools HTTP 回归测试（preproduction settings + 种子 turn，验证 body 带/不带 publish_policy 均 200 且服务端推导 manual、draft 落库未发布；修复前该测试精确复现生产 TypeError）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Fix deployed as r20260910-ff8777f with controlled replay on 13400",
+          "details": "2026-09-10 修复经 PR#1130 合入（beb4d472）后走既有管线重建部署：管线因并发合入的 p2-149 第二轮（#1131 ff8777f8）按规则改从新 main HEAD 重建（r20260910-ff8777f，含 #1130+#1131），部署首次因 collector 阶段 CloudWatch filter-log-events 空响应致 jq argjson 崩而干净回滚，--resume 重试全绿上线（api/route/worker :14，hermes :17，health live/ready/release 三检 ok）。受控重放（13400 注入 end-user 跟进评论，comment.created 契约）：intake→route→三阶段 48 秒完成，save_reply_draft 生产日志实证 200 OK（修复前同端点两次 500），draft-f7b8c864 落库 publish_policy=manual 服务端推导、guardrail 通过、称呼投影正确，同一 binding hermes-session:ca6031bf 复用、conversation_version 1→2、case_revision 1→2，Zendesk 13400 保持 open/无 assignee/仅原始评论=零未授权外发。两次注入被 route.ignored（comment_not_customer_event）为 fail-closed 客户判定（author 需无 role 且显式 is_agent=false，或 customer role 且 is_agent≠false）的正向验证。"
+        },
+        {
+          "type": "test",
+          "label": "Replay exposed unwired publication gate (stale-on-completion)",
+          "details": "重放发现 p2-148 第二阶段设计的编排侧发布门禁未接线：publication_decision_for_turn（automation_hermes_tools.py:487，含 request_hermes_draft_publish/queue_hermes_draft_delivery 调用）仅有测试调用方，automation_hermes_agent.py processor 在 persona 阶段后直接 complete_hermes_agent_turn；turn 完成把 binding conversation_version 推进后 _stale_drafts_for_version 立即将未提升草稿（case_revision NULL）置 stale，而 get_hermes_case_review 与 dashboard approve 端点均不含 stale 草稿——调查草稿人工批准与 automation 草稿自动发布两条路径当前都无法走通（验收标准第 3 条未满足，属新缺陷非本轮修复范围）。次要观察：Hermes 会话内工具名 support_save_reply_draft 报 not available（agent 回退 SupportPortal HTTP 工具端点成功），route/work 阶段 output 有 \"support tools are unavailable\" 叙述但方向记录与调查保存实际成功，Hermes 侧 toolset 注册需核对。"
         },
         {
           "type": "test",
@@ -11352,7 +11362,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-08",
       "updated_at": "2026-09-10",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "2026-09-10 修复 13400 首单暴露的 save_reply_draft 端点 publish_policy kwarg 错位（PR#1116 工具签名改服务端推导后端点漏删转发，任何调用必 500）并补首个 /v1/agent/tools HTTP 端点回归测试；待合入 main 后走 CodeBuild 重建部署 Preproduction（r20260909-8992c77 同病），再用 13400 注入跟进评论受控重放验证 draft 落库、人工审核门禁与同一 binding 复用。",
+      "next_action": "2026-09-10 save_reply_draft 端点修复已上线并被受控重放实证（PR#1130 + r20260910-ff8777f，重放轮 200/draft 落库/binding 复用/零外发）。重放同时暴露新缺口：编排侧 publication gate（publication_decision_for_turn）无任何生产调用方，turn 完成即把 manual 草稿置 stale 且 review 列表不可见，人工批准与 auto 发布两条路径均未接线——需设计接线下一个修复轮；另记录 Hermes 侧内部工具名 support_save_reply_draft 不可用（agent 回退 HTTP 端点成功）与 route/work 阶段工具可用性叙述偏差两个观察点。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -11406,7 +11416,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "13400 first ticket exposed save_reply_draft endpoint kwarg mismatch",
-          "details": "2026-09-10 Preproduction r20260909-8992c77 受控首单 13400：intake/binding/route/三阶段编排全通（58 秒），但 persona 两次调 POST /v1/agent/tools/save_reply_draft 均 500，draft 永不落库且 turn 仍绿完成（requires_human_review=false）。根因：automation_ecs_api.py save_reply_draft 分支仍向 tool_save_reply_draft 转发 publish_policy kwarg，而 PR#1116（d4d55a1f）起工具签名改为 derive_publish_policy 服务端推导，端点漏删导致任何调用必 TypeError（body 带不带该参数都挂）；main 与部署版同病，工具层测试不经过端点转发所以 CI 未拦。修复：删端点转发行；新增 test_automation_ecs_api.py 首个 /v1/agent/tools HTTP 回归测试（preproduction settings + 种子 turn，验证 body 带/不带 publish_policy 均 200 且服务端推导 manual、draft 落库未发布；修复前该测试精确复现生产 TypeError）。"
+          "details": "2026-09-10 Preproduction r20260909-8992c77 受控首单 13400：intake/binding/route/三阶段编排全通（58 秒），但 persona 两次调 POST /v1/agent/tools/save_reply_draft 均 500，draft 永不落库且 turn 仍绿完成（requires_human_review=false）。根因：automation_ecs_api.py save_reply_draft 分支仍向 tool_save_reply_draft 转发 publish_policy kwarg，而 PR#1116（d4d55a1f）起工具签名改为 derive_publish_policy 服务端推导，端点漏删导致任何调用必 TypeError（body 带不带该参数都挂）；main 与部署版同病，工具层测试不经过端点转发所以 CI 未拦。修复：删端点转发行（PR#1130）；新增 test_automation_ecs_api.py 首个 /v1/agent/tools HTTP 回归测试（preproduction settings + 种子 turn，验证 body 带/不带 publish_policy 均 200 且服务端推导 manual、draft 落库未发布；修复前该测试精确复现生产 TypeError）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Fix deployed as r20260910-ff8777f with controlled replay on 13400",
+          "details": "2026-09-10 修复经 PR#1130 合入（beb4d472）后走既有管线重建部署：管线因并发合入的 p2-149 第二轮（#1131 ff8777f8）按规则改从新 main HEAD 重建（r20260910-ff8777f，含 #1130+#1131），部署首次因 collector 阶段 CloudWatch filter-log-events 空响应致 jq argjson 崩而干净回滚，--resume 重试全绿上线（api/route/worker :14，hermes :17，health live/ready/release 三检 ok）。受控重放（13400 注入 end-user 跟进评论，comment.created 契约）：intake→route→三阶段 48 秒完成，save_reply_draft 生产日志实证 200 OK（修复前同端点两次 500），draft-f7b8c864 落库 publish_policy=manual 服务端推导、guardrail 通过、称呼投影正确，同一 binding hermes-session:ca6031bf 复用、conversation_version 1→2、case_revision 1→2，Zendesk 13400 保持 open/无 assignee/仅原始评论=零未授权外发。两次注入被 route.ignored（comment_not_customer_event）为 fail-closed 客户判定（author 需无 role 且显式 is_agent=false，或 customer role 且 is_agent≠false）的正向验证。"
+        },
+        {
+          "type": "test",
+          "label": "Replay exposed unwired publication gate (stale-on-completion)",
+          "details": "重放发现 p2-148 第二阶段设计的编排侧发布门禁未接线：publication_decision_for_turn（automation_hermes_tools.py:487，含 request_hermes_draft_publish/queue_hermes_draft_delivery 调用）仅有测试调用方，automation_hermes_agent.py processor 在 persona 阶段后直接 complete_hermes_agent_turn；turn 完成把 binding conversation_version 推进后 _stale_drafts_for_version 立即将未提升草稿（case_revision NULL）置 stale，而 get_hermes_case_review 与 dashboard approve 端点均不含 stale 草稿——调查草稿人工批准与 automation 草稿自动发布两条路径当前都无法走通（验收标准第 3 条未满足，属新缺陷非本轮修复范围）。次要观察：Hermes 会话内工具名 support_save_reply_draft 报 not available（agent 回退 SupportPortal HTTP 工具端点成功），route/work 阶段 output 有 \"support tools are unavailable\" 叙述但方向记录与调查保存实际成功，Hermes 侧 toolset 注册需核对。"
         }
       ],
       "history": [
@@ -11439,6 +11459,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-10",
           "event": "draft_save_endpoint_fixed",
           "summary": "13400 首单暴露 save_reply_draft 端点 publish_policy kwarg 错位（PR#1116 漏删转发）→ 删转发行 + 首个 agent tools HTTP 回归测试；等待合入后重建部署 Preproduction 并受控重放。"
+        },
+        {
+          "at": "2026-09-10",
+          "event": "fix_deployed_and_replay_verified",
+          "summary": "PR#1130 合入并以 r20260910-ff8777f 部署 Preproduction（并发 #1131 按管线规则一并重建；collector 瞬态失败干净回滚后 resume 成功）；13400 重放实证 draft 200 落库、binding 复用、零外发；新发现 publication gate 未接线缺口（草稿 turn 完成即 stale、审批路径不可达）待下轮修复。"
         }
       ],
       "legacy_ids": [],
