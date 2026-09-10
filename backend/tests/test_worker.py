@@ -3435,9 +3435,9 @@ class WorkerResilienceTests(unittest.TestCase):
 
         classifier.assert_not_called()
         self.assertEqual(handled, "completed")
-        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
-            "TK-ENABLEMENT-DONE", updated_at=unittest.mock.ANY
-        )
+        # cancellation now runs inside the atomic completion claim
+        self.assertTrue(repository.claim_enablement_manual_completion.called)
+        repository.cancel_pending_account_reply_jobs.assert_not_called()
         saved_job = repository.claim_enablement_manual_completion.call_args.kwargs["job"]
         payload = saved_job["payload"]
         self.assertEqual(payload["reply_intent"], "enablement_completed_and_close")
@@ -3504,9 +3504,9 @@ class WorkerResilienceTests(unittest.TestCase):
             saved_job["payload"]["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
-            "TK-ENABLEMENT-FOLLOWUP", updated_at=unittest.mock.ANY
-        )
+        # cancellation now runs inside the atomic completion claim
+        self.assertTrue(repository.claim_enablement_manual_completion.called)
+        repository.cancel_pending_account_reply_jobs.assert_not_called()
 
     def test_enablement_non_completion_reply_does_not_close(self) -> None:
         repository = Mock()
@@ -3611,9 +3611,9 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(classifier.call_args.args[0], "已开通")
         self.assertEqual(classifier.call_args.kwargs["feature_label"], "Media Relay")
         self.assertEqual(handled, "completed")
-        repository.cancel_pending_account_reply_jobs.assert_called_once_with(
-            "TK-ENABLEMENT-CN", updated_at=unittest.mock.ANY
-        )
+        # cancellation now runs inside the atomic completion claim
+        self.assertTrue(repository.claim_enablement_manual_completion.called)
+        repository.cancel_pending_account_reply_jobs.assert_not_called()
         saved_job = repository.claim_enablement_manual_completion.call_args.kwargs["job"]
         payload = saved_job["payload"]
         self.assertEqual(payload["reply_intent"], "enablement_completed_and_close")

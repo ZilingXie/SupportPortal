@@ -2743,10 +2743,12 @@ def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
 
 
 _OUTLOOK_HEADER_LINE_RE = re.compile(
-    r"^(from|sent|to|subject|date|cc)\s*:", re.IGNORECASE
+    r"^(?:from|sent|to|subject|date|cc|发件人|发送时间|收件人|主题|日期|抄送)\s*[:：]",
+    re.IGNORECASE,
 )
 _INLINE_FROM_HEADER_RE = re.compile(
-    r"from:\s+(?:\S+.*<\S+@\S+>|\S+@\S+)", re.IGNORECASE
+    r"(?:from|发件人)\s*[:：]\s*(?:\S+.*<\S+@\S+>|\S+@\S+)",
+    re.IGNORECASE,
 )
 
 
@@ -2767,7 +2769,9 @@ def _unquoted_enablement_reply_segment(note: str) -> str:
         stripped = line.strip()
         if stripped.startswith(">"):
             break
-        if re.match(r"^-{3,}\s*(original|forwarded)\s+message\s*-*$", stripped, re.IGNORECASE):
+        if re.match(
+            r"^-{3,}\s*(original|forwarded)\s+message\s*-*$", stripped, re.IGNORECASE
+        ) or stripped.startswith("-----原始邮件") or stripped.startswith("-----原始邮件-----"):
             break
         if re.match(r"^on\s+.+\s+wrote:\s*$", stripped, re.IGNORECASE):
             break
@@ -3212,6 +3216,19 @@ def _send_claimed_enablement_delivery(
             "claimed": False,
             "delivery_state": "known_not_sent",
         }
+    if (
+        str(account_case.get("automation_status") or "").strip() == "human_review_required"
+        or str(account_case.get("automation_handler") or "").strip() != "enablement"
+    ):
+        # Fail-closed ownership check: once a human owns the case (or the
+        # handler changed), the automation must not send further emails. The
+        # atomic claim enforces the same predicate server-side.
+        return {
+            "status": "skipped",
+            "reason": "case_not_automation_owned",
+            "claimed": False,
+            "delivery_state": "known_not_sent",
+        }
     account_case_id = str(
         account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
     ).strip()
@@ -3403,61 +3420,64 @@ def _drain_enablement_manual_review_emails(
 ) -> dict[str, int]:
     """Progress the manual enablement review gate each bounded cycle.
 
-    Scope is strictly the CURRENT manual application: the case must carry an
-    ``enablement_manual_workflow`` context. (1) ``awaiting_public_reply``
-    emails are released only when THIS application's submission_confirmation
-    reply job's message is confirmed delivered (the readback transaction hook
-    normally did this; this belt covers missed hooks and worker restarts);
-    (2) only emails whose workflow state is ``email_released`` (set by the
-    release paths) are sent through the normal claim/send/complete protocol.
-    Legacy todos without the context — old pending deliveries, failed sends,
-    human-review cases — are never taken over by this drain, and waiting for
-    a human is a normal state that never marks the case failed.
+    Two INDEPENDENT, SQL-targeted scans (so one phase can never starve the
+    other, and records outside the manual flow never consume a window):
+    (1) release — cases gated on ``awaiting_public_reply`` whose workflow
+    state is the same; released only when THIS application's
+    submission_confirmation reply job's message is confirmed delivered (the
+    readback transaction hook normally did this; this belt covers missed
+    hooks and worker restarts);
+    (2) send — cases whose workflow state is ``email_released`` with a
+    claimable email status, sent through the normal claim/send/complete
+    protocol. Cases escalated to human review are excluded by the repository
+    query and by the ownership guard; legacy todos without the workflow
+    context are excluded in SQL and never taken over.
     """
     counts = {"released": 0, "sent": 0, "send_retried": 0, "still_gated": 0}
-    cases = ticket_repository.list_enablement_cases_by_email_status(
-        (
-            "awaiting_public_reply",
-            "pending",
-            "retry",
-            "failed",
-            "skipped_config_missing",
-        ),
+
+    gated_cases = ticket_repository.list_enablement_cases_by_email_status(
+        ("awaiting_public_reply",),
         processing_profile=processing_profile,
         limit=max(1, limit),
+        workflow_states=("awaiting_public_reply",),
     )
-    for account_case in cases:
-        workflow = (account_case.get("automation_context") or {}).get(
-            "enablement_manual_workflow"
-        )
-        if not isinstance(workflow, dict):
+    for account_case in gated_cases:
+        case_id = str(
+            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+        ).strip()
+        if not case_id:
             continue
-        workflow_state = str(workflow.get("state") or "").strip()
-        status = str(account_case.get("internal_email_send_status") or "").strip()
         payload = (
             account_case.get("internal_email_payload")
             if isinstance(account_case.get("internal_email_payload"), dict)
             else {}
         )
-        delivery_key = str(payload.get("delivery_key") or "").strip()
+        if not str(payload.get("delivery_key") or "").strip():
+            continue
+        if not _enablement_public_reply_delivered(account_case):
+            counts["still_gated"] += 1
+            continue
+        if ticket_repository.release_account_internal_email_after_public_reply(
+            case_id, released_at=now_iso()
+        ):
+            counts["released"] += 1
+
+    send_cases = ticket_repository.list_enablement_cases_by_email_status(
+        ("pending", "retry", "failed", "skipped_config_missing"),
+        processing_profile=processing_profile,
+        limit=max(1, limit),
+        workflow_states=("email_released",),
+    )
+    for account_case in send_cases:
         case_id = str(
             account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
         ).strip()
-        if not delivery_key or not case_id:
-            continue
-        if status == "awaiting_public_reply":
-            if workflow_state != "awaiting_public_reply":
-                continue
-            if not _enablement_public_reply_delivered(account_case):
-                counts["still_gated"] += 1
-                continue
-            if not ticket_repository.release_account_internal_email_after_public_reply(
-                case_id, released_at=now_iso()
-            ):
-                continue
-            counts["released"] += 1
-            workflow_state = "email_released"
-        if workflow_state != "email_released":
+        payload = (
+            account_case.get("internal_email_payload")
+            if isinstance(account_case.get("internal_email_payload"), dict)
+            else {}
+        )
+        if not case_id or not str(payload.get("delivery_key") or "").strip():
             continue
         updated_at = _parse_iso_datetime(str(account_case.get("updated_at") or ""))
         if updated_at is not None and (datetime.now(timezone.utc) - updated_at).total_seconds() < 30:
@@ -3986,9 +4006,6 @@ def _queue_enablement_completion_reply_job(
                 "effective_prompt": dict(persona_assignment.get("content") or {}),
             }
         )
-    ticket_repository.cancel_pending_account_reply_jobs(
-        client_ticket_id, updated_at=timestamp
-    )
     completion_job = {
         "job_id": f"account-reply-{uuid4().hex}",
         "ticket_id": client_ticket_id,
@@ -4006,9 +4023,11 @@ def _queue_enablement_completion_reply_job(
         "updated_at": timestamp,
     }
     if handler == "enablement":
-        # Atomic per-application completion: persist "completed" and insert
-        # the one completion job in the same transaction, so duplicate or
-        # concurrent `enabled` confirmations cannot queue a second job.
+        # Atomic per-application completion: persist "completed", cancel the
+        # ticket's pending reply jobs, and insert the one completion job in a
+        # single transaction. The cancellation runs INSIDE the claim so a
+        # concurrent confirmation can never cancel this job after it wins —
+        # the loser's claim simply fails and stops processing.
         completion_claimed = ticket_repository.claim_enablement_manual_completion(
             case_id,
             job=completion_job,
@@ -4024,6 +4043,9 @@ def _queue_enablement_completion_reply_job(
             )
         job = completion_job
     else:
+        ticket_repository.cancel_pending_account_reply_jobs(
+            client_ticket_id, updated_at=timestamp
+        )
         job = ticket_repository.save_account_reply_job(completion_job)
     resolution_event = {
         "event": f"{handler}_internal_resolution_received", "account_case_id": case_id,

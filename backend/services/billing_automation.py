@@ -787,10 +787,40 @@ def _billing_request_reply_from_graph_message(message: dict[str, Any]) -> Billin
     )
 
 
+_QUOTE_SENTINEL = "\n-----Original Message-----\n"
+
+
+def _mark_html_quote_boundaries(text: str) -> str:
+    """Convert HTML quoting structures into a sentinel line BEFORE tag
+    stripping, so quoted history stays separable from newly authored text.
+
+    Handles the structures Outlook/Gmail actually emit: nested
+    ``<blockquote>`` wrappers (converted inner-first), the OWA
+    ``<div id="appendonsend">`` quote container, Outlook's
+    ``<hr id="stopspelling">`` separator, and classic border-left quote divs.
+    """
+    # Nested blockquotes: repeatedly replace the innermost pair.
+    pattern = re.compile(r"(?is)<\s*blockquote\b[^>]*>((?:(?!<\s*blockquote\b).)*?)<\s*/\s*blockquote\s*>")
+    for _ in range(8):
+        marked, count = pattern.subn(_QUOTE_SENTINEL + r"\1", text)
+        if not count:
+            break
+        text = marked
+    text = re.sub(r"(?is)<\s*hr\b[^>]*id\s*=\s*[\"']?stopspelling[\"']?[^>]*>", _QUOTE_SENTINEL, text)
+    text = re.sub(r"(?is)<\s*div\b[^>]*id\s*=\s*[\"']?appendonsend[\"']?[^>]*>", _QUOTE_SENTINEL, text)
+    text = re.sub(
+        r"(?is)<\s*div\b[^>]*style\s*=\s*[\"'][^\"']*border-left[^\"']*[\"'][^>]*>",
+        _QUOTE_SENTINEL,
+        text,
+    )
+    return text
+
+
 def _normalize_graph_message_body(value: Any, *, content_type: str = "") -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
     if content_type == "html" or re.search(r"<[a-zA-Z][^>]*>", text):
-        text = re.sub(r"(?is)<\s*(br|/p|/div|/li)\b[^>]*>", "\n", text)
+        text = _mark_html_quote_boundaries(text)
+        text = re.sub(r"(?is)<\s*(br|/p|/div|/li|/tr|/table|/blockquote|hr)\b[^>]*>", "\n", text)
         text = re.sub(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>", " ", text)
         text = re.sub(r"(?s)<[^>]+>", " ", text)
         text = unescape(text)
