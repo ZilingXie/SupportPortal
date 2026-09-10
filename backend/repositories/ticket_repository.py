@@ -2655,6 +2655,24 @@ class TicketRepository(Protocol):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         ...
 
+    def prepare_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        payload: dict[str, Any],
+        prepared_at: str,
+        allowed_statuses: tuple[str, ...] = (
+            "archer_pending",
+            "not_applicable",
+            "not_ready",
+            "pending",
+            "retry",
+            "failed",
+        ),
+    ) -> bool:
+        ...
+
     def claim_account_internal_email_delivery(
         self,
         account_case_id: str,
@@ -2989,6 +3007,52 @@ class TicketRepository(Protocol):
 class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
+
+    def prepare_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        payload: dict[str, Any],
+        prepared_at: str,
+        allowed_statuses: tuple[str, ...] = (
+            "archer_pending",
+            "not_applicable",
+            "not_ready",
+            "pending",
+            "retry",
+            "failed",
+        ),
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        normalized_key = str(delivery_key or "").strip()
+        if not normalized_id or not normalized_key:
+            return False
+        for billing_ticket_id, current in self._billing_tickets.items():
+            current_id = str(
+                current.get("account_case_id") or current.get("billing_ticket_id") or ""
+            ).strip()
+            if current_id != normalized_id:
+                continue
+            current_payload = current.get("internal_email_payload")
+            current_key = (
+                str(current_payload.get("delivery_key") or "").strip()
+                if isinstance(current_payload, dict)
+                else ""
+            )
+            if current_key and current_key != normalized_key:
+                return False
+            current_status = str(current.get("internal_email_send_status") or "").strip()
+            if current_status not in set(allowed_statuses):
+                return False
+            updated = copy.deepcopy(current)
+            updated["internal_email_payload"] = copy.deepcopy(payload)
+            updated["internal_email_send_status"] = "pending"
+            updated["internal_email_send_reason"] = "delivery_prepared"
+            updated["updated_at"] = prepared_at
+            self._billing_tickets[billing_ticket_id] = _normalize_account_case_record(updated)
+            return True
+        return False
 
     def claim_account_internal_email_delivery(
         self,
@@ -7772,6 +7836,59 @@ def _build_trace_ticket_snapshot_payload(
 class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
+
+    def prepare_account_internal_email_delivery(
+        self,
+        account_case_id: str,
+        *,
+        delivery_key: str,
+        payload: dict[str, Any],
+        prepared_at: str,
+        allowed_statuses: tuple[str, ...] = (
+            "archer_pending",
+            "not_applicable",
+            "not_ready",
+            "pending",
+            "retry",
+            "failed",
+        ),
+    ) -> bool:
+        normalized_id = str(account_case_id or "").strip()
+        normalized_key = str(delivery_key or "").strip()
+        if not normalized_id or not normalized_key:
+            return False
+        prepared_payload = copy.deepcopy(payload)
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET internal_email_payload = %s,
+                            internal_email_send_status = 'pending',
+                            internal_email_send_reason = 'delivery_prepared',
+                            updated_at = %s
+                        WHERE (billing_ticket_id = %s OR account_case_id = %s)
+                          AND internal_email_send_status = ANY(%s)
+                          AND COALESCE(internal_email_payload->>'delivery_key', '') IN ('', %s)
+                        """
+                    ).format(self._table("support_account_cases")),
+                    (
+                        Json(prepared_payload),
+                        prepared_at,
+                        normalized_id,
+                        normalized_id,
+                        list(allowed_statuses),
+                        normalized_key,
+                    ),
+                )
+                return cur.rowcount == 1
+
+        return self._run_with_connection_retry(
+            "prepare_account_internal_email_delivery",
+            _operation,
+        )
 
     def claim_account_internal_email_delivery(
         self,
