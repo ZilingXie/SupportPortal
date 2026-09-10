@@ -185,20 +185,16 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             repository.close()
             self._drop_schema(dsn, schema)
 
-    def test_enablement_failure_workflow_prepares_and_sends_on_postgres(self) -> None:
+    def test_manual_review_gate_release_is_concurrency_safe(self) -> None:
+        # p2-149: the awaiting_public_reply gate must be unclaimable before the
+        # readback release and exactly one concurrent release may win.
         schema, repository = self._temporary_repository()
         dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
-        sender_calls: list[str] = []
-
-        def sender(payload: dict[str, object]) -> dict[str, str]:
-            sender_calls.append(str(payload.get("delivery_key") or ""))
-            return {"status": "sent", "reason": ""}
-
         try:
             repository.initialize()
             repository.save_ticket(
                 {
-                    "ticket_id": "T-ARCHER-WORKFLOW",
+                    "ticket_id": "T-MANUAL-GATE",
                     "customer_id": "customer@example.com",
                     "requester": "customer@example.com",
                     "subject": "Enable Media Relay",
@@ -210,13 +206,100 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             )
             repository.save_account_case(
                 {
-                    "account_case_id": "AC-ARCHER-WORKFLOW",
-                    "billing_ticket_id": "AC-ARCHER-WORKFLOW",
-                    "client_ticket_id": "T-ARCHER-WORKFLOW",
+                    "account_case_id": "AC-MANUAL-GATE",
+                    "billing_ticket_id": "AC-MANUAL-GATE",
+                    "client_ticket_id": "T-MANUAL-GATE",
+                    "automation_status": "automation",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "route_status": "automated",
+                    "execution_action": "enablement",
+                    "automation_handler": "enablement",
+                    "internal_email_payload": None,
+                    "internal_email_send_status": "not_ready",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                }
+            )
+            payload = {"delivery_key": "enablement:AC-MANUAL-GATE:v1", "body": "manual action"}
+            self.assertTrue(
+                prepare_account_internal_email(
+                    repository,
+                    account_case_id="AC-MANUAL-GATE",
+                    payload=dict(payload),
+                    target_status="awaiting_public_reply",
+                )
+            )
+            gated = repository.get_account_case("AC-MANUAL-GATE")
+            self.assertEqual(gated["internal_email_send_status"], "awaiting_public_reply")
+            self.assertFalse(
+                repository.claim_account_internal_email_delivery(
+                    "AC-MANUAL-GATE",
+                    delivery_key=payload["delivery_key"],
+                    claim_token="premature",
+                    claimed_at="2026-09-10T00:00:01+00:00",
+                    payload=dict(payload),
+                )
+            )
+            workers = 4
+            barrier = threading.Barrier(workers)
+
+            def releaser(_index: int) -> bool:
+                barrier.wait()
+                return repository.release_account_internal_email_after_public_reply(
+                    "AC-MANUAL-GATE",
+                    released_at="2026-09-10T00:00:02+00:00",
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                released = list(pool.map(releaser, range(workers)))
+            self.assertEqual(sum(1 for value in released if value), 1)
+
+            saved = repository.get_account_case("AC-MANUAL-GATE")
+            self.assertEqual(saved["internal_email_send_status"], "pending")
+            self.assertEqual(saved["internal_email_send_reason"], "public_reply_confirmed")
+            self.assertTrue(
+                repository.claim_account_internal_email_delivery(
+                    "AC-MANUAL-GATE",
+                    delivery_key=payload["delivery_key"],
+                    claim_token="after-release",
+                    claimed_at="2026-09-10T00:00:03+00:00",
+                    payload=dict(payload),
+                )
+            )
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
+    def test_manual_review_workflow_gates_then_releases_on_postgres(self) -> None:
+        # p2-149: the manual review workflow persists the confirmation reply
+        # job plus a gated internal email, and the readback release + normal
+        # claim protocol work end to end on real PostgreSQL.
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-MANUAL-WORKFLOW",
+                    "customer_id": "customer@example.com",
+                    "requester": "customer@example.com",
+                    "subject": "Enable Media Relay",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                },
+                new_messages=[],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": "AC-MANUAL-WORKFLOW",
+                    "billing_ticket_id": "AC-MANUAL-WORKFLOW",
+                    "client_ticket_id": "T-MANUAL-WORKFLOW",
                     "processing_profile": "production",
                     "automation_status": "automation",
                     "route": "enablement",
                     "route_family": "automated",
+                    "route_status": "automated",
                     "execution_action": "enablement",
                     "automation_handler": "enablement",
                     "route_classification": {"handler_binding_status": "active"},
@@ -224,51 +307,65 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                         "app_id": "abcdefabcdefabcdefabcdefabcdefab",
                         "requested_feature": "media_relay",
                     },
+                    "customer_name": "Ziling",
                     "internal_email_payload": None,
-                    "internal_email_send_status": "archer_pending",
+                    "internal_email_send_status": "not_ready",
                     "updated_at": "2026-09-10T00:00:00+00:00",
                 }
             )
-            with patch(
-                "backend.services.automation_account_intake.execute_enablement_archer",
-                return_value=SimpleNamespace(outcome="enable_failed", detail="synthetic archer failure"),
-            ), patch(
-                "backend.services.automation_account_intake.send_enablement_internal_email",
-                side_effect=sender,
-            ), patch(
-                "backend.services.automation_account_intake.escalate_account_case_to_human_review",
-                return_value=SimpleNamespace(status="escalated"),
-            ), patch(
-                "backend.services.automation_account_intake.notify_account_failure",
-                return_value={"status": "alerted"},
-            ):
-                result, case, reply_job = asyncio.run(intake_module._run_enablement_archer_workflow(
-                    repository=repository,
-                    account_case=repository.get_account_case("AC-ARCHER-WORKFLOW"),
-                    ticket_id="T-ARCHER-WORKFLOW",
-                    fallback_email_payload={
-                        "subject": "[Enablement] manual action needed",
-                        "body": "Please enable the feature manually.",
-                    },
-                    persona_assignment=None,
-                    processing_profile="production",
-                    trigger_message_created_at="2026-09-10T00:00:00+00:00",
-                ))
-
-            self.assertEqual(result.outcome, "enable_failed")
-            self.assertIsNone(reply_job)
-            self.assertEqual(
-                sender_calls,
-                ["enablement:AC-ARCHER-WORKFLOW:v1"],
+            case, reply_job, outcome = intake_module._start_enablement_manual_review(
+                repository=repository,
+                account_case=repository.get_account_case("AC-MANUAL-WORKFLOW"),
+                ticket_id="T-MANUAL-WORKFLOW",
+                email_payload={
+                    "subject": "[Enablement Request] Media Relay",
+                    "body": "Please enable manually and reply enabled.",
+                    "to_addresses": ["reviewer@example.com"],
+                },
+                persona_assignment=None,
+                processing_profile="production",
+                trigger_message_created_at="2026-09-10T00:00:00+00:00",
             )
-            saved = repository.get_account_case("AC-ARCHER-WORKFLOW")
-            self.assertEqual(saved["internal_email_send_status"], "sent")
+            self.assertEqual(outcome, "review_requested")
+            self.assertIsNotNone(reply_job)
+            saved = repository.get_account_case("AC-MANUAL-WORKFLOW")
+            self.assertEqual(saved["internal_email_send_status"], "awaiting_public_reply")
             self.assertEqual(
                 saved["internal_email_payload"]["delivery_key"],
-                "enablement:AC-ARCHER-WORKFLOW:v1",
+                "enablement:AC-MANUAL-WORKFLOW:v1",
             )
-            self.assertEqual(saved["execution_reason_code"], "archer_enable_failed")
-            self.assertEqual(saved["automation_status"], "human_review_required")
+            self.assertFalse(
+                repository.claim_account_internal_email_delivery(
+                    "AC-MANUAL-WORKFLOW",
+                    delivery_key="enablement:AC-MANUAL-WORKFLOW:v1",
+                    claim_token="premature",
+                    claimed_at="2026-09-10T00:00:01+00:00",
+                    payload=dict(saved["internal_email_payload"]),
+                )
+            )
+            self.assertTrue(
+                repository.release_account_internal_email_after_public_reply(
+                    "AC-MANUAL-WORKFLOW",
+                    released_at="2026-09-10T00:00:02+00:00",
+                )
+            )
+            self.assertFalse(
+                repository.release_account_internal_email_after_public_reply(
+                    "AC-MANUAL-WORKFLOW",
+                    released_at="2026-09-10T00:00:03+00:00",
+                )
+            )
+            released = repository.get_account_case("AC-MANUAL-WORKFLOW")
+            self.assertEqual(released["internal_email_send_status"], "pending")
+            self.assertTrue(
+                repository.claim_account_internal_email_delivery(
+                    "AC-MANUAL-WORKFLOW",
+                    delivery_key="enablement:AC-MANUAL-WORKFLOW:v1",
+                    claim_token="after-release",
+                    claimed_at="2026-09-10T00:00:04+00:00",
+                    payload=dict(released["internal_email_payload"]),
+                )
+            )
         finally:
             repository.close()
             self._drop_schema(dsn, schema)

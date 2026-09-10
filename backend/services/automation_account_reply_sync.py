@@ -57,7 +57,7 @@ from backend.services.automation_account_intake import (
     _create_reply_job,
     _record_execution_failure,
     _reply_facts,
-    _run_enablement_archer_workflow,
+    _run_enablement_manual_workflow,
     _run_internal_email_delivery,
 )
 from backend.services.automation_persona import resolve_customer_greeting_name
@@ -1066,6 +1066,7 @@ async def _process_account_customer_reply_impl(
             "",
             "not_ready",
             "pending",
+            "awaiting_public_reply",
             "retry",
             "failed",
             "skipped_config_missing",
@@ -1073,8 +1074,6 @@ async def _process_account_customer_reply_impl(
         if should_send_internal_email:
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
-            if active_handler == "enablement" and automation_attempt.get("internal_email_to_send"):
-                billing_ticket["internal_email_send_status"] = "archer_pending"
     billing_ticket["updated_at"] = timestamp
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
     await _sync(repository.save_ticket, canonical_ticket, new_messages=new_messages)
@@ -1087,11 +1086,11 @@ async def _process_account_customer_reply_impl(
         and str(billing_ticket.get("automation_handler") or "").strip() == "enablement"
     ):
         try:
-            archer_result, billing_ticket, reply_job = await _run_enablement_archer_workflow(
+            billing_ticket, reply_job, _manual_outcome = await _run_enablement_manual_workflow(
                 repository=repository,
                 account_case=billing_ticket,
                 ticket_id=client_ticket_id,
-                fallback_email_payload=dict(automation_attempt["internal_email_to_send"]),
+                email_payload=dict(automation_attempt["internal_email_to_send"]),
                 persona_assignment=persona_assignment,
                 processing_profile=processing_profile,
                 trigger_message_created_at=timestamp,
@@ -1102,7 +1101,7 @@ async def _process_account_customer_reply_impl(
                 account_case=billing_ticket,
                 ticket_id=client_ticket_id,
                 handler="enablement",
-                stage="archer_reply_job",
+                stage="manual_reply_job",
                 reason_code="account_reply_job_creation_failed",
                 detail=exc,
             )

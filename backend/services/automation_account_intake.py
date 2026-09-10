@@ -14,6 +14,7 @@ from backend.services.automation_context import build_automation_context, person
 
 import json
 import logging
+import re
 from html import escape
 from typing import Any
 
@@ -24,6 +25,7 @@ from backend.services.account_admin import (
 from backend.services.account_automation_handlers import account_automation_handler
 from backend.services.account_automation_delivery import (
     AccountAutomationDeliveryResult,
+    DELIVERY_AWAITING_PUBLIC_REPLY,
     DELIVERY_UNKNOWN,
     deliver_account_internal_email_async,
     ensure_account_delivery_key,
@@ -46,6 +48,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
+    ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
     account_reply_delay_seconds_for_profile,
     create_account_reply_job,
 )
@@ -91,10 +94,6 @@ from backend.services.enablement_automation import (
 from backend.services.enablement_field_extractor import (
     EnablementFieldExtraction,
     extract_enablement_fields,
-)
-from backend.services.enablement_archer_executor import (
-    ArcherEnablementResult,
-    execute_enablement_archer,
 )
 from backend.services.detailed_invoice_field_extractor import DetailedInvoiceFieldExtraction
 from backend.services.engineer_assignment import EngineerAssignmentService
@@ -669,156 +668,191 @@ def _archer_reply_facts(
     return intent, facts
 
 
-def _append_archer_failure_reason(payload: dict[str, Any], detail: str) -> dict[str, Any]:
-    updated = dict(payload)
-    reason = str(detail or "Archer automatic enablement failed").strip()
-    body = str(updated.get("body") or "").rstrip()
-    updated["body"] = f"{body}\n\nArcher failure reason: {reason}".strip()
-    body_html = str(updated.get("body_html") or "").rstrip()
-    if body_html:
-        updated["body_html"] = (
-            f"{body_html}<p><strong>Archer failure reason:</strong> {escape(reason)}</p>"
-        )
-    return updated
+_ENABLEMENT_APP_ID_RE = re.compile(r"[0-9a-fA-F]{32}")
+
+ENABLEMENT_MANUAL_WORKFLOW_CONTEXT_KEY = "enablement_manual_workflow"
 
 
-async def _run_enablement_archer_workflow(
+def _start_enablement_manual_review(
     *,
     repository: Any,
     account_case: dict[str, Any],
     ticket_id: str,
-    fallback_email_payload: dict[str, Any],
+    email_payload: dict[str, Any],
     persona_assignment: dict[str, Any] | None,
     processing_profile: str,
     trigger_message_created_at: str,
-) -> tuple[ArcherEnablementResult, dict[str, Any], dict[str, Any] | None]:
-    import asyncio
+) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
+    """Run the manual enablement review flow (p2-149, Archer revert).
 
-    def _sync(call, *args, **kwargs):
-        return asyncio.get_running_loop().run_in_executor(None, lambda: call(*args, **kwargs))
+    The order is inverted versus the legacy manual flow: the customer-facing
+    submission confirmation reply job is created first, and the internal
+    enablement email is persisted behind the ``awaiting_public_reply`` gate.
+    The email only becomes claimable after the Zendesk public readback
+    confirms the confirmation reply was delivered; a human then enables and
+    replies ``enabled`` to the email.  Zero Archer calls are made here.
 
+    Returns ``(account_case, reply_job, outcome)`` where outcome is
+    ``review_requested`` or ``appid_invalid``.
+    """
     timestamp = _now_iso()
-    account_case["internal_email_payload"] = None
-    account_case["internal_email_send_status"] = "archer_pending"
-    account_case["internal_email_send_reason"] = ""
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    )
+    collected_before = dict(account_case.get("collected_fields") or {})
+    app_id = str(collected_before.get("app_id") or "").strip()
     classification = dict(account_case.get("route_classification") or {})
     classification["handler_binding_status"] = "active"
     account_case["route_classification"] = classification
-    account_case["updated_at"] = timestamp
-    await _sync(repository.save_account_case, account_case)
+    account_case["automation_status"] = "automation"
+    account_case["execution_reason_code"] = None
 
-    app_id = str((account_case.get("collected_fields") or {}).get("app_id") or "").strip()
-    result = await _sync(execute_enablement_archer, app_id)
-    reason_code = f"archer_{result.outcome}"
-    context = dict(account_case.get("automation_context") or {})
-    context["enablement_archer"] = {
-        "outcome": result.outcome,
-        "reason_code": reason_code,
-        "detail": result.detail,
-        "attempted_at": timestamp,
-    }
-    account_case["automation_context"] = context
-    await _sync(
-        repository.record_event,
-        ticket_id or None,
-        "enablement_archer_result",
-        {
-            "account_case_id": str(
-                account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
-            ),
-            "outcome": result.outcome,
-            "reason_code": reason_code,
-            "detail": result.detail,
-            "attempted_at": timestamp,
-        },
-    )
-
-    reply_job = None
-    if result.outcome in {"enabled", "appid_invalid", "project_not_found"}:
-        collected_before_update = dict(account_case.get("collected_fields") or {})
-        classification["handler_binding_status"] = (
-            "completed" if result.outcome == "enabled" else "active"
-        )
-        account_case["route_classification"] = classification
-        account_case["automation_status"] = "automation"
+    if not _ENABLEMENT_APP_ID_RE.fullmatch(app_id):
+        collected = dict(collected_before)
+        collected.pop("app_id", None)
+        account_case["collected_fields"] = collected
+        account_case["missing_fields"] = ["app_id"]
         account_case["internal_email_payload"] = None
         account_case["internal_email_send_status"] = "not_applicable"
-        account_case["internal_email_send_reason"] = reason_code
-        if result.outcome != "enabled":
-            collected = dict(collected_before_update)
-            collected.pop("app_id", None)
-            account_case["collected_fields"] = collected
-            account_case["missing_fields"] = ["app_id"]
-        else:
-            account_case["missing_fields"] = []
-        account_case["updated_at"] = _now_iso()
-        await _sync(repository.save_account_case, account_case)
+        account_case["internal_email_send_reason"] = "appid_invalid_format"
+        account_case["updated_at"] = timestamp
+        repository.save_account_case(account_case)
         intent, reply_facts = _archer_reply_facts(
-            outcome=result.outcome,
-            collected_fields=collected_before_update,
+            outcome="appid_invalid",
+            collected_fields=collected_before,
             customer_name=str(account_case.get("customer_name") or "") or None,
         )
-        reply_job = await _sync(
-            _create_reply_job,
+        reply_job = _create_reply_job(
             repository=repository,
             ticket_id=ticket_id,
             trigger_message_created_at=trigger_message_created_at,
             reply_facts=reply_facts,
             asked_field_keys=[],
             persona_assignment=persona_assignment,
-            close_after_publish=result.outcome == "enabled",
+            close_after_publish=False,
             reply_intent=intent,
             processing_profile=processing_profile,
         )
-        return result, account_case, reply_job
-
-    account_case = await _record_execution_failure(
-        repository=repository,
-        account_case=account_case,
-        ticket_id=ticket_id,
-        handler="enablement",
-        stage="archer",
-        reason_code=reason_code,
-        detail=result.detail,
-    )
-    fallback_payload = ensure_account_delivery_key(
-        _append_archer_failure_reason(fallback_email_payload, result.detail),
-        handler="enablement",
-        account_case_id=str(
-            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
-        ),
-    )
-    await _sync(
-        prepare_account_internal_email,
-        repository,
-        account_case_id=str(
-            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
-        ),
-        payload=fallback_payload,
-    )
-
-    async def _fallback_sender(attempt_payload: dict[str, Any]) -> tuple[str, str]:
-        status, reason = await _send_internal_email(
-            attempt_payload, send_enablement_internal_email
+        repository.record_event(
+            ticket_id or None,
+            "enablement_manual_review",
+            {
+                "account_case_id": account_case_id,
+                "outcome": "appid_invalid",
+                "reason_code": "appid_invalid_format",
+                "attempted_at": timestamp,
+            },
         )
-        return (DELIVERY_UNKNOWN if status == "outcome_unknown" else status), reason
+        return account_case, reply_job, "appid_invalid"
 
-    delivery_result = await deliver_account_internal_email_async(
-        repository,
-        account_case_id=str(
-            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
-        ),
-        payload=fallback_payload,
-        sender=_fallback_sender,
+    payload = ensure_account_delivery_key(
+        dict(email_payload),
+        handler="enablement",
+        account_case_id=account_case_id,
     )
-    account_case["internal_email_payload"] = dict(delivery_result.payload or {}) or None
-    account_case["internal_email_send_status"] = delivery_result.status
-    account_case["internal_email_send_reason"] = delivery_result.reason
-    account_case["automation_status"] = "human_review_required"
-    account_case["execution_reason_code"] = reason_code
-    account_case["updated_at"] = _now_iso()
-    await _sync(repository.save_account_case, account_case)
-    return result, account_case, None
+    payload["customer_confirmation_queued"] = True
+    prepared = prepare_account_internal_email(
+        repository,
+        account_case_id=account_case_id,
+        payload=payload,
+        target_status=DELIVERY_AWAITING_PUBLIC_REPLY,
+    )
+    if not prepared:
+        # A conflicting live delivery must not be silently replaced; the
+        # customer has not been promised a review yet, so fail closed now.
+        account_case["automation_status"] = "human_review_required"
+        account_case["execution_reason_code"] = "enablement_manual_email_prepare_conflict"
+        account_case["internal_email_send_reason"] = "enablement_manual_email_prepare_conflict"
+        account_case["updated_at"] = timestamp
+        repository.save_account_case(account_case)
+        repository.record_event(
+            ticket_id or None,
+            "enablement_manual_review",
+            {
+                "account_case_id": account_case_id,
+                "outcome": "prepare_conflict",
+                "reason_code": "enablement_manual_email_prepare_conflict",
+                "attempted_at": timestamp,
+            },
+        )
+        return account_case, None, "prepare_conflict"
+
+    reply_facts = _reply_facts(
+        handler="enablement",
+        action=str(
+            account_case.get("execution_action") or account_case.get("route") or "enablement"
+        ),
+        missing_fields=[],
+        collected_fields=collected_before,
+        submitted=True,
+        customer_name=str(account_case.get("customer_name") or "") or None,
+    )
+    reply_job = _create_reply_job(
+        repository=repository,
+        ticket_id=ticket_id,
+        trigger_message_created_at=trigger_message_created_at,
+        reply_facts=reply_facts,
+        asked_field_keys=[],
+        persona_assignment=persona_assignment,
+        automation_delivery_key=str(payload.get("delivery_key") or ""),
+        reply_intent=ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+        processing_profile=processing_profile,
+    )
+    context = dict(account_case.get("automation_context") or {})
+    context[ENABLEMENT_MANUAL_WORKFLOW_CONTEXT_KEY] = {
+        "version": 1,
+        "state": "awaiting_public_reply",
+        "reply_job_id": str(reply_job.get("job_id") or ""),
+        "delivery_key": str(payload.get("delivery_key") or ""),
+        "prepared_at": timestamp,
+        "updated_at": timestamp,
+    }
+    account_case["automation_context"] = context
+    account_case["internal_email_payload"] = dict(payload)
+    account_case["internal_email_send_status"] = DELIVERY_AWAITING_PUBLIC_REPLY
+    account_case["internal_email_send_reason"] = "enablement_manual_review"
+    account_case["missing_fields"] = []
+    account_case["updated_at"] = timestamp
+    repository.save_account_case(account_case)
+    repository.record_event(
+        ticket_id or None,
+        "enablement_manual_review",
+        {
+            "account_case_id": account_case_id,
+            "outcome": "review_requested",
+            "reason_code": "enablement_manual_review",
+            "delivery_key": str(payload.get("delivery_key") or ""),
+            "reply_job_id": str(reply_job.get("job_id") or ""),
+            "attempted_at": timestamp,
+        },
+    )
+    return account_case, reply_job, "review_requested"
+
+
+async def _run_enablement_manual_workflow(
+    *,
+    repository: Any,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    email_payload: dict[str, Any],
+    persona_assignment: dict[str, Any] | None,
+    processing_profile: str,
+    trigger_message_created_at: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
+    import asyncio
+
+    return await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: _start_enablement_manual_review(
+            repository=repository,
+            account_case=account_case,
+            ticket_id=ticket_id,
+            email_payload=email_payload,
+            persona_assignment=persona_assignment,
+            processing_profile=processing_profile,
+            trigger_message_created_at=trigger_message_created_at,
+        ),
+    )
 
 
 async def run_production_account_intake(
@@ -1186,11 +1220,11 @@ async def run_production_account_intake(
         and attempt.get("internal_email_to_send")
     ):
         try:
-            archer_result, billing_ticket, reply_job = await _run_enablement_archer_workflow(
+            billing_ticket, reply_job, _manual_outcome = await _run_enablement_manual_workflow(
                 repository=repository,
                 account_case=billing_ticket,
                 ticket_id=ticket_id,
-                fallback_email_payload=dict(attempt["internal_email_to_send"]),
+                email_payload=dict(attempt["internal_email_to_send"]),
                 persona_assignment=persona_assignment,
                 processing_profile=normalized_processing_profile,
                 trigger_message_created_at=timestamp,
@@ -1203,9 +1237,7 @@ async def run_production_account_intake(
             )
             response_status = str(billing_ticket.get("automation_status") or "automation")
             execution_reason_code = (
-                f"archer_{archer_result.outcome}"
-                if archer_result.outcome == "enable_failed"
-                else None
+                str(billing_ticket.get("execution_reason_code") or "") or None
             )
         except Exception as exc:
             billing_ticket = await _record_execution_failure(
@@ -1213,7 +1245,7 @@ async def run_production_account_intake(
                 account_case=billing_ticket,
                 ticket_id=ticket_id,
                 handler="enablement",
-                stage="archer_reply_job",
+                stage="manual_reply_job",
                 reason_code="account_reply_job_creation_failed",
                 detail=exc,
             )

@@ -460,7 +460,6 @@ def render_initial_task_definition(
             "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "enablement-internal-email-recipients",
             "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "fraud-internal-email-recipients",
             "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "account-suspension-internal-email-recipients",
-            "ARCHER_OAUTH_COOKIE": "archer-oauth-cookie",
         },
     }
     if role in {"api", "worker"} and (

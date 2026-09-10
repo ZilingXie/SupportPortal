@@ -33,7 +33,6 @@ SOURCE_COPY_SUFFIXES = (
     "enablement-internal-email-recipients",
     "fraud-internal-email-recipients",
     "account-suspension-internal-email-recipients",
-    "archer-oauth-cookie",
 )
 GENERATED_TOKEN_SUFFIXES = (
     "automation-intake-shared-token",

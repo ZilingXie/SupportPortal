@@ -2742,6 +2742,108 @@ def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
     return completed
 
 
+def _unquoted_enablement_reply_segment(note: str) -> str:
+    """Return only the newly authored part of an enablement reply.
+
+    Quoted history (``>`` lines, ``-----Original Message-----`` blocks,
+    ``On ... wrote:`` markers, or forwarded ``From:`` headers) must never
+    satisfy the completion detection on its own. When no unquoted segment
+    can be isolated the caller must not auto-judge completion at all.
+    """
+    kept: list[str] = []
+    for line in str(note or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(">"):
+            break
+        if re.match(r"^-{3,}\s*(original|forwarded)\s+message\s*-*$", stripped, re.IGNORECASE):
+            break
+        if re.match(r"^on\s+.+\s+wrote:\s*$", stripped, re.IGNORECASE):
+            break
+        if re.match(r"^from:\s*\S+@\S+", stripped, re.IGNORECASE):
+            break
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _enablement_reply_identity_gate(account_case: dict[str, Any], reply: Any) -> str | None:
+    """Verify the enablement reply sender before any completion judgement.
+
+    Only addresses that were actual To/Cc recipients of the current
+    application's internal email may confirm completion; group members and
+    unrelated senders must not. The case must also be waiting for the human
+    confirmation (email sent, or delivery_unknown with the reply itself as
+    proof of receipt). Returns a stop reason, or None when the reply may be
+    processed.
+    """
+    payload = account_case.get("internal_email_payload")
+    payload = payload if isinstance(payload, dict) else {}
+    allowed = {
+        str(address or "").strip().lower()
+        for address in list(payload.get("to_addresses") or []) + list(payload.get("cc_addresses") or [])
+        if str(address or "").strip()
+    }
+    legacy_to = str(payload.get("to") or "").strip().lower()
+    if legacy_to:
+        allowed.add(legacy_to)
+    if not allowed:
+        return "enablement_reply_recipients_unknown"
+    sender = str(getattr(reply, "sender", "") or "").strip().lower()
+    if not sender or sender not in allowed:
+        return "enablement_reply_sender_unverified"
+    status = str(account_case.get("internal_email_send_status") or "").strip().lower()
+    if status not in {"sent", "delivery_unknown"}:
+        return "enablement_reply_not_awaiting_confirmation"
+    manual_workflow = (account_case.get("automation_context") or {}).get(
+        "enablement_manual_workflow"
+    )
+    if isinstance(manual_workflow, dict) and str(
+        manual_workflow.get("state") or ""
+    ).strip() == "completed":
+        # A second confirmation for an already-completed application must not
+        # queue another final reply job.
+        return "enablement_reply_already_completed"
+    return None
+
+
+def _stop_enablement_reply_processing(
+    *,
+    reply_key: str,
+    owner_token: str,
+    client_ticket_id: str,
+    account_case: dict[str, Any],
+    reason: str,
+) -> str:
+    """Terminally dismiss an enablement reply that failed the identity gate."""
+    ticket_repository.dismiss_automation_reply_claim(
+        reply_key,
+        owner_token=owner_token,
+        reason=reason,
+        dismissed_at=now_iso(),
+    )
+    case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    )
+    try:
+        ticket_repository.record_event(
+            client_ticket_id or None,
+            "enablement_reply_processing_stopped",
+            {
+                "account_case_id": case_id,
+                "reason": reason,
+                "created_at": now_iso(),
+            },
+        )
+    except Exception:  # pragma: no cover - event recording is best effort
+        LOGGER.debug("enablement reply stop event could not be recorded", exc_info=True)
+    LOGGER.warning(
+        "Enablement reply processing stopped ticket_id=%s reason=%s reply_key=%s",
+        client_ticket_id,
+        reason,
+        reply_key,
+    )
+    return "completed"
+
+
 def _process_claimed_account_reply_jobs(
     *,
     from_status: str,
@@ -2924,6 +3026,7 @@ def process_account_automation_once() -> None:
             limit=10,
         )
     _drain_production_zendesk_comment_deliveries(limit=20)
+    _drain_enablement_manual_review_emails(limit=25, processing_profile=processing_profile)
     _drain_account_slack_deliveries(limit=20)
     _drain_engineer_slack_events(limit=20)
     if _drain_mock_hermes_turns(limit=20):
@@ -3076,13 +3179,17 @@ def _queue_enablement_submission_confirmation(
     return True
 
 
-def _send_claimed_enablement_delivery(account_case: dict[str, Any]) -> dict[str, Any]:
+def _send_claimed_enablement_delivery(
+    account_case: dict[str, Any],
+    *,
+    allow_rerun_owned: bool = False,
+) -> dict[str, Any]:
     existing_payload = (
         dict(account_case.get("internal_email_payload"))
         if isinstance(account_case.get("internal_email_payload"), dict)
         else {}
     )
-    if is_rerun_owned_delivery(existing_payload):
+    if not allow_rerun_owned and is_rerun_owned_delivery(existing_payload):
         return {
             "status": "skipped",
             "reason": "rerun_owned_delivery",
@@ -3209,6 +3316,119 @@ def _send_claimed_enablement_delivery(account_case: dict[str, Any]) -> dict[str,
         "upgraded": upgraded,
         "payload": dict(result.payload),
     }
+
+
+def _enablement_public_reply_delivered(account_case: dict[str, Any]) -> bool:
+    """Check whether a public reply delivered after the manual gate was set."""
+    case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+    ).strip()
+    if not case_id:
+        return False
+    workflow = (account_case.get("automation_context") or {}).get("enablement_manual_workflow")
+    prepared_at = str(workflow.get("prepared_at") or "") if isinstance(workflow, dict) else ""
+    try:
+        deliveries = ticket_repository.list_account_zendesk_comment_deliveries_for_case(case_id)
+    except Exception:  # pragma: no cover - repository access is best effort here
+        LOGGER.warning("enablement manual gate could not list deliveries for %s", case_id)
+        return False
+    for delivery in deliveries:
+        if not bool(delivery.get("is_public")):
+            continue
+        if str(delivery.get("status") or "").strip().lower() != "delivered":
+            continue
+        confirmed_at = str(delivery.get("confirmed_at") or "").strip()
+        if prepared_at and confirmed_at and confirmed_at < prepared_at:
+            continue
+        return True
+    return False
+
+
+def _mark_enablement_manual_workflow_state(
+    account_case_id: str,
+    *,
+    state: str,
+) -> None:
+    refreshed = ticket_repository.get_account_case(account_case_id)
+    if not isinstance(refreshed, dict):
+        return
+    context = dict(refreshed.get("automation_context") or {})
+    workflow = context.get("enablement_manual_workflow")
+    if not isinstance(workflow, dict):
+        return
+    workflow = dict(workflow)
+    workflow.update({"state": state, "updated_at": now_iso()})
+    context["enablement_manual_workflow"] = workflow
+    refreshed["automation_context"] = context
+    refreshed["updated_at"] = now_iso()
+    ticket_repository.save_account_case(refreshed)
+
+
+def _drain_enablement_manual_review_emails(
+    *,
+    limit: int = 25,
+    processing_profile: str = "staging",
+) -> dict[str, int]:
+    """Progress the manual enablement review gate each bounded cycle.
+
+    Two jobs: (1) release ``awaiting_public_reply`` emails whose confirmation
+    reply the Zendesk readback already confirmed delivered (the readback
+    transaction hook normally did this; this belt covers missed hooks and
+    worker restarts), and (2) send released enablement emails through the
+    normal claim/send/complete protocol. Waiting for a human is a normal
+    state; nothing here marks the case failed.
+    """
+    counts = {"released": 0, "sent": 0, "send_retried": 0, "still_gated": 0}
+    cases = ticket_repository.list_billing_tickets(
+        limit=max(1, limit),
+        processing_profile=processing_profile,
+    )
+    for account_case in cases:
+        if str(account_case.get("automation_handler") or "").strip() != "enablement":
+            continue
+        status = str(account_case.get("internal_email_send_status") or "").strip()
+        if status not in {
+            "awaiting_public_reply",
+            "pending",
+            "retry",
+            "failed",
+            "skipped_config_missing",
+        }:
+            continue
+        payload = (
+            account_case.get("internal_email_payload")
+            if isinstance(account_case.get("internal_email_payload"), dict)
+            else {}
+        )
+        delivery_key = str(payload.get("delivery_key") or "").strip()
+        case_id = str(
+            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+        ).strip()
+        if not delivery_key or not case_id:
+            continue
+        if status == "awaiting_public_reply":
+            if not _enablement_public_reply_delivered(account_case):
+                counts["still_gated"] += 1
+                continue
+            if not ticket_repository.release_account_internal_email_after_public_reply(
+                case_id, released_at=now_iso()
+            ):
+                continue
+            counts["released"] += 1
+            account_case = dict(account_case)
+            account_case["internal_email_send_status"] = "pending"
+        updated_at = _parse_iso_datetime(str(account_case.get("updated_at") or ""))
+        if updated_at is not None and (datetime.now(timezone.utc) - updated_at).total_seconds() < 30:
+            continue
+        result = _send_claimed_enablement_delivery(account_case, allow_rerun_owned=True)
+        if not result.get("claimed"):
+            continue
+        if str(result.get("status") or "") == "sent":
+            counts["sent"] += 1
+            _mark_enablement_manual_workflow_state(case_id, state="awaiting_human_confirmation")
+        else:
+            counts["send_retried"] += 1
+    return counts
 
 
 def retry_enablement_internal_deliveries_once(*, limit: int = 100) -> dict[str, int]:
@@ -4132,6 +4352,20 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
         note = str(getattr(reply, "body_text", "") or "").strip()
         if not note:
             raise ValueError(f"{handler} reply body is empty")
+        if handler == "enablement":
+            stop_reason = _enablement_reply_identity_gate(account_case, reply)
+            if stop_reason is None:
+                note = _unquoted_enablement_reply_segment(note)
+                if not note:
+                    stop_reason = "enablement_reply_quoted_only"
+            if stop_reason is not None:
+                return _stop_enablement_reply_processing(
+                    reply_key=reply_key,
+                    owner_token=owner_token,
+                    client_ticket_id=client_ticket_id,
+                    account_case=account_case,
+                    reason=stop_reason,
+                )
         collected_fields = account_case.get("collected_fields")
         collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
         known_information = (
@@ -4165,6 +4399,15 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                         classification.source,
                     )
         if enablement_completed:
+            manual_workflow = (
+                account_case.get("automation_context") or {}
+            ).get("enablement_manual_workflow")
+            if isinstance(manual_workflow, dict):
+                manual_workflow = dict(manual_workflow)
+                manual_workflow.update({"state": "completed", "updated_at": now_iso()})
+                context = dict(account_case.get("automation_context") or {})
+                context["enablement_manual_workflow"] = manual_workflow
+                account_case["automation_context"] = context
             return _queue_enablement_completion_reply_job(
                 reply_key=reply_key,
                 owner_token=owner_token,
