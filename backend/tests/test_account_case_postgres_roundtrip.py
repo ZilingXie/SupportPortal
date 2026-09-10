@@ -370,6 +370,277 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             repository.close()
             self._drop_schema(dsn, schema)
 
+    def _seed_manual_gate_case(self, repository) -> str:
+        repository.save_ticket(
+            {
+                "ticket_id": "T-MANUAL-BIND",
+                "customer_id": "customer@example.com",
+                "requester": "customer@example.com",
+                "subject": "Enable Media Relay",
+                "status": "open",
+                "created_at": "2026-09-10T00:00:00+00:00",
+                "updated_at": "2026-09-10T00:00:00+00:00",
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-MANUAL-BIND",
+                "billing_ticket_id": "AC-MANUAL-BIND",
+                "client_ticket_id": "T-MANUAL-BIND",
+                "processing_profile": "production",
+                "automation_status": "automation",
+                "route": "enablement",
+                "route_family": "automated",
+                "route_status": "automated",
+                "execution_action": "enablement",
+                "automation_handler": "enablement",
+                "internal_email_payload": {
+                    "delivery_key": "enablement:AC-MANUAL-BIND:v1",
+                    "to_addresses": ["reviewer@example.com"],
+                },
+                "internal_email_send_status": "awaiting_public_reply",
+                "automation_context": {
+                    "enablement_manual_workflow": {
+                        "version": 1,
+                        "state": "awaiting_public_reply",
+                        "reply_job_id": "job-conf-1",
+                        "delivery_key": "enablement:AC-MANUAL-BIND:v1",
+                        "prepared_at": "2026-09-10T00:00:00Z",
+                    }
+                },
+                "updated_at": "2026-09-10T00:00:00+00:00",
+            }
+        )
+        return "AC-MANUAL-BIND"
+
+    def _confirmation_message_id(self, dsn, schema, ticket_id, job_id) -> str:
+        with psycopg.connect(dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f'SELECT id FROM "{schema}".support_ticket_messages '
+                    "WHERE ticket_id=%s AND meta->>'account_reply_job_id'=%s "
+                    "ORDER BY id DESC LIMIT 1",
+                    (ticket_id, job_id),
+                )
+                row = cursor.fetchone()
+        assert row is not None
+        return str(row[0])
+
+    def test_manual_gate_release_is_bound_to_confirmation_job_on_postgres(self) -> None:
+        # p2-149 review fix: only THIS application's submission_confirmation
+        # message being confirmed delivered may release the gate.
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            self._seed_manual_gate_case(repository)
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-MANUAL-BIND",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:10+00:00",
+                },
+                new_messages=[
+                    {
+                        "role": "assistant",
+                        "content": "We received your request.",
+                        "created_at": "2026-09-10T00:00:11+00:00",
+                        "meta": {"account_reply_job_id": "job-conf-1"},
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Unrelated update.",
+                        "created_at": "2026-09-10T00:00:12+00:00",
+                        "meta": {"account_reply_job_id": "job-other"},
+                    },
+                ],
+            )
+            unrelated_id = self._confirmation_message_id(dsn, schema, "T-MANUAL-BIND", "job-other")
+            confirmation_id = self._confirmation_message_id(dsn, schema, "T-MANUAL-BIND", "job-conf-1")
+
+            def deliver(message_id: str, key: str) -> None:
+                repository.create_account_zendesk_comment_delivery(
+                    account_case_id="AC-MANUAL-BIND",
+                    message_id=message_id,
+                    zendesk_ticket_id="T-MANUAL-BIND",
+                    idempotency_key=key,
+                    created_at="2026-09-10T00:01:00+00:00",
+                    is_public=True,
+                )
+                repository.begin_idempotent_request(
+                    "account_zendesk_internal_comment", key, created_at="2026-09-10T00:01:01+00:00"
+                )
+                repository.record_account_zendesk_internal_comment_result(
+                    account_case_id="AC-MANUAL-BIND",
+                    ticket_id="T-MANUAL-BIND",
+                    message_id=message_id,
+                    idempotency_key=key,
+                    result_payload={"status": "added"},
+                    recorded_at="2026-09-10T00:02:00+00:00",
+                )
+
+            deliver(unrelated_id, "zd-unrelated")
+            still_gated = repository.get_account_case("AC-MANUAL-BIND")
+            self.assertEqual(still_gated["internal_email_send_status"], "awaiting_public_reply")
+
+            deliver(confirmation_id, "zd-confirmation")
+            released = repository.get_account_case("AC-MANUAL-BIND")
+            self.assertEqual(released["internal_email_send_status"], "pending")
+            self.assertEqual(released["internal_email_send_reason"], "public_reply_confirmed")
+            self.assertEqual(
+                released["automation_context"]["enablement_manual_workflow"]["state"],
+                "email_released",
+            )
+            self.assertFalse(
+                repository.release_account_internal_email_after_public_reply(
+                    "AC-MANUAL-BIND", released_at="2026-09-10T00:03:00+00:00"
+                )
+            )
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
+    def test_manual_completion_claim_is_concurrency_safe_on_postgres(self) -> None:
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-MANUAL-DONE",
+                    "customer_id": "customer@example.com",
+                    "requester": "customer@example.com",
+                    "subject": "Enable Media Relay",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                },
+                new_messages=[],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": "AC-MANUAL-DONE",
+                    "billing_ticket_id": "AC-MANUAL-DONE",
+                    "client_ticket_id": "T-MANUAL-DONE",
+                    "processing_profile": "production",
+                    "automation_status": "automation",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "automation_handler": "enablement",
+                    "internal_email_send_status": "sent",
+                    "internal_email_payload": {
+                        "delivery_key": "enablement:AC-MANUAL-DONE:v1",
+                        "to_addresses": ["reviewer@example.com"],
+                    },
+                    "automation_context": {
+                        "enablement_manual_workflow": {
+                            "version": 1,
+                            "state": "awaiting_human_confirmation",
+                            "reply_job_id": "job-conf-9",
+                            "delivery_key": "enablement:AC-MANUAL-DONE:v1",
+                        }
+                    },
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                }
+            )
+
+            def build_job(index: int) -> dict:
+                return {
+                    "job_id": f"account-reply-done-{index}",
+                    "ticket_id": "T-MANUAL-DONE",
+                    "trigger_message_created_at": "2026-09-10T00:05:00+00:00",
+                    "status": "persona_v8_queued",
+                    "scheduled_for": "2026-09-10T00:06:00+00:00",
+                    "payload": {"reply_intent": "enablement_completed_and_close"},
+                    "attempt_count": 0,
+                    "claimed_at": None,
+                    "published_at": None,
+                    "created_at": "2026-09-10T00:05:00+00:00",
+                    "updated_at": "2026-09-10T00:05:00+00:00",
+                }
+
+            workers = 4
+            barrier = threading.Barrier(workers)
+
+            def claimant(index: int) -> bool:
+                barrier.wait()
+                return repository.claim_enablement_manual_completion(
+                    "AC-MANUAL-DONE",
+                    job=build_job(index),
+                    completed_at="2026-09-10T00:05:30+00:00",
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                claimed = list(pool.map(claimant, range(workers)))
+            self.assertEqual(sum(1 for value in claimed if value), 1)
+            saved = repository.get_account_case("AC-MANUAL-DONE")
+            self.assertEqual(
+                saved["automation_context"]["enablement_manual_workflow"]["state"],
+                "completed",
+            )
+            stored_jobs = [
+                job
+                for _key, job in repository.list_account_reply_jobs_by_ticket("T-MANUAL-DONE").items()
+            ] if hasattr(repository, "list_account_reply_jobs_by_ticket") else []
+            if stored_jobs:
+                completion_jobs = [
+                    job
+                    for job in stored_jobs
+                    if (job.get("payload") or {}).get("reply_intent")
+                    == "enablement_completed_and_close"
+                ]
+                self.assertEqual(len(completion_jobs), 1)
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
+    def test_list_enablement_cases_by_email_status_filters_in_sql(self) -> None:
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            self._seed_manual_gate_case(repository)
+            for index in range(5):
+                repository.save_ticket(
+                    {
+                        "ticket_id": f"T-NEW-{index}",
+                        "customer_id": "customer@example.com",
+                        "requester": "customer@example.com",
+                        "subject": f"Billing {index}",
+                        "status": "open",
+                        "created_at": f"2026-09-11T00:00:{index:02d}+00:00",
+                        "updated_at": f"2026-09-11T00:00:{index:02d}+00:00",
+                    },
+                    new_messages=[],
+                )
+                repository.save_account_case(
+                    {
+                        "account_case_id": f"AC-NEW-{index}",
+                        "billing_ticket_id": f"AC-NEW-{index}",
+                        "client_ticket_id": f"T-NEW-{index}",
+                        "processing_profile": "production",
+                        "automation_status": "automation",
+                        "route": "detailed_invoice",
+                        "route_family": "automated",
+                        "execution_action": "detailed_invoice",
+                        "automation_handler": "billing",
+                        "internal_email_send_status": "pending",
+                        "updated_at": f"2026-09-11T00:00:{index:02d}+00:00",
+                    }
+                )
+            listed = repository.list_enablement_cases_by_email_status(
+                ("awaiting_public_reply",), processing_profile="production", limit=3
+            )
+            self.assertEqual(
+                [case["account_case_id"] for case in listed], ["AC-MANUAL-BIND"]
+            )
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
     def test_initialize_preserves_suspension_handler_across_restarts(self) -> None:
         # 13001 regression: repository startup must never rewrite a stored
         # account_suspension handler back to billing.
