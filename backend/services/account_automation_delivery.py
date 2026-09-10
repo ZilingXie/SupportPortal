@@ -43,6 +43,18 @@ KNOWN_DELIVERY_STATUSES = frozenset({
     DELIVERY_SKIPPED_CONFIG_MISSING,
 })
 
+# Untouched or explicitly not-sent states a prepare may move into ``pending``.
+# ``sent``/``sending``/``delivery_unknown`` keep their live state, and
+# ``skipped_config_missing`` stays owned by the retry poller.
+DELIVERY_PREPARABLE_STATUSES = frozenset({
+    "archer_pending",
+    DELIVERY_NOT_APPLICABLE,
+    DELIVERY_NOT_READY,
+    DELIVERY_PENDING,
+    DELIVERY_RETRY,
+    DELIVERY_FAILED,
+})
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -187,6 +199,35 @@ def ensure_account_delivery_key(
 
 def _claim_token(payload: dict[str, Any], provided: str | None) -> str:
     return _clean(provided) or _clean(payload.get("delivery_claim_token")) or f"account-email-{uuid4().hex}"
+
+
+def prepare_account_internal_email(
+    repo: Any,
+    *,
+    account_case_id: str,
+    payload: dict[str, Any],
+    prepared_at: str | None = None,
+) -> bool:
+    """Persist one claimable ``pending`` delivery without resetting live ones.
+
+    The stored payload must be empty or already carry the same delivery key,
+    so a conflicting delivery (another handler or another pending send) is
+    never taken over.  Callers still run the normal claim/send/complete
+    protocol afterwards; this only makes the claimable state durable first.
+    """
+
+    normalized_id = _clean(account_case_id)
+    source_payload = copy.deepcopy(payload) if isinstance(payload, dict) else {}
+    key = _delivery_key(source_payload)
+    if not normalized_id or not key:
+        return False
+    return bool(repo.prepare_account_internal_email_delivery(
+        normalized_id,
+        delivery_key=key,
+        payload=source_payload,
+        prepared_at=_clean(prepared_at) or _now_iso(),
+        allowed_statuses=tuple(sorted(DELIVERY_PREPARABLE_STATUSES)),
+    ))
 
 
 def _claim(

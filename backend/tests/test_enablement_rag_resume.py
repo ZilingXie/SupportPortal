@@ -290,3 +290,24 @@ class EnablementRagResumeTest(TestCase):
         self.queue.assert_called_once()
         self.archer.assert_not_called()
         self.mail.assert_called_once()
+
+    def test_comment_entry_archer_failure_alerts_owner_and_sends_internal_email(self):
+        # 13386 regression on the customer-comment entry: an Archer enable_failed
+        # outcome must alert the owner and deliver the internal fallback email
+        # once through the real prepare/claim/complete protocol.
+        self.archer.side_effect = lambda app_id: NS(outcome="enable_failed", detail="synthetic archer failure")
+        internal_emails = []
+        self.stack.enter_context(patch.object(
+            intake, "send_enablement_internal_email",
+            side_effect=lambda payload: internal_emails.append(payload) or {"status": "sent", "reason": ""}))
+
+        outcome = self.turn("try: " + "c" * 32, comment_id="archer-failed")
+
+        self.assertEqual(self.mail.call_count, 1)
+        self.assertEqual(self.mail.call_args.kwargs["to_address"], "xieziling@agora.io")
+        self.assertIn("archer_enable_failed", self.mail.call_args.kwargs["body"])
+        self.assertEqual(len(internal_emails), 1)
+        self.assertEqual(internal_emails[0]["delivery_key"], "enablement:test-case:v1")
+        self.assertEqual(outcome["automation_status"], "human_review_required")
+        self.assertEqual(outcome["execution_reason_code"], "archer_enable_failed")
+        self.assertEqual(outcome["internal_email_send_status"], "sent")

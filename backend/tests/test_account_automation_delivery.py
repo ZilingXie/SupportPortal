@@ -10,6 +10,7 @@ from backend.services.account_automation_delivery import (
     deliver_account_internal_email_async,
     ensure_account_delivery_key,
     is_rerun_owned_delivery,
+    prepare_account_internal_email,
 )
 
 
@@ -50,6 +51,83 @@ class AccountAutomationDeliveryTests(unittest.TestCase):
         )
 
         self.assertEqual(upgraded["delivery_key"], "custom:AC-DELIVERY:v2")
+
+    def test_prepare_moves_untouched_states_to_claimable_pending(self) -> None:
+        for status in ("archer_pending", "not_applicable", "not_ready", "failed", "retry"):
+            with self.subTest(status=status):
+                repository = InMemoryTicketRepository()
+                repository.initialize()
+                repository.save_account_case({
+                    "account_case_id": "AC-PREPARE",
+                    "billing_ticket_id": "AC-PREPARE",
+                    "client_ticket_id": "TK-PREPARE",
+                    "internal_email_payload": None,
+                    "internal_email_send_status": status,
+                })
+                payload = {"delivery_key": "enablement:AC-PREPARE:v1", "body": "manual action"}
+                self.assertTrue(prepare_account_internal_email(
+                    repository, account_case_id="AC-PREPARE", payload=payload))
+                saved = repository.get_account_case("AC-PREPARE")
+                self.assertEqual(saved["internal_email_send_status"], "pending")
+                self.assertEqual(
+                    saved["internal_email_payload"]["delivery_key"],
+                    "enablement:AC-PREPARE:v1",
+                )
+                self.assertEqual(saved["internal_email_send_reason"], "delivery_prepared")
+                self.assertTrue(repository.claim_account_internal_email_delivery(
+                    "AC-PREPARE",
+                    delivery_key="enablement:AC-PREPARE:v1",
+                    claim_token="owner-1",
+                    claimed_at="2026-09-10T00:00:00+00:00",
+                    payload=dict(payload),
+                ))
+                self.assertEqual(
+                    repository.get_account_case("AC-PREPARE")["internal_email_send_status"],
+                    "sending",
+                )
+                self.assertFalse(prepare_account_internal_email(
+                    repository, account_case_id="AC-PREPARE", payload=payload))
+                self.assertEqual(
+                    repository.get_account_case("AC-PREPARE")["internal_email_send_status"],
+                    "sending",
+                )
+
+    def test_prepare_refuses_live_and_conflicting_deliveries(self) -> None:
+        cases = (
+            ("sent", {"delivery_key": "enablement:AC-PREPARE:v1"}),
+            ("sending", {"delivery_key": "enablement:AC-PREPARE:v1", "delivery_claim_token": "owner-9"}),
+            ("delivery_unknown", {"delivery_key": "enablement:AC-PREPARE:v1"}),
+            ("skipped_config_missing", {"delivery_key": "enablement:AC-PREPARE:v1"}),
+            ("pending", {"delivery_key": "billing:AC-PREPARE:v1"}),
+        )
+        for status, stored_payload in cases:
+            with self.subTest(status=status):
+                repository = InMemoryTicketRepository()
+                repository.initialize()
+                repository.save_account_case({
+                    "account_case_id": "AC-PREPARE",
+                    "billing_ticket_id": "AC-PREPARE",
+                    "client_ticket_id": "TK-PREPARE",
+                    "internal_email_payload": dict(stored_payload),
+                    "internal_email_send_status": status,
+                })
+                before = repository.get_account_case("AC-PREPARE")
+                payload = {"delivery_key": "enablement:AC-PREPARE:v1", "body": "manual action"}
+                self.assertFalse(prepare_account_internal_email(
+                    repository, account_case_id="AC-PREPARE", payload=payload))
+                after = repository.get_account_case("AC-PREPARE")
+                self.assertEqual(after["internal_email_send_status"], status)
+                self.assertEqual(after["internal_email_payload"], before["internal_email_payload"])
+
+    def test_prepare_without_delivery_key_or_case_id_is_refused(self) -> None:
+        self.assertFalse(prepare_account_internal_email(
+            self.repository, account_case_id="AC-DELIVERY", payload={"body": "no key"}))
+        self.assertFalse(prepare_account_internal_email(
+            self.repository, account_case_id="", payload={"delivery_key": "enablement:AC-DELIVERY:v1"}))
+        self.assertEqual(
+            self.repository.get_account_case("AC-DELIVERY")["internal_email_send_status"],
+            "pending",
+        )
 
     def test_rerun_delivery_is_fenced_from_legacy_workers(self) -> None:
         self.assertTrue(

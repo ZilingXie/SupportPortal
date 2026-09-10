@@ -27,6 +27,7 @@ from backend.services.account_automation_delivery import (
     DELIVERY_UNKNOWN,
     deliver_account_internal_email_async,
     ensure_account_delivery_key,
+    prepare_account_internal_email,
 )
 from backend.services.account_automation_ownership import (
     OWNERSHIP_EVENT_TYPE,
@@ -771,16 +772,14 @@ async def _run_enablement_archer_workflow(
         )
         return result, account_case, reply_job
 
-    await _sync(
-        escalate_account_case_to_human_review,
+    account_case = await _record_execution_failure(
+        repository=repository,
         account_case=account_case,
         ticket_id=ticket_id,
         handler="enablement",
-        failure_stage="archer",
-        failure_code=reason_code,
-        reason=result.detail or reason_code,
-        repository=repository,
-        timestamp=timestamp,
+        stage="archer",
+        reason_code=reason_code,
+        detail=result.detail,
     )
     fallback_payload = ensure_account_delivery_key(
         _append_archer_failure_reason(fallback_email_payload, result.detail),
@@ -788,6 +787,14 @@ async def _run_enablement_archer_workflow(
         account_case_id=str(
             account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
         ),
+    )
+    await _sync(
+        prepare_account_internal_email,
+        repository,
+        account_case_id=str(
+            account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
+        ),
+        payload=fallback_payload,
     )
 
     async def _fallback_sender(attempt_payload: dict[str, Any]) -> tuple[str, str]:

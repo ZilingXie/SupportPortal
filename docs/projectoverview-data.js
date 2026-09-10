@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-07T10:22:13Z",
-  "source_base_commit": "a4938b6b45dab027e3f8369b0e2d80ddfc5e6f0a",
-  "registry_digest": "92c5e57270650c8b942b92c16eb22dd0904dccc920298fc28cfb0c11db9c050c",
+  "generated_at": "2026-09-11T07:14:12Z",
+  "source_base_commit": "3adc2c9d48661dc52844e540a9fce8ba2e806ec2",
+  "registry_digest": "b63ced959e7ec46bf212bcd0388c59d50b250fe3b68d1e9316310b1666ffce0d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1464,6 +1464,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "PostgreSQL prepare/claim concurrency and workflow integration",
+          "command": "RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN；pytest -q backend/tests/test_account_case_postgres_roundtrip.py（临时 schema account_contract_\u003cuuid> 隔离，测后 DROP CASCADE）",
+          "details": "新增两测试通过：①4 线程 Barrier 同步并发 prepare+claim 同一 delivery，恰好 1 个 claim 成功（行状态 sending、payload 含 claim token、再次 prepare 拒绝）；②真实 _run_enablement_archer_workflow 在 PG 上走通 prepare→claim→sender→complete，sender 恰一次（key=enablement:{case}:v1）、终态 sent、execution_reason_code=archer_enable_failed、human_review_required。同文件既有三测试本会话亦通过；test_initialize_preserves 在多测试同进程运行时曾遇远端 RDS SSL eof 抖动，隔离重跑通过，判定为环境连接抖动非代码回归。"
+        },
+        {
+          "type": "test",
+          "label": "Archer failure notification and delivery regression (13386)",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_failure_alerts.py backend/tests/test_account_human_review_escalation.py backend/tests/test_enablement_rag_resume.py backend/tests/test_automation_comment_sync.py",
+          "details": "89 passed + 23 subtests（worktree codex/account-failure-notification-hotfix）。新增真实领取协议回归：enable_failed 后负责人告警恰一次（收件 xieziling@agora.io、incident account-automation:{case}:archer:archer_enable_failed 幂等）、兜底邮件 sender 恰一次且状态 sent；重复处理不重告警不重发（already_claimed/already sent）；sending/delivery_unknown/sent/冲突 key 经 prepare+claim 再投递不重置不重发；enabled/appid_invalid/project_not_found 零告警；告警失败不阻断兜底（alert_status=delivery_failed 仍 human_review_required）；邮件失败保留 archer_enable_failed 主因。评论入口用例驱动真实 reply-sync impl 复证告警+邮件一次。"
+        },
+        {
+          "type": "test",
+          "label": "Adjacent repository and delivery suites",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_internal_email_payload.py backend/tests/test_repository_configuration.py backend/tests/test_account_intake.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py",
+          "details": "343 passed + 47 subtests。仓库三层新增 prepare_account_internal_email_delivery 后领取/完成/重放/版本围栏与既有交付协议回归无漂移。"
+        },
+        {
+          "type": "test",
           "label": "Account Human Review queue handoff regression",
           "command": "../../.venv/bin/python -m pytest backend/tests/test_account_human_review_escalation.py backend/tests/test_account_intake.py backend/tests/test_worker.py -q",
           "details": "283 passed；覆盖 Production private note + route back、staging 无出站、note/route 独立失败、审计幂等、非 numeric identity、outcome_unknown 不重试，以及四类 Account intake/reply worker fallback 的 human_review_required、not_automated 和 pending job cancellation。"
@@ -1499,7 +1517,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 5,
-      "done_count": 2,
+      "done_count": 1,
       "blocked_count": 0
     },
     {
@@ -4677,16 +4695,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p1-15",
       "title": "在 Account 处理失败后触发告警并进入 Human Review",
-      "status": "done",
+      "status": "active",
       "owner": "zac",
-      "summary": "增加 AI 故障告警和人工接管机制；Production route-back 对首次 Zendesk safe-update 409 读取最新工单，已人工接管/已回队列则幂等成功，仍由 AI 持有则只使用新 updated_stamp 重试一次，已关闭或再次冲突继续 fail closed。",
-      "next_action": "",
+      "summary": "增加 AI 故障告警和人工接管机制；Production route-back 对首次 Zendesk safe-update 409 读取最新工单，已人工接管/已回队列则幂等成功，仍由 AI 持有则只使用新 updated_stamp 重试一次，已关闭或再次冲突继续 fail closed。2026-09-10 重开：13386 回归——Archer enable_failed 分支未接入 _record_execution_failure（负责人告警缺失），且兜底邮件在 DB 状态仍为 archer_pending+空 payload 时直接领取（claim 必失败、sender 调用 0 次）；修复为告警 helper 接入 + 新增条件化 prepare 原子操作（payload+pending 先持久化再领取）。",
+      "next_action": "保持 active。等待正式合并、本地栈验证与（Archer 认证恢复后的）紧急 Production 直发发布；发布后按三层证据核验（代码生效/合成隔离测试/真实收件箱），真实邮件核验需用户单独授权；不重放 13386、不修改历史 delivery_unknown。",
       "acceptance_criteria": [
         "Account AI 或自动化处理在 OpenAI/API 不可用、重试 3 次仍失败、结构化输出耗尽、Persona/字段处理异常或内部处理链路失败时停止自动化，最多执行首次调用加 3 次重试；不使用备用 provider/model，不生成客户回复，Case 持久化为 human_review_required，取消 pending reply job，并向预设的项目负责人邮箱发送一次脱敏、incident 幂等的故障邮件；邮件投递失败可重试。",
-        "fraud_account、enablement、detailed_invoice 和 account_suspension 的 Production fallback 通过共享 escalation service 写 Zendesk private internal note、释放 AI ownership 并 route back 到原始 queue；note/route 独立记录失败和 outcome_unknown，staging/preproduction 无 Zendesk side effect。"
+        "fraud_account、enablement、detailed_invoice 和 account_suspension 的 Production fallback 通过共享 escalation service 写 Zendesk private internal note、释放 AI ownership 并 route back 到原始 queue；note/route 独立记录失败和 outcome_unknown，staging/preproduction 无 Zendesk side effect。",
+        "Archer enable_failed（首次 intake 与客户补充评论两入口）必经 _record_execution_failure：故障码 archer_enable_failed、incident 幂等告警到 xieziling@agora.io、告警失败不阻断移交与兜底邮件；enabled/appid_invalid/project_not_found 不发系统失败告警。",
+        "兜底内部邮件按持久化领取协议发送：先条件化 prepare（payload+稳定 delivery_key+pending），再走现有 claim/send/complete；sent/sending/delivery_unknown/冲突 key 不被重置或重发；不放宽领取 SQL、不用 reuse_claim；告警与兜底是两封独立邮件，分类通知合同不变。"
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "PostgreSQL prepare/claim concurrency and workflow integration",
+          "command": "RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN；pytest -q backend/tests/test_account_case_postgres_roundtrip.py（临时 schema account_contract_\u003cuuid> 隔离，测后 DROP CASCADE）",
+          "details": "新增两测试通过：①4 线程 Barrier 同步并发 prepare+claim 同一 delivery，恰好 1 个 claim 成功（行状态 sending、payload 含 claim token、再次 prepare 拒绝）；②真实 _run_enablement_archer_workflow 在 PG 上走通 prepare→claim→sender→complete，sender 恰一次（key=enablement:{case}:v1）、终态 sent、execution_reason_code=archer_enable_failed、human_review_required。同文件既有三测试本会话亦通过；test_initialize_preserves 在多测试同进程运行时曾遇远端 RDS SSL eof 抖动，隔离重跑通过，判定为环境连接抖动非代码回归。"
+        },
+        {
+          "type": "test",
+          "label": "Archer failure notification and delivery regression (13386)",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_failure_alerts.py backend/tests/test_account_human_review_escalation.py backend/tests/test_enablement_rag_resume.py backend/tests/test_automation_comment_sync.py",
+          "details": "89 passed + 23 subtests（worktree codex/account-failure-notification-hotfix）。新增真实领取协议回归：enable_failed 后负责人告警恰一次（收件 xieziling@agora.io、incident account-automation:{case}:archer:archer_enable_failed 幂等）、兜底邮件 sender 恰一次且状态 sent；重复处理不重告警不重发（already_claimed/already sent）；sending/delivery_unknown/sent/冲突 key 经 prepare+claim 再投递不重置不重发；enabled/appid_invalid/project_not_found 零告警；告警失败不阻断兜底（alert_status=delivery_failed 仍 human_review_required）；邮件失败保留 archer_enable_failed 主因。评论入口用例驱动真实 reply-sync impl 复证告警+邮件一次。"
+        },
+        {
+          "type": "test",
+          "label": "Adjacent repository and delivery suites",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_internal_email_payload.py backend/tests/test_repository_configuration.py backend/tests/test_account_intake.py backend/tests/test_account_reply_rag_fallback.py backend/tests/test_account_reply_version_fence.py",
+          "details": "343 passed + 47 subtests。仓库三层新增 prepare_account_internal_email_delivery 后领取/完成/重放/版本围栏与既有交付协议回归无漂移。"
+        },
         {
           "type": "test",
           "label": "Account Human Review queue handoff regression",
@@ -4715,11 +4753,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "source_refs": [
         "docs/roadmap/meetings.html#ticketing-system-2026-08-10",
         "backend/services/zendesk_ticket_assignment.py",
-        "backend/tests/test_zendesk_ticket_assignment.py"
+        "backend/tests/test_zendesk_ticket_assignment.py",
+        "backend/services/automation_account_intake.py",
+        "backend/services/account_automation_delivery.py",
+        "backend/services/account_failure_alerts.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/tests/test_automation_account_intake.py",
+        "backend/tests/test_account_automation_delivery.py",
+        "backend/tests/test_enablement_rag_resume.py",
+        "backend/tests/test_account_case_postgres_roundtrip.py"
       ],
       "created_at": "2026-08-10",
-      "updated_at": "2026-08-24",
+      "updated_at": "2026-09-10",
       "history": [
+        {
+          "at": "2026-09-10",
+          "event": "reopened_archer_failure_notification_gap_13386",
+          "summary": "13386 暴露本任务验收标准回归：_run_enablement_archer_workflow 的 enable_failed 分支只做 escalate_account_case_to_human_review，未调用 _record_execution_failure（负责人告警缺失）；且 case 以 archer_pending+空 payload 落库后直接 deliver，领取 SQL 的存量 key/状态守卫必失败，兜底邮件 sender 调用 0 次。修复：enable_failed 分支接入 _record_execution_failure（含告警幂等）并使用其返回 Case；新增 prepare_account_internal_email（PG 条件 UPDATE + InMemory 孪生）先持久化 payload+pending 再领取。已授权紧急 Production 热修复直发，发布窗口待 Archer 认证恢复。"
+        },
         {
           "at": "2026-08-16",
           "event": "migrated",
