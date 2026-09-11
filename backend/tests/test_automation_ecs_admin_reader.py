@@ -15,36 +15,46 @@ from backend.services.automation_ecs_schema import ACCOUNT_RUNTIME_TABLES
 from backend.tests.test_automation_ecs_store import _settings
 
 
-def _reader() -> AutomationEcsAdminReader:
-    return AutomationEcsAdminReader(
-        replace(
-            _settings("api"),
-            allow_memory=False,
-            db_dsn="postgresql://reader.invalid/supportportal",
-            job_namespace="supportportal-production",
-        )
+def _production_settings() -> object:
+    return replace(
+        _settings("api"),
+        allow_memory=False,
+        db_dsn="postgresql://reader.invalid/supportportal",
+        job_namespace="supportportal-production",
     )
 
 
+def _preproduction_settings() -> object:
+    return replace(
+        _settings("api"),
+        allow_memory=False,
+        environment="preproduction",
+        db_schema="supportportal_preproduction",
+        db_dsn="postgresql://reader.invalid/supportportal_preproduction",
+        job_namespace="supportportal-preproduction",
+    )
+
+
+def _reader() -> AutomationEcsAdminReader:
+    return AutomationEcsAdminReader(_production_settings())
+
+
 @pytest.mark.parametrize(
-    ("field", "value", "message"),
+    ("base_settings", "field", "value", "message"),
     (
-        ("environment", "preproduction", "available only in Production"),
-        ("db_schema", "supportportal_preproduction", "requires supportportal_production"),
-        ("job_namespace", "supportportal-preproduction", "requires namespace supportportal-production"),
-        ("db_dsn", "", "requires AUTOMATION_DB_DSN"),
+        (_production_settings, "environment", "staging", "requires preproduction or production"),
+        (_production_settings, "db_schema", "supportportal_preproduction", "requires supportportal_production"),
+        (_production_settings, "job_namespace", "supportportal-preproduction", "requires namespace supportportal-production"),
+        (_production_settings, "db_dsn", "", "requires AUTOMATION_DB_DSN"),
+        (_preproduction_settings, "db_schema", "supportportal_production", "requires supportportal_preproduction"),
+        (_preproduction_settings, "job_namespace", "supportportal-production", "requires namespace supportportal-preproduction"),
+        (_preproduction_settings, "db_dsn", "", "requires AUTOMATION_DB_DSN"),
     ),
 )
-def test_reader_fails_closed_for_non_production_sources(
-    field: str, value: str, message: str
+def test_reader_fails_closed_for_environment_mismatched_sources(
+    base_settings: object, field: str, value: str, message: str
 ) -> None:
-    overrides = {
-        "allow_memory": False,
-        "db_dsn": "postgresql://reader.invalid/supportportal",
-        "job_namespace": "supportportal-production",
-        field: value,
-    }
-    settings = replace(_settings("api"), **overrides)
+    settings = replace(base_settings(), **{field: value})
     with pytest.raises(RuntimeError, match=message):
         AutomationEcsAdminReader(settings)
 
@@ -109,8 +119,25 @@ def test_account_automation_query_uses_only_production_schema_and_namespace() ->
     assert 'FROM "supportportal_production"."automation_cases"' in rendered
     assert 'JOIN "supportportal_production"."support_account_cases"' in rendered
     assert "automation_case.namespace=%s" in rendered
-    assert parameters == ("supportportal-production",)
+    assert "account_case.processing_profile=%s" in rendered
+    assert parameters == ("production", "supportportal-production")
     assert "supportportal_preproduction" not in rendered
+
+
+def test_account_automation_query_uses_preproduction_profile_and_namespace() -> None:
+    cursor = MagicMock()
+    cursor.fetchall.return_value = []
+
+    rows = AutomationEcsAdminReader(_preproduction_settings())._account_case_rows(cursor)
+
+    assert rows == []
+    query, parameters = cursor.execute.call_args.args
+    rendered = query.as_string()
+    assert 'FROM "supportportal_preproduction"."automation_cases"' in rendered
+    assert 'JOIN "supportportal_preproduction"."support_account_cases"' in rendered
+    assert "account_case.processing_profile=%s" in rendered
+    assert parameters == ("preproduction", "supportportal-preproduction")
+    assert "supportportal_production" not in rendered
 
 
 def test_audit_projection_drops_nested_and_secret_values() -> None:

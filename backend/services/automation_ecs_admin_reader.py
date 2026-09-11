@@ -1,4 +1,4 @@
-"""Strictly read-only Workspace Admin projections for ECS Production."""
+"""Strictly read-only Workspace Admin projections for ECS automation environments."""
 
 from __future__ import annotations
 
@@ -27,8 +27,14 @@ from backend.services.workspace_schedules import (
 )
 
 
-PRODUCTION_SCHEMA = "supportportal_production"
-PRODUCTION_NAMESPACE = "supportportal-production"
+ADMIN_SCHEMAS = {
+    "preproduction": "supportportal_preproduction",
+    "production": "supportportal_production",
+}
+ADMIN_NAMESPACES = {
+    "preproduction": "supportportal-preproduction",
+    "production": "supportportal-production",
+}
 _ENV_KEY_RE = re.compile(r"[A-Z_][A-Z0-9_]*")
 
 
@@ -72,6 +78,9 @@ def _safe_audit_payload(value: Any) -> dict[str, Any]:
 class EmptyAutomationEcsAdminReader:
     """Test-only reader used when the ECS runtime explicitly allows memory storage."""
 
+    def __init__(self, *, processing_profile: str = "production") -> None:
+        self._processing_profile = processing_profile
+
     def accounts(self) -> dict[str, Any]:
         return {"accounts": []}
 
@@ -97,7 +106,7 @@ class EmptyAutomationEcsAdminReader:
 
     def account_automation(self, **_: Any) -> dict[str, Any]:
         return {
-            "processing_profile": "production",
+            "processing_profile": self._processing_profile,
             "metrics": {"total_account_cases": 0, "automated_cases": 0, "not_automated_cases": 0, "automation_rate": 0},
             "automation_subcategories": [],
             "cases": [],
@@ -123,15 +132,15 @@ class EmptyAutomationEcsAdminReader:
 
 
 class AutomationEcsAdminReader:
-    """Read the Production Admin contract without importing the legacy application."""
+    """Read the environment-scoped Admin contract without importing the legacy application."""
 
     def __init__(self, settings: AutomationEcsSettings) -> None:
-        if settings.environment != "production":
-            raise RuntimeError("ECS Admin is available only in Production")
-        if settings.db_schema != PRODUCTION_SCHEMA:
-            raise RuntimeError(f"ECS Admin requires {PRODUCTION_SCHEMA}")
-        if settings.job_namespace != PRODUCTION_NAMESPACE:
-            raise RuntimeError(f"ECS Admin requires namespace {PRODUCTION_NAMESPACE}")
+        if settings.environment not in ADMIN_SCHEMAS:
+            raise RuntimeError("ECS Admin requires preproduction or production")
+        if settings.db_schema != ADMIN_SCHEMAS[settings.environment]:
+            raise RuntimeError(f"ECS Admin requires {ADMIN_SCHEMAS[settings.environment]}")
+        if settings.job_namespace != ADMIN_NAMESPACES[settings.environment]:
+            raise RuntimeError(f"ECS Admin requires namespace {ADMIN_NAMESPACES[settings.environment]}")
         if not settings.db_dsn:
             raise RuntimeError("ECS Admin requires AUTOMATION_DB_DSN")
         self.settings = settings
@@ -268,7 +277,7 @@ class AutomationEcsAdminReader:
                 FROM {} AS automation_case
                 JOIN {} AS account_case
                   ON account_case.zendesk_ticket_id=automation_case.zendesk_ticket_id
-                 AND account_case.processing_profile='production'
+                 AND account_case.processing_profile=%s
                 WHERE automation_case.namespace=%s
                 ORDER BY account_case.created_at DESC, account_case.account_case_id
                 """
@@ -276,7 +285,7 @@ class AutomationEcsAdminReader:
                 self._table("automation_cases"),
                 self._table("support_account_cases"),
             ),
-            (self.settings.job_namespace,),
+            (self.settings.environment, self.settings.job_namespace),
         )
         rows = list(cursor.fetchall())
         for row in rows:
@@ -284,7 +293,7 @@ class AutomationEcsAdminReader:
             row["source"] = safe_zendesk_source(row.get("source"), ticket_id) or (
                 f"https://agoraio.zendesk.com/agent/tickets/{ticket_id}"
                 if ticket_id.isdigit()
-                else "production"
+                else self.settings.environment
             )
         return rows
 
@@ -330,7 +339,7 @@ class AutomationEcsAdminReader:
         }
         on_schedule = on_schedule_engineer_ids(schedules, now) & active_engineers
         automation_metrics = account_automation_payload(
-            _AccountRows(account_cases), processing_profile="production", page_size=1
+            _AccountRows(account_cases), processing_profile=self.settings.environment, page_size=1
         )["metrics"]
         client_counts = {key: ticket_statuses.count(key) for key in ("open", "communicating", "escalated", "investigating", "resolved")}
         return {
@@ -495,7 +504,7 @@ class AutomationEcsAdminReader:
                 category=category,
                 created_from=created_from,
                 created_to=created_to,
-                processing_profile="production",
+                processing_profile=self.settings.environment,
             )
             page_cases = list(payload.get("cases") or [])
             billing_ids = [str(item.get("billing_ticket_id") or "") for item in page_cases]
@@ -716,5 +725,5 @@ def create_automation_ecs_admin_reader(
     settings: AutomationEcsSettings,
 ) -> AutomationEcsAdminReader | EmptyAutomationEcsAdminReader:
     if settings.allow_memory:
-        return EmptyAutomationEcsAdminReader()
+        return EmptyAutomationEcsAdminReader(processing_profile=settings.environment)
     return AutomationEcsAdminReader(settings)

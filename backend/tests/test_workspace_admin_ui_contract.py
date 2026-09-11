@@ -84,17 +84,20 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
     def test_ecs_admin_adapter_uses_cookie_get_apis_and_blocks_business_writes(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         for marker in (
-            "/automation/production/dashboard/auth/login",
-            "/automation/production/dashboard/auth/session",
-            "/automation/production/dashboard/auth/logout",
-            "/automation/production/admin/api",
-            "Production Admin is read-only",
+            "(preproduction|production)\\/admin",
+            "`${ECS_ENV_BASE_PATH}/dashboard/auth/login`",
+            "`${ECS_ENV_BASE_PATH}/dashboard/auth/session`",
+            "`${ECS_ENV_BASE_PATH}/dashboard/auth/logout`",
+            "`${ECS_ADMIN_ROOT}/accounts`",
+            "ECS Admin is read-only",
             "applyReadOnlyControls",
             "ECS_READ_ONLY_ACTIONS",
             'rag.available === false',
             '>Unavailable</span>',
         ):
             self.assertIn(marker, source)
+        self.assertNotIn("/automation/production/dashboard/auth/login", source)
+        self.assertNotIn('"/automation/production/admin/api"', source)
         self.assertNotIn('sectionLink.dataset.section === "new-account"', source)
         self.assertNotIn("a.is-read-only", Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8"))
 
@@ -108,10 +111,10 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             };
             currentAccount = { account_id: 'admin', display_name: 'Production Admin', role: 'admin' };
             accessToken = 'must-not-be-used';
-            if (!isEcsProductionAdmin || !isAdminAuthenticated()) throw new Error('ECS session mode missing');
+            if (!isEcsAdmin || !isAdminAuthenticated()) throw new Error('ECS session mode missing');
             if (adminEndpoints.accounts !== '/automation/production/admin/api/accounts') throw new Error('ECS accounts endpoint mismatch');
             let rejected = false;
-            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); } catch (error) { rejected = error.message === 'Production Admin is read-only'; }
+            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); } catch (error) { rejected = error.message === 'ECS Admin is read-only'; }
             if (!rejected || calls.length !== 0) throw new Error('business write reached the network');
             await fetchJson(adminEndpoints.accounts);
             if (calls.length !== 1 || calls[0].method !== 'GET' || calls[0].authorization) throw new Error('ECS read did not use Cookie-only GET');
@@ -123,6 +126,33 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!control.disabled || control.attrs['aria-disabled'] !== 'true') throw new Error('write control was not disabled');
             """,
             pathname="/automation/production/admin/",
+        )
+
+    def test_ecs_admin_adapter_serves_preproduction_paths(self) -> None:
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            if (!isEcsAdmin) throw new Error('preproduction ECS admin mode missing');
+            if (adminEndpoints.accounts !== '/automation/preproduction/admin/api/accounts') throw new Error('preproduction accounts endpoint mismatch');
+            if (adminEndpoints.authLogin !== '/automation/preproduction/dashboard/auth/login') throw new Error('preproduction login endpoint mismatch');
+            if (adminEndpoints.authSession !== '/automation/preproduction/dashboard/auth/session') throw new Error('preproduction session endpoint mismatch');
+            if (adminEndpoints.authLogout !== '/automation/preproduction/dashboard/auth/logout') throw new Error('preproduction logout endpoint mismatch');
+            let rejected = false;
+            try { await fetchJson(adminEndpoints.accounts, { method: 'POST' }); } catch (error) { rejected = error.message === 'ECS Admin is read-only'; }
+            if (!rejected) throw new Error('preproduction business write was not blocked');
+            """,
+            pathname="/automation/preproduction/admin/",
+        )
+
+    def test_workspace_admin_local_mode_keeps_workspace_endpoints(self) -> None:
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            if (isEcsAdmin) throw new Error('local workspace mode must not enable ECS admin adapter');
+            if (adminEndpoints.accounts !== '/api/workspace/admin/accounts') throw new Error('local accounts endpoint mismatch');
+            if (adminEndpoints.authLogin !== '/api/workspace/auth/login') throw new Error('local login endpoint mismatch');
+            """,
+            pathname="/workspace/admin/",
         )
 
     def test_ecs_admin_hides_model_pricing_strip(self) -> None:
