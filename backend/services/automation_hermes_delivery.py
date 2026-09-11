@@ -9,11 +9,16 @@ and the delivered/failed/outcome_unknown trail used by every other surface.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.services.automation_ecs_store import AutomationEcsStore, HermesDraftStateError
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_delivery")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _current_comments_revision(repository: Any, client_ticket_id: str, zendesk_ticket_id: str) -> str:
@@ -67,6 +72,7 @@ def queue_hermes_draft_delivery(
         message_id=draft_id,
         zendesk_ticket_id=zendesk_ticket_id,
         idempotency_key=f"hermes-draft:{draft_id}",
+        created_at=_now_iso(),
         is_public=True,
         target_status=None,
         source="hermes",
