@@ -27,7 +27,6 @@ from backend.scripts.automation_ecs_release_pipeline import (
     prompt_target_dsn,
     task_definition_sha256,
     validate_preflight_evidence,
-    validate_release_source,
     write_preflight_evidence,
 )
 from backend.services.automation_ecs_contracts import RELEASE_MANIFEST_VERSION, SCHEMA_REVISION
@@ -207,6 +206,131 @@ def test_hotfix_baseline_rejects_manifest_commit_mismatch(tmp_path: Path, monkey
             manifest_path=_manifest(tmp_path / "manifest.json", baseline),
             hotfix_baseline=baseline,
         )
+
+
+@pytest.mark.parametrize("hotfix_mode", [False, True])
+def test_pipeline_runs_and_resumes_with_source_identity_at_every_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hotfix_mode: bool
+) -> None:
+    repo, baseline, release = _hotfix_repo(tmp_path)
+    if not hotfix_mode:
+        _run(repo, "update-ref", "refs/heads/origin/main", release)
+    arguments = [
+        "run", "--project-root", str(repo), "--release-commit", release,
+        "--prompt-release-id", "prompt-test", "--through", "production",
+        "--codebuild-direct-production", "--keep-release-worktree",
+    ]
+    if hotfix_mode:
+        arguments.extend(["--hotfix-baseline", baseline])
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", release)
+    environment = {
+        "DEPLOY_PRODUCTION_APPROVED": "1",
+        "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED": release,
+        "AUTOMATION_ECS_HOTFIX_BASELINE": "f" * 40,
+        "PRODUCTION_PROMPT_RELEASE_TARGET_DSN": "isolated-test-target",
+    }
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: dict(environment))
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    stages = []
+
+    def stage(state, name, command, *, env, **kwargs):
+        stages.append((name, command, dict(env)))
+        if name == "codebuild":
+            release_dir = Path(command[command.index("--output-dir") + 1])
+            release_dir.mkdir(parents=True)
+            manifest_path = _manifest(release_dir / "release-manifest.json", release)
+            if hotfix_mode:
+                manifest = json.loads(manifest_path.read_text())
+                manifest["schema_revision"] = "automation-ecs-002"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            (release_dir / "publish-record.json").write_text("{}", encoding="utf-8")
+        state.append({"stage": name, "status": "passed", "duration_seconds": 0})
+
+    # Git, source validation, checkpoint creation, and resume run for real;
+    # only external release stages and AWS identity are replaced.
+    monkeypatch.setattr(pipeline, "_run_stage", stage)
+    args = pipeline.build_parser().parse_args(arguments)
+    pipeline.run_pipeline(args)
+    assert [item[0] for item in stages] == [
+        "codebuild", "production_promotion", "production_preflight", "production_deploy",
+    ]
+    codebuild_command = stages[0][1]
+    if hotfix_mode:
+        assert codebuild_command[codebuild_command.index("--hotfix-baseline") + 1] == baseline
+    else:
+        assert "--hotfix-baseline" not in codebuild_command
+    for name, command, env in stages:
+        if name in {"production_preflight", "production_deploy"}:
+            assert env.get("AUTOMATION_ECS_HOTFIX_BASELINE") == (baseline if hotfix_mode else None)
+            assert env["AUTOMATION_RELEASE_HOTFIX_AUTHORIZED"] == release
+    checkpoint = next((repo / ".deployments").glob("ecs-pipeline-*/checkpoint.json"))
+    identity = json.loads(checkpoint.read_text())["identity"]
+    assert identity["release_commit"] == release
+    assert identity["prompt_release_id"] == "prompt-test"
+    assert identity.get("hotfix_baseline") == (baseline if hotfix_mode else None)
+    assert identity["mode"]["codebuild_direct_production"] is True
+
+    stages.clear()
+    args.resume = True
+    pipeline.run_pipeline(args)
+    assert [item[0] for item in stages] == [
+        "production_promotion", "production_preflight", "production_deploy",
+    ]
+    if hotfix_mode:
+        stages.clear()
+        args.hotfix_baseline = release
+        with pytest.raises(ValueError, match="checkpoint identity"):
+            pipeline.run_pipeline(args)
+        assert stages == []
+
+
+@pytest.mark.parametrize("authorized", [None, "b" * 40])
+def test_pipeline_rejects_hotfix_authorization_before_creating_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authorized: str | None
+) -> None:
+    repo, baseline, release = _hotfix_repo(tmp_path)
+    args = pipeline.build_parser().parse_args([
+        "run", "--project-root", str(repo), "--release-commit", release,
+        "--prompt-release-id", "prompt-test", "--through", "production",
+        "--codebuild-direct-production", "--hotfix-baseline", baseline,
+    ])
+    if authorized is None:
+        monkeypatch.delenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", raising=False)
+    else:
+        monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", authorized)
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    with pytest.raises(ValueError, match="must equal the reviewed hotfix SHA"):
+        pipeline.run_pipeline(args)
+    assert not (repo / ".deployments").exists()
+
+
+@pytest.mark.parametrize("authorized", [None, "b" * 40])
+def test_old_schema_manifest_requires_exact_hotfix_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authorized: str | None
+) -> None:
+    manifest_path = _manifest(tmp_path / "manifest.json", "a" * 40)
+    manifest = json.loads(manifest_path.read_text())
+    manifest["schema_revision"] = "automation-ecs-002"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    if authorized is None:
+        monkeypatch.delenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", raising=False)
+    else:
+        monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", authorized)
+    with pytest.raises(ValueError, match="schema 002 requires authorization"):
+        pipeline.read_manifest(manifest_path)
+
+
+def test_hotfix_authorization_does_not_allow_unknown_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _manifest(tmp_path / "manifest.json", "a" * 40)
+    manifest = json.loads(manifest_path.read_text())
+    manifest["schema_revision"] = "automation-ecs-999"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", "a" * 40)
+    with pytest.raises(ValueError):
+        pipeline.read_manifest(manifest_path)
 
 
 def test_release_source_rejects_non_ancestor_dirty_and_manifest_mismatch(tmp_path: Path) -> None:
