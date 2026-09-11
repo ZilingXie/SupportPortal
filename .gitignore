@@ -21,8 +21,9 @@ artifacts/
 .env.local
 .msgraph/
 
-# CodeGraph
+# CodeGraph / codesight
 .codegraph/
+.codesight/
 AGENTS.md
 CLAUDE.md
 .deploy_ec2.lock
