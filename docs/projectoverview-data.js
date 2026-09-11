@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T15:29:37Z",
-  "source_base_commit": "f2981425f929069ef401b9ba6c9281884f5db00a",
-  "registry_digest": "c3135595eb595b865e4b570bef09421c8ce687fe40dd64748258b1a9eb53e97c",
+  "generated_at": "2026-09-11T15:53:14Z",
+  "source_base_commit": "8bd2e10ba1e1293500696f5be025fbdad079115e",
+  "registry_digest": "d30e3b6c2300fccd53b470d165ff6d0101fad131e86d5d138d082090bac1c0fa",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2707,6 +2707,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Public cache diagnosis",
           "details": "2026-09-05：ECS Production 已运行包含 PR #1075 的 r20260905-d2fe922，公网 app.js 已包含 ECS-only 短路，但 index.html 仍使用旧 asset version，已打开标签页可继续复用旧脚本；提升共享 Admin asset version 以强制刷新。"
+        },
+        {
+          "type": "test",
+          "label": "Dual-environment admin coverage",
+          "details": "2026-09-11 实施：test_automation_ecs_admin_reader fail-closed 参数化改为环境错配（含 preproduction 变体）+ SQL 参数断言 (environment, namespace)；postgres 集成测试对称参数化双环境（schema/namespace trap 不变）；test_automation_ecs_api 新增 preproduction admin 挂载/会话/只读用例；UI 合同测试更新为派生端点断言并新增 preproduction 与本地 workspace pathname 用例。"
         }
       ],
       "source_refs": [
@@ -2719,7 +2724,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 6,
+      "task_count": 7,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -11819,6 +11824,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-151",
+      "title": "Preproduction 挂载 ECS Admin 只读控制台",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-11",
+      "updated_at": "2026-09-11",
+      "summary": "在 `/automation/preproduction/admin/` 挂载与 Production 同款的 ECS Admin 10 栏只读控制台：去掉 automation_ecs_api 的 production-only 挂载门；AutomationEcsAdminReader 构造守卫改为按环境匹配 schema/namespace（fail-closed 不变）；account case 的 processing_profile 过滤从硬编码 'production' 改为按 settings.environment 派生（否则 preproduction Automated Cases/metrics 恒空）；admin app.js 的 ECS 路径检测仿 dashboard 的 environmentMatch 模式按环境派生端点。两环境 admin 均保持只读（后端仅 GET 端点），Production 行为零变化。",
+      "next_action": "代码+测试+文档已完成待验证；定向测试通过后 finalize 合入，部署 Preproduction 并线上验收 `/automation/preproduction/admin/`（登录 admin/admin、cases/account-automation 返回真实数据），同时确认 Production admin 无回归。",
+      "acceptance_criteria": [
+        "`https://supportcenter.stellarix.space/automation/preproduction/admin/` 返回 Admin UI（System Admin 标题，非 dashboard），dashboard session admin/admin 登录后 `/automation/preproduction/admin/api/*` GET 返回 200 且数据来自 preproduction schema。",
+        "preproduction admin 的 Automated Cases/metrics 含真实 preproduction 工单（processing_profile 按环境派生的直接证据）。 ",
+        "两环境 admin 均无业务写入口：写方法未注册（405/404），前端拦截写操作（ECS Admin is read-only）。",
+        "Production `/automation/production/admin/` 行为无回归（同代码环境参数不同，双环境测试覆盖）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Dual-environment admin coverage",
+          "details": "2026-09-11 实施：test_automation_ecs_admin_reader fail-closed 参数化改为环境错配（含 preproduction 变体）+ SQL 参数断言 (environment, namespace)；postgres 集成测试对称参数化双环境（schema/namespace trap 不变）；test_automation_ecs_api 新增 preproduction admin 挂载/会话/只读用例；UI 合同测试更新为派生端点断言并新增 preproduction 与本地 workspace pathname 用例。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-11",
+          "event": "created",
+          "summary": "用户要求 preproduction 也有 admin 页面（用于在晋级 Production 前验证 admin 页面调整）；实施环境参数化挂载与读取。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/automation_ecs_api.py",
+        "backend/services/automation_ecs_admin_reader.py",
+        "ui/workspace-ui/admin/app.js",
+        "docs/feature_list.md"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17209,7 +17257,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",
-        "ECS Production Admin 提供与 Workspace Admin 一致的 10 栏只读运营视图，并固定读取 Production schema 与 namespace。"
+        "ECS Production 与 Preproduction 均提供 `/automation/\u003cenvironment>/admin/` 与 Workspace Admin 一致的 10 栏只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。"
       ],
       "planned": [
         "待补充。"

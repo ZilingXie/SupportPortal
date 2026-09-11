@@ -545,8 +545,54 @@ def test_admin_static_mount_precedes_dashboard_catch_all() -> None:
     assert page.status_code == 200
     assert "System Admin" in page.text
     assert asset.status_code == 200
-    assert "isEcsProductionAdmin" in asset.text
+    assert "isEcsAdmin" in asset.text
+    assert "(preproduction|production)\\/admin" in asset.text
     assert "Production Automation" not in page.text
+
+
+def test_admin_is_mounted_on_preproduction_with_same_read_only_contract() -> None:
+    reader = _AdminReader()
+    settings = _preproduction_settings()
+    store = InMemoryAutomationEcsStore(settings)
+    store.migrate()
+    client = TestClient(
+        create_app(
+            settings=settings,
+            store=store,
+            dashboard_auth=DashboardAuthConfig(
+                session_secret="test-session-secret-that-is-long-enough",
+                session_ttl_seconds=120,
+            ),
+            admin_reader=reader,
+        ),
+        base_url="https://supportcenter.stellarix.space",
+    )
+    base = "/automation/preproduction/admin"
+    with client:
+        page = client.get(f"{base}/")
+        asset = client.get(f"{base}/app.js")
+        assert page.status_code == 200
+        assert "System Admin" in page.text
+        assert asset.status_code == 200
+        assert "Production Automation" not in page.text
+
+        for endpoint in ("accounts", "cases", "metrics"):
+            assert client.get(f"{base}/api/{endpoint}").status_code == 401
+
+        login = client.post(
+            "/automation/preproduction/dashboard/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert login.status_code == 200
+        assert login.json()["account"]["display_name"] == "Preproduction Admin"
+
+        for endpoint in ("accounts", "cases", "metrics"):
+            assert client.get(f"{base}/api/{endpoint}").status_code == 200
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            response = client.request(method, f"{base}/api/cases", json={})
+            assert response.status_code in {404, 405}, (method, response.status_code)
+
+    assert [call[0] for call in reader.calls] == ["accounts", "cases", "metrics"]
 
 
 def test_admin_get_apis_share_dashboard_session_and_forward_filters() -> None:

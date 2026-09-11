@@ -297,11 +297,7 @@ def create_app(    *,
     coordination_store = store or create_automation_ecs_store(runtime)
     auth = dashboard_auth or DashboardAuthConfig.from_env()
     case_reader = dashboard_reader or create_dashboard_case_reader(runtime)
-    admin_data_reader = (
-        admin_reader or create_automation_ecs_admin_reader(runtime)
-        if runtime.environment == "production"
-        else None
-    )
+    admin_data_reader = admin_reader or create_automation_ecs_admin_reader(runtime)
     if hmac.compare_digest(auth.password, runtime.intake_shared_token) or hmac.compare_digest(
         auth.session_secret, runtime.intake_shared_token
     ):
@@ -1019,7 +1015,7 @@ def create_app(    *,
         app.mount(
             f"{base}/admin",
             StaticFiles(directory=admin_dir, html=True),
-            name="automation-ecs-production-admin-ui",
+            name="automation-ecs-admin-ui",
         )
 
     dashboard_dir = ui_root / "automation-ecs-production"
