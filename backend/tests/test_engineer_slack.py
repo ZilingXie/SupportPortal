@@ -233,33 +233,61 @@ class EngineerSlackContractTests(unittest.TestCase):
         self.assertEqual(result["slack_message_ts"], "100.200")
         self.assertEqual(result["slack_thread_ts"], "100.200")
 
-    def test_hermes_review_pending_posts_channel_root_with_review_link(self) -> None:
+    def test_hermes_review_pending_posts_root_then_thread_with_investigation(self) -> None:
         draft = {
             "draft_id": "draft-abc123",
             "zendesk_ticket_id": "13413",
             "content": "Hi Ziling,\n\nPlease provide the affected product and OS version.",
         }
+        investigation = {
+            "summary": "Black screen reported; product and OS version missing.",
+            "evidence": [{"source": "case", "note": "symptom"}],
+            "blockers": ["missing device details"],
+            "next_steps": ["ask customer for device details"],
+        }
+        responses = [
+            _Response({"ok": True, "channel": "C-TEST", "ts": "100.300"}),
+            _Response({"ok": True, "channel": "C-TEST", "ts": "100.301"}),
+        ]
         with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
             "backend.services.engineer_slack.urllib.request.urlopen",
-            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.300"}),
+            side_effect=responses,
         ) as urlopen:
             result = notify_hermes_review_pending(
-                draft=draft, direction="investigation", environment="preproduction"
+                draft=draft,
+                title="Zac Test <bug>",
+                question="I got blackscreen, what should i do?",
+                route_result="investigation",
+                investigation=investigation,
+                environment="preproduction",
             )
 
-        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
-        self.assertEqual(payload["channel"], "C-TEST")
-        self.assertNotIn("thread_ts", payload)
-        self.assertIn("#13413", payload["text"])
-        self.assertIn("investigation", payload["text"])
-        self.assertIn("Please provide the affected product", payload["text"])
+        self.assertEqual(urlopen.call_count, 2)
+        root_payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        self.assertEqual(root_payload["channel"], "C-TEST")
+        self.assertNotIn("thread_ts", root_payload)
+        root_lines = root_payload["text"].split("\n")
+        self.assertEqual(root_lines[0], "Zac Test &lt;bug&gt;")
+        self.assertEqual(root_lines[1], "I got blackscreen, what should i do?")
+        self.assertEqual(
+            root_lines[2], "zendesk: https://agoraio.zendesk.com/agent/tickets/13413"
+        )
+        self.assertEqual(root_lines[3], "route reason: investigation")
+
+        thread_payload = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertEqual(thread_payload["thread_ts"], "100.300")
+        self.assertIn("Hermes investigation — Zendesk #13413", thread_payload["text"])
+        self.assertIn("Summary: Black screen reported", thread_payload["text"])
+        self.assertIn("Blockers: missing device details", thread_payload["text"])
+        self.assertIn("Next steps: ask customer for device details", thread_payload["text"])
+        self.assertIn("Draft awaiting review: Hi Ziling,", thread_payload["text"])
         self.assertIn(
             "https://supportcenter.stellarix.space/automation/preproduction/",
-            payload["text"],
+            thread_payload["text"],
         )
-        self.assertEqual(result["status"], "delivered")
-        self.assertEqual(result["slack_message_ts"], "100.300")
-        self.assertEqual(result["event_id"], "hermes-review-pending:draft-abc123")
+        self.assertEqual(result["root"]["slack_message_ts"], "100.300")
+        self.assertEqual(result["thread"]["slack_message_ts"], "100.301")
+        self.assertEqual(result["root"]["event_id"], "hermes-review-pending:draft-abc123")
 
     def test_hermes_review_pending_skips_when_not_configured(self) -> None:
         cleared = {key: "" for key in DIRECT_ENV}
@@ -268,7 +296,10 @@ class EngineerSlackContractTests(unittest.TestCase):
         ) as urlopen:
             result = notify_hermes_review_pending(
                 draft={"draft_id": "d", "zendesk_ticket_id": "1", "content": "x"},
-                direction="investigation",
+                title="t",
+                question="q",
+                route_result="investigation",
+                investigation=None,
                 environment="preproduction",
             )
         urlopen.assert_not_called()

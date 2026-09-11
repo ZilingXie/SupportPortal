@@ -291,18 +291,43 @@ class HermesAgentTurnProcessor:
                     draft_id,
                 )
                 return
-            binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+            ticket = payload.event.ticket
+            question = ticket.description
+            if payload.event.comment_snapshot is not None:
+                trigger = next(
+                    (
+                        comment
+                        for comment in payload.event.comment_snapshot.comments
+                        if comment.id == payload.event.comment_snapshot.trigger_comment_id
+                    ),
+                    None,
+                )
+                if trigger is not None and str(trigger.body or "").strip():
+                    question = trigger.body
+            binding = self.store.get_hermes_case_binding(ticket.id) or {}
+            turn = self.store.get_hermes_turn(str(draft.get("turn_id") or "")) or {}
+            route_result = str(binding.get("direction") or turn.get("direction") or "")
+            turn_route = str(turn.get("route") or "").strip()
+            if turn_route:
+                route_result = f"{route_result} ({turn_route})" if route_result else turn_route
             outcome = notify_hermes_review_pending(
                 draft=draft,
-                direction=str(binding.get("direction") or ""),
+                title=str(ticket.subject or ""),
+                question=str(question or ""),
+                route_result=route_result,
+                investigation=binding.get("investigation")
+                if isinstance(binding.get("investigation"), dict)
+                else None,
                 environment=self.environment,
             )
+            root_outcome = outcome.get("root") or {}
+            thread_outcome = outcome.get("thread") or {}
             LOGGER.info(
-                "hermes_review_pending_notified turn_id=%s draft_id=%s status=%s message_ts=%s",
+                "hermes_review_pending_notified turn_id=%s draft_id=%s root=%s thread=%s",
                 payload.turn_id,
                 draft_id,
-                outcome.get("status"),
-                outcome.get("slack_message_ts"),
+                root_outcome.get("slack_message_ts"),
+                thread_outcome.get("slack_message_ts"),
             )
         except Exception:  # noqa: BLE001 - best-effort channel ping
             LOGGER.warning(

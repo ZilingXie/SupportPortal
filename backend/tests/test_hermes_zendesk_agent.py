@@ -30,7 +30,10 @@ from backend.services.automation_hermes_agent import (
     HermesAgentTurnProcessor,
     HermesTurnDeferred,
 )
-from backend.services.automation_hermes_tools import tool_save_reply_draft
+from backend.services.automation_hermes_tools import (
+    tool_save_investigation_progress,
+    tool_save_reply_draft,
+)
 from backend.services.hermes_agent_runtime import HermesAgentError
 
 
@@ -514,6 +517,15 @@ class TestAgentTurnProcessor:
                 store.record_hermes_case_direction(
                     handoff["turn_id"], direction="investigation", reason="technical"
                 )
+                tool_save_investigation_progress(
+                    store,
+                    None,
+                    turn_id=handoff["turn_id"],
+                    summary="Reproduced the relay enablement failure.",
+                    evidence=[],
+                    blockers=[],
+                    next_steps=["ask customer for app id"],
+                )
             elif phase == "persona":
                 store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
                 with patch(
@@ -530,7 +542,7 @@ class TestAgentTurnProcessor:
         client = FakeHermesClient(on_run_completed=on_run_completed)
         with patch(
             "backend.services.engineer_slack.notify_hermes_review_pending",
-            return_value={"status": "delivered", "slack_message_ts": "1.2"},
+            return_value={"root": {"slack_message_ts": "1.1"}, "thread": {"slack_message_ts": "1.2"}},
         ) as notify:
             outcome = self._processor(store, client).process(agent_job)
         assert outcome["status"] == "completed"
@@ -539,8 +551,11 @@ class TestAgentTurnProcessor:
         kwargs = notify.call_args.kwargs
         assert kwargs["draft"]["zendesk_ticket_id"] == "123"
         assert kwargs["draft"]["status"] == "awaiting_approval"
-        assert kwargs["direction"] == "investigation"
         assert kwargs["environment"] == "preproduction"
+        assert kwargs["title"] == "Enable Media Relay"
+        assert kwargs["question"] == "Please enable Media Relay for app 123."
+        assert kwargs["route_result"] == "investigation"
+        assert kwargs["investigation"]["summary"].startswith("Reproduced")
 
     def test_slack_review_ping_failure_does_not_break_turn(self) -> None:
         store = _store()
