@@ -737,7 +737,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     release_id,
                     "--output-dir",
                     str(release_dir),
-                    *(["--hotfix-baseline", hotfix_baseline] if hotfix_baseline else []),
+                    *(
+                        [
+                            "--hotfix-baseline",
+                            hotfix_baseline,
+                            "--prompt-code-root",
+                            str(release_worktree),
+                        ]
+                        if hotfix_baseline
+                        else []
+                    ),
                 ],
                 cwd=project_root,
                 env=env,

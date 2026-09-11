@@ -15,6 +15,7 @@ PROMPT_RELEASE_ID=""
 OUTPUT_DIR=""
 REQUEST_DIR=""
 HOTFIX_BASELINE=""
+PROMPT_CODE_ROOT=""
 
 log() { printf '[codebuild-trigger] %s\n' "$*"; }
 fail() { printf '[codebuild-trigger] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -33,6 +34,9 @@ Options:
                        the commit against this pinned baseline instead of
                        origin/main. Requires AUTOMATION_RELEASE_HOTFIX_AUTHORIZED
                        to equal --git-commit (AGENTS.md 受限热修复来源例外).
+  --prompt-code-root <path>
+                       Clean release worktree used for Prompt catalog validation.
+                       Required with --hotfix-baseline and rejected otherwise.
 
 Validates the fixed commit and Prompt Release, submits a secret-free versioned
 request to CodeBuild, waits for completion, and downloads Manifest v2 plus the
@@ -48,10 +52,20 @@ parse_args() {
       --prompt-release-id) [[ $# -ge 2 ]] || fail "--prompt-release-id requires a value"; PROMPT_RELEASE_ID="$2"; shift 2 ;;
       --output-dir) [[ $# -ge 2 ]] || fail "--output-dir requires a value"; OUTPUT_DIR="$2"; shift 2 ;;
       --hotfix-baseline) [[ $# -ge 2 ]] || fail "--hotfix-baseline requires a value"; HOTFIX_BASELINE="$2"; shift 2 ;;
+      --prompt-code-root) [[ $# -ge 2 ]] || fail "--prompt-code-root requires a value"; PROMPT_CODE_ROOT="$2"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
+}
+
+canonical_git_common_dir() {
+  local repo="$1" common_dir
+  common_dir="$(git -C "${repo}" rev-parse --git-common-dir)" || return 1
+  if [[ "${common_dir}" != /* ]]; then
+    common_dir="${repo}/${common_dir}"
+  fi
+  (cd -- "${common_dir}" && pwd -P)
 }
 
 main() {
@@ -66,6 +80,9 @@ main() {
   [[ "${REGION}" = "us-east-1" ]] || fail "AWS region must be us-east-1"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=all)" ]] || fail "Working tree must be clean"
   if [[ -n "${HOTFIX_BASELINE}" ]]; then
+    [[ -n "${PROMPT_CODE_ROOT}" ]] || fail "--prompt-code-root is required with --hotfix-baseline"
+    PROMPT_CODE_ROOT="$(cd -- "${PROMPT_CODE_ROOT}" && pwd -P)" \
+      || fail "--prompt-code-root must be an existing directory"
     [[ "${HOTFIX_BASELINE}" =~ ^[0-9a-f]{40}$ ]] || fail "--hotfix-baseline must be a full 40-character SHA"
     [[ -n "${AUTOMATION_RELEASE_HOTFIX_AUTHORIZED:-}" ]] \
       || fail "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED is required for a hotfix release"
@@ -76,7 +93,15 @@ main() {
     git -C "${PROJECT_ROOT}" cat-file -e "${HOTFIX_BASELINE}^{commit}" || fail "Hotfix baseline does not exist locally"
     git -C "${PROJECT_ROOT}" merge-base --is-ancestor "${HOTFIX_BASELINE}" "${GIT_COMMIT}" \
       || fail "Hotfix commit is not descended from the pinned baseline"
+    [[ "$(canonical_git_common_dir "${PROMPT_CODE_ROOT}")" = "$(canonical_git_common_dir "${PROJECT_ROOT}")" ]] \
+      || fail "Prompt code root must be a worktree of the release repository"
+    [[ -z "$(git -C "${PROMPT_CODE_ROOT}" status --porcelain --untracked-files=all)" ]] \
+      || fail "Prompt code root must be clean"
+    [[ "$(git -C "${PROMPT_CODE_ROOT}" rev-parse HEAD)" = "${GIT_COMMIT}" ]] \
+      || fail "Prompt code root HEAD must equal the reviewed hotfix commit"
   else
+    [[ -z "${PROMPT_CODE_ROOT}" ]] || fail "--prompt-code-root is only allowed with --hotfix-baseline"
+    PROMPT_CODE_ROOT="${PROJECT_ROOT}"
     git -C "${PROJECT_ROOT}" fetch origin main --quiet
     git -C "${PROJECT_ROOT}" cat-file -e "${GIT_COMMIT}^{commit}" || fail "Requested Git commit does not exist locally"
     git -C "${PROJECT_ROOT}" merge-base --is-ancestor "${GIT_COMMIT}" origin/main \
@@ -88,7 +113,7 @@ main() {
   REQUEST_DIR="$(mktemp -d "${PROJECT_ROOT}/.deployments/codebuild-request.XXXXXX")"
   trap 'rm -rf -- "${REQUEST_DIR}"' EXIT
   request_path="${REQUEST_DIR}/request.json"
-  validation="$(cd "${PROJECT_ROOT}" && TICKET_DB_DSN="${TICKET_DB_DSN:-}" TICKET_DB_SCHEMA="${TICKET_DB_SCHEMA:-supportportal}" \
+  validation="$(cd "${PROMPT_CODE_ROOT}" && TICKET_DB_DSN="${TICKET_DB_DSN:-}" TICKET_DB_SCHEMA="${TICKET_DB_SCHEMA:-supportportal}" \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release validate --release-id "${PROMPT_RELEASE_ID}")" \
     || fail "Prompt Release validation failed"
   prompt_build_ref="$(jq -r '.identity.build_ref // empty' <<<"${validation}")"
