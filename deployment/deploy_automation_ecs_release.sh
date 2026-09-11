@@ -1311,9 +1311,22 @@ main() {
   GIT_COMMIT="$(jq -r '.git_commit' "${MANIFEST_PATH}")"
   PROMPT_RELEASE_ID="$(jq -r '.prompt_release_id' "${MANIFEST_PATH}")"
   BUILD_TIME="$(jq -r '.build_time' "${MANIFEST_PATH}")"
+  # Restricted hotfix source exception: when the operator pins a hotfix
+  # baseline, the source gate validates against it instead of origin/main and
+  # requires the matching authorization env var (AGENTS.md 受限热修复来源例外).
+  local -a hotfix_source_args=()
+  if [[ -n "${AUTOMATION_ECS_HOTFIX_BASELINE:-}" ]]; then
+    [[ "${AUTOMATION_ECS_HOTFIX_BASELINE}" =~ ^[0-9a-f]{40}$ ]] \
+      || fail "AUTOMATION_ECS_HOTFIX_BASELINE must be a full 40-character SHA"
+    [[ -n "${AUTOMATION_RELEASE_HOTFIX_AUTHORIZED:-}" ]] \
+      || fail "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED is required for a hotfix release"
+    [[ "${AUTOMATION_RELEASE_HOTFIX_AUTHORIZED}" = "${GIT_COMMIT}" ]] \
+      || fail "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED must equal the manifest git_commit"
+    hotfix_source_args=(--hotfix-baseline "${AUTOMATION_ECS_HOTFIX_BASELINE}")
+  fi
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
     validate-release-source --repo "${RELEASE_SOURCE_ROOT}" --release-commit "${GIT_COMMIT}" \
-    --manifest "${MANIFEST_PATH}" >/dev/null
+    --manifest "${MANIFEST_PATH}" ${hotfix_source_args+"${hotfix_source_args[@]}"} >/dev/null
   prepare_deploy_workspace
   prepare_terraform_provider
   verify_aws_mutation_ready
