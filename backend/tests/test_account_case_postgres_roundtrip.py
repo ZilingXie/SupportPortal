@@ -181,6 +181,21 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             self.assertIn("delivery_claim_token", saved["internal_email_payload"])
             self.assertFalse(prepare_account_internal_email(
                 repository, account_case_id="AC-ARCHER-CLAIM", payload=dict(payload)))
+            claim_token = saved["internal_email_payload"]["delivery_claim_token"]
+            saved["automation_status"] = "human_review_required"
+            repository.save_account_case(saved)
+            replay = dict(
+                delivery_key=payload["delivery_key"],
+                claim_token=claim_token,
+                claimed_at="2026-09-10T00:01:00+00:00",
+                payload=dict(payload),
+            )
+            self.assertFalse(repository.claim_account_internal_email_delivery(
+                "AC-ARCHER-CLAIM", require_automation_active=True, **replay
+            ))
+            self.assertTrue(repository.claim_account_internal_email_delivery(
+                "AC-ARCHER-CLAIM", **replay
+            ))
         finally:
             repository.close()
             self._drop_schema(dsn, schema)
@@ -260,8 +275,7 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                 created_at="2026-09-10T00:01:00+00:00",
                 is_public=True,
             )
-            # Mark the delivery delivered WITHOUT the readback hook (direct
-            # complete), so the concurrent release below is what races.
+            # Persist the readback before concurrent worker release attempts.
             repository.complete_account_zendesk_comment_delivery(
                 account_case_id="AC-MANUAL-GATE",
                 message_id=confirmation_id,
@@ -405,7 +419,7 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                 )
             )
             # Release requires THIS application's confirmation job message to
-            # be confirmed delivered: seed the linkage the readback hook binds
+            # be confirmed delivered: seed the linkage the release query binds
             # on (assistant message meta.account_reply_job_id + delivered
             # public delivery for that message).
             confirmation_job_id = str(
@@ -451,15 +465,9 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                 result_payload={"status": "added"},
                 recorded_at="2026-09-10T00:01:30+00:00",
             )
-            # The readback transaction hook released the gate already; the
-            # explicit release is idempotent-false afterwards.
-            hooked = repository.get_account_case("AC-MANUAL-WORKFLOW")
-            self.assertEqual(hooked["internal_email_send_status"], "pending")
-            self.assertEqual(
-                hooked["automation_context"]["enablement_manual_workflow"]["state"],
-                "email_released",
-            )
-            self.assertFalse(
+            gated = repository.get_account_case("AC-MANUAL-WORKFLOW")
+            self.assertEqual(gated["internal_email_send_status"], "awaiting_public_reply")
+            self.assertTrue(
                 repository.release_account_internal_email_after_public_reply(
                     "AC-MANUAL-WORKFLOW",
                     released_at="2026-09-10T00:00:03+00:00",
@@ -467,6 +475,16 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             )
             released = repository.get_account_case("AC-MANUAL-WORKFLOW")
             self.assertEqual(released["internal_email_send_status"], "pending")
+            self.assertEqual(
+                released["automation_context"]["enablement_manual_workflow"]["state"],
+                "email_released",
+            )
+            self.assertFalse(
+                repository.release_account_internal_email_after_public_reply(
+                    "AC-MANUAL-WORKFLOW",
+                    released_at="2026-09-10T00:00:04+00:00",
+                )
+            )
             self.assertTrue(
                 repository.claim_account_internal_email_delivery(
                     "AC-MANUAL-WORKFLOW",
@@ -594,8 +612,16 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             deliver(unrelated_id, "zd-unrelated")
             still_gated = repository.get_account_case("AC-MANUAL-BIND")
             self.assertEqual(still_gated["internal_email_send_status"], "awaiting_public_reply")
+            self.assertFalse(repository.release_account_internal_email_after_public_reply(
+                "AC-MANUAL-BIND", released_at="2026-09-10T00:02:01+00:00"
+            ))
 
             deliver(confirmation_id, "zd-confirmation")
+            before_worker = repository.get_account_case("AC-MANUAL-BIND")
+            self.assertEqual(before_worker["internal_email_send_status"], "awaiting_public_reply")
+            self.assertTrue(repository.release_account_internal_email_after_public_reply(
+                "AC-MANUAL-BIND", released_at="2026-09-10T00:02:02+00:00"
+            ))
             released = repository.get_account_case("AC-MANUAL-BIND")
             self.assertEqual(released["internal_email_send_status"], "pending")
             self.assertEqual(released["internal_email_send_reason"], "public_reply_confirmed")
