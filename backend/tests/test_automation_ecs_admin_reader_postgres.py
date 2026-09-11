@@ -19,15 +19,16 @@ pytestmark = pytest.mark.skipif(
     reason="AUTOMATION_ECS_ADMIN_TEST_POSTGRES_DSN is not configured",
 )
 PRODUCTION_SCHEMA = "supportportal_production"
-TRAP_SCHEMA = "supportportal_preproduction"
+PREPRODUCTION_SCHEMA = "supportportal_preproduction"
 
 
-def _runtime_settings(*, schema: str, namespace: str):
+def _runtime_settings(*, environment: str, schema: str, namespace: str):
     return replace(
         _settings("api"),
         allow_memory=False,
         db_dsn=DSN,
         migration_dsn=DSN,
+        environment=environment,
         db_schema=schema,
         job_namespace=namespace,
     )
@@ -46,6 +47,7 @@ def _seed_workspace_data(
     *,
     account_id: str,
     ticket_id: str,
+    processing_profile: str,
 ) -> None:
     created_at = "2026-09-05T00:00:00+00:00"
     repository.save_workspace_account(
@@ -76,7 +78,7 @@ def _seed_workspace_data(
             "account_case_id": f"AC-{ticket_id}",
             "billing_ticket_id": f"AC-{ticket_id}",
             "client_ticket_id": ticket_id,
-            "processing_profile": "production",
+            "processing_profile": processing_profile,
             "zendesk_ticket_id": ticket_id,
             "source": f"https://agoraio.zendesk.com/agent/tickets/{ticket_id}",
             "title": f"Ticket {ticket_id}",
@@ -114,15 +116,23 @@ def _table_counts(connection: psycopg.Connection, schema: str) -> dict[str, int]
     return counts
 
 
-@pytest.fixture
-def production_reader() -> AutomationEcsAdminReader:
+@pytest.fixture(params=["production", "preproduction"])
+def admin_reader(request) -> AutomationEcsAdminReader:
+    environment = request.param
+    primary_schema = (
+        PRODUCTION_SCHEMA if environment == "production" else PREPRODUCTION_SCHEMA
+    )
+    trap_schema = (
+        PREPRODUCTION_SCHEMA if environment == "production" else PRODUCTION_SCHEMA
+    )
+    other_environment = "preproduction" if environment == "production" else "production"
     with psycopg.connect(DSN, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT current_database()")
             database_name = str(cursor.fetchone()[0])
             cursor.execute(
                 "SELECT schema_name FROM information_schema.schemata WHERE schema_name=ANY(%s)",
-                ([PRODUCTION_SCHEMA, TRAP_SCHEMA],),
+                ([PRODUCTION_SCHEMA, PREPRODUCTION_SCHEMA],),
             )
             existing = [str(row[0]) for row in cursor.fetchall()]
         if existing:
@@ -132,33 +142,51 @@ def production_reader() -> AutomationEcsAdminReader:
             )
 
     repositories = [
-        PostgresTicketRepository(dsn=DSN, migration_dsn=DSN, schema=PRODUCTION_SCHEMA),
-        PostgresTicketRepository(dsn=DSN, migration_dsn=DSN, schema=TRAP_SCHEMA),
+        PostgresTicketRepository(dsn=DSN, migration_dsn=DSN, schema=primary_schema),
+        PostgresTicketRepository(dsn=DSN, migration_dsn=DSN, schema=trap_schema),
     ]
-    production_settings = _runtime_settings(
-        schema=PRODUCTION_SCHEMA,
-        namespace="supportportal-production",
+    primary_settings = _runtime_settings(
+        environment=environment,
+        schema=primary_schema,
+        namespace=f"supportportal-{environment}",
     )
     wrong_namespace_settings = _runtime_settings(
-        schema=PRODUCTION_SCHEMA,
-        namespace="supportportal-preproduction",
+        environment=environment,
+        schema=primary_schema,
+        namespace=f"supportportal-{other_environment}",
     )
     trap_settings = _runtime_settings(
-        schema=TRAP_SCHEMA,
-        namespace="supportportal-production",
+        environment=other_environment,
+        schema=trap_schema,
+        namespace=f"supportportal-{other_environment}",
     )
     try:
         for repository in repositories:
             repository.initialize()
-        for settings in (production_settings, wrong_namespace_settings, trap_settings):
+        for settings in (primary_settings, wrong_namespace_settings, trap_settings):
             PostgresAutomationEcsStore(settings).migrate()
 
-        _seed_workspace_data(repositories[0], account_id="production-engineer", ticket_id="14501")
-        _seed_workspace_data(repositories[0], account_id="wrong-namespace-engineer", ticket_id="14502")
-        _seed_workspace_data(repositories[1], account_id="wrong-schema-engineer", ticket_id="14503")
-        PostgresAutomationEcsStore(production_settings).accept_intake(
-            _ticket_event("14501", "fixture:production"),
-            production_settings.provenance(),
+        _seed_workspace_data(
+            repositories[0],
+            account_id="primary-engineer",
+            ticket_id="14501",
+            processing_profile=environment,
+        )
+        _seed_workspace_data(
+            repositories[0],
+            account_id="wrong-namespace-engineer",
+            ticket_id="14502",
+            processing_profile=environment,
+        )
+        _seed_workspace_data(
+            repositories[1],
+            account_id="wrong-schema-engineer",
+            ticket_id="14503",
+            processing_profile=other_environment,
+        )
+        PostgresAutomationEcsStore(primary_settings).accept_intake(
+            _ticket_event("14501", "fixture:primary"),
+            primary_settings.provenance(),
         )
         PostgresAutomationEcsStore(wrong_namespace_settings).accept_intake(
             _ticket_event("14502", "fixture:wrong-namespace"),
@@ -168,13 +196,13 @@ def production_reader() -> AutomationEcsAdminReader:
             _ticket_event("14503", "fixture:wrong-schema"),
             trap_settings.provenance(),
         )
-        yield AutomationEcsAdminReader(production_settings)
+        yield AutomationEcsAdminReader(primary_settings)
     finally:
         for repository in repositories:
             repository.close()
         with psycopg.connect(DSN, autocommit=True) as connection:
             with connection.cursor() as cursor:
-                for schema_name in (PRODUCTION_SCHEMA, TRAP_SCHEMA):
+                for schema_name in (PRODUCTION_SCHEMA, PREPRODUCTION_SCHEMA):
                     cursor.execute(
                         sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
                             sql.Identifier(schema_name)
@@ -183,37 +211,38 @@ def production_reader() -> AutomationEcsAdminReader:
 
 
 def test_postgres_reader_is_read_only_and_excludes_schema_and_namespace_traps(
-    production_reader: AutomationEcsAdminReader,
+    admin_reader: AutomationEcsAdminReader,
 ) -> None:
     with psycopg.connect(DSN) as observer:
-        before = _table_counts(observer, PRODUCTION_SCHEMA)
+        before = _table_counts(observer, admin_reader.settings.db_schema)
 
-    accounts = production_reader.accounts()
-    automation = production_reader.account_automation()
-    metrics = production_reader.metrics()
-    production_reader.cases()
-    production_reader.audit(limit=100)
-    production_reader.engineer_schedules()
-    production_reader.agent_config()
-    production_reader.environment_config()
+    accounts = admin_reader.accounts()
+    automation = admin_reader.account_automation()
+    metrics = admin_reader.metrics()
+    admin_reader.cases()
+    admin_reader.audit(limit=100)
+    admin_reader.engineer_schedules()
+    admin_reader.agent_config()
+    admin_reader.environment_config()
 
-    with production_reader._read_cursor() as cursor:
+    with admin_reader._read_cursor() as cursor:
         cursor.execute(
             "SELECT current_setting('transaction_read_only') AS read_only, "
             "current_setting('transaction_isolation') AS isolation"
         )
         transaction_settings = cursor.fetchone()
     with psycopg.connect(DSN) as observer:
-        after = _table_counts(observer, PRODUCTION_SCHEMA)
+        after = _table_counts(observer, admin_reader.settings.db_schema)
 
     serialized = str({"accounts": accounts, "automation": automation})
-    assert "production-engineer" in serialized
+    assert "primary-engineer" in serialized
     assert "14501" in serialized
     assert "wrong-namespace-engineer" in serialized
     assert "14502" not in str(automation)
     assert "wrong-schema-engineer" not in serialized
     assert "14503" not in serialized
     assert "secret-hash" not in serialized
+    assert automation["processing_profile"] == admin_reader.settings.environment
     assert automation["cases"][0]["token_usage"]["sources"]["rag"]["available"] is False
     assert automation["cases"][0]["token_usage"]["sources"]["automation"]["available"] is True
     assert metrics["billing"]["internal_email_failed"] == 1

@@ -1,77 +1,53 @@
 {
   "schema_version": 2,
   "task_id": "p2-151",
-  "title": "Enablement 双流程模式开关（manual 默认 + Archer 可切换）",
-  "status": "active",
-  "owner": "zac",
-  "summary": "引入环境开关 ENABLEMENT_WORKFLOW_MODE（manual|archer，默认 manual）：manual 保持 p2-149 人工开通流程（确认 AppID→回复先行→内部邮件门禁→人工开通回复→最终回复关单）为全环境默认；从回退提交父版本恢复 Archer 自动开通编排（含 p1-15 失败告警与回退邮件加固）作为 archer 分支，经统一分发点按模式选择。部署工具链按 HERMES_CASE_WORKFLOW_MODE/ENGINEER_SLACK_OUTBOUND_ENABLED 先例支持 --enablement-workflow-mode 按环境注入开关与 ARCHER_OAUTH_COOKIE 条件凭据，retired-secret 门禁与 provider probe Archer 读探针改为按模式条件化（manual 含凭据必 fail、archer 强制 archer_read_get_ok）。当前无 Archer 权限：默认 manual、不注入凭据、不建 SSM 参数；将来拿到权限后建 SSM 参数并按 runbook 切换，preproduction/production 均可切（用户拍板）。",
-  "next_action": "代码+测试+文档已完成；剩：真库 PG 回环验证 → finalize 合码 → preproduction 部署（manual）并 live 验证后转 done。",
+  "title": "Preproduction 挂载 ECS Admin 只读控制台",
+  "status": "done",
+  "owner": "codex",
+  "phase_id": "phase-1",
+  "module_id": "platform-delivery",
+  "function_id": "ecs-environment-migration",
+  "created_at": "2026-09-11",
+  "updated_at": "2026-09-11",
+  "summary": "在 `/automation/preproduction/admin/` 挂载与 Production 同款的 ECS Admin 10 栏只读控制台：去掉 automation_ecs_api 的 production-only 挂载门；AutomationEcsAdminReader 构造守卫改为按环境匹配 schema/namespace（fail-closed 不变）；account case 的 processing_profile 过滤从硬编码 'production' 改为按 settings.environment 派生（否则 preproduction Automated Cases/metrics 恒空）；admin app.js 的 ECS 路径检测仿 dashboard 的 environmentMatch 模式按环境派生端点。两环境 admin 均保持只读（后端仅 GET 端点），Production 行为零变化。",
+  "next_action": "",
   "acceptance_criteria": [
-    "两套流程同树共存：默认（未设/空 ENABLEMENT_WORKFLOW_MODE）全环境 manual，行为与 p2-149 人工流程完全一致，现有零 Archer 调用守卫原样通过；未知模式值 fail-closed 报错。",
-    "archer 模式行为等于回退前 r20260902 lineage：enabled→完成回复关单、appid_invalid/project_not_found→清 App ID 重问、enable_failed→失败告警+回退内部邮件+human_review_required，delivery_key 幂等保留。",
-    "四个分发入口（intake、评论 resume、Hermes 工具、main 旧入口含 rerun）全部经统一模式分发；prior archer 可恢复 outcome 在 archer 模式下重试 Archer、manual 模式保持现有人工恢复。",
-    "凭据门禁双向：manual 渲染含 ARCHER_OAUTH_COOKIE 必 fail；archer 渲染注入 worker 凭据且部署 provider probe 强制 archer_read_get_ok=true；SSM 参数缺失在渲染前被部署脚本拦截。",
-    "preproduction 部署 manual 模式成功并通过 live 验证（health/build ref/worker td 无 Archer secret）；Production 不在本次范围。",
-    "文档与登记收口：feature_list/prompt_change_log/archer 架构文档（休眠可切换+切换 runbook）/deploy runbook 更新，project overview 重新生成并通过 --check。"
+    "`https://supportcenter.stellarix.space/automation/preproduction/admin/` 返回 Admin UI（System Admin 标题，非 dashboard），dashboard session admin/admin 登录后 `/automation/preproduction/admin/api/*` GET 返回 200 且数据来自 preproduction schema。",
+    "preproduction admin 的 Automated Cases/metrics 含真实 preproduction 工单（processing_profile 按环境派生的直接证据）。 ",
+    "两环境 admin 均无业务写入口：写方法未注册（405/404），前端拦截写操作（ECS Admin is read-only）。",
+    "Production `/automation/production/admin/` 行为无回归（同代码环境参数不同，双环境测试覆盖）。"
   ],
   "blockers": [],
   "evidence": [
     {
       "type": "test",
-      "label": "Dual-flow targeted regression (13 suites)",
-      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_archer_executor.py backend/tests/test_archer_direct_client.py backend/tests/test_worker.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_provider_probe.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_single_host_compose.py backend/tests/test_enablement_rag_resume.py backend/tests/test_automation_ecs_worker.py",
-      "details": "446 passed / 94 subtests。恢复回退前被删用例：intake 三个 archer 结果用例 + ArcherFailureNotificationDeliveryTests 整类 6 个（13386 失败告警/claim 协议幂等/可恢复结果零告警/告警失败不挡回退邮件）+ comment-sync 补正 AppID 重达 dispatch（archer_pending 首写断言）+ provider probe 双模式。新增：mode helper 三态（默认 manual/archer/未知 raise）、分发双模式（archer 零 manual 门、manual 零 Archer 调用）、deploy 渲染参数化（archer 注入凭据与模式 env、manual 归一化剥离、observed archer 缺凭据自动修复、validate 双向门禁、CLI 拒绝未知值、initial 渲染捆绑凭据、部署脚本 SSM 守卫与探针门禁断言）、pipeline deploy_mode_args 双环境透传。manual 零 Archer 守卫原样保持绿。"
+      "label": "Dual-environment admin coverage",
+      "details": "2026-09-11 实施：test_automation_ecs_admin_reader fail-closed 参数化改为环境错配（含 preproduction 变体）+ SQL 参数断言 (environment, namespace)；postgres 集成测试对称参数化双环境（schema/namespace trap 不变）；test_automation_ecs_api 新增 preproduction admin 挂载/会话/只读用例；UI 合同测试更新为派生端点断言并新增 preproduction 与本地 workspace pathname 用例。"
     },
     {
-      "type": "test",
-      "label": "Legacy main intake + persona suites",
-      "command": ".venv/bin/python -m pytest -q backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_failure_alerts.py backend/tests/test_automation_persona.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_split_environment_deployment.py",
-      "details": "293+2 套件全绿（legacy /account 入口与 rerun 均改经统一分发 wrapper，manual 行为不变）。"
-    },
-    {
-      "type": "test",
-      "label": "PostgreSQL real-database roundtrip",
-      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<root .env> .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
-      "details": "10 passed（914s）含恢复的 test_enablement_failure_workflow_prepares_and_sends_on_postgres（真库端到端：archer enable_failed→_record_execution_failure→fallback 邮件经 prepare/claim 协议恰发一次 delivery_key=enablement:AC-ARCHER-WORKFLOW:v1→human_review_required）。同轮 test_initialize_preserves_suspension_handler_across_restarts 报 psycopg OperationalError（连接瞬态、与本改动无关领域），单独重跑 1 passed（165s）确认环境瞬态。"
-    },
-    {
-      "type": "document",
-      "label": "Registry and generators",
-      "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
-      "details": "Feature list verification passed；project overview 重新生成并校验通过（digest 8caa5a4f...）。"
+      "type": "deployment",
+      "label": "Preproduction ECS rollout and live verification",
+      "details": "PR #1152（main 2e781bf7）经正式 pipeline 发布 Preproduction release r20260911-2e781bf（prompt release pr-175312c491e7 保持 active，全阶段 passed：preflight/prompt_schema/route_worker_rollout/heartbeat/api_rollout/collector/activation，总 1219s）。线上验收 2026-09-11：GET /automation/preproduction/admin/ =200（System Admin 标题）+ app.js 含 isEcsAdmin 与 (preproduction|production) 派生检测；admin/admin 登录返回 Preproduction Admin；dashboard/api/runtime provenance=release r20260911-2e781bf/commit 2e781bf7/prompt pr-175312c491e7；admin/api/account-automation 返回 processing_profile=preproduction 且真实数据（total_account_cases=4, automated=1, not_automated=3，13424/13413/13400 在列）；/admin/api/cases =200（engineer cases 合法为空）；Production /automation/production/admin/ 仍 200 无回归。"
     }
   ],
-  "source_refs": [
-    "backend/services/automation_account_intake.py",
-    "backend/services/automation_account_reply_sync.py",
-    "backend/services/automation_hermes_tools.py",
-    "backend/services/enablement_automation.py",
-    "backend/services/automation_provider_probe.py",
-    "backend/scripts/automation_ecs_deploy.py",
-    "backend/scripts/bootstrap_automation_preproduction.py",
-    "backend/scripts/automation_ecs_release_pipeline.py",
-    "deployment/deploy_automation_ecs_release.sh",
-    "docs/deploy_automation_ecs_release.md",
-    "docs/archer_direct_auth_architecture.md",
-    "docs/feature_list.md"
-  ],
-  "created_at": "2026-09-11",
-  "updated_at": "2026-09-11",
-  "phase_id": "phase-1",
-  "module_id": "account-automation",
-  "function_id": "automation-execution-loop",
-  "legacy_ids": [],
-  "legacy_refs": [],
   "history": [
     {
       "at": "2026-09-11",
       "event": "created",
-      "summary": "用户要求 preproduction enablement 提供两套代码：现 production 的人工流程（确认 AppID→内部邮件→人工开通→回复客户）与现 preproduction 的 Archer 自动开通；因当前无 Archer 权限，Archer 代码保留休眠、拿到权限后可随时切换。经 AskUserQuestion 确认：archer 模式对两环境开放（默认 manual），本次包含 preproduction 部署。"
+      "summary": "用户要求 preproduction 也有 admin 页面（用于在晋级 Production 前验证 admin 页面调整）；实施环境参数化挂载与读取。"
     },
     {
       "at": "2026-09-11",
-      "event": "implementation_complete",
-      "summary": "ENABLEMENT_WORKFLOW_MODE 开关接入四个分发入口（intake/评论 resume/Hermes 工具/main 旧入口+rerun，统一经 _run_enablement_workflow）；从 8d5b82c5^ 恢复 _run_enablement_archer_workflow/_archer_reply_facts/_append_archer_failure_reason（含 p1-15 失败告警与回退邮件 claim 协议）；部署工具链按 hermes/slack 先例支持 --enablement-workflow-mode（render 强制回写+ARCHER_OAUTH_COOKIE 条件注入/剥离+validate_worker_contract 双向门禁+bootstrap 源拷贝后缀+provider probe archer 读探针条件化+shell SSM 存在性守卫+pipeline 透传纳入 checkpoint 身份）；compose/.env.example parity；恢复回退前被删测试并新增模式测试；四份文档更新。13 套件 446 passed/94 subtests + legacy 套件 293 passed。"
+      "event": "done",
+      "summary": "PR #1152 合并（main=2e781bf7），定向测试全绿（86 passed），Preproduction 发布 r20260911-2e781bf 并完成线上验收（admin 页面 200、登录、真实 account-automation 数据、Production 无回归）。"
     }
+  ],
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "source_refs": [
+    "backend/automation_ecs_api.py",
+    "backend/services/automation_ecs_admin_reader.py",
+    "ui/workspace-ui/admin/app.js",
+    "docs/feature_list.md"
   ]
 }
