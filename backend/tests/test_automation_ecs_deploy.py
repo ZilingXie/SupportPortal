@@ -206,6 +206,45 @@ def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: P
     )
 
 
+def _as_preproduction(current: Path) -> None:
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    environment = {item["name"]: item for item in container["environment"]}
+    environment["AUTOMATION_ENVIRONMENT"]["value"] = "preproduction"
+    environment["AUTOMATION_DB_SCHEMA"]["value"] = "supportportal_preproduction"
+    environment["AUTOMATION_JOB_NAMESPACE"]["value"] = "supportportal-preproduction"
+    next(
+        item for item in container["secrets"] if item["name"] == "AUTOMATION_DB_DSN"
+    )["valueFrom"] = (
+        "arn:aws:ssm:us-east-1:123456789012:"
+        "parameter/supportportal/preproduction/automation-db-dsn"
+    )
+    current.write_text(json.dumps(payload))
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+@pytest.mark.parametrize("environment,expected", [("production", "0"), ("preproduction", "1")])
+def test_render_task_definition_sets_engineer_slack_outbound_switch(
+    tmp_path: Path, role: str, environment: str, expected: str
+) -> None:
+    current = _task_definition(tmp_path, role)
+    if environment == "preproduction":
+        _as_preproduction(current)
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment=environment,
+        repository=f"supportportal/{environment}",
+    )
+
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    assert values["ENGINEER_SLACK_OUTBOUND_ENABLED"] == expected
+
+
 def _worker_current_with_archer_secret(tmp_path: Path) -> Path:
     current = _task_definition(tmp_path, "worker")
     payload = json.loads(current.read_text())
