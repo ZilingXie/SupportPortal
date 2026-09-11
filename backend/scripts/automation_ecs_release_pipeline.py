@@ -133,14 +133,67 @@ def _allowed_post_release_path(path: str) -> bool:
     return path.startswith("docs/") or path in ALLOWED_POST_RELEASE_PATHS
 
 
+HOTFIX_AUTHORIZED_ENV = "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED"
+
+
+def _hotfix_authorization_sha() -> str:
+    return str(os.environ.get(HOTFIX_AUTHORIZED_ENV) or "").strip()
+
+
 def validate_release_worktree(
     *,
     repo: str | Path,
     release_commit: str,
     main_ref: str = "origin/main",
+    hotfix_baseline: str | None = None,
 ) -> dict[str, Any]:
     repo_path = Path(repo).resolve()
     resolved_release = _git(repo_path, "rev-parse", f"{release_commit}^{{commit}}")
+    if hotfix_baseline:
+        # Restricted one-off hotfix source exception (AGENTS.md "受限热修复
+        # 来源例外"): the release is validated against the pinned production
+        # baseline instead of origin/main, and requires an explicit operator
+        # authorization env var whose value equals the reviewed hotfix SHA.
+        resolved_baseline = _git(repo_path, "rev-parse", f"{hotfix_baseline}^{{commit}}")
+        if not re.fullmatch(r"[0-9a-f]{40}", resolved_baseline):
+            raise ValueError("hotfix baseline must resolve to a full SHA")
+        ancestor = subprocess.run(
+            ["git", "-C", str(repo_path), "merge-base", "--is-ancestor", resolved_baseline, resolved_release],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if ancestor.returncode != 0:
+            raise ValueError("hotfix release commit is not descended from the pinned baseline")
+        authorized_sha = _hotfix_authorization_sha()
+        if not authorized_sha:
+            raise ValueError(f"{HOTFIX_AUTHORIZED_ENV} is required for a hotfix release")
+        if authorized_sha != resolved_release:
+            raise ValueError(
+                f"{HOTFIX_AUTHORIZED_ENV} does not match the release commit; "
+                "the reviewed hotfix SHA must equal the release worktree HEAD"
+            )
+        head = _git(repo_path, "rev-parse", "HEAD")
+        if head != resolved_release:
+            raise ValueError("release worktree HEAD does not match the requested release commit")
+        if _git(repo_path, "status", "--porcelain", "--untracked-files=all"):
+            raise ValueError("release worktree must be clean")
+        baseline_diff = [
+            path
+            for path in _git(
+                repo_path, "diff", "--name-only", f"{resolved_baseline}..{resolved_release}"
+            ).splitlines()
+            if path
+        ]
+        return {
+            "release_commit": resolved_release,
+            "hotfix_baseline_commit": resolved_baseline,
+            "origin_main_commit": None,
+            "post_release_paths": baseline_diff,
+            "post_release_runtime_changes": [],
+            "hotfix_source": True,
+            "status": "passed",
+        }
     resolved_main = _git(repo_path, "rev-parse", f"{main_ref}^{{commit}}")
     if not re.fullmatch(r"[0-9a-f]{40}", resolved_release):
         raise ValueError("release commit must resolve to a full SHA")
@@ -183,9 +236,13 @@ def validate_release_source(
     release_commit: str,
     manifest_path: str | Path,
     main_ref: str = "origin/main",
+    hotfix_baseline: str | None = None,
 ) -> dict[str, Any]:
     result = validate_release_worktree(
-        repo=repo, release_commit=release_commit, main_ref=main_ref
+        repo=repo,
+        release_commit=release_commit,
+        main_ref=main_ref,
+        hotfix_baseline=hotfix_baseline,
     )
     manifest = read_manifest(Path(manifest_path))
     if manifest.git_commit != result["release_commit"]:
@@ -578,6 +635,15 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--through production keeps the Hermes agent disabled")
     release_commit = args.release_commit or _git(project_root, "rev-parse", "origin/main")
     release_commit = _git(project_root, "rev-parse", f"{release_commit}^{{commit}}")
+    hotfix_baseline = getattr(args, "hotfix_baseline", None) or None
+    if hotfix_baseline:
+        if not direct_production:
+            raise ValueError("--hotfix-baseline requires --codebuild-direct-production")
+        state.bind_identity(
+            {
+                "hotfix_baseline": _git(project_root, "rev-parse", f"{hotfix_baseline}^{{commit}}"),
+            }
+        )
     release_id = f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"
     if args.resume:
         candidates = sorted(
@@ -613,7 +679,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             ["git", "-C", str(project_root), "worktree", "add", "--detach", str(release_worktree), release_commit],
             check=True,
         )
-    validate_release_worktree(repo=release_worktree, release_commit=release_commit)
+    validate_release_worktree(
+        repo=release_worktree,
+        release_commit=release_commit,
+        hotfix_baseline=hotfix_baseline,
+    )
     manifest_path = release_dir / "release-manifest.json"
     record_path = release_dir / "publish-record.json"
     mode_args = deploy_mode_args(args)
@@ -673,6 +743,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             repo=release_worktree,
             release_commit=release_commit,
             manifest_path=manifest_path,
+            hotfix_baseline=hotfix_baseline,
         )
         if not direct_production:
             preproduction_env = dict(env)
@@ -796,10 +867,12 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--release-commit", required=True)
     release.add_argument("--manifest", required=True)
     release.add_argument("--main-ref", default="origin/main")
+    release.add_argument("--hotfix-baseline")
     release_tree = subparsers.add_parser("validate-release-worktree")
     release_tree.add_argument("--repo", required=True)
     release_tree.add_argument("--release-commit", required=True)
     release_tree.add_argument("--main-ref", default="origin/main")
+    release_tree.add_argument("--hotfix-baseline")
 
     create = subparsers.add_parser("create-preflight-evidence")
     create.add_argument("--manifest", required=True)
@@ -826,6 +899,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline = subparsers.add_parser("run")
     pipeline.add_argument("--project-root", default=str(Path(__file__).resolve().parents[2]))
     pipeline.add_argument("--release-commit")
+    pipeline.add_argument("--hotfix-baseline")
     pipeline.add_argument("--prompt-release-id", required=True)
     pipeline.add_argument("--through", choices=("preproduction", "production"), default="preproduction")
     pipeline.add_argument(
@@ -851,12 +925,14 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             release_commit=args.release_commit,
             manifest_path=args.manifest,
             main_ref=args.main_ref,
+            hotfix_baseline=args.hotfix_baseline,
         )
     if args.command == "validate-release-worktree":
         return validate_release_worktree(
             repo=args.repo,
             release_commit=args.release_commit,
             main_ref=args.main_ref,
+            hotfix_baseline=args.hotfix_baseline,
         )
     if args.command == "create-preflight-evidence":
         evidence = make_preflight_evidence(

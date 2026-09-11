@@ -17,6 +17,8 @@ from backend.scripts.automation_ecs_release_pipeline import (
     assert_secret_free_argv,
     assert_evidence_secret_free,
     make_preflight_evidence,
+    validate_release_source,
+    validate_release_worktree,
     _pipeline_summary,
     sanitized_aws_environment,
     database_identity_sha256,
@@ -114,6 +116,96 @@ def test_release_commit_rejects_post_release_runtime_change(tmp_path: Path, chan
             repo=repo,
             release_commit=release,
             manifest_path=_manifest(tmp_path / "manifest.json", release),
+        )
+
+
+def _hotfix_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """A repo whose origin/main does NOT contain the hotfix lineage."""
+    repo = tmp_path / "hotfix-repo"
+    repo.mkdir()
+    _run(repo, "init", "-b", "main")
+    _run(repo, "config", "user.email", "test@example.com")
+    _run(repo, "config", "user.name", "Test")
+    baseline = _commit(repo, "backend/app.py", "baseline\n")
+    hotfix = _commit(repo, "backend/worker.py", "hotfix\n")
+    _run(repo, "branch", "origin/main", baseline)  # origin/main == baseline, WITHOUT the hotfix
+    _run(repo, "checkout", "--detach", hotfix)
+    return repo, baseline, hotfix
+
+
+def test_hotfix_baseline_passes_without_main_reachability(tmp_path: Path, monkeypatch) -> None:
+    repo, baseline, hotfix = _hotfix_repo(tmp_path)
+    manifest = _manifest(tmp_path / "manifest.json", hotfix)
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", hotfix)
+
+    result = validate_release_source(
+        repo=repo,
+        release_commit=hotfix,
+        manifest_path=manifest,
+        hotfix_baseline=baseline,
+    )
+
+    assert result["status"] == "passed"
+    assert result["hotfix_source"] is True
+    assert result["hotfix_baseline_commit"] == baseline
+    assert result["origin_main_commit"] is None
+    # And the same commit is rejected by the DEFAULT (main) gate:
+    _run(repo, "checkout", "--detach", hotfix)
+    with pytest.raises(ValueError, match="not reachable"):
+        validate_release_source(
+            repo=repo,
+            release_commit=hotfix,
+            manifest_path=_manifest(tmp_path / "manifest2.json", hotfix),
+        )
+
+
+def test_hotfix_baseline_requires_matching_authorization_env(tmp_path: Path, monkeypatch) -> None:
+    repo, baseline, hotfix = _hotfix_repo(tmp_path)
+    manifest = _manifest(tmp_path / "manifest.json", hotfix)
+    monkeypatch.delenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", raising=False)
+    with pytest.raises(ValueError, match="AUTOMATION_RELEASE_HOTFIX_AUTHORIZED is required"):
+        validate_release_source(
+            repo=repo, release_commit=hotfix, manifest_path=manifest, hotfix_baseline=baseline
+        )
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", baseline)
+    with pytest.raises(ValueError, match="does not match the release commit"):
+        validate_release_source(
+            repo=repo, release_commit=hotfix, manifest_path=manifest, hotfix_baseline=baseline
+        )
+
+
+def test_hotfix_baseline_rejects_commit_not_descended_from_baseline(tmp_path: Path, monkeypatch) -> None:
+    repo, baseline, hotfix = _hotfix_repo(tmp_path)
+    _run(repo, "checkout", "--orphan", "unrelated")
+    unrelated = _commit(repo, "unrelated.txt", "x\n")
+    _run(repo, "checkout", "--detach", unrelated)
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", unrelated)
+    with pytest.raises(ValueError, match="not descended from the pinned baseline"):
+        validate_release_source(
+            repo=repo,
+            release_commit=unrelated,
+            manifest_path=_manifest(tmp_path / "manifest.json", unrelated),
+            hotfix_baseline=baseline,
+        )
+
+
+def test_hotfix_baseline_rejects_dirty_worktree(tmp_path: Path, monkeypatch) -> None:
+    repo, baseline, hotfix = _hotfix_repo(tmp_path)
+    (repo / "dirty.txt").write_text("dirty", encoding="utf-8")
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", hotfix)
+    with pytest.raises(ValueError, match="clean"):
+        validate_release_worktree(repo=repo, release_commit=hotfix, hotfix_baseline=baseline)
+
+
+def test_hotfix_baseline_rejects_manifest_commit_mismatch(tmp_path: Path, monkeypatch) -> None:
+    repo, baseline, hotfix = _hotfix_repo(tmp_path)
+    monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", hotfix)
+    with pytest.raises(ValueError, match="Manifest Git commit"):
+        validate_release_source(
+            repo=repo,
+            release_commit=hotfix,
+            manifest_path=_manifest(tmp_path / "manifest.json", baseline),
+            hotfix_baseline=baseline,
         )
 
 
@@ -362,7 +454,7 @@ def test_formal_pipeline_keeps_production_approval_before_promotion() -> None:
     assert '"production_preflight"' in text
     assert '"--preflight-evidence"' in text
     assert '_write_json_atomic(state.path / "timings.json", _pipeline_summary(state))' in text
-    assert text.index("validate_release_worktree(repo=release_worktree") < text.index(
+    assert text.index("validate_release_worktree(") < text.index(
         '"codebuild"'
     )
 

@@ -14,6 +14,7 @@ RELEASE_ID=""
 PROMPT_RELEASE_ID=""
 OUTPUT_DIR=""
 REQUEST_DIR=""
+HOTFIX_BASELINE=""
 
 log() { printf '[codebuild-trigger] %s\n' "$*"; }
 fail() { printf '[codebuild-trigger] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -27,6 +28,11 @@ Usage:
 Options:
   --release-id <id>    Default: rYYYYMMDD-<commit7>
   --output-dir <path>  Default: .deployments/releases/<release-id>
+  --hotfix-baseline <full-sha>
+                       Restricted emergency-hotfix source exception: validate
+                       the commit against this pinned baseline instead of
+                       origin/main. Requires AUTOMATION_RELEASE_HOTFIX_AUTHORIZED
+                       to equal --git-commit (AGENTS.md 受限热修复来源例外).
 
 Validates the fixed commit and Prompt Release, submits a secret-free versioned
 request to CodeBuild, waits for completion, and downloads Manifest v2 plus the
@@ -41,6 +47,7 @@ parse_args() {
       --release-id) [[ $# -ge 2 ]] || fail "--release-id requires a value"; RELEASE_ID="$2"; shift 2 ;;
       --prompt-release-id) [[ $# -ge 2 ]] || fail "--prompt-release-id requires a value"; PROMPT_RELEASE_ID="$2"; shift 2 ;;
       --output-dir) [[ $# -ge 2 ]] || fail "--output-dir requires a value"; OUTPUT_DIR="$2"; shift 2 ;;
+      --hotfix-baseline) [[ $# -ge 2 ]] || fail "--hotfix-baseline requires a value"; HOTFIX_BASELINE="$2"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1" ;;
     esac
@@ -58,10 +65,23 @@ main() {
   [[ -n "${EVIDENCE_BUCKET}" ]] || fail "AUTOMATION_RELEASE_EVIDENCE_BUCKET is required"
   [[ "${REGION}" = "us-east-1" ]] || fail "AWS region must be us-east-1"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=all)" ]] || fail "Working tree must be clean"
-  git -C "${PROJECT_ROOT}" fetch origin main --quiet
-  git -C "${PROJECT_ROOT}" cat-file -e "${GIT_COMMIT}^{commit}" || fail "Requested Git commit does not exist locally"
-  git -C "${PROJECT_ROOT}" merge-base --is-ancestor "${GIT_COMMIT}" origin/main \
-    || fail "Requested Git commit is not reachable from origin/main"
+  if [[ -n "${HOTFIX_BASELINE}" ]]; then
+    [[ "${HOTFIX_BASELINE}" =~ ^[0-9a-f]{40}$ ]] || fail "--hotfix-baseline must be a full 40-character SHA"
+    [[ -n "${AUTOMATION_RELEASE_HOTFIX_AUTHORIZED:-}" ]] \
+      || fail "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED is required for a hotfix release"
+    [[ "${AUTOMATION_RELEASE_HOTFIX_AUTHORIZED}" = "${GIT_COMMIT}" ]] \
+      || fail "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED must equal the reviewed hotfix --git-commit"
+    git -C "${PROJECT_ROOT}" fetch origin main --quiet
+    git -C "${PROJECT_ROOT}" cat-file -e "${GIT_COMMIT}^{commit}" || fail "Requested Git commit does not exist locally"
+    git -C "${PROJECT_ROOT}" cat-file -e "${HOTFIX_BASELINE}^{commit}" || fail "Hotfix baseline does not exist locally"
+    git -C "${PROJECT_ROOT}" merge-base --is-ancestor "${HOTFIX_BASELINE}" "${GIT_COMMIT}" \
+      || fail "Hotfix commit is not descended from the pinned baseline"
+  else
+    git -C "${PROJECT_ROOT}" fetch origin main --quiet
+    git -C "${PROJECT_ROOT}" cat-file -e "${GIT_COMMIT}^{commit}" || fail "Requested Git commit does not exist locally"
+    git -C "${PROJECT_ROOT}" merge-base --is-ancestor "${GIT_COMMIT}" origin/main \
+      || fail "Requested Git commit is not reachable from origin/main"
+  fi
 
   local request_path validation prompt_build_ref prompt_fingerprint request_key request_version
   mkdir -p "${PROJECT_ROOT}/.deployments"
