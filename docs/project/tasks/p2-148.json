@@ -10,7 +10,7 @@
   "created_at": "2026-09-08",
   "updated_at": "2026-09-11",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "2026-09-11 用户确认 Slack 召唤收到并授权 approve 后暴露第六缺口：dashboard approve 草稿已 approved 但 queue 500——API role 任务定义缺 zendesk_basic_auth 与 ZENDESK_AI_ASSIGNEE_EMAIL（仅 worker 接线），comments_revision 回退的 read_ticket_ownership_snapshot 抛 zendesk_assignee_config_missing。修复=render_task_definition 对 api role 确保 API_ZENDESK_READBACK_SECRET_SUFFIXES 两引用存在（含 initial 渲染映射同步），前缀不可推导时跳过让原校验报错。待部署后：解卡 draft-3c6e7ddf（approved 回 awaiting_approval 受控复位）→ 重 approve → ledger queued → worker 发送 → Zendesk 13413 读回闭环验收点 6。",
+  "next_action": "2026-09-11 PR#1141 部署（r20260911-2e58f71）后重 approve 又暴露第七缺口：queue 走到 create_account_zendesk_comment_delivery 时 TypeError——PG 仓库方法必填 keyword-only created_at 而 queue 未传（此前仅 InMemory 假仓库 **kwargs 覆盖）。本轮补 created_at=_now_iso() 并将测试假仓库镜像为必填。待部署后重 approve draft-3c6e7ddf（已复位 awaiting_approval）→ queued → 发送 → Zendesk 13413 读回闭环。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -100,6 +100,11 @@
       "type": "test",
       "label": "Approve queue 500: API role missing Zendesk readback secrets (sixth gap)",
       "details": "2026-09-11 用户在频道确认 Slack 召唤收到并授权 approve draft-3c6e7ddf：approve 事务中 approve_hermes_case_draft 成功（draft→approved, dashboard-admin）但 queue_hermes_draft_delivery 500——hermes 原生案例无 comment sync 行，回退 read_ticket_ownership_snapshot 需要 ZENDESK_AI_ASSIGNEE_EMAIL 与 zendesk_basic_auth，两者在任务定义仅 worker role 接线，API role 缺失→zendesk_assignee_config_missing。修复：render_task_definition 为 api role 无条件确保 zendesk_basic_auth/zendesk-ai-assignee-email 两个 SSM 引用（幂等 _set_secret_reference；前缀不可推导时跳过，让 bootstrap 等原校验保持报错语义；render_initial_task_definition 的 api secrets 映射同步补齐）；新增 api 渲染含两 secret 的回归测试。部署测试 88 全绿。"
+    },
+    {
+      "type": "test",
+      "label": "Queue delivery created_at mismatch (seventh gap)",
+      "details": "r20260911-2e58f71 重 approve：环境修复生效（过 zendesk_assignee_config_missing/comments_revision/版本围栏）但 queue 在 create_account_zendesk_comment_delivery 抛 TypeError：PG 实现要求必填 keyword-only created_at，queue_hermes_draft_delivery 未传（p2-148 全部测试用 InMemory 假仓库 **kwargs 接收故未拦）。修复：automation_hermes_delivery.py 新增 _now_iso() 并在调用传 created_at；test_hermes_zendesk_agent_tools.py 的 FakeRepository 镜像 PG 签名（created_at 必填）防回归。74 绿。"
     }
   ],
   "history": [
@@ -162,6 +167,11 @@
       "at": "2026-09-11",
       "event": "approve_queue_gapped_api_zendesk_env",
       "summary": "用户确认 Slack 收到+授权 approve；approve 半成功（draft approved、queue 500）暴露 API role 缺 Zendesk 读回凭证（第六缺口）；渲染器补接线待部署重试。"
+    },
+    {
+      "at": "2026-09-11",
+      "event": "queue_created_at_fixed",
+      "summary": "第七缺口：queue 漏传 PG 必填 created_at（仅假仓库路径被测过）；补参+假仓库签名镜像，待部署后重 approve 闭环。"
     }
   ],
   "legacy_ids": [],
