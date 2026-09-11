@@ -12279,7 +12279,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                     sql.SQL(
                         "ALTER TABLE {} ADD CONSTRAINT "
                         "support_account_zendesk_comment_deliveries_source_check "
-                        "CHECK (source IN ('account', 'engineer'))"
+                        "CHECK (source IN ('account', 'engineer', 'hermes'))"
                     ).format(zendesk_delivery_table)
                 )
                 cur.execute(

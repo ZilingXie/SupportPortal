@@ -1599,6 +1599,16 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("engineer_handoff_packet", repo_source)
         self.assertIn("engineer_agent_state", repo_source)
 
+    def test_zendesk_delivery_source_check_matches_across_schema_sources(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        # PR #1144 added 'hermes' to the ticket_storage.sql check but missed the
+        # inline initialize() ALTER; bootstrap then failed on live hermes rows.
+        constraint = "CHECK (source IN ('account', 'engineer', 'hermes'))"
+        self.assertIn(constraint, sql_source)
+        self.assertIn(constraint, repo_source)
+
     def test_ticket_storage_contract_includes_engineer_case_tables_and_client_linkage(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
