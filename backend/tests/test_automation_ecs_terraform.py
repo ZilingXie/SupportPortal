@@ -298,6 +298,17 @@ def test_codebuild_release_project_allows_only_one_build_at_a_time() -> None:
     assert "concurrent_build_limit = 1" in source
 
 
+def test_codebuild_release_project_rechecks_restricted_hotfix_source() -> None:
+    source = (ROOT / "infra/terraform/release/main.tf").read_text(encoding="utf-8")
+    assert 'if test -n "$AUTOMATION_RELEASE_HOTFIX_BASELINE"; then' in source
+    assert 'test "$AUTOMATION_RELEASE_HOTFIX_AUTHORIZED" = "$AUTOMATION_RELEASE_GIT_COMMIT"' in source
+    assert (
+        'git merge-base --is-ancestor "$AUTOMATION_RELEASE_HOTFIX_BASELINE" '
+        '"$AUTOMATION_RELEASE_GIT_COMMIT"'
+    ) in source
+    assert 'git merge-base --is-ancestor "$AUTOMATION_RELEASE_GIT_COMMIT" origin/main' in source
+
+
 def test_codebuild_role_reads_requests_but_writes_only_release_evidence() -> None:
     source = (ROOT / "infra/terraform/release/main.tf").read_text(encoding="utf-8")
     request_statement = source.split('Sid      = "VersionedReleaseRequestRead"', 1)[1].split(

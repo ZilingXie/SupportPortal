@@ -16,6 +16,8 @@ PROMPT_RELEASE_ID="${PROMPT_RELEASE_ID:-}"
 REQUEST_BUCKET="${AUTOMATION_RELEASE_REQUEST_BUCKET:-}"
 REQUEST_KEY="${AUTOMATION_RELEASE_REQUEST_KEY:-}"
 REQUEST_VERSION="${AUTOMATION_RELEASE_REQUEST_VERSION:-}"
+HOTFIX_BASELINE="${AUTOMATION_RELEASE_HOTFIX_BASELINE:-}"
+HOTFIX_AUTHORIZED="${AUTOMATION_RELEASE_HOTFIX_AUTHORIZED:-}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 OUTPUT_DIR="${CODEBUILD_SRC_DIR:-/tmp}/release-evidence"
 
@@ -30,6 +32,13 @@ validate_inputs() {
   [[ "${REPOSITORY}" = "supportportal/preproduction" ]] || fail "CodeBuild may publish only to supportportal/preproduction"
   [[ -n "${EVIDENCE_BUCKET}" && -n "${REQUEST_BUCKET}" && -n "${REQUEST_KEY}" && -n "${REQUEST_VERSION}" ]] \
     || fail "Versioned release request and evidence bucket are required"
+  if [[ -n "${HOTFIX_BASELINE}" ]]; then
+    [[ "${HOTFIX_BASELINE}" =~ ^[0-9a-f]{40}$ ]] || fail "AUTOMATION_RELEASE_HOTFIX_BASELINE must be a full Git SHA"
+    [[ "${HOTFIX_AUTHORIZED}" = "${GIT_COMMIT}" ]] \
+      || fail "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED must equal the requested Git commit"
+  else
+    [[ -z "${HOTFIX_AUTHORIZED}" ]] || fail "Hotfix authorization requires a hotfix baseline"
+  fi
   [[ "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" = "${GIT_COMMIT}" ]] || fail "Checked out Git commit does not match request"
   [[ -z "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=all)" ]] || fail "CodeBuild checkout must be clean"
 }
@@ -46,12 +55,18 @@ read_release_request() {
     --arg release_id "${RELEASE_ID}" \
     --arg git_commit "${GIT_COMMIT}" \
     --arg prompt_release_id "${PROMPT_RELEASE_ID}" \
+    --arg hotfix_baseline "${HOTFIX_BASELINE}" \
+    --arg hotfix_authorized "${HOTFIX_AUTHORIZED}" \
     '.schema_version == "automation-codebuild-request-v1"
       and .release_id == $release_id
       and .git_commit == $git_commit
       and .prompt_release_id == $prompt_release_id
       and (.prompt_build_ref | type == "string" and length > 0)
-      and (.prompt_content_fingerprint | test("^sha256:[0-9a-f]{64}$"))' \
+      and (.prompt_content_fingerprint | test("^sha256:[0-9a-f]{64}$"))
+      and (if $hotfix_baseline == ""
+        then ((.hotfix_baseline // "") == "" and (.hotfix_authorized_commit // "") == "")
+        else (.hotfix_baseline == $hotfix_baseline and .hotfix_authorized_commit == $hotfix_authorized)
+        end)' \
     "${request_path}" >/dev/null || fail "Versioned release request does not match CodeBuild inputs"
 }
 

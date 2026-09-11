@@ -8,6 +8,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = ROOT / "deployment/codebuild_build_automation_release.sh"
@@ -96,14 +98,18 @@ def _install_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
                 handle.write(json.dumps(args) + "\\n")
             if args[:2] == ["s3api", "get-object"]:
                 destination = pathlib.Path(args[-1])
-                destination.write_text(json.dumps({
+                request = {
                     "schema_version": "automation-codebuild-request-v1",
                     "release_id": os.environ["AUTOMATION_RELEASE_ID"],
                     "git_commit": os.environ["AUTOMATION_RELEASE_GIT_COMMIT"],
                     "prompt_release_id": os.environ["PROMPT_RELEASE_ID"],
                     "prompt_build_ref": "prompt-build-ref",
                     "prompt_content_fingerprint": "sha256:" + "f" * 64,
-                }), encoding="utf-8")
+                }
+                if os.environ.get("AUTOMATION_RELEASE_HOTFIX_BASELINE"):
+                    request["hotfix_baseline"] = os.environ["AUTOMATION_RELEASE_HOTFIX_BASELINE"]
+                    request["hotfix_authorized_commit"] = os.environ["AUTOMATION_RELEASE_HOTFIX_AUTHORIZED"]
+                destination.write_text(json.dumps(request), encoding="utf-8")
             elif args[:2] == ["sts", "get-caller-identity"]:
                 print("123456789012")
             elif args[:2] == ["ecr", "get-login-password"]:
@@ -123,7 +129,10 @@ def _install_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
     return fake_bin, state
 
 
-def test_codebuild_build_emits_registry_manifest_and_publish_record(tmp_path: Path) -> None:
+@pytest.mark.parametrize("hotfix_mode", [False, True])
+def test_codebuild_build_emits_registry_manifest_and_publish_record(
+    tmp_path: Path, hotfix_mode: bool
+) -> None:
     repo, commit = _prepare_repo(tmp_path)
     fake_bin, state = _install_fake_tools(tmp_path)
     environment = {
@@ -143,6 +152,9 @@ def test_codebuild_build_emits_registry_manifest_and_publish_record(tmp_path: Pa
         "CODEBUILD_BUILD_ARN": "arn:aws:codebuild:us-east-1:123456789012:build/example:1",
         "CODEBUILD_BUILD_NUMBER": "1",
     }
+    if hotfix_mode:
+        environment["AUTOMATION_RELEASE_HOTFIX_BASELINE"] = "a" * 40
+        environment["AUTOMATION_RELEASE_HOTFIX_AUTHORIZED"] = commit
     result = subprocess.run(
         [str(repo / "deployment/codebuild_build_automation_release.sh")],
         cwd=repo,
@@ -179,6 +191,38 @@ def test_codebuild_build_emits_registry_manifest_and_publish_record(tmp_path: Pa
     assert all("--entrypoint" in call and "python" in call for call in release_tool_calls)
 
 
+def test_codebuild_build_rejects_mismatched_hotfix_authorization(tmp_path: Path) -> None:
+    repo, commit = _prepare_repo(tmp_path)
+    fake_bin, state = _install_fake_tools(tmp_path)
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "CODEBUILD_TEST_STATE": str(state),
+        "AUTOMATION_RELEASE_PYTHON": sys.executable,
+        "AUTOMATION_RELEASE_ID": "release-42",
+        "AUTOMATION_RELEASE_GIT_COMMIT": commit,
+        "PROMPT_RELEASE_ID": "prompt-42",
+        "AUTOMATION_RELEASE_EVIDENCE_BUCKET": "evidence-bucket",
+        "AUTOMATION_RELEASE_REQUEST_BUCKET": "evidence-bucket",
+        "AUTOMATION_RELEASE_REQUEST_KEY": "requests/release-42/request.json",
+        "AUTOMATION_RELEASE_REQUEST_VERSION": "request-version-1",
+        "AUTOMATION_RELEASE_HOTFIX_BASELINE": "a" * 40,
+        "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED": "b" * 40,
+    }
+
+    result = subprocess.run(
+        [str(repo / "deployment/codebuild_build_automation_release.sh")],
+        cwd=repo,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "AUTOMATION_RELEASE_HOTFIX_AUTHORIZED must equal the requested Git commit" in result.stderr
+    assert not (state / "aws.jsonl").exists()
+
+
 def test_codebuild_trigger_is_fixed_sha_secret_free_and_does_not_deploy() -> None:
     script = START_SCRIPT.read_text(encoding="utf-8")
     assert "full 40-character SHA" in script
@@ -193,6 +237,12 @@ def test_codebuild_trigger_is_fixed_sha_secret_free_and_does_not_deploy() -> Non
     assert 'Prompt code root must be a worktree of the release repository' in script
     assert 'Prompt code root HEAD must equal the reviewed hotfix commit' in script
     assert 'cd "${PROMPT_CODE_ROOT}"' in script
+    assert 'hotfix_authorized_commit:$git_commit' in script
+    override_payload = script.split('overrides="$(jq', 1)[1].split(
+        'verify_release_aws_mutation_ready', 1
+    )[0]
+    assert 'AUTOMATION_RELEASE_HOTFIX_BASELINE' in override_payload
+    assert 'AUTOMATION_RELEASE_HOTFIX_AUTHORIZED' in override_payload
     assert "update-service" not in script
     assert "register-task-definition" not in script
     assert "TICKET_DB_DSN" not in script.split("environment-variables-override", 1)[1]
