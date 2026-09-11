@@ -71,6 +71,19 @@ PHASE_TOOLSETS = {
 # The gateway currently narrows within the api_server platform toolsets;
 # the plugin's phase toolsets ride along until the gateway learns them.
 
+# The investigation work run additionally needs the plugin's read-only case
+# context tools (registered under the plugin's `common` toolset) and the
+# Hermes-native memory toolset: without `memory` in enabled_toolsets the
+# engine hides the memory-provider tools entirely (memory_manager gating),
+# which is exactly the "investigation without loaded tools" failure mode.
+INVESTIGATION_WORK_TOOLSETS = ["supportportal_work", "common", "memory"]
+
+
+def toolsets_for_phase(phase: str, *, direction: str | None) -> list[str] | None:
+    if phase == HermesTurnPhase.WORK.value and direction == "investigation":
+        return INVESTIGATION_WORK_TOOLSETS
+    return PHASE_TOOLSETS.get(phase)
+
 _WORKSPACE_KEY_RE = re.compile(r"[^a-z0-9_-]+")
 
 
@@ -231,6 +244,17 @@ class HermesAgentTurnProcessor:
                     "turn_id": payload.turn_id,
                     "status": str(final.get("status") or "superseded"),
                 }
+            if (
+                phase == HermesTurnPhase.WORK
+                and outcome == _PHASE_COMPLETED
+                and str(refreshed.get("turn_kind") or "normal") == "normal"
+                and str(refreshed.get("direction") or "") == "investigation"
+            ):
+                # Human gate: the investigation result must be reviewed (Slack
+                # + dashboard) before any customer reply is drafted. The
+                # persona phase runs later, on the investigation_reply turn
+                # opened by the dashboard continue action.
+                return self._complete_investigation_review(payload, refreshed)
             if phase == HermesTurnPhase.ROUTE.value:
                 refreshed = self.store.get_hermes_turn(payload.turn_id) or {}
                 direction = str(refreshed.get("direction") or "")
@@ -337,6 +361,86 @@ class HermesAgentTurnProcessor:
                 exc_info=True,
             )
 
+    def _complete_investigation_review(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Close the turn after the work phase and hand the result to humans."""
+        turn_id = payload.turn_id
+        binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+        investigation = (
+            binding.get("investigation") if isinstance(binding.get("investigation"), dict) else {}
+        )
+        if str(investigation.get("recorded_turn_id") or "") != turn_id:
+            self.store.fail_hermes_agent_turn(
+                turn_id,
+                status="failed",
+                error_code="missing_investigation_result",
+                error_message="work run finished without recording an investigation result",
+            )
+            return {
+                "engine": "hermes",
+                "turn_id": turn_id,
+                "status": "human_review",
+                "error_code": "missing_investigation_result",
+            }
+        result = {
+            "engine": "hermes",
+            "turn_id": turn_id,
+            "status": "awaiting_investigation_review",
+            "case_revision": int(turn["case_revision"]),
+        }
+        self.store.complete_hermes_agent_turn(turn_id, result=result)
+        self._notify_investigation_result(payload, investigation)
+        return result
+
+    def _notify_investigation_result(
+        self, payload: AgentTurnJobPayload, investigation: dict[str, Any]
+    ) -> None:
+        # Summons only: a failed ping must never affect the turn state machine.
+        from backend.services.engineer_slack import notify_hermes_investigation_result
+
+        try:
+            ticket = payload.event.ticket
+            question = ticket.description
+            if payload.event.comment_snapshot is not None:
+                trigger = next(
+                    (
+                        comment
+                        for comment in payload.event.comment_snapshot.comments
+                        if comment.id == payload.event.comment_snapshot.trigger_comment_id
+                    ),
+                    None,
+                )
+                if trigger is not None and str(trigger.body or "").strip():
+                    question = trigger.body
+            binding = self.store.get_hermes_case_binding(ticket.id) or {}
+            turn = self.store.get_hermes_turn(payload.turn_id) or {}
+            route_result = str(binding.get("direction") or turn.get("direction") or "")
+            turn_route = str(turn.get("route") or "").strip()
+            if turn_route:
+                route_result = f"{route_result} ({turn_route})" if route_result else turn_route
+            outcome = notify_hermes_investigation_result(
+                ticket_id=ticket.id,
+                turn_id=payload.turn_id,
+                title=str(ticket.subject or ""),
+                question=str(question or ""),
+                route_result=route_result,
+                investigation=investigation,
+                environment=self.environment,
+            )
+            LOGGER.info(
+                "hermes_investigation_result_notified turn_id=%s status=%s ts=%s",
+                payload.turn_id,
+                outcome.get("status"),
+                outcome.get("slack_message_ts"),
+            )
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_investigation_result_notify_failed turn_id=%s",
+                payload.turn_id,
+                exc_info=True,
+            )
+
     # ----------------------------------------------------------------- phases
 
     def _run_phase(
@@ -370,7 +474,7 @@ class HermesAgentTurnProcessor:
                     input_text=render_snapshot_for_run(snapshot),
                     idempotency_key=str(turn_run["request_id"]),
                     workspace_key=workspace,
-                    enabled_toolsets=PHASE_TOOLSETS.get(phase),
+                    enabled_toolsets=toolsets_for_phase(phase, direction=turn.get("direction")),
                 )
             except HermesAgentError as exc:
                 return self._fail_phase_submission(turn_id, phase, exc)

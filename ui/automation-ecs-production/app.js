@@ -614,6 +614,22 @@ function renderHermesReview() {
         ${investigation.next_steps?.length ? `<h5>Next steps</h5><ul>${investigation.next_steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
       </div>`
     : `<p class="section-empty">No investigation summary yet.</p>`;
+  const awaitingReviewTurn = (review.turns || []).find(
+    (turn) => turn.turn_kind === "normal"
+      && turn.direction === "investigation"
+      && turn.status === "completed"
+      && turn.result?.status === "awaiting_investigation_review"
+      && !turn.result?.continued_turn_id,
+  );
+  const investigationReviewBlock = awaitingReviewTurn
+    ? `<article class="message message-support hermes-draft">
+        <header><strong>Investigation ${escapeHtml(String(awaitingReviewTurn.turn_id).slice(0, 18))}</strong><span>human gate</span>${statusMarkup("pending")}</header>
+        <p class="message-body">The Hermes investigation result above is awaiting your review${investigation?.blockers?.length ? " (unresolved blockers must be cleared first)" : ""}. Continue only when the result is good enough to draft the customer reply from.</p>
+        ${canAct && !investigation?.blockers?.length
+          ? `<button class="button button-secondary" data-hermes-continue-turn-id="${escapeHtml(awaitingReviewTurn.turn_id)}" type="button">Continue to customer reply</button>`
+          : ""}
+      </article>`
+    : "";
   const draftBlock = drafts.length
     ? drafts.map((draft) => {
         const guardrail = draft.guardrail || {};
@@ -646,6 +662,7 @@ function renderHermesReview() {
     ])}
     <h4>Investigation</h4>
     ${investigationBlock}
+    ${investigationReviewBlock}
     <h4>Reply drafts</h4>
     ${draftBlock}
     ${feedbackForm}
@@ -747,6 +764,24 @@ function bindEvents() {
           state.error = error.message;
           render();
         }
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-hermes-continue-turn-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const ticketId = state.selectedTicketId;
+      if (!ticketId) return;
+      if (!window.confirm("Continue this investigation into a customer reply draft?")) return;
+      state.error = "";
+      try {
+        await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review/investigation/continue`, {
+          method: "POST",
+        });
+        await loadHermesReview(ticketId);
+      } catch (error) {
+        state.error = error.message;
+        render();
       }
     });
   });

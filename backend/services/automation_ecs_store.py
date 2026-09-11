@@ -29,6 +29,7 @@ from backend.services.automation_ecs_contracts import (
     RuntimeProvenance,
     SCHEMA_REVISION,
     StepStatus,
+    SyntheticTurnEvent,
     canonical_payload_digest,
 )
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
@@ -44,6 +45,32 @@ def _iso(value: datetime | None = None) -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def _synthetic_turn_event_payload(
+    *,
+    event_id: str,
+    event_type: str,
+    ticket_row: dict[str, Any] | None,
+    occurred_at: str,
+) -> dict[str, Any]:
+    """Contract-checked SyntheticTurnEvent payload for server-originated turns.
+
+    The ticket row is the coordination mirror's stored ZendeskTicketSnapshot
+    dump; validating here keeps the AGENT_TURN job payload loadable by
+    AgentTurnJobPayload at claim time.
+    """
+    return (
+        SyntheticTurnEvent.model_validate(
+            {
+                "event_id": event_id,
+                "event_type": event_type,
+                "occurred_at": occurred_at,
+                "ticket": dict(ticket_row or {}),
+            }
+        )
+        .model_dump(mode="json")
+    )
 
 
 class IntakeConflictError(RuntimeError):
@@ -170,6 +197,22 @@ class AutomationEcsStore(Protocol):
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
+    def create_investigation_feedback_turn(
+        self,
+        zendesk_ticket_id: str,
+        *,
+        feedback: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]: ...
+    def create_investigation_reply_turn(
+        self,
+        zendesk_ticket_id: str,
+        *,
+        source_turn_id: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]: ...
     def mark_processing_external_started(self, job: ClaimedJob) -> None: ...
     def complete_processing(self, job: ClaimedJob, *, outcome: dict[str, Any], status: ExecutionStatus) -> None: ...
     def fail_job(self, job: ClaimedJob, *, failure_stage: str, failure_code: str, error_message: str, outcome_unknown: bool = False) -> None: ...
@@ -1241,12 +1284,12 @@ class InMemoryAutomationEcsStore:
                     "execution_id": execution_id,
                     "turn_id": turn_id,
                     "conversation_key": str(binding["logical_conversation_key"]),
-                    "event": {
-                        "event_id": f"feedback:{turn_id}",
-                        "event_type": "investigation_feedback",
-                        "occurred_at": now_value,
-                        "ticket": case_row.get("ticket") or {},
-                    },
+                    "event": _synthetic_turn_event_payload(
+                        event_id=f"feedback:{turn_id}",
+                        event_type="investigation_feedback",
+                        ticket_row=case_row.get("ticket"),
+                        occurred_at=now_value,
+                    ),
                 },
                 "attempt": 0,
                 "claim_token": None,
@@ -1262,6 +1305,144 @@ class InMemoryAutomationEcsStore:
                 "job_id": agent_job_id,
                 "case_revision": revision,
                 "phase": "work",
+                "direction": "investigation",
+            }
+
+    def create_investigation_reply_turn(
+        self,
+        zendesk_ticket_id: str,
+        *,
+        source_turn_id: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Continue an approved investigation into the persona phase.
+
+        The source turn must have completed with `awaiting_investigation_review`
+        at the case's current revision; stamping `continued_turn_id` on its
+        result makes a second continue click a conflict instead of a duplicate
+        customer-reply turn.
+        """
+        namespace = self.settings.job_namespace
+        with self._lock:
+            case_row = self._cases.get(zendesk_ticket_id)
+            binding = self._hermes_bindings.get((namespace, zendesk_ticket_id))
+            if case_row is None or binding is None:
+                raise HermesTurnStateError(source_turn_id, "case mirror or binding not found")
+            source_turn = self._hermes_turns.get(source_turn_id)
+            if source_turn is None or source_turn["zendesk_ticket_id"] != zendesk_ticket_id:
+                raise HermesTurnStateError(source_turn_id, "source turn not found for this case")
+            source_result = source_turn.get("result") if isinstance(source_turn.get("result"), dict) else {}
+            if str(source_turn.get("status") or "") != "completed" or str(
+                source_result.get("status") or ""
+            ) != "awaiting_investigation_review":
+                raise HermesTurnStateError(source_turn_id, "source turn is not awaiting investigation review")
+            if source_result.get("continued_turn_id"):
+                raise HermesTurnConflictError(str(source_result["continued_turn_id"]))
+            revision = int(case_row.get("case_revision") or 1)
+            if int(source_turn.get("case_revision") or 0) != revision:
+                raise HermesTurnStateError(
+                    source_turn_id,
+                    f"stale_case_revision: turn {source_turn.get('case_revision')} != case {revision}",
+                )
+            blocker = self.get_hermes_turn_fence_blocker(zendesk_ticket_id)
+            if blocker is not None:
+                raise HermesTurnConflictError(blocker["turn_id"])
+            now_value = _iso()
+            execution_id = _new_id("exec")
+            turn_id = _new_id("turn")
+            request_id = _new_id("hmreq")
+            self._executions[execution_id] = {
+                "execution_id": execution_id,
+                "zendesk_ticket_id": zendesk_ticket_id,
+                "event_id": f"investigation-reply:{turn_id}",
+                "event_type": "investigation_reply",
+                "status": ExecutionStatus.PROCESSING_PENDING.value,
+                "current_stage": "agent_turn.queued",
+                "failure_stage": None,
+                "failure_code": None,
+                "error_message": None,
+                "requires_human_review": False,
+                "intake": {"source_turn_id": source_turn_id},
+                "route": {"engine": "hermes", "turn_kind": "investigation_reply"},
+                "persona": None,
+                "outcome": None,
+                "provenance": base_event.get("provenance") or {},
+                "case_revision": revision,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            self._hermes_turns[turn_id] = {
+                "turn_id": turn_id,
+                "namespace": namespace,
+                "zendesk_ticket_id": zendesk_ticket_id,
+                "execution_id": execution_id,
+                "event_id": f"investigation-reply:{turn_id}",
+                "event_type": "investigation_reply",
+                "input_version": int(binding["conversation_version"]),
+                "case_revision": revision,
+                "turn_kind": "investigation_reply",
+                "phase": "persona",
+                "direction": "investigation",
+                "route": None,
+                "work_result": None,
+                "input_snapshot": None,
+                "request_id": request_id,
+                "prompt_release_id": str(prompt_release_id or "") or None,
+                "run_id": None,
+                "status": "pending",
+                "cancel_reason": None,
+                "cancelled_at": None,
+                "result": None,
+                "error_code": None,
+                "error_message": None,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            agent_job_id = _new_id("job")
+            self._jobs[agent_job_id] = {
+                "job_id": agent_job_id,
+                "execution_id": execution_id,
+                "kind": JobKind.AGENT_TURN.value,
+                "status": JobStatus.PENDING.value,
+                "namespace": namespace,
+                "payload": {
+                    "contract_version": "automation-agent-turn-v1",
+                    "execution_id": execution_id,
+                    "turn_id": turn_id,
+                    "conversation_key": str(binding["logical_conversation_key"]),
+                    "event": _synthetic_turn_event_payload(
+                        event_id=f"investigation-reply:{turn_id}",
+                        event_type="investigation_reply",
+                        ticket_row=case_row.get("ticket"),
+                        occurred_at=now_value,
+                    ),
+                },
+                "attempt": 0,
+                "claim_token": None,
+                "claimed_by": None,
+                "lease_expires_at": None,
+                "external_started_at": None,
+                "available_at": now_value,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            source_turn["result"] = {
+                **source_result,
+                "continued_turn_id": turn_id,
+            }
+            source_turn["updated_at"] = now_value
+            self._append_event(
+                source_turn["execution_id"],
+                "agent_turn.reply_continued",
+                {"source_turn_id": source_turn_id, "turn_id": turn_id, "case_revision": revision},
+            )
+            return {
+                "turn_id": turn_id,
+                "job_id": agent_job_id,
+                "source_turn_id": source_turn_id,
+                "case_revision": revision,
+                "phase": "persona",
                 "direction": "investigation",
             }
 
@@ -1385,6 +1566,9 @@ class InMemoryAutomationEcsStore:
             "evidence": list(evidence),
             "blockers": list(blockers),
             "next_steps": list(next_steps),
+            # Stamps which turn actually produced this conclusion; the
+            # orchestrator refuses to close a turn on an older record.
+            "recorded_turn_id": turn_id,
         }
         with self._lock:
             turn = self._hermes_turns.get(turn_id)
@@ -3140,12 +3324,12 @@ class PostgresAutomationEcsStore:
                                 "execution_id": execution_id,
                                 "turn_id": turn_id,
                                 "conversation_key": str(binding["logical_conversation_key"]),
-                                "event": {
-                                    "event_id": f"feedback:{turn_id}",
-                                    "event_type": "investigation_feedback",
-                                    "occurred_at": _iso(),
-                                    "ticket": case_row["ticket"],
-                                },
+                                "event": _synthetic_turn_event_payload(
+                                    event_id=f"feedback:{turn_id}",
+                                    event_type="investigation_feedback",
+                                    ticket_row=dict(case_row["ticket"] or {}),
+                                    occurred_at=_iso(),
+                                ),
                             }
                         ),
                     ),
@@ -3155,6 +3339,167 @@ class PostgresAutomationEcsStore:
                     "job_id": agent_job_id,
                     "case_revision": revision,
                     "phase": "work",
+                    "direction": "investigation",
+                }
+
+    def create_investigation_reply_turn(
+        self,
+        zendesk_ticket_id: str,
+        *,
+        source_turn_id: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Continue an approved investigation into the persona phase.
+
+        The source turn must have completed with `awaiting_investigation_review`
+        at the case's current revision; stamping `continued_turn_id` on its
+        result makes a second continue click a conflict instead of a duplicate
+        customer-reply turn.
+        """
+        namespace = self.settings.job_namespace
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_cases")),
+                    (namespace, zendesk_ticket_id),
+                )
+                case_row = cursor.fetchone()
+                if case_row is None:
+                    raise HermesTurnStateError(source_turn_id, "case mirror not found")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (namespace, zendesk_ticket_id),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(source_turn_id, "case binding not found")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE turn_id=%s AND namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (source_turn_id, namespace, zendesk_ticket_id),
+                )
+                source_turn = cursor.fetchone()
+                if source_turn is None:
+                    raise HermesTurnStateError(source_turn_id, "source turn not found for this case")
+                source_result = dict(source_turn["result"] or {})
+                if str(source_turn["status"] or "") != "completed" or str(
+                    source_result.get("status") or ""
+                ) != "awaiting_investigation_review":
+                    raise HermesTurnStateError(
+                        source_turn_id, "source turn is not awaiting investigation review"
+                    )
+                if source_result.get("continued_turn_id"):
+                    raise HermesTurnConflictError(str(source_result["continued_turn_id"]))
+                revision = int(case_row["case_revision"])
+                if int(source_turn["case_revision"] or 0) != revision:
+                    raise HermesTurnStateError(
+                        source_turn_id,
+                        f"stale_case_revision: turn {source_turn['case_revision']} != case {revision}",
+                    )
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "AND status IN ('pending','running','cancel_requested')"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (namespace, zendesk_ticket_id),
+                )
+                if cursor.fetchone() is not None:
+                    raise HermesTurnConflictError("")
+                now_value = _iso()
+                execution_id = _new_id("exec")
+                turn_id = _new_id("turn")
+                request_id = _new_id("hmreq")
+                execution_route = {"engine": "hermes", "turn_kind": "investigation_reply"}
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (execution_id,namespace,zendesk_ticket_id,event_id,event_type,status,current_stage,intake,provenance,case_revision)
+                        VALUES (%s,%s,%s,%s,'investigation_reply',%s,%s,%s,%s,%s)
+                        """
+                    ).format(self._table("automation_executions")),
+                    (
+                        execution_id,
+                        namespace,
+                        zendesk_ticket_id,
+                        f"investigation-reply:{turn_id}",
+                        ExecutionStatus.PROCESSING_PENDING.value,
+                        "agent_turn.queued",
+                        Jsonb({"source_turn_id": source_turn_id}),
+                        Jsonb(base_event),
+                        revision,
+                    ),
+                )
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
+                            input_version,case_revision,turn_kind,phase,direction,request_id,prompt_release_id,status)
+                        VALUES (%s,%s,%s,%s,%s,'investigation_reply',%s,%s,'investigation_reply','persona','investigation',%s,%s,'pending')
+                        """
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (
+                        turn_id,
+                        namespace,
+                        zendesk_ticket_id,
+                        execution_id,
+                        f"investigation-reply:{turn_id}",
+                        int(binding["conversation_version"]),
+                        revision,
+                        request_id,
+                        str(prompt_release_id or "") or None,
+                    ),
+                )
+                agent_job_id = _new_id("job")
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) VALUES (%s,%s,%s,%s,%s,%s)"
+                    ).format(self._table("automation_jobs")),
+                    (
+                        agent_job_id,
+                        namespace,
+                        execution_id,
+                        JobKind.AGENT_TURN.value,
+                        JobStatus.PENDING.value,
+                        Jsonb(
+                            {
+                                "contract_version": "automation-agent-turn-v1",
+                                "execution_id": execution_id,
+                                "turn_id": turn_id,
+                                "conversation_key": str(binding["logical_conversation_key"]),
+                                "event": _synthetic_turn_event_payload(
+                                    event_id=f"investigation-reply:{turn_id}",
+                                    event_type="investigation_reply",
+                                    ticket_row=dict(case_row["ticket"] or {}),
+                                    occurred_at=now_value,
+                                ),
+                            }
+                        ),
+                    ),
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET result=%s,updated_at=NOW() WHERE turn_id=%s"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (Jsonb({**source_result, "continued_turn_id": turn_id}), source_turn_id),
+                )
+                self._insert_timeline(
+                    cursor,
+                    str(source_turn["execution_id"]),
+                    "agent_turn.reply_continued",
+                    {"source_turn_id": source_turn_id, "turn_id": turn_id, "case_revision": revision},
+                )
+                return {
+                    "turn_id": turn_id,
+                    "job_id": agent_job_id,
+                    "source_turn_id": source_turn_id,
+                    "case_revision": revision,
+                    "phase": "persona",
                     "direction": "investigation",
                 }
 
@@ -3377,6 +3722,9 @@ class PostgresAutomationEcsStore:
             "evidence": list(evidence),
             "blockers": list(blockers),
             "next_steps": list(next_steps),
+            # Stamps which turn actually produced this conclusion; the
+            # orchestrator refuses to close a turn on an older record.
+            "recorded_turn_id": turn_id,
         }
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:

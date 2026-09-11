@@ -18,8 +18,11 @@ LOGGER = logging.getLogger("supportportal.engineer_slack")
 ENGINEER_SLACK_SCHEMA_VERSION = 1
 SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 HERMES_REVIEW_PENDING_EVENT_TYPE = "hermes_review_pending"
+HERMES_INVESTIGATION_RESULT_EVENT_TYPE = "hermes_investigation_result"
 PUBLIC_DASHBOARD_BASE_URL = "https://supportcenter.stellarix.space"
-_ROOT_EVENT_TYPES = frozenset({"engineer_case_opened", HERMES_REVIEW_PENDING_EVENT_TYPE})
+_ROOT_EVENT_TYPES = frozenset(
+    {"engineer_case_opened", HERMES_REVIEW_PENDING_EVENT_TYPE, HERMES_INVESTIGATION_RESULT_EVENT_TYPE}
+)
 _SLACK_ACTIONS = frozenset({
     "summarize",
     "guardrail",
@@ -459,3 +462,85 @@ def notify_hermes_review_pending(
         thread_ts=str(root.get("slack_thread_ts") or "").strip() or None,
     )
     return {"root": root, "thread": thread}
+
+
+def _investigation_evidence_lines(record: dict[str, Any], *, limit: int = 5) -> list[str]:
+    lines: list[str] = []
+    for item in (record.get("evidence") or [])[:limit]:
+        if isinstance(item, dict):
+            text = next(
+                (
+                    _clean_text(item.get(key))
+                    for key in ("detail", "summary", "text", "note", "source")
+                    if _clean_text(item.get(key))
+                ),
+                "",
+            ) or _clean_text(json.dumps(item, ensure_ascii=False))[:200]
+        else:
+            text = _clean_text(item)
+        if text:
+            lines.append(f"- {text[:200]}")
+    return lines
+
+
+def notify_hermes_investigation_result(
+    *,
+    ticket_id: str,
+    turn_id: str,
+    title: str,
+    question: str,
+    route_result: str,
+    investigation: dict[str, Any] | None,
+    environment: str,
+) -> dict[str, Any]:
+    """Best-effort investigation-result delivery when a turn parks for review.
+
+    One channel root message: the legacy four-line header (case title /
+    customer question / zendesk link / route result) followed by the Hermes
+    investigation result and the dashboard review entry point, where a human
+    approves continuing into the customer reply. No action buttons — the
+    preproduction Slack interactivity path is not wired (p2-154 v1). The
+    caller must treat any failure as non-blocking for the turn.
+    """
+    if not engineer_slack_configured():
+        LOGGER.info("hermes_investigation_result_skipped reason=engineer_slack_not_configured")
+        return {"status": "skipped_not_configured"}
+    normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
+    normalized_question = _clean_text(question) or normalized_title
+
+    root_lines = [
+        _escape_slack_untrusted_text(normalized_title),
+        _escape_slack_untrusted_text(normalized_question),
+    ]
+    if ticket_id:
+        quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
+        root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
+    if _clean_text(route_result):
+        root_lines.append(f"route reason: {_clean_text(route_result)}")
+
+    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
+    record = investigation if isinstance(investigation, dict) else {}
+    body_lines = [f"Hermes investigation — Zendesk #{ticket_id} (awaiting review)"]
+    if _clean_text(record.get("summary")):
+        body_lines.append(f"Summary: {_clean_text(record.get('summary'))}")
+    evidence_lines = _investigation_evidence_lines(record)
+    if evidence_lines:
+        body_lines.append("Evidence:")
+        body_lines.extend(evidence_lines)
+    if record.get("blockers"):
+        body_lines.append(
+            "Blockers: " + "; ".join(_clean_text(item) for item in record["blockers"])
+        )
+    if record.get("next_steps"):
+        body_lines.append(
+            "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
+        )
+    body_lines.append(f"Review & continue to customer reply: {review_url}")
+    message_text = "\n".join([*root_lines, "", *body_lines])
+    return post_engineer_slack_event(
+        {
+            "event_id": f"hermes-investigation-result:{turn_id}",
+            "event_type": HERMES_INVESTIGATION_RESULT_EVENT_TYPE,
+            "message_text": message_text,
+        }
+    )

@@ -1017,6 +1017,104 @@ def create_app(    *,
                 headers={"Cache-Control": "no-store"},
             )
 
+        @app.post(
+            f"{base}/dashboard/api/cases/{{zendesk_ticket_id}}/hermes-review/investigation/continue",
+            dependencies=[Depends(require_dashboard_session)],
+        )
+        async def dashboard_continue_hermes_investigation(
+            zendesk_ticket_id: str,
+        ) -> JSONResponse:
+            from backend.services.automation_ecs_store import (
+                HermesTurnConflictError,
+                HermesTurnStateError,
+            )
+
+            if not zendesk_ticket_id.isdigit() or len(zendesk_ticket_id) > 128:
+                raise HTTPException(status_code=422, detail="Zendesk ticket id must be numeric")
+            review = coordination_store.get_hermes_case_review(zendesk_ticket_id)
+            if review is None:
+                raise HTTPException(status_code=404, detail="hermes case review not found")
+            mirror = coordination_store.get_case_mirror(zendesk_ticket_id) or {}
+            current_revision = int(mirror.get("case_revision") or 0)
+            binding = review.get("binding") or {}
+            investigation = (
+                binding.get("investigation")
+                if isinstance(binding.get("investigation"), dict)
+                else {}
+            )
+            source_turn = next(
+                (
+                    turn
+                    for turn in review.get("turns") or []
+                    if str(turn.get("turn_kind") or "") == "normal"
+                    and str(turn.get("direction") or "") == "investigation"
+                    and str(turn.get("status") or "") == "completed"
+                    and str((turn.get("result") or {}).get("status") or "")
+                    == "awaiting_investigation_review"
+                ),
+                None,
+            )
+            if source_turn is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="no investigation is awaiting review for this case",
+                )
+            if (source_turn.get("result") or {}).get("continued_turn_id"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "investigation already continued as turn "
+                        f"{(source_turn.get('result') or {}).get('continued_turn_id')}"
+                    ),
+                )
+            turn_revision = int(source_turn.get("case_revision") or 0)
+            if current_revision and turn_revision and turn_revision != current_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"stale_case_revision: turn {turn_revision} != case {current_revision}",
+                )
+            # Deterministic completeness gate before any persona run: the
+            # investigation must actually carry a conclusion and no unresolved
+            # blockers — the human first resolves or accepts them in Zendesk.
+            if not str(investigation.get("summary") or "").strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail="investigation has no summary; nothing to draft a reply from",
+                )
+            unresolved_blockers = [str(item) for item in investigation.get("blockers") or [] if str(item).strip()]
+            if unresolved_blockers:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "investigation has unresolved blockers: "
+                        + "; ".join(unresolved_blockers[:5])
+                    ),
+                )
+            try:
+                created = coordination_store.create_investigation_reply_turn(
+                    zendesk_ticket_id,
+                    source_turn_id=str(source_turn["turn_id"]),
+                    base_event={
+                        "provenance": {"service_role": "api", "environment": runtime.environment}
+                    },
+                    prompt_release_id=str(binding.get("prompt_release_id") or "") or None,
+                )
+            except HermesTurnConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except HermesTurnStateError as exc:
+                message = str(exc)
+                status_code = 409 if "stale_case_revision" in message else 422
+                raise HTTPException(status_code=status_code, detail=message) from exc
+            return JSONResponse(
+                content={
+                    "continued": True,
+                    "source_turn_id": created["source_turn_id"],
+                    "reply_turn_id": created["turn_id"],
+                    "case_revision": created["case_revision"],
+                },
+                headers={"Cache-Control": "no-store"},
+            )
+
     ui_root = FilePath(__file__).resolve().parents[1] / "ui"
     if admin_data_reader is not None:
         admin_dir = ui_root / "workspace-ui" / "admin"
