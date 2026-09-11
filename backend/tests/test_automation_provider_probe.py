@@ -87,6 +87,95 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
     assert "example.com" not in json.dumps(result)
 
 
+def test_provider_probe_checks_archer_read_only_in_archer_mode() -> None:
+    recipient = AccountInternalEmailRecipients(
+        to=("to@example.com",),
+        cc=("cc@example.com",),
+        config_key="test",
+        source="environment_json",
+    )
+    archer_calls: list[tuple[str, str]] = []
+
+    class _FakeArcherClient:
+        def call(self, method: str, path: str):
+            archer_calls.append((method, path))
+            return {"vendor": "none"}
+
+    def urlopen(request, *, timeout):
+        if "knowledge.example.com" in request.full_url:
+            return _Response({"code": 0, "data": {"chunks": [], "total": 0}})
+        if "graph.microsoft.com" in request.full_url:
+            return _Response({"id": "graph-user"})
+        assert request.full_url.endswith("/api/v2/users/me.json")
+        return _Response({"user": {"id": 1}})
+
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "RAGFLOW_BASE_URL": "https://knowledge.example.com/kb/ticket-agent",
+                "RAGFLOW_API_KEY": "ragflow-token",
+                "ENABLEMENT_WORKFLOW_MODE": "archer",
+            },
+            clear=False,
+        ),
+        patch("backend.services.automation_provider_probe.load_graph_mail_config", return_value={}),
+        patch("backend.services.automation_provider_probe.acquire_graph_access_token", return_value="token"),
+        patch("backend.services.automation_provider_probe.zendesk_basic_auth_header", return_value="Basic token"),
+        patch("backend.services.automation_provider_probe.resolve_account_internal_email_recipients", return_value=recipient),
+        patch("backend.services.automation_provider_probe.DirectArcherClient", _FakeArcherClient),
+        patch("backend.services.automation_provider_probe.urllib.request.urlopen", side_effect=urlopen),
+    ):
+        result = run_probe()
+
+    assert archer_calls == [
+        ("GET", "/api/v2/check-simple-vendor?keywords=00000000000000000000000000000000")
+    ]
+    assert result["archer_read_get_ok"] is True
+
+
+def test_provider_probe_skips_archer_in_manual_mode() -> None:
+    recipient = AccountInternalEmailRecipients(
+        to=("to@example.com",),
+        cc=("cc@example.com",),
+        config_key="test",
+        source="environment_json",
+    )
+
+    class _ExplodingArcherClient:
+        def call(self, *_args, **_kwargs):
+            raise AssertionError("manual mode must not touch Archer")
+
+    def urlopen(request, *, timeout):
+        if "knowledge.example.com" in request.full_url:
+            return _Response({"code": 0, "data": {"chunks": [], "total": 0}})
+        if "graph.microsoft.com" in request.full_url:
+            return _Response({"id": "graph-user"})
+        assert request.full_url.endswith("/api/v2/users/me.json")
+        return _Response({"user": {"id": 1}})
+
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "RAGFLOW_BASE_URL": "https://knowledge.example.com/kb/ticket-agent",
+                "RAGFLOW_API_KEY": "ragflow-token",
+                "ENABLEMENT_WORKFLOW_MODE": "manual",
+            },
+            clear=False,
+        ),
+        patch("backend.services.automation_provider_probe.load_graph_mail_config", return_value={}),
+        patch("backend.services.automation_provider_probe.acquire_graph_access_token", return_value="token"),
+        patch("backend.services.automation_provider_probe.zendesk_basic_auth_header", return_value="Basic token"),
+        patch("backend.services.automation_provider_probe.resolve_account_internal_email_recipients", return_value=recipient),
+        patch("backend.services.automation_provider_probe.DirectArcherClient", _ExplodingArcherClient),
+        patch("backend.services.automation_provider_probe.urllib.request.urlopen", side_effect=urlopen),
+    ):
+        result = run_probe()
+
+    assert "archer_read_get_ok" not in result
+
+
 def test_provider_probe_requires_the_worker_ragflow_credential() -> None:
     with patch.dict(os.environ, {"RAGFLOW_API_KEY": ""}, clear=False):
         try:

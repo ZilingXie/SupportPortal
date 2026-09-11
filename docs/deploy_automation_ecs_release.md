@@ -70,8 +70,9 @@ service update。Production先生成可复用preflight evidence，正式deploy�
 Promotion为`crane`/`skopeo`创建私有临时`DOCKER_CONFIG`并在退出时删除，避免读取用户全局
 Docker credential helper；ECR短期登录凭据不写入用户配置或release evidence。
 
-部署后的单个Worker one-off task只执行只读Provider probe：RAG health、合成不存在App ID的Archer
-GET、Graph `/me`、Zendesk `users/me`，并验证Enablement/Fraud/Suspension三类收件人配置。探针不发送
+部署后的单个Worker one-off task只执行只读Provider probe：RAG health、（仅
+`--enablement-workflow-mode archer` 时）合成不存在App ID的Archer GET、Graph `/me`、Zendesk
+`users/me`，并验证Enablement/Fraud/Suspension三类收件人配置。探针不发送
 邮件、不创建或修改Zendesk工单，不执行Archer enablement；evidence只保存布尔值和收件人数，不保存
 身份、地址、token或响应正文。该探针与公网health、CloudWatch、EC2 backup、ALB target和发布后
 Terraform zero-drift并行执行，任一失败仍阻断Prompt激活。
@@ -313,11 +314,35 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。
 
-## Enablement 人工开通流程发布门禁（p2-149 起）
+## Enablement 工作流模式（p2-152 起：manual 默认 + Archer 可切换）
 
-`p2-149` 起 Enablement 回退为人工开通流程，Worker **不再持有任何 Archer 凭证**：
-task definition 不再注入 `ARCHER_OAUTH_COOKIE`，Provider 探针不再检查 Archer，
-`archer-oauth-cookie` SSM 参数仅作为历史凭证保留（不删除、不再消费）。
+`p2-152` 起 Enablement 由 `ENABLEMENT_WORKFLOW_MODE`（`manual` | `archer`，默认 `manual`）
+在四个执行入口（split intake、客户评论 resume、Hermes 工具、legacy main 入口/rerun）统一分发。
+manual 模式即 `p2-149` 人工开通流程，行为不变；archer 模式恢复回退前的自动开通编排
+（enabled→完成回复关单；appid_invalid/project_not_found→清 App ID 重问；
+enable_failed→owner 失败告警+回退内部邮件一次+人工升级）。未知取值 fail-closed。
+
+凭据门禁（双向 fail-closed）：
+
+- manual 渲染的 Worker task definition 含 `ARCHER_OAUTH_COOKIE` 即拒绝（register 前 jq 断言 +
+  `validate_worker_contract`）；
+- archer 渲染必须注入 `/supportportal/{env}/archer-oauth-cookie`（缺失即拒绝），且 Provider 探针
+  必须回报 `archer_read_get_ok=true`；
+- `archer-oauth-cookie` SSM 参数当前不存在（无 Archer 权限），manual 模式不消费任何 Archer 凭据。
+
+切换到 archer 模式（拿到 Archer 权限后）：
+
+1. 创建 SSM SecureString `/supportportal/{env}/archer-oauth-cookie`（`oauth2-token` 根凭证，
+   注意约 7 天绝对过期风险，见 `docs/archer_direct_auth_architecture.md` §6）；
+2. 以 `--enablement-workflow-mode archer` 走标准发布（pipeline 会在渲染前校验 SSM 参数存在）；
+3. 发布门禁与 provider probe 验证通过后，用受控工单做一次 archer 全链验收；
+4. 切回 manual 同样走发布，凭据自动剥离（无需先删 SSM 参数）。
+
+### manual 人工开通流程（默认）
+
+`p2-149` 起 Enablement 默认为人工开通流程，Worker **不持有任何 Archer 凭证**：
+task definition 不注入 `ARCHER_OAUTH_COOKIE`，Provider 探针不检查 Archer，
+`archer-oauth-cookie` SSM 参数仅作为历史凭证保留（不删除、不消费）。
 
 目标流程（回复在先、邮件在后）：
 

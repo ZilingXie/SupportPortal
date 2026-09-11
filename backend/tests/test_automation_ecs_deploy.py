@@ -316,6 +316,199 @@ def test_deploy_script_fails_closed_on_archer_secret_in_rendered_worker() -> Non
     assert 'still references ARCHER_OAUTH_COOKIE' in script
 
 
+def test_render_task_definition_archer_mode_injects_credential_and_mode(
+    tmp_path: Path,
+) -> None:
+    # p2-152: archer enablement mode carries the credential and the mode env
+    # into the rendered Worker revision; the register-time contract then
+    # requires exactly this pairing.
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        enablement_workflow_mode="archer",
+    )
+    container = rendered["containerDefinitions"][0]
+    values = {item["name"]: item["value"] for item in container["environment"]}
+    assert values["ENABLEMENT_WORKFLOW_MODE"] == "archer"
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    assert secrets["ARCHER_OAUTH_COOKIE"].endswith(
+        "parameter/supportportal/preproduction/archer-oauth-cookie"
+    )
+
+
+@pytest.mark.parametrize("environment", ["preproduction", "production"])
+def test_render_task_definition_archer_mode_allowed_for_both_environments(
+    tmp_path: Path, environment: str
+) -> None:
+    # The user pinned dual-environment availability (p2-152): archer mode is
+    # not production-forbidden like the hermes case engine.
+    current = _task_definition(tmp_path, "worker")
+    if environment == "preproduction":
+        _as_preproduction(current)
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment=environment,
+        repository=f"supportportal/{environment}",
+        enablement_workflow_mode="archer",
+    )
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    assert values["ENABLEMENT_WORKFLOW_MODE"] == "archer"
+
+
+def test_render_task_definition_manual_mode_normalizes_observed_archer_worker(
+    tmp_path: Path,
+) -> None:
+    # An observed Worker already on archer mode must downgrade cleanly when
+    # the release requests manual mode: secret stripped, env normalized.
+    current = _worker_current_with_archer_secret(tmp_path)
+    payload = json.loads(current.read_text())
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    container["environment"].append({"name": "ENABLEMENT_WORKFLOW_MODE", "value": "archer"})
+    current.write_text(json.dumps(payload))
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        enablement_workflow_mode="manual",
+    )
+    container = rendered["containerDefinitions"][0]
+    values = {item["name"]: item["value"] for item in container["environment"]}
+    assert values["ENABLEMENT_WORKFLOW_MODE"] == "manual"
+    secret_names = {item["name"] for item in container["secrets"]}
+    assert "ARCHER_OAUTH_COOKIE" not in secret_names
+
+
+def test_render_task_definition_archer_mode_repairs_missing_credential(
+    tmp_path: Path,
+) -> None:
+    # An observed Worker claims archer mode but lost the credential; the
+    # render is authoritative and re-injects it (a missing SSM parameter is
+    # caught earlier by the deploy script's archer-switch guard).
+    current = _worker_current_with_archer_secret(tmp_path)
+    payload = json.loads(current.read_text())
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    container["secrets"] = [
+        item for item in container["secrets"] if item["name"] != "ARCHER_OAUTH_COOKIE"
+    ]
+    container["environment"].append({"name": "ENABLEMENT_WORKFLOW_MODE", "value": "archer"})
+    current.write_text(json.dumps(payload))
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        enablement_workflow_mode=None,
+    )
+    secrets = {
+        item["name"]: item["valueFrom"]
+        for item in rendered["containerDefinitions"][0]["secrets"]
+    }
+    assert secrets["ARCHER_OAUTH_COOKIE"].endswith(
+        "parameter/supportportal/production/archer-oauth-cookie"
+    )
+
+
+def test_validate_worker_contract_enforces_archer_credential_pairing(
+    tmp_path: Path,
+) -> None:
+    # Standalone register-time contract: archer mode without the credential
+    # fails closed, and manual mode with the credential fails closed.
+    import copy
+
+    from backend.scripts.automation_ecs_deploy import validate_worker_contract
+
+    current = _worker_current_with_archer_secret(tmp_path)
+    payload = json.loads(current.read_text())["taskDefinition"]
+    archer_without_secret = copy.deepcopy(payload)
+    container = archer_without_secret["containerDefinitions"][0]
+    container["secrets"] = [
+        item for item in container["secrets"] if item["name"] != "ARCHER_OAUTH_COOKIE"
+    ]
+    container["environment"].append({"name": "ENABLEMENT_WORKFLOW_MODE", "value": "archer"})
+    with pytest.raises(ValueError, match="missing the Archer credential secret"):
+        validate_worker_contract(archer_without_secret)
+
+
+def test_render_task_definition_rejects_unknown_enablement_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="enablement workflow mode must be manual or archer"):
+        render_task_definition(
+            role="worker",
+            current_path=_task_definition(tmp_path, "worker"),
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            enablement_workflow_mode="auto",
+        )
+
+
+def test_render_task_definition_sets_enablement_mode_on_api(tmp_path: Path) -> None:
+    current = _task_definition(tmp_path, "api")
+    _as_preproduction(current)
+    rendered = render_task_definition(
+        role="api",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        enablement_workflow_mode="manual",
+    )
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    assert values["ENABLEMENT_WORKFLOW_MODE"] == "manual"
+
+
+def test_render_initial_task_definition_archer_mode_bundles_credential(tmp_path: Path) -> None:
+    rendered = render_initial_task_definition(
+        role="worker",
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        execution_role_arn="arn:aws:iam::123456789012:role/preproduction-execution",
+        task_role_arn="arn:aws:iam::123456789012:role/preproduction-task",
+        log_group_name="/ecs/supportportal/preproduction",
+        parameter_prefix_arn=(
+            "arn:aws:ssm:us-east-1:123456789012:"
+            "parameter/supportportal/preproduction"
+        ),
+        enablement_workflow_mode="archer",
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
+    )
+    container = rendered["containerDefinitions"][0]
+    values = {item["name"]: item["value"] for item in container["environment"]}
+    assert values["ENABLEMENT_WORKFLOW_MODE"] == "archer"
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    assert secrets["ARCHER_OAUTH_COOKIE"].endswith(
+        "parameter/supportportal/preproduction/archer-oauth-cookie"
+    )
+
+
+def test_deploy_script_guards_archer_switch_and_probe_gate() -> None:
+    # The switch-to-archer runbook guards: SSM parameter existence before
+    # rendering, and the provider probe must report archer_read_get_ok.
+    script = DEPLOY_SCRIPT.read_text()
+    assert "archer-oauth-cookie" in script
+    assert "ENABLEMENT_WORKFLOW_MODE=archer requires SSM parameter" in script
+    assert ".archer_read_get_ok == true" in script
+
+
 def test_render_task_definition_explicitly_sets_hermes_mode_on_api_and_worker(
     tmp_path: Path,
 ) -> None:

@@ -34,6 +34,9 @@ ENABLEMENT_ACTION = "enablement"
 ENABLEMENT_TOOLING_PROFILE = "deterministic_enablement_intake"
 ENABLEMENT_SEMANTIC_INTENT = "enablement.feature_activation"
 ENABLEMENT_AUTOMATION_HANDLER = "enablement"
+ENABLEMENT_WORKFLOW_MODE_ENV = "ENABLEMENT_WORKFLOW_MODE"
+ENABLEMENT_WORKFLOW_MODES = frozenset({"manual", "archer"})
+ENABLEMENT_WORKFLOW_MODE_DEFAULT = "manual"
 ENABLEMENT_INTERNAL_EMAIL_ENV = "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL"
 ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX = "[Enablement Request]"
 ENABLEMENT_CUSTOMER_REPLY_PROMPT_VERSION = "enablement-customer-reply-v1"
@@ -125,6 +128,24 @@ class EnablementAutomationResult:
     missing_fields: list[str]
     collected_fields: dict[str, str]
     internal_email: dict[str, str] | None
+
+
+def enablement_workflow_mode() -> str:
+    """Resolve the enablement execution mode (p2-152).
+
+    Unset/empty defaults to ``manual`` (the p2-149 human review flow).  An
+    unknown value fails closed instead of silently falling back, mirroring
+    ``environment_from_env``.
+    """
+    value = str(os.getenv(ENABLEMENT_WORKFLOW_MODE_ENV) or "").strip().lower()
+    if not value:
+        return ENABLEMENT_WORKFLOW_MODE_DEFAULT
+    if value not in ENABLEMENT_WORKFLOW_MODES:
+        raise ValueError(
+            "ENABLEMENT_WORKFLOW_MODE must be one of "
+            f"{sorted(ENABLEMENT_WORKFLOW_MODES)}, got {value!r}"
+        )
+    return value
 
 
 def customer_visible_enablement_information(

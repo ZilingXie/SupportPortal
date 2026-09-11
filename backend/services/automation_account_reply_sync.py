@@ -57,7 +57,8 @@ from backend.services.automation_account_intake import (
     _create_reply_job,
     _record_execution_failure,
     _reply_facts,
-    _run_enablement_manual_workflow,
+    _enablement_workflow_failure_stage,
+    _run_enablement_workflow,
     _run_internal_email_delivery,
 )
 from backend.services.automation_persona import resolve_customer_greeting_name
@@ -66,7 +67,10 @@ from backend.services.billing_automation import (
     build_billing_internal_email_payload,
     send_billing_internal_email,
 )
-from backend.services.enablement_automation import send_enablement_internal_email
+from backend.services.enablement_automation import (
+    enablement_workflow_mode,
+    send_enablement_internal_email,
+)
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_ai_execution import AccountProcessingFailure
 from backend.services.engineer_assignment import EngineerAssignmentService
@@ -1083,12 +1087,15 @@ async def _process_account_customer_reply_impl(
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
             if active_handler == "enablement" and automation_attempt.get("internal_email_to_send"):
-                # The first durable write for a manual enablement application
-                # is already the unclaimable gate — the workflow below only
-                # re-affirms it, so an interruption between the two saves can
-                # never leave a claimable pending email behind.
-                billing_ticket["internal_email_send_status"] = "awaiting_public_reply"
-                billing_ticket["internal_email_send_reason"] = "enablement_manual_review"
+                if enablement_workflow_mode() == "archer":
+                    billing_ticket["internal_email_send_status"] = "archer_pending"
+                else:
+                    # The first durable write for a manual enablement application
+                    # is already the unclaimable gate — the workflow below only
+                    # re-affirms it, so an interruption between the two saves can
+                    # never leave a claimable pending email behind.
+                    billing_ticket["internal_email_send_status"] = "awaiting_public_reply"
+                    billing_ticket["internal_email_send_reason"] = "enablement_manual_review"
     billing_ticket["updated_at"] = timestamp
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
     await _sync(repository.save_ticket, canonical_ticket, new_messages=new_messages)
@@ -1101,14 +1108,16 @@ async def _process_account_customer_reply_impl(
         and str(billing_ticket.get("automation_handler") or "").strip() == "enablement"
     ):
         try:
-            billing_ticket, reply_job, _manual_outcome = await _run_enablement_manual_workflow(
-                repository=repository,
-                account_case=billing_ticket,
-                ticket_id=client_ticket_id,
-                email_payload=dict(automation_attempt["internal_email_to_send"]),
-                persona_assignment=persona_assignment,
-                processing_profile=processing_profile,
-                trigger_message_created_at=timestamp,
+            billing_ticket, reply_job, _workflow_outcome, _archer_result = (
+                await _run_enablement_workflow(
+                    repository=repository,
+                    account_case=billing_ticket,
+                    ticket_id=client_ticket_id,
+                    email_payload=dict(automation_attempt["internal_email_to_send"]),
+                    persona_assignment=persona_assignment,
+                    processing_profile=processing_profile,
+                    trigger_message_created_at=timestamp,
+                )
             )
         except Exception as exc:
             billing_ticket = await _record_execution_failure(
@@ -1116,7 +1125,7 @@ async def _process_account_customer_reply_impl(
                 account_case=billing_ticket,
                 ticket_id=client_ticket_id,
                 handler="enablement",
-                stage="manual_reply_job",
+                stage=_enablement_workflow_failure_stage(),
                 reason_code="account_reply_job_creation_failed",
                 detail=exc,
             )

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T16:35:04Z",
-  "source_base_commit": "3cd627349ad6fd9b29a794ae98cfd979cd1130d7",
-  "registry_digest": "7b8a35e13e905c99385ead50d0de6fd7bac5b4e918a65d05c8746203b68f1ea9",
+  "generated_at": "2026-09-11T16:37:55Z",
+  "source_base_commit": "dd4d1403f1358d125e82f489091d9e8959f5c482",
+  "registry_digest": "de7cb2b948e32f21a3795c64166b274a59fb4ea5b10069d283490c0786e7ee9c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1138,6 +1138,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Dual-flow targeted regression (13 suites)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_archer_executor.py backend/tests/test_archer_direct_client.py backend/tests/test_worker.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_provider_probe.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_single_host_compose.py backend/tests/test_enablement_rag_resume.py backend/tests/test_automation_ecs_worker.py",
+          "details": "446 passed / 94 subtests。恢复回退前被删用例：intake 三个 archer 结果用例 + ArcherFailureNotificationDeliveryTests 整类 6 个（13386 失败告警/claim 协议幂等/可恢复结果零告警/告警失败不挡回退邮件）+ comment-sync 补正 AppID 重达 dispatch（archer_pending 首写断言）+ provider probe 双模式。新增：mode helper 三态（默认 manual/archer/未知 raise）、分发双模式（archer 零 manual 门、manual 零 Archer 调用）、deploy 渲染参数化（archer 注入凭据与模式 env、manual 归一化剥离、observed archer 缺凭据自动修复、validate 双向门禁、CLI 拒绝未知值、initial 渲染捆绑凭据、部署脚本 SSM 守卫与探针门禁断言）、pipeline deploy_mode_args 双环境透传。manual 零 Archer 守卫原样保持绿。"
+        },
+        {
+          "type": "test",
+          "label": "Legacy main intake + persona suites",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_failure_alerts.py backend/tests/test_automation_persona.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_split_environment_deployment.py",
+          "details": "293+2 套件全绿（legacy /account 入口与 rerun 均改经统一分发 wrapper，manual 行为不变）。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL real-database roundtrip",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "10 passed（914s）含恢复的 test_enablement_failure_workflow_prepares_and_sends_on_postgres（真库端到端：archer enable_failed→_record_execution_failure→fallback 邮件经 prepare/claim 协议恰发一次 delivery_key=enablement:AC-ARCHER-WORKFLOW:v1→human_review_required）。同轮 test_initialize_preserves_suspension_handler_across_restarts 报 psycopg OperationalError（连接瞬态、与本改动无关领域），单独重跑 1 passed（165s）确认环境瞬态。"
+        },
+        {
+          "type": "document",
+          "label": "Registry and generators",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
+          "details": "Feature list verification passed；project overview 重新生成并校验通过（digest 8caa5a4f...）。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1243,7 +1267,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 36,
+      "task_count": 37,
       "done_count": 18,
       "blocked_count": 0
     },
@@ -11882,6 +11906,83 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-152",
+      "title": "Enablement 双流程模式开关（manual 默认 + Archer 可切换）",
+      "status": "active",
+      "owner": "zac",
+      "summary": "引入环境开关 ENABLEMENT_WORKFLOW_MODE（manual|archer，默认 manual）：manual 保持 p2-149 人工开通流程（确认 AppID→回复先行→内部邮件门禁→人工开通回复→最终回复关单）为全环境默认；从回退提交父版本恢复 Archer 自动开通编排（含 p1-15 失败告警与回退邮件加固）作为 archer 分支，经统一分发点按模式选择。部署工具链按 HERMES_CASE_WORKFLOW_MODE/ENGINEER_SLACK_OUTBOUND_ENABLED 先例支持 --enablement-workflow-mode 按环境注入开关与 ARCHER_OAUTH_COOKIE 条件凭据，retired-secret 门禁与 provider probe Archer 读探针改为按模式条件化（manual 含凭据必 fail、archer 强制 archer_read_get_ok）。当前无 Archer 权限：默认 manual、不注入凭据、不建 SSM 参数；将来拿到权限后建 SSM 参数并按 runbook 切换，preproduction/production 均可切（用户拍板）。",
+      "next_action": "代码+测试+文档已完成；剩：真库 PG 回环验证 → finalize 合码 → preproduction 部署（manual）并 live 验证后转 done。",
+      "acceptance_criteria": [
+        "两套流程同树共存：默认（未设/空 ENABLEMENT_WORKFLOW_MODE）全环境 manual，行为与 p2-149 人工流程完全一致，现有零 Archer 调用守卫原样通过；未知模式值 fail-closed 报错。",
+        "archer 模式行为等于回退前 r20260902 lineage：enabled→完成回复关单、appid_invalid/project_not_found→清 App ID 重问、enable_failed→失败告警+回退内部邮件+human_review_required，delivery_key 幂等保留。",
+        "四个分发入口（intake、评论 resume、Hermes 工具、main 旧入口含 rerun）全部经统一模式分发；prior archer 可恢复 outcome 在 archer 模式下重试 Archer、manual 模式保持现有人工恢复。",
+        "凭据门禁双向：manual 渲染含 ARCHER_OAUTH_COOKIE 必 fail；archer 渲染注入 worker 凭据且部署 provider probe 强制 archer_read_get_ok=true；SSM 参数缺失在渲染前被部署脚本拦截。",
+        "preproduction 部署 manual 模式成功并通过 live 验证（health/build ref/worker td 无 Archer secret）；Production 不在本次范围。",
+        "文档与登记收口：feature_list/prompt_change_log/archer 架构文档（休眠可切换+切换 runbook）/deploy runbook 更新，project overview 重新生成并通过 --check。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Dual-flow targeted regression (13 suites)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_archer_executor.py backend/tests/test_archer_direct_client.py backend/tests/test_worker.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_provider_probe.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_single_host_compose.py backend/tests/test_enablement_rag_resume.py backend/tests/test_automation_ecs_worker.py",
+          "details": "446 passed / 94 subtests。恢复回退前被删用例：intake 三个 archer 结果用例 + ArcherFailureNotificationDeliveryTests 整类 6 个（13386 失败告警/claim 协议幂等/可恢复结果零告警/告警失败不挡回退邮件）+ comment-sync 补正 AppID 重达 dispatch（archer_pending 首写断言）+ provider probe 双模式。新增：mode helper 三态（默认 manual/archer/未知 raise）、分发双模式（archer 零 manual 门、manual 零 Archer 调用）、deploy 渲染参数化（archer 注入凭据与模式 env、manual 归一化剥离、observed archer 缺凭据自动修复、validate 双向门禁、CLI 拒绝未知值、initial 渲染捆绑凭据、部署脚本 SSM 守卫与探针门禁断言）、pipeline deploy_mode_args 双环境透传。manual 零 Archer 守卫原样保持绿。"
+        },
+        {
+          "type": "test",
+          "label": "Legacy main intake + persona suites",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_account_failure_alerts.py backend/tests/test_automation_persona.py backend/tests/test_automation_ecs_terraform.py backend/tests/test_split_environment_deployment.py",
+          "details": "293+2 套件全绿（legacy /account 入口与 rerun 均改经统一分发 wrapper，manual 行为不变）。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL real-database roundtrip",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "10 passed（914s）含恢复的 test_enablement_failure_workflow_prepares_and_sends_on_postgres（真库端到端：archer enable_failed→_record_execution_failure→fallback 邮件经 prepare/claim 协议恰发一次 delivery_key=enablement:AC-ARCHER-WORKFLOW:v1→human_review_required）。同轮 test_initialize_preserves_suspension_handler_across_restarts 报 psycopg OperationalError（连接瞬态、与本改动无关领域），单独重跑 1 passed（165s）确认环境瞬态。"
+        },
+        {
+          "type": "document",
+          "label": "Registry and generators",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
+          "details": "Feature list verification passed；project overview 重新生成并校验通过（digest 8caa5a4f...）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_account_intake.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/enablement_automation.py",
+        "backend/services/automation_provider_probe.py",
+        "backend/scripts/automation_ecs_deploy.py",
+        "backend/scripts/bootstrap_automation_preproduction.py",
+        "backend/scripts/automation_ecs_release_pipeline.py",
+        "deployment/deploy_automation_ecs_release.sh",
+        "docs/deploy_automation_ecs_release.md",
+        "docs/archer_direct_auth_architecture.md",
+        "docs/feature_list.md"
+      ],
+      "created_at": "2026-09-11",
+      "updated_at": "2026-09-11",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-11",
+          "event": "created",
+          "summary": "用户要求 preproduction enablement 提供两套代码：现 production 的人工流程（确认 AppID→内部邮件→人工开通→回复客户）与现 preproduction 的 Archer 自动开通；因当前无 Archer 权限，Archer 代码保留休眠、拿到权限后可随时切换。经 AskUserQuestion 确认：archer 模式对两环境开放（默认 manual），本次包含 preproduction 部署。"
+        },
+        {
+          "at": "2026-09-11",
+          "event": "implementation_complete",
+          "summary": "ENABLEMENT_WORKFLOW_MODE 开关接入四个分发入口（intake/评论 resume/Hermes 工具/main 旧入口+rerun，统一经 _run_enablement_workflow）；从 8d5b82c5^ 恢复 _run_enablement_archer_workflow/_archer_reply_facts/_append_archer_failure_reason（含 p1-15 失败告警与回退邮件 claim 协议）；部署工具链按 hermes/slack 先例支持 --enablement-workflow-mode（render 强制回写+ARCHER_OAUTH_COOKIE 条件注入/剥离+validate_worker_contract 双向门禁+bootstrap 源拷贝后缀+provider probe archer 读探针条件化+shell SSM 存在性守卫+pipeline 透传纳入 checkpoint 身份）；compose/.env.example parity；恢复回退前被删测试并新增模式测试；四份文档更新。13 套件 446 passed/94 subtests + legacy 套件 293 passed。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17199,7 +17300,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Enablement 的 Media Relay 请求走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）。",
+        "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]

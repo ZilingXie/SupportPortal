@@ -26,6 +26,7 @@ HERMES_CASE_WORKFLOW_MODE=""
 HERMES_PERSONA_ENABLED=0
 AUTOMATION_CASE_ENGINE="legacy"
 HERMES_AGENT_ENABLED=0
+ENABLEMENT_WORKFLOW_MODE="manual"
 SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-}"
 PROMPT_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-}"
 TEMP_DIR=""
@@ -207,6 +208,7 @@ parse_args() {
       --hermes-persona-enabled) HERMES_PERSONA_ENABLED=1; shift ;;
       --automation-case-engine) [[ $# -ge 2 ]] || fail "--automation-case-engine requires a value"; AUTOMATION_CASE_ENGINE="$2"; shift 2 ;;
       --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; shift ;;
+      --enablement-workflow-mode) [[ $# -ge 2 ]] || fail "--enablement-workflow-mode requires a value"; ENABLEMENT_WORKFLOW_MODE="$2"; shift 2 ;;
       --check-only) CHECK_ONLY=1; shift ;;
       --resume) RESUME=1; shift ;;
       --preflight-evidence) [[ $# -ge 2 ]] || fail "--preflight-evidence requires a value"; PREFLIGHT_EVIDENCE="$2"; shift 2 ;;
@@ -226,6 +228,8 @@ parse_args() {
     || fail "Hermes mock activation requires --bootstrap-account-schema"
   [[ "${HERMES_CASE_WORKFLOW_MODE}" != "real" || "${BOOTSTRAP_ACCOUNT_SCHEMA}" = "1" ]] \
     || fail "Hermes real activation requires --bootstrap-account-schema"
+  [[ "${ENABLEMENT_WORKFLOW_MODE}" = "manual" || "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]] \
+    || fail "--enablement-workflow-mode must be manual or archer"
 }
 
 file_sha256() {
@@ -782,8 +786,19 @@ render_role_task_definition() {
   if [[ "${HERMES_AGENT_ENABLED}" = "1" ]]; then
     args+=(--hermes-agent-enabled)
   fi
+  args+=(--enablement-workflow-mode "${ENABLEMENT_WORKFLOW_MODE}")
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
     render-task-definition "${args[@]}" >/dev/null
+}
+
+ensure_enablement_archer_secret() {
+  # Switching to archer mode (p2-152) requires the SSO root credential to
+  # already exist; fail before rendering instead of letting run-task crash.
+  [[ "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]] || return 0
+  aws ssm get-parameter --region "${REGION}" \
+    --name "/supportportal/${ENVIRONMENT}/archer-oauth-cookie" \
+    --query 'Parameter.Name' --output text >/dev/null 2>&1 \
+    || fail "ENABLEMENT_WORKFLOW_MODE=archer requires SSM parameter /supportportal/${ENVIRONMENT}/archer-oauth-cookie to exist"
 }
 
 prepare_schema_bootstrap() {
@@ -1124,7 +1139,7 @@ verify_public_runtime() {
 }
 
 run_provider_probe() {
-  local task_arn task_id task_json exit_code reason log_group log_prefix log_stream deadline probe_line
+  local task_arn task_id task_json exit_code reason log_group log_prefix log_stream deadline probe_line probe_filter
   aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
     --services "${WORKER_SERVICE}" --query 'services[0].networkConfiguration' \
     --output json >"${TEMP_DIR}/provider-probe.network.json"
@@ -1162,14 +1177,18 @@ run_provider_probe() {
     probe_line="$(jq -r '.events[].message | select(startswith("{") and contains("automation-provider-probe-v1"))' \
       "${TEMP_DIR}/provider-probe.events.json" | tail -n 1)"
     if [[ -n "${probe_line}" ]]; then
-      if ! printf '%s\n' "${probe_line}" | jq -e '
+      probe_filter='
         .schema_version == "automation-provider-probe-v1"
         and .rag_health_ok == true
         and .graph_me_ok == true
         and .zendesk_identity_ok == true
         and ([.recipients.enablement,.recipients.fraud_account,.recipients.account_suspension]
-          | all(.valid == true and .to_count > 0 and .cc_count > 0))
-      ' >/dev/null; then
+          | all(.valid == true and .to_count > 0 and .cc_count > 0))'
+      if [[ "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]]; then
+        probe_filter="${probe_filter}
+        and .archer_read_get_ok == true"
+      fi
+      if ! printf '%s\n' "${probe_line}" | jq -e "${probe_filter}" >/dev/null; then
         fail "Provider probe result failed validation"
         return 1
       fi
@@ -1387,6 +1406,7 @@ main() {
   done
   [[ "${preflight_failed}" = "0" ]] \
     || fail "Parallel Terraform, Prompt, ECR, or EC2 backup preflight failed"
+  ensure_enablement_archer_secret
   [[ -n "${PREFLIGHT_EVIDENCE}" ]] || TERRAFORM_STATUS="passed"
   SOURCE_PROMPT_STATUS="passed"
   EC2_BACKUP_STATUS="passed"
@@ -1433,12 +1453,18 @@ main() {
   unset suspension_recipients_json
   SUSPENSION_RECIPIENTS_STATUS="passed"
 
-  # p2-149: Enablement runs the manual review flow — the rendered Worker must
-  # not carry the retired Archer credential into the new revision.
-  if jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
-      "${TEMP_DIR}/worker.register.json" >/dev/null; then
-    fail "Rendered Worker task definition still references ARCHER_OAUTH_COOKIE"
-    return 1
+  # p2-152: the Enablement workflow mode owns the Archer credential — manual
+  # renders must not carry it into the new revision, archer renders must.
+  if [[ "${ENABLEMENT_WORKFLOW_MODE}" != "archer" ]]; then
+    if jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
+        "${TEMP_DIR}/worker.register.json" >/dev/null; then
+      fail "Rendered Worker task definition still references ARCHER_OAUTH_COOKIE"
+      return 1
+    fi
+  else
+    jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
+      "${TEMP_DIR}/worker.register.json" >/dev/null \
+      || fail "Rendered Worker task definition is missing ARCHER_OAUTH_COOKIE in archer enablement mode"
   fi
   RETIRED_ARCHER_SECRET_STATUS="passed"
 

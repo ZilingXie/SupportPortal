@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -11,6 +12,7 @@ from backend.services.enablement_automation import (
     customer_visible_enablement_information,
     detect_enablement_route,
     detect_registered_enablement_route,
+    enablement_workflow_mode,
     is_supported_enablement_feature,
     send_enablement_internal_email,
 )
@@ -24,6 +26,35 @@ we enable co host authentication token but pk view not show so please enable med
 
 thanks
 """
+
+
+class EnablementWorkflowModeTests(unittest.TestCase):
+    """ENABLEMENT_WORKFLOW_MODE resolution (p2-152): manual default, archer opt-in."""
+
+    def test_defaults_to_manual_when_unset_or_blank(self) -> None:
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("ENABLEMENT_WORKFLOW_MODE", None)
+                    if value is not None:
+                        os.environ["ENABLEMENT_WORKFLOW_MODE"] = value
+                    self.assertEqual(enablement_workflow_mode(), "manual")
+
+    def test_accepts_manual_and_archer(self) -> None:
+        for value, expected in (
+            ("manual", "manual"),
+            ("archer", "archer"),
+            (" Archer ", "archer"),
+            ("MANUAL", "manual"),
+        ):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {"ENABLEMENT_WORKFLOW_MODE": value}):
+                    self.assertEqual(enablement_workflow_mode(), expected)
+
+    def test_unknown_value_fails_closed(self) -> None:
+        with patch.dict(os.environ, {"ENABLEMENT_WORKFLOW_MODE": "auto"}):
+            with self.assertRaises(ValueError):
+                enablement_workflow_mode()
 
 
 class EnablementAutomationTests(unittest.TestCase):

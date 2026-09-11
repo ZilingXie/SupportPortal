@@ -10,6 +10,8 @@ from typing import Any
 from backend.services.account_internal_email_recipients import (
     resolve_account_internal_email_recipients,
 )
+from backend.services.archer_direct_client import DirectArcherClient
+from backend.services.enablement_automation import enablement_workflow_mode
 from backend.services.graph_mail import acquire_graph_access_token, load_graph_mail_config
 from backend.services.ragflow_docs_search_skill import DEFAULT_RAGFLOW_BASE_URL
 from backend.services.zendesk_comments import zendesk_basic_auth_header
@@ -20,6 +22,9 @@ _RAGFLOW_DATASET_IDS = (
     "c2eaf30463e511f18586e7085c4194fc",
     "d3d8e64e63ea11f18586e7085c4194fc",
 )
+# A syntactically valid App ID that matches no real project; the Archer read
+# probe only needs the API to answer, not to find anything.
+_SYNTHETIC_MISSING_APP_ID = "00000000000000000000000000000000"
 
 
 def _read_json(url: str, *, headers: dict[str, str], timeout: float = 15.0) -> dict[str, Any]:
@@ -77,8 +82,20 @@ def _probe_ragflow() -> None:
         raise RuntimeError("RAGFlow read probe failed")
 
 
+def _probe_archer_read() -> None:
+    payload = DirectArcherClient().call(
+        "GET", f"/api/v2/check-simple-vendor?keywords={_SYNTHETIC_MISSING_APP_ID}"
+    )
+    if not isinstance(payload, (dict, list)):
+        raise RuntimeError("Archer read probe failed")
+
+
 def run_probe() -> dict[str, Any]:
     _probe_ragflow()
+
+    archer_probe_required = enablement_workflow_mode() == "archer"
+    if archer_probe_required:
+        _probe_archer_read()
 
     graph_token = acquire_graph_access_token(load_graph_mail_config())
     graph_payload = _read_json(
@@ -109,6 +126,7 @@ def run_probe() -> dict[str, Any]:
         "rag_health_ok": True,
         "graph_me_ok": True,
         "zendesk_identity_ok": True,
+        **({"archer_read_get_ok": True} if archer_probe_required else {}),
         "recipients": recipients,
     }
 
