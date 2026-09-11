@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T17:57:39Z",
-  "source_base_commit": "f61620a9211f3babe9a3d4b0ffd0bf0aae507190",
-  "registry_digest": "fd4fa13a12909799cdc9a2a8cb30608d110412be9ec47771df3f80b788fcbee4",
+  "generated_at": "2026-09-11T17:58:10Z",
+  "source_base_commit": "8dd442a378a394e80edab73795c218b7f636f3f2",
+  "registry_digest": "9a06e17ff6340c35c33e811a46e56959eb0bc06c314316af5ca9f5be6c7939f0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12033,7 +12033,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-12",
       "updated_at": "2026-09-12",
       "summary": "ECS Admin 控制台新增 Release Notes tab（导航位于 Automated Cases 正下方，仅 ECS 两环境显示，本地 /workspace/admin 不显示）：deploy 管线在 activation 阶段通过后自动向环境库新表 support_release_notes 写权威发布记录（release_id/git_commit/build_time/prompt_release_id/三角色 image digests/自动 PR 变更列表=git log 上一 release..HEAD 的 squash 标题/部署时间，同 release_id 幂等 upsert），admin 只读 API /admin/api/release-notes 与 UI 懒加载渲染。新表走 ticket_storage.sql + repository initialize + ACCOUNT_RUNTIME_TABLES 幂等 bootstrap；deploy 增加 release_note 阶段（写入失败 fail-closed，且加 DEPLOY_COMPLETE 回滚护栏+activation 后统一置位 ACTIVATION_STARTED，避免部署完成后失败误回滚健康服务）。",
-      "next_action": "代码+测试已完成；定向测试通过后 finalize 合入并部署 Preproduction（--bootstrap-account-schema 建 DDL + 已 active prompt release 需 --resume 两段式），线上验收 tab 与首条自动写入的发布记录。",
+      "next_action": "DDL 漂移修复（zendesk deliveries source_check 内联缺 hermes，#1144 只改了 ticket_storage.sql）已实施；重跑管线从新 SHA 发布 Preproduction 并验收。",
       "acceptance_criteria": [
         "Preproduction admin 导航在 Automated Cases 下方出现 Release Notes（本地 /workspace/admin 无此 tab）。",
         "部署完成后 /automation/preproduction/admin/api/release-notes 返回本次 release 自动写入的记录：release_id 与运行版本一致、三角色 digest 齐全、changes 为上一 release 以来的 PR 标题列表。",
@@ -12054,6 +12054,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-12",
           "event": "created",
           "summary": "用户要求 admin 页面增加 release note tab（Automated Cases 下方）并协助规划；方案定为发布时 deploy 工具自动落库（用户拍板），仅 ECS 两环境显示。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "blocked_then_fixed",
+          "summary": "首次部署（f61620a9）在 schema bootstrap 失败：initialize() 内联 source_check 只含 account/engineer，preproduction 已有 p2-148 Hermes 审阅写入的 source='hermes' 行；对齐 ticket_storage.sql 增加 hermes 并加双源一致性回归测试。"
         }
       ],
       "legacy_ids": [],
