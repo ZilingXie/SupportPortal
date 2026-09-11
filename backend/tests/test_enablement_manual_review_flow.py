@@ -1072,4 +1072,3 @@ class Round4OwnershipRecoveryTests(unittest.TestCase):
         self.assertEqual(counts["still_gated"], 25)
         stored = repository.get_account_case("AC-READY")
         self.assertEqual(stored["internal_email_send_status"], "pending")
-

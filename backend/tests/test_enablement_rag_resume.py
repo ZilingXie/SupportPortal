@@ -56,6 +56,7 @@ class EnablementRagResumeTest(TestCase):
         self.repo.get_account_case.side_effect = lambda _: deepcopy(self.case)
         self.repo.get_ticket.side_effect = lambda _: deepcopy(self.ticket)
         self.repo.save_account_case.side_effect = self.save_case
+        self.repo.prepare_account_internal_email_delivery.return_value = True
         self.repo.save_ticket.side_effect = self.save_ticket
         self.repo.begin_idempotent_request.side_effect = self.claim
         self.repo.complete_idempotent_request.side_effect = self.complete
@@ -65,8 +66,9 @@ class EnablementRagResumeTest(TestCase):
                                              notify_account_failure(**kw, mail_sender=self.mail)))
         self.stack.enter_context(patch.object(reply, "_apply_ownership_gate", return_value=True))
         self.extract = self.stack.enter_context(patch.object(intake, "extract_enablement_fields", side_effect=self.extract_fields))
-        self.archer = self.stack.enter_context(patch.object(intake, "execute_enablement_archer", side_effect=lambda app_id:
-            NS(outcome="enabled" if len(app_id) == 32 else "appid_invalid", detail="synthetic")))
+        self.archer = self.stack.enter_context(patch(
+            "backend.services.enablement_archer_executor.execute_enablement_archer",
+            side_effect=AssertionError("manual enablement must not call Archer")))
         self.rag = self.stack.enter_context(patch.object(reply, "try_rag_fallback_answer",
             return_value=NS(kind="answer", answer="Read the project settings.", references=("https://docs.agora.io",))))
         self.create = self.stack.enter_context(patch.object(reply, "_create_reply_job", side_effect=self.create_job))
@@ -121,21 +123,25 @@ class EnablementRagResumeTest(TestCase):
         self.assertEqual(self.case["execution_action"], "enablement")
         self.assertEqual(self.case["collected_fields"], self.fields)
         self.turn("try: " + "a" * 33)
-        self.assertEqual(self.case["automation_context"]["enablement_archer"]["outcome"], "appid_invalid")
+        self.assertEqual(self.case["internal_email_send_reason"], "appid_invalid_format")
         for question in ("Where can I find it?", "Which project settings?"):
             self.turn(question, "rag")
             self.assertEqual(self.case["route_classification"]["handler_binding_status"], "active")
             self.assertEqual(self.case["automation_context"]["zendesk_ownership"]["source_group_id"], "original-group")
         self.turn("try: " + "b" * 32, comment_id="corrected")
-        self.assertEqual([c.args[0] for c in self.archer.call_args_list], ["a" * 33, "b" * 32])
+        self.archer.assert_not_called()
         context = self.extract.call_args.kwargs["automation_context"]
         self.assertEqual(context["evidence_message_ids"], [context["current_message_id"]])
         self.assertEqual(len(context["conversation"]), 7)
         self.assertNotIn("app_id", self.extract.call_args.kwargs["existing_fields"])
-        self.assertEqual(self.case["route_classification"]["handler_binding_status"], "completed")
+        self.assertEqual(self.case["route_classification"]["handler_binding_status"], "active")
+        self.assertEqual(self.case["internal_email_send_status"], "awaiting_public_reply")
+        self.assertEqual(self.jobs[-1]["reply_intent"], "submission_confirmation")
         self.assertEqual(self.rag.call_count, 3)
+        job_count = len(self.jobs)
         self.turn("try: " + "b" * 32, comment_id="corrected")
-        self.assertEqual(self.archer.call_count, 2)
+        self.assertEqual(len(self.jobs), job_count)
+        self.archer.assert_not_called()
         self.mail.assert_not_called()
         self.assertEqual(self.jobs[0]["reply_intent"], "rag_fallback_answer")
         diagnostic = self.case["route_classification"]["field_extraction"]
@@ -237,26 +243,40 @@ class EnablementRagResumeTest(TestCase):
         self.archer.assert_not_called()
         self.assertEqual(self.jobs, [])
 
-    def test_project_not_found_then_direct_replacement(self):
-        self.archer.side_effect = [NS(outcome="project_not_found", detail="not found"),
-                                   NS(outcome="enabled", detail="enabled")]
+    def test_valid_app_id_waits_for_review_without_project_lookup(self):
         self.turn("try: " + "a" * 32)
-        self.turn("try: " + "b" * 32)
-        self.assertEqual(self.archer.call_count, 2)
+        self.archer.assert_not_called()
         context = self.extract.call_args.kwargs["automation_context"]
         self.assertEqual(context["evidence_message_ids"], [context["current_message_id"]])
-        self.assertEqual(len(context["conversation"]), 4)
-        self.assertEqual(self.case["route_classification"]["handler_binding_status"], "completed")
+        self.assertEqual(len(context["conversation"]), 3)
+        self.assertEqual(self.case["collected_fields"]["app_id"], "a" * 32)
+        self.assertEqual(self.case["route_classification"]["handler_binding_status"], "active")
+        self.assertEqual(self.case["internal_email_send_status"], "awaiting_public_reply")
+        self.assertEqual(self.jobs[-1]["reply_intent"], "submission_confirmation")
         self.rag.assert_not_called()
 
     def test_replacement_can_still_be_invalid(self):
         self.turn("try: " + "a" * 33)
         self.turn("Where is it?", "rag")
         self.turn("try: " + "b" * 33)
-        self.assertEqual(self.case["automation_context"]["enablement_archer"]["outcome"], "appid_invalid")
+        self.assertEqual(self.case["internal_email_send_reason"], "appid_invalid_format")
         self.assertEqual(self.case["missing_fields"], ["app_id"])
-        self.assertEqual(self.archer.call_count, 2)
+        self.archer.assert_not_called()
         self.mail.assert_not_called()
+
+    def test_legacy_rejected_app_id_resumes_into_manual_review(self):
+        self.case["automation_context"]["enablement_archer"] = {"outcome": "project_not_found"}
+        self.case["collected_fields"]["app_id"] = "a" * 32
+        self.case["internal_email_send_status"] = "not_applicable"
+        self.case["internal_email_send_reason"] = "archer_project_not_found"
+
+        self.turn("try: " + "b" * 32)
+
+        self.assertNotIn("app_id", self.extract.call_args.kwargs["existing_fields"])
+        self.assertEqual(self.case["collected_fields"]["app_id"], "b" * 32)
+        self.assertEqual(self.case["internal_email_send_status"], "awaiting_public_reply")
+        self.assertEqual(self.jobs[-1]["reply_intent"], "submission_confirmation")
+        self.archer.assert_not_called()
 
     def test_completed_enablement_is_not_retained_by_rag(self):
         self.case["route_classification"]["handler_binding_status"] = "completed"
@@ -291,23 +311,22 @@ class EnablementRagResumeTest(TestCase):
         self.archer.assert_not_called()
         self.mail.assert_called_once()
 
-    def test_comment_entry_archer_failure_alerts_owner_and_sends_internal_email(self):
-        # 13386 regression on the customer-comment entry: an Archer enable_failed
-        # outcome must alert the owner and deliver the internal fallback email
-        # once through the real prepare/claim/complete protocol.
-        self.archer.side_effect = lambda app_id: NS(outcome="enable_failed", detail="synthetic archer failure")
+    def test_comment_entry_gates_internal_email_until_public_confirmation(self):
         internal_emails = []
         self.stack.enter_context(patch.object(
             intake, "send_enablement_internal_email",
             side_effect=lambda payload: internal_emails.append(payload) or {"status": "sent", "reason": ""}))
 
-        outcome = self.turn("try: " + "c" * 32, comment_id="archer-failed")
+        outcome = self.turn("try: " + "c" * 32, comment_id="manual-review")
 
-        self.assertEqual(self.mail.call_count, 1)
-        self.assertEqual(self.mail.call_args.kwargs["to_address"], "xieziling@agora.io")
-        self.assertIn("archer_enable_failed", self.mail.call_args.kwargs["body"])
-        self.assertEqual(len(internal_emails), 1)
-        self.assertEqual(internal_emails[0]["delivery_key"], "enablement:test-case:v1")
-        self.assertEqual(outcome["automation_status"], "human_review_required")
-        self.assertEqual(outcome["execution_reason_code"], "archer_enable_failed")
-        self.assertEqual(outcome["internal_email_send_status"], "sent")
+        self.mail.assert_not_called()
+        self.archer.assert_not_called()
+        self.assertEqual(internal_emails, [])
+        self.assertEqual(outcome["automation_status"], "automation")
+        self.assertEqual(outcome["internal_email_send_status"], "awaiting_public_reply")
+        self.assertEqual(outcome["internal_email_payload"]["delivery_key"], "enablement:test-case:v1")
+        workflow = outcome["automation_context"]["enablement_manual_workflow"]
+        self.assertEqual(workflow["reply_job_id"], "job-1")
+        self.assertEqual(self.jobs[0]["reply_intent"], "submission_confirmation")
+        prepared = self.repo.prepare_account_internal_email_delivery.call_args.kwargs
+        self.assertEqual(prepared["target_status"], "awaiting_public_reply")
