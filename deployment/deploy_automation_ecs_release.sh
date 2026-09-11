@@ -751,6 +751,11 @@ read_secret_value() {
   fi
 }
 
+run_release_prompt_cli() {
+  (cd -- "${RELEASE_SOURCE_ROOT}" && \
+    "${PYTHON_BIN}" -m backend.scripts.prompt_release "$@")
+}
+
 render_role_task_definition() {
   local role="$1" current_path="$2" output_path="$3"
   local -a args
@@ -1343,7 +1348,7 @@ main() {
   terraform_pid=$!
   (
     TICKET_DB_DSN="${TICKET_DB_DSN:-}" TICKET_DB_SCHEMA="${TICKET_DB_SCHEMA:-supportportal}" \
-      "${PYTHON_BIN}" -m backend.scripts.prompt_release validate --release-id "${PROMPT_RELEASE_ID}" \
+      run_release_prompt_cli validate --release-id "${PROMPT_RELEASE_ID}" \
       >"${TEMP_DIR}/source-prompt.json"
   ) 2>/dev/null &
   prompt_pid=$!
@@ -1491,7 +1496,7 @@ main() {
     verify_aws_mutation_ready
     PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
       PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
-      "${PYTHON_BIN}" -m backend.scripts.prompt_release sync \
+      run_release_prompt_cli sync \
         --release-id "${PROMPT_RELEASE_ID}" --defer-activation \
         >"${TEMP_DIR}/prompt-sync.json" 2>/dev/null \
       || fail "Target Prompt Release sync failed"
@@ -1501,7 +1506,7 @@ main() {
     || fail "Target Prompt Release is not deployable"
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
     TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
-    "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
+    run_release_prompt_cli validate \
       --release-id "${PROMPT_RELEASE_ID}" >/dev/null 2>&1
   log "Target Prompt Release activation preflight passed without schema initialization"
   if [[ "${PROMPT_SYNC_STATUS}" = "active" ]]; then
@@ -1567,7 +1572,7 @@ main() {
     ACTIVATION_STARTED=1
     TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
       TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
-      "${PYTHON_BIN}" -m backend.scripts.prompt_release activate \
+      run_release_prompt_cli activate \
         --release-id "${PROMPT_RELEASE_ID}" >"${TEMP_DIR}/prompt-activate.json" 2>/dev/null \
       || fail "Target Prompt Release activation result is unknown; reconciliation required"
     [[ "$(jq -r '.release.status' "${TEMP_DIR}/prompt-activate.json")" = "active" ]] \
@@ -1575,7 +1580,7 @@ main() {
   fi
   TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
     TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
-    "${PYTHON_BIN}" -m backend.scripts.prompt_release validate \
+    run_release_prompt_cli validate \
       --release-id "${PROMPT_RELEASE_ID}" >/dev/null 2>&1
   PROMPT_SYNC_STATUS="active"
   PROMPT_ACTIVATION_STATUS="active"

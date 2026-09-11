@@ -1063,6 +1063,9 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "--target-dsn" not in script
     assert "PROMPT_RELEASE_TARGET_DSN=" in script
     assert '[[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"' in script
+    assert '(cd -- "${RELEASE_SOURCE_ROOT}"' in script
+    assert main_script.count("run_release_prompt_cli") == 5
+    assert "backend.scripts.prompt_release" not in main_script
     assert 'mkdir -p -- "${PROJECT_ROOT}/.deployments"' in script
     assert "validate-suspension-recipients" in script
     assert main_script.index("validate-suspension-recipients") < main_script.index(
@@ -1107,7 +1110,7 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     ) in script
     assert '--log-stream-name-prefix "${role}/${role}/"' in script
     check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
-    prompt_sync = main_script.index("backend.scripts.prompt_release sync")
+    prompt_sync = main_script.index("run_release_prompt_cli sync")
     schema_bootstrap = main_script.index("run_schema_bootstrap")
     assert "schema_is_current" in script
     assert 'SCHEMA_BOOTSTRAP_STATUS="skipped_current"' in script
