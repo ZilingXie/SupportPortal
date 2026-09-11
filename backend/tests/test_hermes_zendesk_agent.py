@@ -364,12 +364,20 @@ class TestAgentTurnProcessor:
         store.start_hermes_turn_run(handoff["turn_id"], "route", run_id="run-old")
         store.complete_hermes_turn_run(handoff["turn_id"], "route", output={"done": True})
         store.record_hermes_turn_direction(handoff["turn_id"], direction="investigation", route=None)
-        client = FakeHermesClient()
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.endswith(":work"):
+                tool_save_investigation_progress(
+                    store, None, turn_id=handoff["turn_id"],
+                    summary="Recovered investigation.", evidence=[], blockers=[], next_steps=[],
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
         outcome = self._processor(store, client).process(agent_job)
-        assert outcome["status"] == "completed"
+        assert outcome["status"] == "awaiting_investigation_review"
+        # the completed route row is skipped; work runs once and the turn parks
         assert [s["idempotency_key"] for s in client.submissions] == [
             f"hmreq:{handoff['turn_id']}:work",
-            f"hmreq:{handoff['turn_id']}:persona",
         ]
 
     def test_submission_rejection_fails_turn(self) -> None:
@@ -442,12 +450,23 @@ class TestAgentTurnProcessor:
 
         def on_run_completed(run_id, idempotency_key):
             phase = idempotency_key.rsplit(":", 1)[-1]
+            turn_id = idempotency_key.split(":")[1]
             if phase == "route":
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="investigation", route=None
                 )
+            elif phase == "work":
+                tool_save_investigation_progress(
+                    store,
+                    None,
+                    turn_id=handoff["turn_id"],
+                    summary="Reproduced the relay enablement failure.",
+                    evidence=[],
+                    blockers=[],
+                    next_steps=[],
+                )
             elif phase == "persona":
-                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                store._hermes_turns[turn_id]["phase"] = "persona"
                 with patch(
                     "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
                     side_effect=lambda *a, **k: {
@@ -458,22 +477,35 @@ class TestAgentTurnProcessor:
                     tool_save_reply_draft(
                         store,
                         None,
-                        turn_id=handoff["turn_id"],
+                        turn_id=turn_id,
                         content="Please share your device model and OS version.",
                         basis={},
                     )
 
         client = FakeHermesClient(on_run_completed=on_run_completed)
         outcome = self._processor(store, client).process(agent_job)
-        assert outcome["status"] == "completed"
-        assert outcome["publication"]["status"] == "awaiting_approval"
-        assert outcome["publication"]["queued"] is False
+        assert outcome["status"] == "awaiting_investigation_review"
+        created = store.create_investigation_reply_turn(
+            "123", source_turn_id=handoff["turn_id"], base_event={}
+        )
+        reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+        reply_outcome = self._processor(store, client).process(reply_job)
+        assert reply_outcome["status"] == "completed"
+        assert reply_outcome["publication"]["status"] == "awaiting_approval"
+        assert reply_outcome["publication"]["queued"] is False
         drafts = store.get_hermes_case_review("123")["drafts"]
         assert len(drafts) == 1
         assert drafts[0]["status"] == "awaiting_approval"
         assert drafts[0]["case_revision"] == 1
-        # the producing turn's completion must not stale its own promoted draft
+        # the producing turns' completions must not stale their own promoted draft
         assert store.get_hermes_turn(handoff["turn_id"])["status"] == "completed"
+        assert store.get_hermes_turn(created["turn_id"])["status"] == "completed"
+        # the continue stamp makes a second click a conflict
+        with pytest.raises(HermesTurnConflictError):
+            store.create_investigation_reply_turn(
+                "123", source_turn_id=handoff["turn_id"], base_event={}
+            )
 
     def test_publication_gate_blocked_guardrail_parks_turn_in_human_review(self) -> None:
         store = _store()
@@ -510,6 +542,7 @@ class TestAgentTurnProcessor:
 
         def on_run_completed(run_id, idempotency_key):
             phase = idempotency_key.rsplit(":", 1)[-1]
+            turn_id = idempotency_key.split(":")[1]
             if phase == "route":
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="investigation", route=None
@@ -517,6 +550,7 @@ class TestAgentTurnProcessor:
                 store.record_hermes_case_direction(
                     handoff["turn_id"], direction="investigation", reason="technical"
                 )
+            elif phase == "work":
                 tool_save_investigation_progress(
                     store,
                     None,
@@ -527,7 +561,7 @@ class TestAgentTurnProcessor:
                     next_steps=["ask customer for app id"],
                 )
             elif phase == "persona":
-                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                store._hermes_turns[turn_id]["phase"] = "persona"
                 with patch(
                     "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
                     side_effect=lambda *a, **k: {
@@ -536,17 +570,37 @@ class TestAgentTurnProcessor:
                     },
                 ):
                     tool_save_reply_draft(
-                        store, None, turn_id=handoff["turn_id"], content="Draft", basis={}
+                        store, None, turn_id=turn_id, content="Draft", basis={}
                     )
 
         client = FakeHermesClient(on_run_completed=on_run_completed)
         with patch(
+            "backend.services.engineer_slack.notify_hermes_investigation_result",
+            return_value={"status": "delivered", "slack_message_ts": "1.0"},
+        ) as notify_result, patch(
             "backend.services.engineer_slack.notify_hermes_review_pending",
             return_value={"root": {"slack_message_ts": "1.1"}, "thread": {"slack_message_ts": "1.2"}},
         ) as notify:
             outcome = self._processor(store, client).process(agent_job)
-        assert outcome["status"] == "completed"
-        assert outcome["publication"]["status"] == "awaiting_approval"
+            assert outcome["status"] == "awaiting_investigation_review"
+            created = store.create_investigation_reply_turn(
+                "123", source_turn_id=handoff["turn_id"], base_event={}
+            )
+            reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+            assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+            reply_outcome = self._processor(store, client).process(reply_job)
+        assert reply_outcome["status"] == "completed"
+        assert reply_outcome["publication"]["status"] == "awaiting_approval"
+        # investigation-result summons fired when the turn parked for review
+        notify_result.assert_called_once()
+        result_kwargs = notify_result.call_args.kwargs
+        assert result_kwargs["ticket_id"] == "123"
+        assert result_kwargs["turn_id"] == handoff["turn_id"]
+        assert result_kwargs["environment"] == "preproduction"
+        assert result_kwargs["title"] == "Enable Media Relay"
+        assert result_kwargs["question"] == "Please enable Media Relay for app 123."
+        assert result_kwargs["route_result"] == "investigation"
+        assert result_kwargs["investigation"]["summary"].startswith("Reproduced")
         notify.assert_called_once()
         kwargs = notify.call_args.kwargs
         assert kwargs["draft"]["zendesk_ticket_id"] == "123"
@@ -563,12 +617,23 @@ class TestAgentTurnProcessor:
 
         def on_run_completed(run_id, idempotency_key):
             phase = idempotency_key.rsplit(":", 1)[-1]
+            turn_id = idempotency_key.split(":")[1]
             if phase == "route":
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="investigation", route=None
                 )
+            elif phase == "work":
+                tool_save_investigation_progress(
+                    store,
+                    None,
+                    turn_id=handoff["turn_id"],
+                    summary="Investigated.",
+                    evidence=[],
+                    blockers=[],
+                    next_steps=[],
+                )
             elif phase == "persona":
-                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                store._hermes_turns[turn_id]["phase"] = "persona"
                 with patch(
                     "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
                     side_effect=lambda *a, **k: {
@@ -577,17 +642,28 @@ class TestAgentTurnProcessor:
                     },
                 ):
                     tool_save_reply_draft(
-                        store, None, turn_id=handoff["turn_id"], content="Draft", basis={}
+                        store, None, turn_id=turn_id, content="Draft", basis={}
                     )
 
         client = FakeHermesClient(on_run_completed=on_run_completed)
         with patch(
+            "backend.services.engineer_slack.notify_hermes_investigation_result",
+            side_effect=RuntimeError("slack down"),
+        ), patch(
             "backend.services.engineer_slack.notify_hermes_review_pending",
             side_effect=RuntimeError("slack down"),
         ):
             outcome = self._processor(store, client).process(agent_job)
-        assert outcome["status"] == "completed"
+            assert outcome["status"] == "awaiting_investigation_review"
+            created = store.create_investigation_reply_turn(
+                "123", source_turn_id=handoff["turn_id"], base_event={}
+            )
+            reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+            assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+            reply_outcome = self._processor(store, client).process(reply_job)
+        assert reply_outcome["status"] == "completed"
         assert store.get_hermes_turn(handoff["turn_id"])["status"] == "completed"
+        assert store.get_hermes_turn(created["turn_id"])["status"] == "completed"
         drafts = store.get_hermes_case_review("123")["drafts"]
         assert drafts and drafts[0]["status"] == "awaiting_approval"
 
@@ -608,6 +684,237 @@ class TestAgentTurnProcessor:
             outcome = self._processor(store, client).process(agent_job)
         assert outcome["status"] == "completed"
         notify.assert_not_called()
+
+
+class TestInvestigationReviewGate:
+    """v1 investigation flow: park after work, continue from the dashboard."""
+
+    def _processor(self, store, client, **kwargs):
+        return HermesAgentTurnProcessor(
+            store, client=client, environment="preproduction", repository=None,
+            poll_interval_seconds=0.01, **kwargs,
+        )
+
+    def _hand_off_claim(self, store, event):
+        receipt = store.accept_intake(event, _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert job is not None and job.execution_id == receipt.execution_id
+        handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert agent_job is not None
+        return handoff, agent_job
+
+    def _investigation_client(self, store, handoff_turn_id: str) -> FakeHermesClient:
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff_turn_id, direction="investigation", route=None
+                )
+            elif phase == "work":
+                tool_save_investigation_progress(
+                    store,
+                    None,
+                    turn_id=handoff_turn_id,
+                    summary="Checked project config and memory.",
+                    evidence=[{"source": "case context", "detail": "app id present"}],
+                    blockers=[],
+                    next_steps=["draft reply"],
+                )
+
+        return FakeHermesClient(on_run_completed=on_run_completed)
+
+    def test_investigation_turn_parks_after_work_without_persona(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_investigation_result",
+            return_value={"status": "delivered"},
+        ) as notify_result:
+            outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "awaiting_investigation_review"
+        assert outcome["case_revision"] == 1
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["status"] == "completed"
+        assert turn["result"]["status"] == "awaiting_investigation_review"
+        # no persona run, no draft
+        assert [s["idempotency_key"] for s in client.submissions] == [
+            f"hmreq:{handoff['turn_id']}:route",
+            f"hmreq:{handoff['turn_id']}:work",
+        ]
+        assert store.get_hermes_case_review("123")["drafts"] == []
+        notify_result.assert_called_once()
+        assert notify_result.call_args.kwargs["turn_id"] == handoff["turn_id"]
+
+    def test_investigation_work_run_loads_context_and_memory_toolsets(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        work_submission = next(
+            s for s in client.submissions if s["idempotency_key"].endswith(":work")
+        )
+        assert work_submission["enabled_toolsets"] == [
+            "supportportal_work",
+            "common",
+            "memory",
+        ]
+        # automation-direction work runs keep the plain work toolset
+        automation_store = _store()
+        automation_handoff, automation_job = self._hand_off_claim(automation_store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.endswith(":route"):
+                automation_store.record_hermes_turn_direction(
+                    automation_handoff["turn_id"], direction="automation", route="enablement"
+                )
+
+        automation_client = FakeHermesClient(on_run_completed=on_run_completed)
+        self._processor(automation_store, automation_client).process(automation_job)
+        automation_work = next(
+            s for s in automation_client.submissions if s["idempotency_key"].endswith(":work")
+        )
+        assert automation_work["enabled_toolsets"] == ["supportportal_work"]
+
+    def test_work_without_investigation_result_parks_human_review(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.endswith(":route"):
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="investigation", route=None
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["error_code"] == "missing_investigation_result"
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "failed"
+
+    def test_stale_investigation_record_from_older_turn_parks_human_review(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        # a first turn records an investigation, then a newer comment supersedes it;
+        # the replacement turn's work run finishes without a fresh record
+        first_client = self._investigation_client(store, handoff["turn_id"])
+        first_outcome = self._processor(store, first_client).process(agent_job)
+        assert first_outcome["status"] == "awaiting_investigation_review"
+        second = _accept_and_hand_off(
+            store, _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED)
+        )
+        second_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert second_job is not None and second_job.payload["turn_id"] == second["turn_id"]
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    second["turn_id"], direction="investigation", route=None
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        outcome = self._processor(store, client).process(second_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["error_code"] == "missing_investigation_result"
+
+    def test_continue_requires_current_revision(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        _accept_and_hand_off(
+            store, _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED)
+        )
+        with pytest.raises(HermesTurnStateError, match="stale_case_revision"):
+            store.create_investigation_reply_turn(
+                "123", source_turn_id=handoff["turn_id"], base_event={}
+            )
+
+    def test_continue_rejects_turn_not_awaiting_review(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        automation_client = FakeHermesClient()
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.endswith(":route"):
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="human", route=None
+                )
+
+        automation_client = FakeHermesClient(on_run_completed=on_run_completed)
+        self._processor(store, automation_client).process(agent_job)
+        with pytest.raises(HermesTurnStateError, match="not awaiting investigation review"):
+            store.create_investigation_reply_turn(
+                "123", source_turn_id=handoff["turn_id"], base_event={}
+            )
+
+    def test_continue_reply_turn_runs_persona_only_and_reuses_session(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        created = store.create_investigation_reply_turn(
+            "123", source_turn_id=handoff["turn_id"], base_event={}
+        )
+        assert created["phase"] == "persona"
+        binding = store.get_hermes_case_binding("123")
+
+        def on_reply_run_completed(run_id, idempotency_key):
+            turn_id = idempotency_key.split(":")[1]
+            store._hermes_turns[turn_id]["phase"] = "persona"
+            with patch(
+                "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                side_effect=lambda *a, **k: {
+                    "decision": "approved_for_final_engineer_review",
+                    "blockers": [],
+                },
+            ):
+                tool_save_reply_draft(
+                    store, None, turn_id=turn_id, content="We reproduced the issue.", basis={}
+                )
+
+        reply_client = FakeHermesClient(on_run_completed=on_reply_run_completed)
+        reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_review_pending",
+            return_value={"root": {"slack_message_ts": "2.1"}, "thread": {"slack_message_ts": "2.2"}},
+        ):
+            outcome = self._processor(store, reply_client).process(reply_job)
+        assert outcome["status"] == "completed"
+        assert outcome["publication"]["status"] == "awaiting_approval"
+        # persona-only: one submission, same case session + workspace, persona toolset
+        assert [s["idempotency_key"] for s in reply_client.submissions] == [
+            f"hmreq:{created['turn_id']}:persona"
+        ]
+        submission = reply_client.submissions[0]
+        assert submission["session_id"] == binding["hermes_session_id"]
+        assert submission["workspace_key"] == "supportportal_automation-preproduction_123"
+        assert submission["enabled_toolsets"] == ["supportportal_persona"]
+        # a new customer comment while the reply turn is parked supersedes the draft path
+        assert store.get_hermes_turn(created["turn_id"])["status"] == "completed"
+
+    def test_feedback_turn_job_payload_is_contract_valid(self) -> None:
+        from backend.services.automation_ecs_contracts import AgentTurnJobPayload
+
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        created = store.create_investigation_feedback_turn(
+            "123", feedback="Tighten the summary.", base_event={}
+        )
+        job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert job is not None and job.payload["turn_id"] == created["turn_id"]
+        payload = AgentTurnJobPayload.model_validate(job.payload)
+        assert payload.event.event_type == "investigation_feedback"
+        assert payload.event.ticket.id == "123"
 
 
 class TestExpiryRecovery:

@@ -222,3 +222,50 @@ class TestPostgresWorkerOutcome:
         turn = store.get_hermes_turn(handoff["turn_id"])
         assert turn["status"] == "failed"
         assert isinstance(turn["input_snapshot"]["turns"][0]["created_at"], str)
+
+
+class TestPostgresInvestigationContinue:
+    def test_investigation_stamp_and_reply_turn_continuation(self, store) -> None:
+        from backend.services.automation_ecs_contracts import AgentTurnJobPayload
+
+        handoff = _hand_off(store, _event("zendesk:ticket:123:created"))
+        turn_id = handoff["turn_id"]
+        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert agent_job is not None and agent_job.payload["turn_id"] == turn_id
+        store.start_hermes_agent_turn(turn_id, run_id=None)
+        store.record_hermes_turn_direction(turn_id, direction="investigation", route=None)
+        binding = store.save_hermes_investigation(
+            turn_id,
+            summary="Reproduced with project config.",
+            evidence=[{"source": "memory", "detail": "known issue"}],
+            blockers=[],
+            next_steps=["draft reply"],
+        )
+        assert binding["investigation"]["recorded_turn_id"] == turn_id
+        store.complete_hermes_agent_turn(
+            turn_id,
+            result={
+                "engine": "hermes",
+                "turn_id": turn_id,
+                "status": "awaiting_investigation_review",
+                "case_revision": 1,
+            },
+        )
+        created = store.create_investigation_reply_turn(
+            "123", source_turn_id=turn_id, base_event={}
+        )
+        assert created["phase"] == "persona" and created["case_revision"] == 1
+        source = store.get_hermes_turn(turn_id)
+        assert source["result"]["continued_turn_id"] == created["turn_id"]
+        reply_turn = store.get_hermes_turn(created["turn_id"])
+        assert reply_turn["turn_kind"] == "investigation_reply"
+        assert reply_turn["direction"] == "investigation"
+        assert reply_turn["status"] == "pending"
+        reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+        payload = AgentTurnJobPayload.model_validate(reply_job.payload)
+        assert payload.event.event_type == "investigation_reply"
+        assert payload.event.ticket.id == "123"
+        # second continue conflicts via the stamped result
+        with pytest.raises(HermesTurnConflictError):
+            store.create_investigation_reply_turn("123", source_turn_id=turn_id, base_event={})

@@ -917,3 +917,151 @@ def test_agent_tool_save_reply_draft_derives_publish_policy_server_side() -> Non
     assert all(draft["publish_policy"] == "manual" for draft in drafts)
     assert all(draft["status"] == "draft" for draft in drafts)
     assert all(not draft.get("delivery_message_id") for draft in drafts)
+
+
+def _park_investigation_turn(store: InMemoryAutomationEcsStore, *, blockers: list[str] | None = None) -> str:
+    store.accept_intake(_event(), store.settings.provenance())
+    job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=30)
+    assert job is not None
+    turn_id = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")["turn_id"]
+    # the worker claimed the original agent-turn job before driving the turn
+    claimed = store.claim_job(JobKind.AGENT_TURN, worker_id="route-1", lease_seconds=30)
+    assert claimed is not None and claimed.payload["turn_id"] == turn_id
+    store.start_hermes_agent_turn(turn_id, run_id=None)
+    store.record_hermes_turn_direction(turn_id, direction="investigation", route=None)
+    store.save_hermes_investigation(
+        turn_id,
+        summary="Reproduced the failure with the project config.",
+        evidence=[{"source": "memory", "detail": "known regression"}],
+        blockers=list(blockers or []),
+        next_steps=["ask for sdk version"],
+    )
+    store.complete_hermes_agent_turn(
+        turn_id,
+        result={
+            "engine": "hermes",
+            "turn_id": turn_id,
+            "status": "awaiting_investigation_review",
+            "case_revision": 1,
+        },
+    )
+    return turn_id
+
+
+def _preproduction_dashboard_client(store: InMemoryAutomationEcsStore) -> TestClient:
+    client = TestClient(
+        create_app(
+            settings=_preproduction_settings(),
+            store=store,
+            dashboard_auth=DashboardAuthConfig(
+                session_secret="test-session-secret-that-is-long-enough"
+            ),
+        ),
+        base_url="https://supportcenter.stellarix.space",
+    )
+    return client
+
+
+def test_continue_hermes_investigation_creates_reply_turn_with_gates() -> None:
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    turn_id = _park_investigation_turn(store)
+    client = _preproduction_dashboard_client(store)
+    with client:
+        assert (
+            client.get("/automation/preproduction/dashboard/api/cases/123/hermes-review").status_code
+            == 401
+        )
+        login = client.post(
+            "/automation/preproduction/dashboard/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert login.status_code == 200, login.text
+        path = "/automation/preproduction/dashboard/api/cases/123/hermes-review/investigation/continue"
+
+        continued = client.post(path)
+        assert continued.status_code == 200, continued.text
+        body = continued.json()
+        assert body["continued"] is True
+        assert body["source_turn_id"] == turn_id
+        assert body["reply_turn_id"]
+        assert body["case_revision"] == 1
+
+        # idempotency: the source turn is stamped, a second click conflicts
+        again = client.post(path)
+        assert again.status_code == 409
+        assert body["reply_turn_id"] in again.json()["detail"]
+
+        reply_turn = store.get_hermes_turn(body["reply_turn_id"])
+        assert reply_turn["turn_kind"] == "investigation_reply"
+        assert reply_turn["phase"] == "persona"
+        assert reply_turn["status"] == "pending"
+        job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=30)
+        assert job is not None and job.payload["turn_id"] == body["reply_turn_id"]
+
+
+def test_continue_hermes_investigation_rejects_blockers_stale_and_missing_state() -> None:
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    client = _preproduction_dashboard_client(store)
+    with client:
+        login = client.post(
+            "/automation/preproduction/dashboard/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert login.status_code == 200
+        path = "/automation/preproduction/dashboard/api/cases/123/hermes-review/investigation/continue"
+
+        # no hermes case at all
+        assert client.post(path).status_code == 404
+
+        # unresolved blockers refuse the continue
+        blocked_turn = _park_investigation_turn(store, blockers=["missing app id"])
+        blocked = client.post(path)
+        assert blocked.status_code == 422
+        assert "missing app id" in blocked.json()["detail"]
+        # clear blockers by re-saving the investigation without them
+        store.save_hermes_investigation(
+            blocked_turn,
+            summary="Blockers resolved after internal confirmation.",
+            evidence=[],
+            blockers=[],
+            next_steps=[],
+        )
+
+        # a newer customer comment advances the revision: stale continue is refused
+        from backend.services.automation_ecs_contracts import AutomationIntakeEvent, IntakeEventType
+
+        stale_event = AutomationIntakeEvent.model_validate(
+            {
+                "schema_version": "automation-intake-v1",
+                "event_id": "zendesk:ticket:123:comment",
+                "event_type": IntakeEventType.COMMENT_CREATED,
+                "occurred_at": "2026-09-12T10:05:00Z",
+                "ticket": {
+                    "id": "123",
+                    "status": "open",
+                    "subject": "Enable Media Relay",
+                    "description": "Please enable Media Relay for app 123.",
+                    "requester": {"email": "cx@example.com", "name": "Customer"},
+                },
+                "comment_snapshot": {
+                    "source_updated_at": "2026-09-12T10:05:00Z",
+                    "snapshot_complete": True,
+                    "trigger_comment_id": "55",
+                    "comments": [
+                        {
+                            "id": "55",
+                            "public": True,
+                            "author": {"email": "cx@example.com", "role": "end-user"},
+                            "body": "Any update?",
+                            "created_at": "2026-09-12T10:05:00Z",
+                        }
+                    ],
+                },
+            }
+        )
+        store.accept_intake(stale_event, store.settings.provenance())
+        stale = client.post(path)
+        assert stale.status_code == 409
+        assert "stale_case_revision" in stale.json()["detail"]

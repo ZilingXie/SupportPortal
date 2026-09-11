@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T17:44:10Z",
-  "source_base_commit": "f61620a9211f3babe9a3d4b0ffd0bf0aae507190",
-  "registry_digest": "c15733f6b2033fe3940ec8806976427998ba30d37ff98f2aff8a3342ee2f789f",
+  "generated_at": "2026-09-11T17:58:10Z",
+  "source_base_commit": "8dd442a378a394e80edab73795c218b7f636f3f2",
+  "registry_digest": "9a06e17ff6340c35c33e811a46e56959eb0bc06c314316af5ca9f5be6c7939f0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3215,6 +3215,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Hermes agent orchestration + tools + API regression (with new v1 cases)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_automation_ecs_api.py",
+          "details": "111 passed。新增 TestInvestigationReviewGate 八例：investigation turn work 后收口 awaiting_investigation_review 且零 persona 提交、work run toolsets=[supportportal_work,common,memory] 而 automation 方向保持 [supportportal_work]、work 无调查结论或结论为旧 turn 盖章→missing_investigation_result→human_review、continue 的 stale/未-awaiting/已续跑三态拒绝、续跑 turn 仅 persona 单提交且复用主 session+workspace+persona toolset、feedback turn job payload 经 AgentTurnJobPayload 校验（修复既有潜在缺陷：request-changes 链的合成事件此前不满足 AutomationIntakeEvent 契约，processor 领取即抛错，无测试覆盖且 preprod 从未真实走过）；API 两例：continue 端点登录门禁+成功+二次 409+reply turn 契约、404/422 blockers/409 stale_case_revision；改写三例编码旧行为的用例（publication gate/Slack review ping/ping 失败隔离）为两段式（收口→continue→persona）。"
+        },
+        {
+          "type": "test",
+          "label": "Store/worker/route-worker/Slack/contracts/deploy/pipeline regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py",
+          "details": "全绿（与 hermes 三套件合计 253 passed + 3 subtests）。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL real-database integration",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "8 passed（7 既有 + 新增 TestPostgresInvestigationContinue：save_hermes_investigation 盖章 recorded_turn_id、create_investigation_reply_turn 落 investigation_reply/persona/pending turn+AGENT_TURN job、payload 经契约校验、源 turn result.continued_turn_id 盖章与二次 continue 冲突）。零 schema 迁移（新字段均在既有 JSONB 内）。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3557,7 +3575,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 25,
+      "task_count": 26,
       "done_count": 10,
       "blocked_count": 0
     },
@@ -12056,6 +12074,67 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-154",
+      "title": "Preproduction Hermes 调查链 v1（调查→Slack 人审→续跑 persona 审批）",
+      "status": "active",
+      "owner": "codex",
+      "summary": "按用户澄清流程为 Preproduction Hermes investigation 方向落地第一版调查链：修复 work run 工具加载（补 common+memory toolset，恢复 case context 与 TencentDB memory 检索/知识写可见性）；调查回合结束后 turn 结构性收口为 awaiting_investigation_review 并把调查结果（summary/evidence/blockers/next_steps）直达发送到工程师 Slack 频道；人在 dashboard 审阅页点「继续生成客户回复」按钮（前置确定性完备性检查：summary 非空、无未解决 blockers、case_revision 未过期）后创建 investigation_reply turn（仅 persona phase）在同一 session/revision 续跑，走既有草稿 guardrail→manual 审批→Slack review ping→approve→Zendesk 发送链。不做子 Agent（设计 tab #08 的多子任务调查为后续版本）；Slack 原生按钮因 preprod 无交互回调通道列为后续；调查证据源仍限 case context + memory（真实检索源另行规划）。",
+      "next_action": "代码与测试已完成：待 finalize 合并 main 后，本地官方栈重启验证（/health build ref），随后 Preproduction 管线发布（worker+api 镜像、无手册改动无 prompt release 同步）+ 受控重放验收（工具加载可见→Slack 调查结果 delivered→继续按钮→草稿→审批→送达；负路径 stale 409）。",
+      "acceptance_criteria": [
+        "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
+        "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
+        "dashboard 审阅页提供「继续生成客户回复」动作：turn.case_revision 与 mirror 不一致 → 409 stale；调查不完备（summary 空/存在未解决 blockers）→ 422 带原因；重复续跑 → 409；通过后创建 investigation_reply turn（phases=[persona]）在同一 hermes session 续跑。",
+        "续跑 turn 走既有 persona→tool_save_reply_draft（guardrail+readiness 派生）→publication gate（investigation⇒manual 审批）→Slack review ping（p2-148 根+线程格式不变）→approve→发送门禁与 delivery ledger（source=hermes），零语义变更。",
+        "automation 各方向、investigation_feedback（request-changes）turn 行为零回归；one-active fence/revision 栅栏语义不变。",
+        "Preproduction 受控重放实证：技术问题工单→工具加载可见→Slack 调查结果 delivered→继续按钮→草稿→review ping→approve→Zendesk delivered；负路径：按钮前新客户评论→continue 409 且新 turn 自动重新调查。",
+        "登记收口：feature_list/projectoverview tab #08 notice 更新，generate_project_overview --write/--check 通过；手册零改动（无 prompt release）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Hermes agent orchestration + tools + API regression (with new v1 cases)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_automation_ecs_api.py",
+          "details": "111 passed。新增 TestInvestigationReviewGate 八例：investigation turn work 后收口 awaiting_investigation_review 且零 persona 提交、work run toolsets=[supportportal_work,common,memory] 而 automation 方向保持 [supportportal_work]、work 无调查结论或结论为旧 turn 盖章→missing_investigation_result→human_review、continue 的 stale/未-awaiting/已续跑三态拒绝、续跑 turn 仅 persona 单提交且复用主 session+workspace+persona toolset、feedback turn job payload 经 AgentTurnJobPayload 校验（修复既有潜在缺陷：request-changes 链的合成事件此前不满足 AutomationIntakeEvent 契约，processor 领取即抛错，无测试覆盖且 preprod 从未真实走过）；API 两例：continue 端点登录门禁+成功+二次 409+reply turn 契约、404/422 blockers/409 stale_case_revision；改写三例编码旧行为的用例（publication gate/Slack review ping/ping 失败隔离）为两段式（收口→continue→persona）。"
+        },
+        {
+          "type": "test",
+          "label": "Store/worker/route-worker/Slack/contracts/deploy/pipeline regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py",
+          "details": "全绿（与 hermes 三套件合计 253 passed + 3 subtests）。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL real-database integration",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "8 passed（7 既有 + 新增 TestPostgresInvestigationContinue：save_hermes_investigation 盖章 recorded_turn_id、create_investigation_reply_turn 落 investigation_reply/persona/pending turn+AGENT_TURN job、payload 经契约校验、源 turn result.continued_turn_id 盖章与二次 continue 冲突）。零 schema 迁移（新字段均在既有 JSONB 内）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/automation_ecs_store.py",
+        "backend/services/automation_ecs_contracts.py",
+        "backend/services/engineer_slack.py",
+        "backend/automation_ecs_api.py"
+      ],
+      "created_at": "2026-09-12",
+      "updated_at": "2026-09-12",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-12",
+          "event": "created",
+          "summary": "用户指出 preproduction Hermes 调查能力未就绪，要求按 docs/projectoverview.html#investigation-workflow 设计做第一版；澄清目标流为：Hermes 调查→结果发 Slack→人点按钮→guardrail 把关→persona 组装客户回复→Slack 等工程师审批。多子 Agent 方案（设计 tab #08 全量）与 AgentRelay fan-out（2026-09-05 plan-2）明确不在 v1 范围。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17373,6 +17452,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。多子 Agent 调查（设计 tab #08 全量）与 Slack 原生按钮为后续版本。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

@@ -80,6 +80,7 @@ class AgentTurnStatus(StrEnum):
 class HermesTurnKind(StrEnum):
     NORMAL = "normal"
     INVESTIGATION_FEEDBACK = "investigation_feedback"
+    INVESTIGATION_REPLY = "investigation_reply"
 
 
 class HermesTurnPhase(StrEnum):
@@ -91,6 +92,8 @@ class HermesTurnPhase(StrEnum):
     def phases_for(cls, turn_kind: str) -> tuple["HermesTurnPhase", ...]:
         if turn_kind == HermesTurnKind.INVESTIGATION_FEEDBACK.value:
             return (cls.WORK, cls.PERSONA)
+        if turn_kind == HermesTurnKind.INVESTIGATION_REPLY.value:
+            return (cls.PERSONA,)
         return (cls.ROUTE, cls.WORK, cls.PERSONA)
 
 
@@ -282,6 +285,43 @@ class ProcessingJobPayload(BaseModel):
     prompt_snapshots: dict[str, Any] = Field(default_factory=dict)
 
 
+class SyntheticTurnEventType(StrEnum):
+    """Server-originated events that resume a Hermes turn without new intake.
+
+    These events never arrive through the intake endpoint; they are built by
+    the store when a human action (reviewer feedback, investigation approval)
+    opens a follow-up turn on an existing case.
+    """
+
+    INVESTIGATION_FEEDBACK = "investigation_feedback"
+    INVESTIGATION_REPLY = "investigation_reply"
+
+
+class SyntheticTurnEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=1, max_length=240)
+    event_type: SyntheticTurnEventType
+    occurred_at: datetime
+    ticket: ZendeskTicketSnapshot
+    comment_snapshot: ZendeskCommentSnapshot | None = None
+
+    @field_validator("event_id")
+    @classmethod
+    def validate_event_id(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not _EVENT_ID_RE.fullmatch(normalized):
+            raise ValueError("event_id contains unsupported characters")
+        return normalized
+
+    def routing_text(self) -> str:
+        if self.comment_snapshot is not None:
+            trigger_id = self.comment_snapshot.trigger_comment_id
+            trigger = next(comment for comment in self.comment_snapshot.comments if comment.id == trigger_id)
+            return trigger.body.strip()
+        return self.ticket.description.strip()
+
+
 class AgentTurnJobPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -289,7 +329,7 @@ class AgentTurnJobPayload(BaseModel):
     execution_id: str
     turn_id: str
     conversation_key: str
-    event: AutomationIntakeEvent
+    event: AutomationIntakeEvent | SyntheticTurnEvent
 
 
 class RuntimeProvenance(BaseModel):
