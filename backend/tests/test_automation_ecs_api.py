@@ -919,13 +919,26 @@ def test_agent_tool_save_reply_draft_derives_publish_policy_server_side() -> Non
     assert all(not draft.get("delivery_message_id") for draft in drafts)
 
 
-def _park_investigation_turn(store: InMemoryAutomationEcsStore, *, blockers: list[str] | None = None) -> str:
-    store.accept_intake(_event(), store.settings.provenance())
+def _park_investigation_turn(
+    store: InMemoryAutomationEcsStore,
+    *,
+    blockers: list[str] | None = None,
+    event: Any = None,
+) -> str:
+    store.accept_intake(event or _event(), store.settings.provenance())
     job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=30)
     assert job is not None
     turn_id = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")["turn_id"]
     # the worker claimed the original agent-turn job before driving the turn
-    claimed = store.claim_job(JobKind.AGENT_TURN, worker_id="route-1", lease_seconds=30)
+    # (drain unrelated pending agent jobs, e.g. an unclaimed reply turn)
+    claimed = None
+    while True:
+        candidate = store.claim_job(JobKind.AGENT_TURN, worker_id="route-1", lease_seconds=30)
+        if candidate is None:
+            break
+        if candidate.payload["turn_id"] == turn_id:
+            claimed = candidate
+            break
     assert claimed is not None and claimed.payload["turn_id"] == turn_id
     store.start_hermes_agent_turn(turn_id, run_id=None)
     store.record_hermes_turn_direction(turn_id, direction="investigation", route=None)
@@ -1015,53 +1028,55 @@ def test_continue_hermes_investigation_rejects_blockers_stale_and_missing_state(
         # no hermes case at all
         assert client.post(path).status_code == 404
 
-        # unresolved blockers refuse the continue
+        # open blockers are review information, not a hard gate: the human
+        # decides at the confirmation dialog, so the endpoint still continues
         blocked_turn = _park_investigation_turn(store, blockers=["missing app id"])
         blocked = client.post(path)
-        assert blocked.status_code == 422
-        assert "missing app id" in blocked.json()["detail"]
-        # clear blockers by re-saving the investigation without them
-        store.save_hermes_investigation(
-            blocked_turn,
-            summary="Blockers resolved after internal confirmation.",
-            evidence=[],
-            blockers=[],
-            next_steps=[],
-        )
+        assert blocked.status_code == 200, blocked.text
+        assert blocked.json()["source_turn_id"] == blocked_turn
 
         # a newer customer comment advances the revision: stale continue is refused
         from backend.services.automation_ecs_contracts import AutomationIntakeEvent, IntakeEventType
 
-        stale_event = AutomationIntakeEvent.model_validate(
-            {
-                "schema_version": "automation-intake-v1",
-                "event_id": "zendesk:ticket:123:comment",
-                "event_type": IntakeEventType.COMMENT_CREATED,
-                "occurred_at": "2026-09-12T10:05:00Z",
-                "ticket": {
-                    "id": "123",
-                    "status": "open",
-                    "subject": "Enable Media Relay",
-                    "description": "Please enable Media Relay for app 123.",
-                    "requester": {"email": "cx@example.com", "name": "Customer"},
-                },
-                "comment_snapshot": {
-                    "source_updated_at": "2026-09-12T10:05:00Z",
-                    "snapshot_complete": True,
-                    "trigger_comment_id": "55",
-                    "comments": [
-                        {
-                            "id": "55",
-                            "public": True,
-                            "author": {"email": "cx@example.com", "role": "end-user"},
-                            "body": "Any update?",
-                            "created_at": "2026-09-12T10:05:00Z",
-                        }
-                    ],
-                },
-            }
+        def _comment_event(event_id: str, body: str) -> Any:
+            return AutomationIntakeEvent.model_validate(
+                {
+                    "schema_version": "automation-intake-v1",
+                    "event_id": event_id,
+                    "event_type": IntakeEventType.COMMENT_CREATED,
+                    "occurred_at": "2026-09-12T10:05:00Z",
+                    "ticket": {
+                        "id": "123",
+                        "status": "open",
+                        "subject": "Enable Media Relay",
+                        "description": "Please enable Media Relay for app 123.",
+                        "requester": {"email": "cx@example.com", "name": "Customer"},
+                    },
+                    "comment_snapshot": {
+                        "source_updated_at": "2026-09-12T10:05:00Z",
+                        "snapshot_complete": True,
+                        "trigger_comment_id": "55",
+                        "comments": [
+                            {
+                                "id": "55",
+                                "public": True,
+                                "author": {"email": "cx@example.com", "role": "end-user"},
+                                "body": body,
+                                "created_at": "2026-09-12T10:05:00Z",
+                            }
+                        ],
+                    },
+                }
+            )
+
+        stale_turn = _park_investigation_turn(
+            store, event=_comment_event("zendesk:ticket:123:comment:park2", "Second question.")
         )
-        store.accept_intake(stale_event, store.settings.provenance())
+        store.accept_intake(
+            _comment_event("zendesk:ticket:123:comment", "Any update?"),
+            store.settings.provenance(),
+        )
         stale = client.post(path)
         assert stale.status_code == 409
         assert "stale_case_revision" in stale.json()["detail"]
+        assert stale_turn
