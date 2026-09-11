@@ -867,9 +867,8 @@ class AccountIntakeApiTests(unittest.TestCase):
                 },
             ).json()
 
-        with patch.object(
-            main,
-            "_create_account_reply_job",
+        with patch(
+            "backend.services.automation_account_intake._create_reply_job",
             side_effect=RuntimeError("reply job persistence failed"),
         ), patch(
             "backend.main.send_enablement_internal_email",
@@ -1931,11 +1930,14 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as chooser:
             asyncio.run(main._run_account_full_reroute_job("account-reroute-test"))
 
-        sender.assert_awaited_once()
+        # p2-149: the enablement rerun email is prepared behind the
+        # public-reply gate instead of being sent; the sender is never
+        # reached and the delivery key keeps its rerun-owned fencing.
+        sender.assert_not_awaited()
         self.assertEqual(chooser.call_count, 0)
         stored = self.repository.get_account_case("AC-12513")
         assert stored is not None
-        self.assertEqual(stored["internal_email_send_status"], "sent")
+        self.assertEqual(stored["internal_email_send_status"], "awaiting_public_reply")
         self.assertEqual(
             stored["internal_email_payload"]["delivery_key"],
             "delivery-12513:rerun:account-reroute-test",
@@ -1953,7 +1955,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         latest_job = main._account_full_reroute_job("account-reroute-test")
         assert latest_job is not None
         self.assertEqual(latest_job["status"], "completed")
-        self.assertEqual(latest_job["emails_sent"], 1)
+        self.assertEqual(latest_job["emails_sent"], 0)
         self.assertEqual(latest_job["replies_scheduled"], 1)
         self.assertEqual(latest_job["reply_jobs_deleted"], 0)
         self.assertEqual(latest_job["reply_executions_deleted"], 0)
@@ -2106,7 +2108,9 @@ class AccountIntakeApiTests(unittest.TestCase):
         ) as resolve:
             asyncio.run(main._run_account_full_reroute_job(job["job_id"]))
 
-        sender.assert_awaited_once()
+        # p2-149: the enablement rerun email is gated, so the sender never
+        # runs and no reply is scheduled on this reply-less rerun.
+        sender.assert_not_awaited()
         resolve.assert_not_called()
         self.assertIsNone(self.repository.get_account_persona_assignment(ticket_id))
         self.assertIsNone(self.repository.get_latest_account_reply_job(ticket_id))
@@ -2232,8 +2236,10 @@ class AccountIntakeApiTests(unittest.TestCase):
         ):
             asyncio.run(main._run_account_full_reroute_job("account-reroute-persona-unavailable"))
 
-        self.assertEqual(call_order, ["email"])
-        sender.assert_awaited_once()
+        # p2-149: the enablement rerun email is gated; persona resolution
+        # stays deferred and neither side effect fires during the rerun.
+        self.assertEqual(call_order, [])
+        sender.assert_not_awaited()
         stored = self.repository.get_account_case("AC-12514")
         assert stored is not None
         self.assertEqual(stored["route"], "enablement")
@@ -2584,7 +2590,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(payload["semantic_intent"], "backend_operation.enablement")
         self.assertEqual(payload["collected_fields"]["app_id"], "7da36383d624411698e5c0bc1fda6324")
         self.assertEqual(payload["collected_fields"]["requested_feature"], "media_relay")
-        self.assertEqual(payload["internal_email_send_status"], "sent")
+        self.assertEqual(payload["internal_email_send_status"], "awaiting_public_reply")
         self.assertEqual(payload["ai_reply_status"], "queued")
         reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
         self.assertIsNotNone(reply_job)
@@ -2601,12 +2607,17 @@ class AccountIntakeApiTests(unittest.TestCase):
             reply_job["payload"]["reply_facts"]["ownership_state"],
             "support_owned_internal_review",
         )
-        send_email.assert_called_once()
-        email_payload = send_email.call_args.args[0]
-        self.assertEqual(email_payload["to"], "")
+        # p2-149: the email is gated behind the public readback, not sent at
+        # intake; the persisted payload still carries the resolved recipient
+        # contract for the later release.
+        send_email.assert_not_called()
+        stored_case = self.repository.get_account_case(payload["account_case_id"])
+        assert stored_case is not None
+        email_payload = stored_case["internal_email_payload"]
         self.assertEqual(email_payload["recipient_config_key"], "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL")
         self.assertIn("[Enablement Request]", email_payload["subject"])
         self.assertIn(payload["ticket_id"], email_payload["body"])
+        self.assertTrue(email_payload.get("customer_confirmation_queued"))
 
     def test_production_non_media_relay_enablement_creates_engineer_case_without_automation_side_effects(self) -> None:
         assignment = Mock()
@@ -3239,10 +3250,18 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["internal_email_send_status"], "retry")
-        self.assertEqual(payload["execution_reason_code"], "enablement_internal_email_retry")
-        self.assertIsNone(payload["ai_reply_status"])
-        self.assertIsNone(self.repository.get_latest_account_reply_job(payload["ticket_id"]))
+        # p2-149 manual review flow: the App ID is malformed, so the local
+        # format check short-circuits to the appid_invalid ask (zero network,
+        # no email); the retrying sender is never reached.
+        self.assertEqual(payload["internal_email_send_status"], "not_applicable")
+        stored_case = self.repository.get_account_case(payload["account_case_id"])
+        self.assertEqual(stored_case["missing_fields"], ["app_id"])
+        reply_job = self.repository.get_latest_account_reply_job(payload["ticket_id"])
+        self.assertIsNotNone(reply_job)
+        assert reply_job is not None
+        self.assertEqual(
+            reply_job["payload"]["reply_intent"], "enablement_appid_invalid"
+        )
 
     def test_uncertain_enablement_fields_fail_closed_to_human_review(self) -> None:
         uncertain = EnablementFieldExtraction(
@@ -3313,18 +3332,22 @@ class AccountIntakeApiTests(unittest.TestCase):
             )
             self.assertEqual(completed.status_code, 200, completed.text)
             self.assertEqual(completed.json()["missing_fields"], [])
-            self.assertEqual(completed.json()["internal_email_send_status"], "sent")
+            # p2-149: the email is gated behind the public readback, not sent
+            # during intake; the confirmation flag marks the queued reply.
+            self.assertEqual(
+                completed.json()["internal_email_send_status"], "awaiting_public_reply"
+            )
             self.assertTrue(
                 completed.json()["internal_email_payload"]["customer_confirmation_queued"]
             )
-            send_email.assert_called_once()
+            send_email.assert_not_called()
 
             repeated = self.client.post(
                 f"/api/account/cases/{created_payload['account_case_id']}/reply",
                 json={"message": "Thank you."},
             )
             self.assertEqual(repeated.status_code, 200, repeated.text)
-            send_email.assert_called_once()
+            send_email.assert_not_called()
 
     def test_uncertain_enablement_followup_fails_closed_to_human_review(self) -> None:
         uncertain = EnablementFieldExtraction(
@@ -4485,7 +4508,9 @@ class AccountIntakeApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "human_review_required")
+        # p2-149: the malformed App ID takes the local format check, which
+        # re-asks for a valid App ID instead of escalating to human review.
+        self.assertEqual(payload["status"], "automation")
         self.assertEqual(payload["route"], "enablement")
 
         bt = self.repository.get_billing_ticket(payload["billing_ticket_id"])
@@ -4496,7 +4521,7 @@ class AccountIntakeApiTests(unittest.TestCase):
         self.assertEqual(bt["account_case_id"], payload["account_case_id"])
         self.assertEqual(bt["category"], "backend_operation")
         self.assertEqual(bt["subcategory"], "enablement")
-        self.assertEqual(bt["route_status"], "not_automated")
+        self.assertEqual(bt["route_status"], "automated")
         self.assertEqual(bt["automation_handler"], "enablement")
         self.assertEqual(bt["execution_action"], "enablement")
         self.assertEqual(bt["route"], "enablement")

@@ -368,11 +368,13 @@ class AccountRerunSyntheticBatchTests(unittest.IsolatedAsyncioTestCase):
                     send_internal_email=True,
                 )
         self.assertEqual(failure.exception.stage, "reply")
-        sender.assert_awaited_once()
+        # p2-149: enablement emails are prepared behind the public-reply gate
+        # instead of sent, so the sender is never reached during the rerun.
+        sender.assert_not_awaited()
         create_reply.assert_called_once()
         self.assertEqual(
             self.repository.get_account_case(case_id)["internal_email_send_status"],
-            "sent",
+            "awaiting_public_reply",
         )
 
         with (
