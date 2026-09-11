@@ -10,7 +10,7 @@
   "created_at": "2026-09-08",
   "updated_at": "2026-09-11",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "2026-09-11 PR#1141 部署（r20260911-2e58f71）后重 approve 又暴露第七缺口：queue 走到 create_account_zendesk_comment_delivery 时 TypeError——PG 仓库方法必填 keyword-only created_at 而 queue 未传（此前仅 InMemory 假仓库 **kwargs 覆盖）。本轮补 created_at=_now_iso() 并将测试假仓库镜像为必填。待部署后重 approve draft-3c6e7ddf（已复位 awaiting_approval）→ queued → 发送 → Zendesk 13413 读回闭环。",
+  "next_action": "2026-09-11 第八层（闭环最后一层）：PR#1142 部署（r20260911-ba0756b）后重 approve 过了 created_at，queue 入库时撞 support_account_zendesk_comment_deliveries 的 source CHECK 约束不含 'hermes'（验收标准第 4 条要求 source='hermes' 但共享库约束从未扩展）。用户授权迁移：新增 2026_09_11_hermes_delivery_source.sql（纯增量扩枚举）+基线同步，在 RDS n8n-postgres-db 的 supportportal_production 库（preprod+prod 共享）与本地 supportportal 库执行后重 approve 完成 Zendesk 13413 读回闭环。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -105,6 +105,11 @@
       "type": "test",
       "label": "Queue delivery created_at mismatch (seventh gap)",
       "details": "r20260911-2e58f71 重 approve：环境修复生效（过 zendesk_assignee_config_missing/comments_revision/版本围栏）但 queue 在 create_account_zendesk_comment_delivery 抛 TypeError：PG 实现要求必填 keyword-only created_at，queue_hermes_draft_delivery 未传（p2-148 全部测试用 InMemory 假仓库 **kwargs 接收故未拦）。修复：automation_hermes_delivery.py 新增 _now_iso() 并在调用传 created_at；test_hermes_zendesk_agent_tools.py 的 FakeRepository 镜像 PG 签名（created_at 必填）防回归。74 绿。"
+    },
+    {
+      "type": "deployment",
+      "label": "Delivery ledger source check missing hermes (eighth gap, migration)",
+      "details": "r20260911-ba0756b 重 approve：created_at 修复生效，queue 走到 PG 写入时 CheckViolation——support_account_zendesk_comment_deliveries_source_check 仅允许 ('account','engineer')，p2-148 设计的 source='hermes' 从未加入约束（2026_08_24_engineer_zendesk_deliveries.sql 建立的约束）。修复：迁移文件 2026_09_11_hermes_delivery_source.sql（DROP+ADD 含 'hermes'，纯增量、不动现有行、回滚=还原约束）+ticket_storage.sql 基线同步；用户授权后在 supportportal_production（ECS preprod+prod 共享库）与本地 supportportal 库执行。"
     }
   ],
   "history": [
@@ -172,6 +177,11 @@
       "at": "2026-09-11",
       "event": "queue_created_at_fixed",
       "summary": "第七缺口：queue 漏传 PG 必填 created_at（仅假仓库路径被测过）；补参+假仓库签名镜像，待部署后重 approve 闭环。"
+    },
+    {
+      "at": "2026-09-11",
+      "event": "delivery_source_migration_authorized",
+      "summary": "第八缺口：投递台账 source 约束缺 hermes；用户授权纯增量迁移，文件入库+双库执行后重 approve 闭环。"
     }
   ],
   "legacy_ids": [],
