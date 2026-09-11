@@ -314,9 +314,9 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。
 
-## Enablement 工作流模式（p2-151 起：manual 默认 + Archer 可切换）
+## Enablement 工作流模式（p2-152 起：manual 默认 + Archer 可切换）
 
-`p2-151` 起 Enablement 由 `ENABLEMENT_WORKFLOW_MODE`（`manual` | `archer`，默认 `manual`）
+`p2-152` 起 Enablement 由 `ENABLEMENT_WORKFLOW_MODE`（`manual` | `archer`，默认 `manual`）
 在四个执行入口（split intake、客户评论 resume、Hermes 工具、legacy main 入口/rerun）统一分发。
 manual 模式即 `p2-149` 人工开通流程，行为不变；archer 模式恢复回退前的自动开通编排
 （enabled→完成回复关单；appid_invalid/project_not_found→清 App ID 重问；

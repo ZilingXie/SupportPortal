@@ -1,7 +1,7 @@
 # Prompt Change Log
 
 
-## 2026-09-11 - Enablement dual-flow mode switch (p2-151)
+## 2026-09-11 - Enablement dual-flow mode switch (p2-152)
 
 - Behavior: All four enablement dispatch entries (split intake, customer-comment resume, Hermes tool, legacy main intake/rerun) route through one `ENABLEMENT_WORKFLOW_MODE` switch. Default (unset/blank) keeps the p2-149 manual review flow unchanged; `archer` restores the pre-p2-149 Archer auto-enablement behavior (enabled closes the ticket via the archer reply job, appid_invalid/project_not_found re-ask for the App ID, enable_failed records the owner failure alert, delivers the fallback internal email once through the claim protocol and escalates to human review). Unknown values fail closed at read time.
 - Completion input: unchanged in manual mode; archer mode uses the restored Archer reply intents (`enablement_archer_enabled` / `enablement_appid_invalid` / `enablement_appid_not_found`) with the existing persona contracts and App ID redaction.

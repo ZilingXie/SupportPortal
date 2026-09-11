@@ -29,7 +29,7 @@ thanks
 
 
 class EnablementWorkflowModeTests(unittest.TestCase):
-    """ENABLEMENT_WORKFLOW_MODE resolution (p2-151): manual default, archer opt-in."""
+    """ENABLEMENT_WORKFLOW_MODE resolution (p2-152): manual default, archer opt-in."""
 
     def test_defaults_to_manual_when_unset_or_blank(self) -> None:
         for value in (None, "", "   "):

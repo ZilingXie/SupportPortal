@@ -6072,7 +6072,7 @@ async def _create_account_intake_impl(
                     )
                     await async_to_thread(ticket_repository.save_account_case, billing_ticket)
     if enablement_email_attempt and enablement_email_attempt.get("internal_email_to_send"):
-        # Unified enablement dispatch (p2-151): manual review flow by default,
+        # Unified enablement dispatch (p2-152): manual review flow by default,
         # Archer auto-enablement when ENABLEMENT_WORKFLOW_MODE=archer.  In the
         # manual mode the customer confirmation reply job is created first and
         # the internal email is persisted behind the public-readback gate, so
@@ -10923,7 +10923,7 @@ async def _process_account_customer_reply_impl(
     if should_send_internal_email and automation_attempt and automation_attempt.get("internal_email_to_send"):
         active_handler = str(billing_ticket.get("automation_handler") or "").strip()
         if active_handler == "enablement":
-            # Unified enablement dispatch (p2-151) for the comment path too.
+            # Unified enablement dispatch (p2-152) for the comment path too.
             try:
                 billing_ticket, reply_job, _workflow_outcome, _archer_result = (
                     await _run_enablement_workflow(

@@ -792,7 +792,7 @@ render_role_task_definition() {
 }
 
 ensure_enablement_archer_secret() {
-  # Switching to archer mode (p2-151) requires the SSO root credential to
+  # Switching to archer mode (p2-152) requires the SSO root credential to
   # already exist; fail before rendering instead of letting run-task crash.
   [[ "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]] || return 0
   aws ssm get-parameter --region "${REGION}" \
@@ -1453,7 +1453,7 @@ main() {
   unset suspension_recipients_json
   SUSPENSION_RECIPIENTS_STATUS="passed"
 
-  # p2-151: the Enablement workflow mode owns the Archer credential — manual
+  # p2-152: the Enablement workflow mode owns the Archer credential — manual
   # renders must not carry it into the new revision, archer renders must.
   if [[ "${ENABLEMENT_WORKFLOW_MODE}" != "archer" ]]; then
     if jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \

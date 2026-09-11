@@ -54,12 +54,12 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
     "zendesk_basic_auth": "zendesk-basic-auth",
     "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
 }
-# Enablement execution mode switch (p2-151): "manual" keeps the p2-149 human
+# Enablement execution mode switch (p2-152): "manual" keeps the p2-149 human
 # review flow; "archer" restores the Archer auto-enablement workflow.
 ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
 ARCHER_SECRET_NAME = "ARCHER_OAUTH_COOKIE"
 ARCHER_SECRET_SUFFIX = "archer-oauth-cookie"
-# Retired Enablement runtime dependency gate (p2-149, conditioned by p2-151):
+# Retired Enablement runtime dependency gate (p2-149, conditioned by p2-152):
 # Worker task definitions must not carry the Archer credential unless the
 # rendered enablement workflow mode is "archer".  Formal upgrades strip it from
 # an observed Worker task definition in manual mode instead of carrying it into
@@ -838,7 +838,7 @@ def render_task_definition(
             "0" if environment == "production" else "1",
         )
     if role in {"api", "worker"} and enablement_workflow_mode is not None:
-        # Carry the requested enablement workflow mode (p2-151) onto every
+        # Carry the requested enablement workflow mode (p2-152) onto every
         # rendered api/worker revision; the worker contract above already
         # normalized the mode and credential injection before validation.
         _set_environment_value(container, "ENABLEMENT_WORKFLOW_MODE", enablement_workflow_mode)

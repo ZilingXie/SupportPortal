@@ -33,7 +33,7 @@ SOURCE_COPY_SUFFIXES = (
     "enablement-internal-email-recipients",
     "fraud-internal-email-recipients",
     "account-suspension-internal-email-recipients",
-    # Archer SSO root credential, restored by p2-151 for the switchable archer
+    # Archer SSO root credential, restored by p2-152 for the switchable archer
     # enablement mode; only consumed when ENABLEMENT_WORKFLOW_MODE=archer.
     "archer-oauth-cookie",
 )

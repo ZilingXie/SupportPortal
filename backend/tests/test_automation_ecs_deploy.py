@@ -319,7 +319,7 @@ def test_deploy_script_fails_closed_on_archer_secret_in_rendered_worker() -> Non
 def test_render_task_definition_archer_mode_injects_credential_and_mode(
     tmp_path: Path,
 ) -> None:
-    # p2-151: archer enablement mode carries the credential and the mode env
+    # p2-152: archer enablement mode carries the credential and the mode env
     # into the rendered Worker revision; the register-time contract then
     # requires exactly this pairing.
     current = _task_definition(tmp_path, "worker")
@@ -347,7 +347,7 @@ def test_render_task_definition_archer_mode_injects_credential_and_mode(
 def test_render_task_definition_archer_mode_allowed_for_both_environments(
     tmp_path: Path, environment: str
 ) -> None:
-    # The user pinned dual-environment availability (p2-151): archer mode is
+    # The user pinned dual-environment availability (p2-152): archer mode is
     # not production-forbidden like the hermes case engine.
     current = _task_definition(tmp_path, "worker")
     if environment == "preproduction":

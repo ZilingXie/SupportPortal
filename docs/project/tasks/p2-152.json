@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "task_id": "p2-151",
+  "task_id": "p2-152",
   "title": "Enablement 双流程模式开关（manual 默认 + Archer 可切换）",
   "status": "active",
   "owner": "zac",

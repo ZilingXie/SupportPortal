@@ -935,7 +935,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--enablement-workflow-mode",
         choices=("manual", "archer"),
         default="manual",
-        help="Enablement execution mode deployed to the target environment (p2-151)",
+        help="Enablement execution mode deployed to the target environment (p2-152)",
     )
     pipeline.add_argument("--resume", action="store_true")
     pipeline.add_argument("--keep-release-worktree", action="store_true", help=argparse.SUPPRESS)

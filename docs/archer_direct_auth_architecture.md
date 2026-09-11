@@ -2,8 +2,8 @@
 
 - 首次实现：PR #1023（2026-09-02，任务 p2-134）；redirect host 白名单加固：2026-09-02
 - 生产状态：r20260902-46370fa 起上线（ECS worker:17），Mac 与 ECS Fargate 双侧端到端探针通过
-- **休眠可切换（2026-09-11 起，p2-151）**：SSO 根凭证为约 7 天绝对过期 JWT，2026-09-09 运行中失效
-  导致工单 13386 失败后，Enablement 默认回退人工开通流程（p2-149）；p2-151 把 Archer 编排恢复为
+- **休眠可切换（2026-09-11 起，p2-152）**：SSO 根凭证为约 7 天绝对过期 JWT，2026-09-09 运行中失效
+  导致工单 13386 失败后，Enablement 默认回退人工开通流程（p2-149）；p2-152 把 Archer 编排恢复为
   `ENABLEMENT_WORKFLOW_MODE=archer` 可切换模式（默认 `manual`，两个 ECS 环境均可启用）——编排、
   回复合同、失败告警与部署门禁全部保留在树上。切换步骤：① 创建 SSM SecureString
   `/supportportal/{env}/archer-oauth-cookie`（根凭证，注意周级绝对过期风险，见 §6）；

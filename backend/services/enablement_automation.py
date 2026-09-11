@@ -131,7 +131,7 @@ class EnablementAutomationResult:
 
 
 def enablement_workflow_mode() -> str:
-    """Resolve the enablement execution mode (p2-151).
+    """Resolve the enablement execution mode (p2-152).
 
     Unset/empty defaults to ``manual`` (the p2-149 human review flow).  An
     unknown value fails closed instead of silently falling back, mirroring
