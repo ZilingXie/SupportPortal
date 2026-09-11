@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "codex",
   "summary": "按用户澄清流程为 Preproduction Hermes investigation 方向落地第一版调查链：修复 work run 工具加载（补 common+memory toolset，恢复 case context 与 TencentDB memory 检索/知识写可见性）；调查回合结束后 turn 结构性收口为 awaiting_investigation_review 并把调查结果（summary/evidence/blockers/next_steps）直达发送到工程师 Slack 频道；人在 dashboard 审阅页点「继续生成客户回复」按钮（前置确定性完备性检查：summary 非空、无未解决 blockers、case_revision 未过期）后创建 investigation_reply turn（仅 persona phase）在同一 session/revision 续跑，走既有草稿 guardrail→manual 审批→Slack review ping→approve→Zendesk 发送链。不做子 Agent（设计 tab #08 的多子任务调查为后续版本）；Slack 原生按钮因 preprod 无交互回调通道列为后续；调查证据源仍限 case context + memory（真实检索源另行规划）。",
-  "next_action": "代码与测试已完成：待 finalize 合并 main 后，本地官方栈重启验证（/health build ref），随后 Preproduction 管线发布（worker+api 镜像、无手册改动无 prompt release 同步）+ 受控重放验收（工具加载可见→Slack 调查结果 delivered→继续按钮→草稿→审批→送达；负路径 stale 409）。",
+  "next_action": "代码/测试/部署/受控重放全链完成（PR#1160+#1162+#1163，r20260911-e78488d）。待用户：①工程师频道 eyeball 调查结果消息与审批 ping 格式（13424，评论 53486793539860 已送达）；②决策 v1.1：调查证据源（RAGFlow/pilot 检索）、Slack 原生按钮（需交互回调通道）、旧工程师流线程统一。确认后置 done。",
   "acceptance_criteria": [
     "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
     "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
@@ -34,6 +34,18 @@
       "label": "PostgreSQL real-database integration",
       "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<root .env> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py",
       "details": "8 passed（7 既有 + 新增 TestPostgresInvestigationContinue：save_hermes_investigation 盖章 recorded_turn_id、create_investigation_reply_turn 落 investigation_reply/persona/pending turn+AGENT_TURN job、payload 经契约校验、源 turn result.continued_turn_id 盖章与二次 continue 冲突）。零 schema 迁移（新字段均在既有 JSONB 内）。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction pipeline releases (3)",
+      "command": "deployment/release_automation_ecs_pipeline.sh --release-commit <main sha> --prompt-release-id pr-175312c491e7 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled（env 配方同 .planning/2026-09-06-codebuild-preproduction/live-pipeline-runner）",
+      "details": "r20260911-f2cec63（v1 主体，PR#1160）、r20260911-5deb29d（blockers 门禁放宽，PR#1162）、r20260911-e78488d（投递 revision 身份修复，PR#1163）三连发布全阶段 passed；hermes 引擎恢复（route AUTOMATION_CASE_ENGINE=hermes + worker HERMES_AGENT secrets，此前 p2-153 发布曾以默认 legacy flags 覆盖）；本地官方栈两次重启 /health build ref matched（f2cec63fb0e2/e78488d7*）。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction controlled replay on 13424 (4 rounds)",
+      "command": "POST /automation/preproduction/v1/intake（4 次客户评论注入）+ dashboard continue/approve + PG/日志读回",
+      "details": "①工具加载：investigation work run 以 [supportportal_work, common, memory] 提交并被 gateway 接受（memory 不在平台允许集会被拒——提交成功即探针通过），模型自述 'Investigation progress saved'，四轮调查均产出高质量 summary/evidence/blockers/next_steps；②人审门禁：三轮 turn 均收口 awaiting_investigation_review（recorded_turn_id 盖章、零 persona 提交），Slack 调查结果 delivered（hermes_investigation_result_notified ts=1789152307.738549）；③门禁负路径：blockers 422 live 实证（后按证据放宽为确认弹窗）；④continue 200→investigation_reply turn 仅 persona 单跑→草稿 awaiting_approval→review ping delivered；⑤approve→投递 delivered：Zendesk 公开评论 53486793539860（source=hermes 账本）；⑥途中发现并修复续跑 turn 投递身份缺陷（draft_version=conv+1 误判 stale，PR#1163，修复前 draft-e43d14af failed/修复后 draft-8f2b10a3 delivered 对照实证）。"
     }
   ],
   "source_refs": [
@@ -61,6 +73,11 @@
       "at": "2026-09-12",
       "event": "amended",
       "summary": "Preproduction 三轮受控重放实证：调查手册『缺证据即列追问』契约使调查几乎恒带 4-5 个 blockers，原『无未解决 blockers 才能 continue』门禁导致正链不可达。经 AskUserQuestion 未获作答，按计划意图（人是满意与否的决策者）自主放宽：服务端门禁仅保留 summary 非空，UI 按钮常显并在确认弹窗列出 blockers 由人二次确认；人审按钮+guardrail+草稿人工审批三道关不变。"
+    },
+    {
+      "at": "2026-09-12",
+      "event": "deployed",
+      "summary": "三次 Preproduction 发布与 13424 四轮受控重放完成全链验收：调查→工具加载→Slack 直达→dashboard 继续→persona→审批→Zendesk 送达。"
     }
   ]
 }
