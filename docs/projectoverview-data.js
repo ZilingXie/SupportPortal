@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T08:36:31Z",
-  "source_base_commit": "2e58f71f2ee4630d36ac7a68fe82dfde41ccf2cd",
-  "registry_digest": "91bee7dea665ed70442a49d32d8fa0ab533d21d6ca4001e42bbba10b4307c2aa",
+  "generated_at": "2026-09-11T09:34:33Z",
+  "source_base_commit": "5039aa70816bacdad9232a7c465fa6fe7404d0cd",
+  "registry_digest": "30bbbb5f48f0d021d03ba2cff7616357389b1952f2476f35f04ca1df6a0d55c9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1123,6 +1123,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Local App ID correction resumes manual review",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_rag_resume.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_comment_sync.py",
           "details": "78 passed / 2 subtests. The previous suite could not start after the Archer entry was removed; updated it to preserve RAG, ownership, failure-alert, idempotency and manual-email gating assertions. Reproduced and repaired valid correction after local appid_invalid_format remaining stuck in not_applicable. Recovery requires the current customer comment to contribute app_id and discards rejected historical values. Repeated invalid corrections remain missing; legacy Archer project_not_found resumes into manual review without an Archer call."
+        },
+        {
+          "type": "test",
+          "label": "Manual enablement restoration simplification",
+          "command": ".venv/bin/python -m pytest -q \u003c22 targeted suites>; RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest \u003c7 targeted PostgreSQL contracts>",
+          "details": "22 套件 851 passed / 137 subtests。闭环覆盖 customer confirmation delivered 后 Worker 唯一释放、真实 claim/send、重复扫描只发一封、重复 enabled 只建一个 completion job、完成公开回复在 Zendesk solved readback 后才本地关闭；孤立 Date/To/Subject/中文标签后的撤销正文不再被截断。真库 7 个目标契约全部通过：组合运行 6 passed，唯一旧用例仍期待已删除的 readback 事务释放；改为显式 Worker 原子释放并验证无关 job false/本次 job true 后单跑 1 passed。另验证 InMemory 与 PostgreSQL 均拒绝 human-review case 的同 token 后台 replay，显式 Resume 保持原行为。未执行 Production、真实邮件或真实工单。"
         },
         {
           "type": "test",
@@ -11603,10 +11609,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "SSO 根凭证（约 7 天绝对过期 JWT）2026-09-09 运行中失效导致 13386 失败后，将 Enablement Media Relay 从 Archer 自动直连回退为人工开通流程：信息齐全后先创建客户 review 确认回复 job，内部开通邮件以 awaiting_public_reply 门禁持久化，Zendesk 公开回复 readback 确认送达后才释放发送；人工开通后回复 enabled（仅限本次邮件 To/Cc 个人收件人、等待态、未引用正文段三重校验）触发最终公开回复与关单。Worker 移除 ARCHER_OAUTH_COOKIE 注入、发布探针移除 Archer 检查；不删 SSM 历史凭证、不回退历史提交（p1-15 prepare 协议被复用）。",
-      "next_action": "Production schema-002 热修复续作：Phase A 入口/来源透传/002 Manifest 修复已合并 #1139。Phase B 已从线上 3adc2c9 移植人工开通、通知和120秒超时；补查发现本地 App ID 格式拒绝后的补正无法恢复，已补恢复条件并对齐旧 RAG-resume 套件。待合并后官方栈验证、热修复 PG 与回退包复验，再由 owner 按具体 SHA 授权发布。",
+      "next_action": "人工流程简化与隔离 PostgreSQL 验证已完成；待合并后官方栈验证并生成 schema-002 热修复新 SHA 与安全回退包，再由 owner 按具体基线及 SHA 授权 Production 发布。",
       "acceptance_criteria": [
         "所有 Enablement 执行入口（intake、客户评论、Hermes 工具、main 旧入口/评论补投、rerun/resume/内部邮件重试、full reroute）对新请求 Archer 调用次数为零；App ID 32 位 hex 本地校验保留（非法格式零网络追问正确值）。",
-        "信息齐全后创建 submission_confirmation 客户回复 job 并持久化内部邮件为 awaiting_public_reply（不可领取）；公开回复经 Zendesk readback 确认 delivered 后（事务钩子+有界兜底步）释放为 pending 并经 claim/send/complete 协议发送一次；确认送达时间早于邮件发送时间；进程重启可续走。",
+        "信息齐全后创建 submission_confirmation 客户回复 job 并持久化内部邮件为 awaiting_public_reply（不可领取）；公开回复经 Zendesk readback 确认 delivered 后（Worker 唯一有界释放入口）释放为 pending 并经 claim/send/complete 协议发送一次；确认送达时间早于邮件发送时间；进程重启可续走。",
         "内部邮件复用既有收件人/模板/环境前缀/delivery_key，要求人工检查开通并直接回复 enabled；发送时持久化 To/Cc 快照。",
         "回信三重校验：发件人精确匹配 To/Cc 快照（不扩展组员）、Case 处于等待确认态（sent/delivery_unknown）、完成识别仅取未引用正文段；任一不过终止自动处理并留事件；旧申请/否定/将来时/引用段/重复确认不触发二次最终回复。",
         "人工确认后经 enablement_completed_and_close 发布最终公开回复，读回确认后 solved+本地关闭；p1-15 通知修复与 prepare_account_internal_email 保留不回退；delivery_unknown 不自动重发。",
@@ -11658,6 +11664,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Local App ID correction resumes manual review",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_rag_resume.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_comment_sync.py",
           "details": "78 passed / 2 subtests. The previous suite could not start after the Archer entry was removed; updated it to preserve RAG, ownership, failure-alert, idempotency and manual-email gating assertions. Reproduced and repaired valid correction after local appid_invalid_format remaining stuck in not_applicable. Recovery requires the current customer comment to contribute app_id and discards rejected historical values. Repeated invalid corrections remain missing; legacy Archer project_not_found resumes into manual review without an Archer call."
+        },
+        {
+          "type": "test",
+          "label": "Manual enablement restoration simplification",
+          "command": ".venv/bin/python -m pytest -q \u003c22 targeted suites>; RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest \u003c7 targeted PostgreSQL contracts>",
+          "details": "22 套件 851 passed / 137 subtests。闭环覆盖 customer confirmation delivered 后 Worker 唯一释放、真实 claim/send、重复扫描只发一封、重复 enabled 只建一个 completion job、完成公开回复在 Zendesk solved readback 后才本地关闭；孤立 Date/To/Subject/中文标签后的撤销正文不再被截断。真库 7 个目标契约全部通过：组合运行 6 passed，唯一旧用例仍期待已删除的 readback 事务释放；改为显式 Worker 原子释放并验证无关 job false/本次 job true 后单跑 1 passed。另验证 InMemory 与 PostgreSQL 均拒绝 human-review case 的同 token 后台 replay，显式 Resume 保持原行为。未执行 Production、真实邮件或真实工单。"
         }
       ],
       "source_refs": [
@@ -11676,7 +11688,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/feature_list.md"
       ],
       "created_at": "2026-09-10",
-      "updated_at": "2026-09-10",
+      "updated_at": "2026-09-11",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -11702,6 +11714,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-11",
           "event": "review_round_4_fixes",
           "summary": "owner 三轮验收发现四项（守卫误伤 Resume/释放饥饿/测试竞态/PG 假断言）全部修复，并对齐遗留 /account 套件至人工流程契约；ff8777f8 不放行维持。"
+        },
+        {
+          "at": "2026-09-11",
+          "event": "manual_flow_simplification",
+          "summary": "复用原人工邮件与完成回复链，仅保留 Worker 释放门禁；删除 readback 释放钩子、计数接口、重复状态写回及未使用 helper。孤立邮件头标签保留正文撤销说明；后台同 token replay 仍受人工处理权守卫约束。生产闭环未执行，维持 active。"
         }
       ]
     },

@@ -2743,7 +2743,7 @@ def _enablement_reply_explicitly_confirms_completion(note: str) -> bool:
 
 
 _OUTLOOK_HEADER_LINE_RE = re.compile(
-    r"^(?:from|sent|to|subject|date|cc|发件人|发送时间|收件人|主题|日期|抄送)\s*[:：]",
+    r"^(from|sent|to|subject|date|cc|发件人|发送时间|收件人|主题|日期|抄送)\s*[:：]",
     re.IGNORECASE,
 )
 _INLINE_FROM_HEADER_RE = re.compile(
@@ -2763,9 +2763,9 @@ def _unquoted_enablement_reply_segment(note: str) -> str:
     When no unquoted segment can be isolated the caller must not auto-judge
     completion at all.
     """
-    text = str(note or "")
+    lines = str(note or "").splitlines()
     kept: list[str] = []
-    for line in text.splitlines():
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith(">"):
             break
@@ -2776,7 +2776,20 @@ def _unquoted_enablement_reply_segment(note: str) -> str:
         if re.match(r"^on\s+.+\s+wrote:\s*$", stripped, re.IGNORECASE):
             break
         if _OUTLOOK_HEADER_LINE_RE.match(stripped):
-            break
+            # A lone label can be newly authored text followed by a correction.
+            # Only a header block identifies quoted mail; preserve other lines.
+            headers: set[str] = set()
+            for following in lines[index:]:
+                if not following.strip():
+                    continue
+                header = _OUTLOOK_HEADER_LINE_RE.match(following.strip())
+                if header is None:
+                    break
+                headers.add(header.group(1).lower())
+                if len(headers) >= 3:
+                    break
+            if len(headers) >= 3:
+                break
         inline = _INLINE_FROM_HEADER_RE.search(stripped)
         if inline:
             kept.append(stripped[: inline.start()].rstrip())
@@ -3352,96 +3365,19 @@ def _send_claimed_enablement_delivery(
     }
 
 
-def _enablement_public_reply_delivered(account_case: dict[str, Any]) -> bool:
-    """Check whether a public reply delivered after the manual gate was set."""
-    case_id = str(
-        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
-    ).strip()
-    if not case_id:
-        return False
-    workflow = (account_case.get("automation_context") or {}).get("enablement_manual_workflow")
-    if not isinstance(workflow, dict):
-        return False
-    reply_job_id = str(workflow.get("reply_job_id") or "").strip()
-    client_ticket_id = str(account_case.get("client_ticket_id") or "").strip()
-    if not reply_job_id or not client_ticket_id:
-        return False
-    try:
-        canonical_ticket = ticket_repository.get_ticket(client_ticket_id)
-        deliveries = ticket_repository.list_account_zendesk_comment_deliveries_for_case(case_id)
-    except Exception:  # pragma: no cover - repository access is best effort here
-        LOGGER.warning("enablement manual gate could not list deliveries for %s", case_id)
-        return False
-    confirmation_message_ids: set[str] = set()
-    for message in (canonical_ticket or {}).get("messages") or []:
-        if not isinstance(message, dict):
-            continue
-        meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
-        if str(meta.get("account_reply_job_id") or "") != reply_job_id:
-            continue
-        for candidate in (message.get("message_id"), message.get("id")):
-            if str(candidate or "").strip():
-                confirmation_message_ids.add(str(candidate).strip())
-    if not confirmation_message_ids:
-        return False
-    for delivery in deliveries:
-        if not bool(delivery.get("is_public")):
-            continue
-        if str(delivery.get("status") or "").strip().lower() != "delivered":
-            continue
-        if str(delivery.get("message_id") or "").strip() in confirmation_message_ids:
-            return True
-    return False
-
-
-def _mark_enablement_manual_workflow_state(
-    account_case_id: str,
-    *,
-    state: str,
-) -> None:
-    refreshed = ticket_repository.get_account_case(account_case_id)
-    if not isinstance(refreshed, dict):
-        return
-    context = dict(refreshed.get("automation_context") or {})
-    workflow = context.get("enablement_manual_workflow")
-    if not isinstance(workflow, dict):
-        return
-    workflow = dict(workflow)
-    workflow.update({"state": state, "updated_at": now_iso()})
-    context["enablement_manual_workflow"] = workflow
-    refreshed["automation_context"] = context
-    refreshed["updated_at"] = now_iso()
-    ticket_repository.save_account_case(refreshed)
-
-
 def _drain_enablement_manual_review_emails(
     *,
     limit: int = 25,
     processing_profile: str = "staging",
 ) -> dict[str, int]:
-    """Progress the manual enablement review gate each bounded cycle.
+    """Release confirmed applications, then use the existing email sender.
 
-    Two INDEPENDENT, SQL-targeted scans (so one phase can never starve the
-    other, and records outside the manual flow never consume a window):
-    (1) release — gated cases whose OWN submission_confirmation message is
-    already confirmed delivered (the SQL EXISTS filters them BEFORE the
-    LIMIT, so undeliverable gated cases never occupy the release window;
-    ``still_gated`` comes from a separate count for observability). The
-    readback transaction hook normally released these already; this belt
-    covers missed hooks and worker restarts;
-    (2) send — cases whose workflow state is ``email_released`` with a
-    claimable email status, sent through the normal claim/send/complete
-    protocol. Cases escalated to human review are excluded by the repository
-    query, the ownership guard, and the ownership-aware claim; legacy todos
-    without the workflow context are excluded in SQL and never taken over.
+    This is the only automatic gate-release path. Both bounded queries filter
+    before LIMIT; a pending customer reply cannot hide releasable applications.
+    The delivery status owns sending progress, and the completion claim owns
+    the final workflow state.
     """
-    counts = {"released": 0, "sent": 0, "send_retried": 0, "still_gated": 0}
-
-    gated_total = ticket_repository.count_enablement_cases_by_email_status(
-        ("awaiting_public_reply",),
-        processing_profile=processing_profile,
-        workflow_states=("awaiting_public_reply",),
-    )
+    counts = {"released": 0, "sent": 0, "send_retried": 0}
     releasable_cases = ticket_repository.list_enablement_cases_by_email_status(
         ("awaiting_public_reply",),
         processing_profile=processing_profile,
@@ -3466,8 +3402,6 @@ def _drain_enablement_manual_review_emails(
             case_id, released_at=now_iso()
         ):
             counts["released"] += 1
-    counts["still_gated"] = max(0, gated_total - counts["released"])
-
     send_cases = ticket_repository.list_enablement_cases_by_email_status(
         ("pending", "retry", "failed", "skipped_config_missing"),
         processing_profile=processing_profile,
@@ -3493,7 +3427,6 @@ def _drain_enablement_manual_review_emails(
             continue
         if str(result.get("status") or "") == "sent":
             counts["sent"] += 1
-            _mark_enablement_manual_workflow_state(case_id, state="awaiting_human_confirmation")
         else:
             counts["send_retried"] += 1
     return counts
@@ -4487,15 +4420,6 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
                         classification.source,
                     )
         if enablement_completed:
-            manual_workflow = (
-                account_case.get("automation_context") or {}
-            ).get("enablement_manual_workflow")
-            if isinstance(manual_workflow, dict):
-                manual_workflow = dict(manual_workflow)
-                manual_workflow.update({"state": "completed", "updated_at": now_iso()})
-                context = dict(account_case.get("automation_context") or {})
-                context["enablement_manual_workflow"] = manual_workflow
-                account_case["automation_context"] = context
             return _queue_enablement_completion_reply_job(
                 reply_key=reply_key,
                 owner_token=owner_token,

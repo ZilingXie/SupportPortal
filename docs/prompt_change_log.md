@@ -1,5 +1,12 @@
 # Prompt Change Log
 
+## 2026-09-11 - Restore manual enablement with one release path
+
+- Behavior: Public reply readback persists delivery evidence; the existing Worker cycle alone releases the matching manual request email. Existing claim/send/complete and atomic completion-job protocols remain authoritative.
+- Completion input: A standalone Date/To/Subject or Chinese header label remains in the newly authored body, including any later revocation. Three distinct consecutive header fields, explicit quote separators and HTML quote markers retain the quote boundary. The existing completion classifier is unchanged.
+- Cleanup: Removed duplicate readback release hooks, the unused delivery helper, count-only queries and redundant workflow-state writes. Background same-token claims cannot bypass human-review ownership; explicit Resume retains its existing behavior.
+- Verification: Manual-flow regression covers delivery gating, one email, one completion job, quote revocation, same-token ownership and Resume. Production deployment and real email/ticket acceptance remain pending.
+
 ## 2026-09-09 - Preserve authorization through routine Preproduction rebuilds
 
 - Area/version: Repository deployment instructions in `AGENTS.md` and `docs/agent_workflow_details.md`; no application prompt or model version change.
