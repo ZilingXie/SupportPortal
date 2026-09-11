@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T16:37:55Z",
-  "source_base_commit": "dd4d1403f1358d125e82f489091d9e8959f5c482",
-  "registry_digest": "de7cb2b948e32f21a3795c64166b274a59fb4ea5b10069d283490c0786e7ee9c",
+  "generated_at": "2026-09-11T17:16:04Z",
+  "source_base_commit": "4553a18f529ecfb51fc6f09c2741c3a5b2ea0bce",
+  "registry_digest": "504280760a51669c5014efc3581bc488213a2e9c04fe5dc18629f6b51b0ffa84",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1161,6 +1161,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "Feature list verification passed；project overview 重新生成并校验通过（digest 8caa5a4f...）。"
         },
         {
+          "type": "deployment",
+          "label": "Preproduction manual-mode release r20260911-97b8d96",
+          "command": "AUTOMATION_TERRAFORM_BIN=\u003clocal podman terraform wrapper> AUTOMATION_RELEASE_EVIDENCE_BUCKET=supportportal-release-evidence-891612554546-us-east-1 DEPLOY_PREPRODUCTION_APPROVED=1 TICKET_DB_DSN=\u003croot .env> PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN=\u003cssm /supportportal/preproduction/automation-db-migration-dsn> ./deployment/release_automation_ecs_pipeline.sh --release-commit 97b8d9684a07c659dc6647e647222111864517c3 --prompt-release-id pr-175312c491e7 --through preproduction --hermes-case-workflow-mode disabled --enablement-workflow-mode manual --resume",
+          "details": "首次运行在 preflight 因本机无 terraform 二进制中断（CodeBuild 构建与 evidence 已通过）；以 AUTOMATION_TERRAFORM_BIN 指向 .planning/2026-09-06-codebuild-preproduction/terraform-1.9.8（podman hashicorp/terraform:1.9.8 包装器）--resume 续跑成功。全阶段 passed（preflight/prompt_schema/route_worker_rollout 276s/heartbeat/api_rollout 196s/collector/activation），terraform 零漂移复用 preflight evidence，provider probe 全绿（manual 模式正确无 archer_read_get_ok 键）。Live 验证：/health/live 200；/health/release provenance release_id=r20260911-97b8d96、git_commit=97b8d9684a07c659dc6647e647222111864517c3（PR #1155）、prompt pr-175312c491e7 active、hermes disabled、schema automation-ecs-004；worker td :23 携带 ENABLEMENT_WORKFLOW_MODE=manual、APP_BUILD_REF=97b8d968、无 ARCHER_OAUTH_COOKIE（双向门禁 manual 侧成立）。未创建真实工单或发送业务邮件。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1268,7 +1274,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 37,
-      "done_count": 18,
+      "done_count": 19,
       "blocked_count": 0
     },
     {
@@ -11908,10 +11914,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-152",
       "title": "Enablement 双流程模式开关（manual 默认 + Archer 可切换）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "summary": "引入环境开关 ENABLEMENT_WORKFLOW_MODE（manual|archer，默认 manual）：manual 保持 p2-149 人工开通流程（确认 AppID→回复先行→内部邮件门禁→人工开通回复→最终回复关单）为全环境默认；从回退提交父版本恢复 Archer 自动开通编排（含 p1-15 失败告警与回退邮件加固）作为 archer 分支，经统一分发点按模式选择。部署工具链按 HERMES_CASE_WORKFLOW_MODE/ENGINEER_SLACK_OUTBOUND_ENABLED 先例支持 --enablement-workflow-mode 按环境注入开关与 ARCHER_OAUTH_COOKIE 条件凭据，retired-secret 门禁与 provider probe Archer 读探针改为按模式条件化（manual 含凭据必 fail、archer 强制 archer_read_get_ok）。当前无 Archer 权限：默认 manual、不注入凭据、不建 SSM 参数；将来拿到权限后建 SSM 参数并按 runbook 切换，preproduction/production 均可切（用户拍板）。",
-      "next_action": "代码+测试+文档已完成；剩：真库 PG 回环验证 → finalize 合码 → preproduction 部署（manual）并 live 验证后转 done。",
+      "next_action": "",
       "acceptance_criteria": [
         "两套流程同树共存：默认（未设/空 ENABLEMENT_WORKFLOW_MODE）全环境 manual，行为与 p2-149 人工流程完全一致，现有零 Archer 调用守卫原样通过；未知模式值 fail-closed 报错。",
         "archer 模式行为等于回退前 r20260902 lineage：enabled→完成回复关单、appid_invalid/project_not_found→清 App ID 重问、enable_failed→失败告警+回退内部邮件+human_review_required，delivery_key 幂等保留。",
@@ -11945,6 +11951,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Registry and generators",
           "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
           "details": "Feature list verification passed；project overview 重新生成并校验通过（digest 8caa5a4f...）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction manual-mode release r20260911-97b8d96",
+          "command": "AUTOMATION_TERRAFORM_BIN=\u003clocal podman terraform wrapper> AUTOMATION_RELEASE_EVIDENCE_BUCKET=supportportal-release-evidence-891612554546-us-east-1 DEPLOY_PREPRODUCTION_APPROVED=1 TICKET_DB_DSN=\u003croot .env> PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN=\u003cssm /supportportal/preproduction/automation-db-migration-dsn> ./deployment/release_automation_ecs_pipeline.sh --release-commit 97b8d9684a07c659dc6647e647222111864517c3 --prompt-release-id pr-175312c491e7 --through preproduction --hermes-case-workflow-mode disabled --enablement-workflow-mode manual --resume",
+          "details": "首次运行在 preflight 因本机无 terraform 二进制中断（CodeBuild 构建与 evidence 已通过）；以 AUTOMATION_TERRAFORM_BIN 指向 .planning/2026-09-06-codebuild-preproduction/terraform-1.9.8（podman hashicorp/terraform:1.9.8 包装器）--resume 续跑成功。全阶段 passed（preflight/prompt_schema/route_worker_rollout 276s/heartbeat/api_rollout 196s/collector/activation），terraform 零漂移复用 preflight evidence，provider probe 全绿（manual 模式正确无 archer_read_get_ok 键）。Live 验证：/health/live 200；/health/release provenance release_id=r20260911-97b8d96、git_commit=97b8d9684a07c659dc6647e647222111864517c3（PR #1155）、prompt pr-175312c491e7 active、hermes disabled、schema automation-ecs-004；worker td :23 携带 ENABLEMENT_WORKFLOW_MODE=manual、APP_BUILD_REF=97b8d968、无 ARCHER_OAUTH_COOKIE（双向门禁 manual 侧成立）。未创建真实工单或发送业务邮件。"
         }
       ],
       "source_refs": [
@@ -11978,6 +11990,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-11",
           "event": "implementation_complete",
           "summary": "ENABLEMENT_WORKFLOW_MODE 开关接入四个分发入口（intake/评论 resume/Hermes 工具/main 旧入口+rerun，统一经 _run_enablement_workflow）；从 8d5b82c5^ 恢复 _run_enablement_archer_workflow/_archer_reply_facts/_append_archer_failure_reason（含 p1-15 失败告警与回退邮件 claim 协议）；部署工具链按 hermes/slack 先例支持 --enablement-workflow-mode（render 强制回写+ARCHER_OAUTH_COOKIE 条件注入/剥离+validate_worker_contract 双向门禁+bootstrap 源拷贝后缀+provider probe archer 读探针条件化+shell SSM 存在性守卫+pipeline 透传纳入 checkpoint 身份）；compose/.env.example parity；恢复回退前被删测试并新增模式测试；四份文档更新。13 套件 446 passed/94 subtests + legacy 套件 293 passed。"
+        },
+        {
+          "at": "2026-09-11",
+          "event": "preproduction_deployed_and_done",
+          "summary": "PR #1155 合入 main（97b8d968，期间发现并发线程已占用 p2-151 编号遂改号 p2-152）。Preproduction 发布 r20260911-97b8d96（manual 模式）全阶段通过并完成 live 验证（health/provenance/worker td 模式与凭据门禁/provider probe）。验收标准全部满足，转 done；Archer 模式保持休眠，待权限到位后按 runbook 切换。"
         }
       ]
     },
