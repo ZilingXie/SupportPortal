@@ -76,7 +76,13 @@ def queue_hermes_draft_delivery(
         is_public=True,
         target_status=None,
         source="hermes",
-        draft_version=int(draft["conversation_version"]) + 1,
+        # The sender compares this against the mirror case_revision, so it
+        # must carry that revision identity — not conversation_version + 1,
+        # which only coincides with it for turns that follow an intake bump.
+        # Continuation turns (investigation_reply, investigation_feedback)
+        # draft at conversation_version == case_revision and would otherwise
+        # be falsely rejected as stale by the sender.
+        draft_version=int(draft.get("case_revision") or draft.get("conversation_version") or 0),
         comments_revision=comments_revision,
         immutable_content=str(draft["content"]),
     )

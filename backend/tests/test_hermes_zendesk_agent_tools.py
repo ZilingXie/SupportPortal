@@ -344,3 +344,34 @@ class TestDeliveryQueue:
                 store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
             )
         assert repository.deliveries == []
+
+    def test_queue_carries_case_revision_for_continuation_turns(self) -> None:
+        # Continuation turns (investigation_reply / investigation_feedback)
+        # draft at conversation_version == case_revision because no intake
+        # bump precedes them; the queued draft_version must still equal the
+        # mirror case_revision or the sender falsely rejects the send as
+        # stale. Legacy normal turns keep the identical value (their
+        # conversation_version + 1 == case_revision).
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(
+                store, repository, turn_id=turn_id, content="Draft", basis={}
+            )
+        # simulate the continuation-turn shape: conversation_version caught up
+        # with the case revision
+        draft_row = store.get_hermes_draft(draft["draft_id"])
+        store._hermes_drafts[draft["draft_id"]]["conversation_version"] = int(
+            draft_row["case_revision"]
+        )
+        store.request_hermes_draft_publish(draft["draft_id"])
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
+        )
+        delivery = repository.deliveries[0]
+        mirror_revision = int(store.get_case_mirror("123")["case_revision"])
+        assert delivery["draft_version"] == mirror_revision
+        assert delivery["draft_version"] == int(draft_row["case_revision"])
