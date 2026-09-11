@@ -8,9 +8,9 @@
   "module_id": "account-automation",
   "function_id": "account-production-environment",
   "created_at": "2026-09-08",
-  "updated_at": "2026-09-10",
+  "updated_at": "2026-09-11",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "2026-09-10 save_reply_draft 端点修复已上线并被受控重放实证（PR#1130 + r20260910-ff8777f，重放轮 200/draft 落库/binding 复用/零外发）。重放同时暴露新缺口：编排侧 publication gate（publication_decision_for_turn）无任何生产调用方，turn 完成即把 manual 草稿置 stale 且 review 列表不可见，人工批准与 auto 发布两条路径均未接线——需设计接线下一个修复轮；另记录 Hermes 侧内部工具名 support_save_reply_draft 不可用（agent 回退 HTTP 端点成功）与 route/work 阶段工具可用性叙述偏差两个观察点。",
+  "next_action": "2026-09-11 publication gate 接线修复已实施待部署：processor 在 persona 后调用 publication_decision_for_turn（guardrail 阻断→human_review 不 complete；结果并入 turn result）；草稿保存时盖章 case_revision（列自 schema-004 已有但从未写入），complete 清扫 floor 改用 turn.case_revision（豁免本 turn 草稿），approve 放宽为 binding ≤ 草稿版本+1（+1=本 turn 完成、更多=新客户输入已失效）。待合入 main 后重建部署 Preproduction 并重放：注入 13400 客户评论→draft awaiting_approval 不 stale→dashboard approve→delivery ledger queued（Zendesk 实际外发取决于 worker side-effects 开关，关闭则验到 queued 为止）。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -75,6 +75,11 @@
       "type": "test",
       "label": "Replay exposed unwired publication gate (stale-on-completion)",
       "details": "重放发现 p2-148 第二阶段设计的编排侧发布门禁未接线：publication_decision_for_turn（automation_hermes_tools.py:487，含 request_hermes_draft_publish/queue_hermes_draft_delivery 调用）仅有测试调用方，automation_hermes_agent.py processor 在 persona 阶段后直接 complete_hermes_agent_turn；turn 完成把 binding conversation_version 推进后 _stale_drafts_for_version 立即将未提升草稿（case_revision NULL）置 stale，而 get_hermes_case_review 与 dashboard approve 端点均不含 stale 草稿——调查草稿人工批准与 automation 草稿自动发布两条路径当前都无法走通（验收标准第 3 条未满足，属新缺陷非本轮修复范围）。次要观察：Hermes 会话内工具名 support_save_reply_draft 报 not available（agent 回退 SupportPortal HTTP 工具端点成功），route/work 阶段 output 有 \"support tools are unavailable\" 叙述但方向记录与调查保存实际成功，Hermes 侧 toolset 注册需核对。"
+    },
+    {
+      "type": "test",
+      "label": "Publication gate wired with coherent revision semantics",
+      "details": "2026-09-11 三层修复：① processor 在三阶段后、complete 前调用 publication_decision_for_turn（guardrail 阻断→返回 human_review 且不 complete，工具已 fail turn；其余结果并入 turn result.publication；side-effects 开关读 AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED）。② 两 store 实现的 save_hermes_case_draft 盖章 turn.case_revision（列自 schema-004 已有但从未写入，intake 失效与发送门禁的 stale_case_revision 比较因此回到同空间）。③ complete 清扫 floor 从 bump 后 binding 版本改为 turn.case_revision（豁免本 turn 草稿），approve 校验从相等放宽为 binding ≤ 草稿版本+1（+1=本 turn 完成且无新输入，≥+2=新客户输入已把草稿失效，intake 失效兜底不变）。测试：新增 processor 两例（manual→awaiting_approval 且 review 可见不 stale；blocked→human_review 且 turn failed）与审批两态用例，更新 TestTurnLifecycle 与两个编码了旧过度失效语义的用例；PG 真库集成 7/7（含重写 test_new_turn_stales_prior_drafts 为同 turn 存活/新输入才失效），InMemory 96 全绿。"
     }
   ],
   "history": [
@@ -112,6 +117,11 @@
       "at": "2026-09-10",
       "event": "fix_deployed_and_replay_verified",
       "summary": "PR#1130 合入并以 r20260910-ff8777f 部署 Preproduction（并发 #1131 按管线规则一并重建；collector 瞬态失败干净回滚后 resume 成功）；13400 重放实证 draft 200 落库、binding 复用、零外发；新发现 publication gate 未接线缺口（草稿 turn 完成即 stale、审批路径不可达）待下轮修复。"
+    },
+    {
+      "at": "2026-09-11",
+      "event": "publication_gate_wired",
+      "summary": "三层修复：processor 接 publication_decision_for_turn（human_review 不 complete）+草稿盖章 case_revision+清扫 floor/approve 校验同空间化；InMemory 96 全绿、PG 真库 7/7；等待合入后部署 Preproduction 并重放审批链。"
     }
   ],
   "legacy_ids": [],
