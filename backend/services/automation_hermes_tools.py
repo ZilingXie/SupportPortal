@@ -384,7 +384,7 @@ async def tool_execute_automation_action(
     if missing_fields:
         account_case["execution_reason_code"] = None
     repository.save_account_case(account_case)
-    return {
+    result = {
         "status": "missing_fields" if missing_fields else "executed",
         "route": normalized_route,
         "missing_fields": missing_fields,
@@ -393,6 +393,8 @@ async def tool_execute_automation_action(
         "internal_email_send_status": internal_email_status,
         "internal_email_send_reason": internal_email_reason,
     }
+    store.record_hermes_turn_work(turn_id, work_result=result)
+    return result
 
 
 def tool_save_investigation_progress(
@@ -463,9 +465,18 @@ def tool_save_reply_draft(
     if isinstance(snapshot, dict) and snapshot.get("greeting_name"):
         greeting_name = str(snapshot["greeting_name"])
     normalized_content = apply_greeting_projection(normalized_content, greeting_name)
+    investigation = binding.get("investigation") if isinstance(binding.get("investigation"), dict) else {}
+    work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else None
     guardrail = run_engineer_guardrail_final(
         draft_customer_reply=normalized_content,
-        reply_readiness={"summary": str((binding.get("investigation") or {}).get("summary") or "")},
+        reply_readiness={
+            "summary": str(investigation.get("summary") or ""),
+            # Hermes-native self-report: the durable work record behind this
+            # draft — saved investigation progress or an executed automation
+            # action — is the readiness proof; drafts with no recorded work
+            # stay blocked.
+            "ready_for_customer_reply": bool(investigation) or bool(work_result),
+        },
     )
     draft = store.save_hermes_case_draft(
         turn_id,
