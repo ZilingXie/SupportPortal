@@ -185,6 +185,27 @@ def test_render_task_definition_only_changes_image_and_provenance(tmp_path: Path
     assert "revision" not in rendered
 
 
+def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+
+    rendered = render_task_definition(
+        role="api",
+        current_path=current,
+        manifest_path=manifest,
+        registry_id="123456789012",
+        region="us-east-1",
+    )
+
+    secrets = {item["name"]: item["valueFrom"] for item in rendered["containerDefinitions"][0]["secrets"]}
+    assert secrets["zendesk_basic_auth"].endswith(
+        "parameter/supportportal/production/zendesk-basic-auth"
+    )
+    assert secrets["ZENDESK_AI_ASSIGNEE_EMAIL"].endswith(
+        "parameter/supportportal/production/zendesk-ai-assignee-email"
+    )
+
+
 def _worker_current_with_archer_secret(tmp_path: Path) -> Path:
     current = _task_definition(tmp_path, "worker")
     payload = json.loads(current.read_text())
