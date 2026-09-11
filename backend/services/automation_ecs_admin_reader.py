@@ -130,6 +130,9 @@ class EmptyAutomationEcsAdminReader:
     def environment_config(self) -> dict[str, Any]:
         return {"names": [], "items": []}
 
+    def release_notes(self) -> dict[str, Any]:
+        return {"releases": []}
+
 
 class AutomationEcsAdminReader:
     """Read the environment-scoped Admin contract without importing the legacy application."""
@@ -665,6 +668,39 @@ class AutomationEcsAdminReader:
                 {"name": name, "description": environment_config_description(name)}
                 for name in names
             ],
+        }
+
+    def release_notes(self) -> dict[str, Any]:
+        with self._read_cursor() as cursor:
+            cursor.execute(
+                sql.SQL(
+                    """
+                    SELECT release_id, git_commit, build_time, prompt_release_id,
+                           image_digests, changes, deployed_at
+                    FROM {}
+                    ORDER BY deployed_at DESC, release_id
+                    LIMIT 50
+                    """
+                ).format(self._table("support_release_notes"))
+            )
+            rows = cursor.fetchall()
+        return {
+            "releases": [
+                {
+                    "release_id": str(row.get("release_id") or ""),
+                    "git_commit": str(row.get("git_commit") or ""),
+                    "build_time": _iso(row.get("build_time")),
+                    "prompt_release_id": str(row.get("prompt_release_id") or ""),
+                    "image_digests": _json_dict(row.get("image_digests")),
+                    "changes": [
+                        str(item)
+                        for item in (row.get("changes") or [])
+                        if isinstance(item, str)
+                    ],
+                    "deployed_at": _iso(row.get("deployed_at")),
+                }
+                for row in rows
+            ]
         }
 
 

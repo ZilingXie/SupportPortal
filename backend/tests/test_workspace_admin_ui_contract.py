@@ -171,6 +171,57 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             pathname="/automation/production/admin/",
         )
 
+    def test_release_notes_section_is_ecs_only_and_renders_deploy_records(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        for marker in (
+            '`${ECS_ADMIN_ROOT}/release-notes`',
+            '"release-notes": "Release Notes"',
+            '["release-notes", "new_releases", "Release Notes", "RN"]',
+            'rootSection === "release-notes" && !isEcsAdmin',
+            'navItems.filter(([id]) => id !== "release-notes")',
+            "renderReleaseNotes",
+            "loadReleaseNotes",
+            'data-action="retry-release-notes"',
+            "admin-release-changes",
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("/api/workspace/admin/release-notes", source)
+
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            releaseNotesData = {
+              releases: [
+                {
+                  release_id: 'r20260912-abcdef1',
+                  git_commit: 'a'.repeat(40),
+                  build_time: '2026-09-12T00:00:00Z',
+                  prompt_release_id: 'pr-1',
+                  image_digests: { api: 'sha256:1111111111111111', route: 'sha256:2222222222222222' },
+                  changes: ['Add release notes tab (p2-153) (#1160)', 'Fix thing (#1159)'],
+                  deployed_at: '2026-09-12T01:02:03+00:00',
+                },
+              ],
+            };
+            const markup = renderReleaseNotes();
+            if (!markup.includes('r20260912-abcdef1')) throw new Error('release id missing');
+            if (!markup.includes('Add release notes tab (p2-153) (#1160)')) throw new Error('change entry missing');
+            if (!markup.includes('pr-1')) throw new Error('prompt release missing');
+            if (!markup.includes('sha256:111111111111')) throw new Error('digest summary missing');
+            releaseNotesData = { releases: [] };
+            if (!renderReleaseNotes().includes('No release notes recorded yet')) throw new Error('empty state missing');
+            """,
+            pathname="/automation/production/admin/",
+        )
+
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            if (adminEndpoints.releaseNotes !== undefined) throw new Error('release notes must not be wired for local workspace mode');
+            """,
+            pathname="/workspace/admin/",
+        )
+
     def test_account_automation_hierarchical_agent_config_and_environment_tabs_are_operational(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         css = Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8")

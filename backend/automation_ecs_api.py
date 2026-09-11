@@ -716,6 +716,16 @@ def create_app(    *,
                 headers={"Cache-Control": "no-store"},
             )
 
+        @app.get(
+            f"{base}/admin/api/release-notes",
+            dependencies=admin_dependencies,
+        )
+        async def admin_release_notes() -> JSONResponse:
+            return JSONResponse(
+                content=jsonable_encoder(admin_data_reader.release_notes()),
+                headers={"Cache-Control": "no-store"},
+            )
+
     @app.get(
         f"{base}/api/integrations/slack/engineer-cases/thread-bindings/resolve",
         dependencies=[Depends(_require_n8n_request_token)],

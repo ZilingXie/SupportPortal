@@ -276,7 +276,48 @@ def test_account_runtime_preflight_includes_every_admin_source_table() -> None:
         "support_prompt_definitions",
         "support_prompt_versions",
         "support_prompt_releases",
+        "support_release_notes",
     } <= ACCOUNT_RUNTIME_TABLES
+
+
+def test_release_notes_projection_reads_latest_records_and_sanitizes_payload() -> None:
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        {
+            "release_id": "r20260912-abcdef1",
+            "git_commit": "b" * 40,
+            "build_time": "2026-09-12T00:00:00Z",
+            "prompt_release_id": "pr-1",
+            "image_digests": {"api": "sha256:aaa", "route": "sha256:bbb"},
+            "changes": ["Add release notes tab (p2-153) (#1160)", 42, None],
+            "deployed_at": datetime(2026, 9, 12, 1, 2, 3, tzinfo=timezone.utc),
+        }
+    ]
+    transaction = MagicMock()
+    transaction.__enter__.return_value = cursor
+    reader = _reader()
+
+    with patch.object(reader, "_read_cursor", return_value=transaction):
+        payload = reader.release_notes()
+
+    query = cursor.execute.call_args.args[0]
+    rendered = query.as_string()
+    assert 'FROM "supportportal_production"."support_release_notes"' in rendered
+    assert "ORDER BY deployed_at DESC" in rendered
+    assert "LIMIT 50" in rendered
+    assert payload == {
+        "releases": [
+            {
+                "release_id": "r20260912-abcdef1",
+                "git_commit": "b" * 40,
+                "build_time": "2026-09-12T00:00:00Z",
+                "prompt_release_id": "pr-1",
+                "image_digests": {"api": "sha256:aaa", "route": "sha256:bbb"},
+                "changes": ["Add release notes tab (p2-153) (#1160)"],
+                "deployed_at": "2026-09-12T01:02:03+00:00",
+            }
+        ]
+    }
 
 
 def test_hermes_tables_are_part_of_ecs_runtime_schema_contract() -> None:

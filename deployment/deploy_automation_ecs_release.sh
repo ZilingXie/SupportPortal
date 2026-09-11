@@ -614,7 +614,7 @@ prune_success_artifacts() {
 }
 
 rollback_services() {
-  [[ "${DEPLOY_STARTED}" = "1" && "${ACTIVATION_STARTED}" = "0" ]] || return 0
+  [[ "${DEPLOY_STARTED}" = "1" && "${ACTIVATION_STARTED}" = "0" && "${DEPLOY_COMPLETE}" = "0" ]] || return 0
   log "Deployment failed before Prompt activation; restoring captured task definitions"
   local index role service old_arn new_arn current_arn failed=0
   ROLLBACK_STATUS="in_progress"
@@ -1610,8 +1610,28 @@ main() {
       --release-id "${PROMPT_RELEASE_ID}" >/dev/null 2>&1
   PROMPT_SYNC_STATUS="active"
   PROMPT_ACTIVATION_STATUS="active"
+  # The target Prompt Release is verified active from this point on, whether it
+  # was activated now or already active; later failures must not roll back ECS
+  # services and fall into the reconciliation path instead.
+  ACTIVATION_STARTED=1
   finish_phase passed
   DEPLOY_COMPLETE=1
+
+  start_phase release_note
+  (
+    cd -- "${RELEASE_SOURCE_ROOT}"
+    export PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}"
+    export PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA}"
+    "${PYTHON_BIN}" -m backend.scripts.automation_release_notes record \
+      --release-id "${RELEASE_ID}" \
+      --git-commit "$(jq -r '.git_commit' "${MANIFEST_PATH}")" \
+      --build-time "$(jq -r '.build_time // ""' "${MANIFEST_PATH}")" \
+      --prompt-release-id "${PROMPT_RELEASE_ID}" \
+      --image-digests "$(jq -c '.components | with_entries(.value = .value.digest)' "${MANIFEST_PATH}")" \
+      --worktree "${RELEASE_SOURCE_ROOT}"
+  ) >"${TEMP_DIR}/release-note.json" \
+    || fail "Release note record failed"
+  finish_phase passed
   write_evidence "complete"
   prune_success_artifacts
   log "Deployment verified and target Prompt Release activated: ${RELEASE_ID}"

@@ -2130,6 +2130,17 @@ p {
   background: rgba(239, 244, 251, 0.42);
 }
 
+.admin-release-changes {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-release-changes li {
+  color: var(--ink-muted);
+}
+
 .admin-source-cell {
   display: flex;
   min-width: 96px;

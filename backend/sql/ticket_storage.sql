@@ -371,6 +371,16 @@ CREATE TABLE IF NOT EXISTS support_prompt_release_items (
         REFERENCES support_prompt_versions(prompt_key, version)
 );
 
+CREATE TABLE IF NOT EXISTS support_release_notes (
+    release_id TEXT PRIMARY KEY,
+    git_commit TEXT NOT NULL,
+    build_time TEXT,
+    prompt_release_id TEXT,
+    image_digests JSONB NOT NULL,
+    changes JSONB NOT NULL,
+    deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS support_assets (
     asset_id TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL,

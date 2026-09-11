@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-153",
+  "title": "ECS Admin Release Notes tab（发布时自动落库）",
+  "status": "active",
+  "owner": "codex",
+  "phase_id": "phase-1",
+  "module_id": "platform-delivery",
+  "function_id": "ecs-environment-migration",
+  "created_at": "2026-09-12",
+  "updated_at": "2026-09-12",
+  "summary": "ECS Admin 控制台新增 Release Notes tab（导航位于 Automated Cases 正下方，仅 ECS 两环境显示，本地 /workspace/admin 不显示）：deploy 管线在 activation 阶段通过后自动向环境库新表 support_release_notes 写权威发布记录（release_id/git_commit/build_time/prompt_release_id/三角色 image digests/自动 PR 变更列表=git log 上一 release..HEAD 的 squash 标题/部署时间，同 release_id 幂等 upsert），admin 只读 API /admin/api/release-notes 与 UI 懒加载渲染。新表走 ticket_storage.sql + repository initialize + ACCOUNT_RUNTIME_TABLES 幂等 bootstrap；deploy 增加 release_note 阶段（写入失败 fail-closed，且加 DEPLOY_COMPLETE 回滚护栏+activation 后统一置位 ACTIVATION_STARTED，避免部署完成后失败误回滚健康服务）。",
+  "next_action": "代码+测试已完成；定向测试通过后 finalize 合入并部署 Preproduction（--bootstrap-account-schema 建 DDL + 已 active prompt release 需 --resume 两段式），线上验收 tab 与首条自动写入的发布记录。",
+  "acceptance_criteria": [
+    "Preproduction admin 导航在 Automated Cases 下方出现 Release Notes（本地 /workspace/admin 无此 tab）。",
+    "部署完成后 /automation/preproduction/admin/api/release-notes 返回本次 release 自动写入的记录：release_id 与运行版本一致、三角色 digest 齐全、changes 为上一 release 以来的 PR 标题列表。",
+    "同 release_id 重复部署幂等 upsert（deploy 工具单测覆盖）。",
+    "Admin 只读契约不变：release-notes 仅 GET，写方法 405/404，前端无写入口。",
+    "Production 下次授权部署后其 admin 同样出现该 tab（本次不动 Production）。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Release notes chain coverage",
+      "details": "2026-09-12 实施：test_automation_release_notes 7 例（temp git 仓库 changes 计算/幂等 upsert 参数与 JSON/fail-closed 校验/DSN 必填）；reader release_notes 投影单测（SQL+清洗）；API release-notes 端点并入 GET 会话/只读矩阵；UI 合同（ECS-only 导航与端点派生、本地模式不接线、渲染与空态）。定向 93 passed + 2 skipped + repository configuration 123 passed。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-09-12",
+      "event": "created",
+      "summary": "用户要求 admin 页面增加 release note tab（Automated Cases 下方）并协助规划；方案定为发布时 deploy 工具自动落库（用户拍板），仅 ECS 两环境显示。"
+    }
+  ],
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "source_refs": [
+    "backend/scripts/automation_release_notes.py",
+    "deployment/deploy_automation_ecs_release.sh",
+    "backend/services/automation_ecs_admin_reader.py",
+    "backend/automation_ecs_api.py",
+    "ui/workspace-ui/admin/app.js",
+    "backend/sql/ticket_storage.sql"
+  ]
+}
