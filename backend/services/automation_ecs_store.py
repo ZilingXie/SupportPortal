@@ -1322,7 +1322,7 @@ class InMemoryAutomationEcsStore:
             )
             binding["updated_at"] = _iso()
             self._stale_hermes_drafts(
-                turn["zendesk_ticket_id"], floor_version=int(binding["conversation_version"])
+                turn["zendesk_ticket_id"], floor_version=int(turn["case_revision"])
             )
             self._append_event(
                 turn["execution_id"],
@@ -1448,6 +1448,7 @@ class InMemoryAutomationEcsStore:
                 "zendesk_ticket_id": turn["zendesk_ticket_id"],
                 "turn_id": turn_id,
                 "conversation_version": int(binding["conversation_version"]),
+                "case_revision": int(turn["case_revision"]),
                 "content": normalized,
                 "basis": copy.deepcopy(basis or {}),
                 "guardrail": copy.deepcopy(guardrail) if guardrail is not None else None,
@@ -1495,7 +1496,10 @@ class InMemoryAutomationEcsStore:
             binding = self._hermes_bindings.get((draft["namespace"], draft["zendesk_ticket_id"]))
             if binding is None:
                 raise HermesDraftStateError(draft_id, "case binding disappeared")
-            if int(binding["conversation_version"]) != int(draft["conversation_version"]):
+            # binding == draft.conversation_version + 1 means the producing turn
+            # completed; any higher value means a newer customer input advanced
+            # the conversation and the draft must be invalidated.
+            if int(binding["conversation_version"]) > int(draft["conversation_version"]) + 1:
                 draft.update(status="stale", updated_at=_iso())
                 raise HermesDraftStaleError(draft_id)
             draft.update(approved_by=approver, approved_at=_iso(), status="approved", updated_at=_iso())
@@ -3295,7 +3299,7 @@ class PostgresAutomationEcsStore:
                 if binding is None:
                     raise HermesTurnStateError(turn_id, "case binding disappeared")
                 self._stale_drafts_for_version(
-                    cursor, str(row["zendesk_ticket_id"]), floor_version=int(binding["conversation_version"])
+                    cursor, str(row["zendesk_ticket_id"]), floor_version=int(row["case_revision"])
                 )
                 self._insert_timeline(
                     cursor,
@@ -3470,8 +3474,8 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         INSERT INTO {} (draft_id,namespace,zendesk_ticket_id,turn_id,conversation_version,
-                            content,basis,guardrail,publish_policy,status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft')
+                            case_revision,content,basis,guardrail,publish_policy,status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft')
                         RETURNING *
                         """
                     ).format(self._table("automation_hermes_case_drafts")),
@@ -3481,6 +3485,7 @@ class PostgresAutomationEcsStore:
                         turn["zendesk_ticket_id"],
                         turn_id,
                         int(binding["conversation_version"]),
+                        int(turn["case_revision"]),
                         normalized,
                         Jsonb(basis or {}),
                         Jsonb(guardrail) if guardrail is not None else None,
@@ -3549,7 +3554,10 @@ class PostgresAutomationEcsStore:
                 binding = cursor.fetchone()
                 if binding is None:
                     raise HermesDraftStateError(draft_id, "case binding disappeared")
-                if int(binding["conversation_version"]) != int(row["conversation_version"]):
+                # binding == draft.conversation_version + 1 means the producing turn
+                # completed; any higher value means a newer customer input advanced
+                # the conversation and the draft must be invalidated.
+                if int(binding["conversation_version"]) > int(row["conversation_version"]) + 1:
                     cursor.execute(
                         sql.SQL("UPDATE {} SET status='stale',updated_at=NOW() WHERE draft_id=%s").format(
                             self._table("automation_hermes_case_drafts")

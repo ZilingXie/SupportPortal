@@ -175,8 +175,14 @@ class TestPostgresDraftLifecycle:
         draft = store.save_hermes_case_draft(
             handoff["turn_id"], content="Draft v0", basis={}, guardrail=None, publish_policy="manual"
         )
+        assert draft["case_revision"] == 1
         store.start_hermes_agent_turn(handoff["turn_id"], run_id="run-1")
         store.complete_hermes_agent_turn(handoff["turn_id"], result={"status": "completed"})
+        # the producing turn's own completion must not stale its draft
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "draft"
+        second = _hand_off(store, _event("zendesk:ticket:123:comment", event_type="comment.created"))
+        store.start_hermes_agent_turn(second["turn_id"], run_id="run-2")
+        store.complete_hermes_agent_turn(second["turn_id"], result={"status": "completed"})
         assert store.get_hermes_draft(draft["draft_id"])["status"] == "stale"
 
     def test_review_payload_groups_binding_turns_drafts(self, store) -> None:

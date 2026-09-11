@@ -30,6 +30,7 @@ from backend.services.automation_hermes_agent import (
     HermesAgentTurnProcessor,
     HermesTurnDeferred,
 )
+from backend.services.automation_hermes_tools import tool_save_reply_draft
 from backend.services.hermes_agent_runtime import HermesAgentError
 
 
@@ -142,7 +143,7 @@ class TestHandOff:
 
 
 class TestTurnLifecycle:
-    def test_complete_turn_advances_version_and_stales_drafts(self) -> None:
+    def test_complete_turn_advances_version_and_stales_prior_drafts(self) -> None:
         store = _store()
         handoff = _accept_and_hand_off(store, _event())
         store.start_hermes_agent_turn(handoff["turn_id"], run_id="run-1")
@@ -153,8 +154,17 @@ class TestTurnLifecycle:
             guardrail={"decision": "pass"},
             publish_policy="auto",
         )
+        assert draft["case_revision"] == 1
         store.complete_hermes_agent_turn(handoff["turn_id"], result={"status": "completed"})
         assert store.get_hermes_case_binding("123")["conversation_version"] == 1
+        # the producing turn's own completion advances the version but must
+        # not stale the draft it just produced
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "draft"
+        second = _accept_and_hand_off(
+            store, _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED)
+        )
+        store.start_hermes_agent_turn(second["turn_id"], run_id="run-2")
+        store.complete_hermes_agent_turn(second["turn_id"], result={"status": "completed"})
         stale = store.get_hermes_draft(draft["draft_id"])
         assert stale["status"] == "stale"
 
@@ -195,6 +205,25 @@ class TestDraftApproval:
         store.request_hermes_draft_publish(draft["draft_id"])
         store.start_hermes_agent_turn(handoff["turn_id"], run_id="run-1")
         store.complete_hermes_agent_turn(handoff["turn_id"], result={"status": "completed"})
+        # the producing turn's completion keeps the draft approvable
+        approved = store.approve_hermes_case_draft(draft["draft_id"], approver="admin")
+        assert approved["status"] == "approved"
+
+    def test_approval_rejects_draft_once_newer_input_advanced(self) -> None:
+        store = _store()
+        handoff = _accept_and_hand_off(store, _event())
+        store.record_hermes_case_direction(handoff["turn_id"], direction="investigation", reason="technical")
+        draft = store.save_hermes_case_draft(
+            handoff["turn_id"], content="Draft v0", basis={}, guardrail=None, publish_policy="manual"
+        )
+        store.request_hermes_draft_publish(draft["draft_id"])
+        store.start_hermes_agent_turn(handoff["turn_id"], run_id="run-1")
+        store.complete_hermes_agent_turn(handoff["turn_id"], result={"status": "completed"})
+        second = _accept_and_hand_off(
+            store, _event("zendesk:ticket:123:comment", event_type=IntakeEventType.COMMENT_CREATED)
+        )
+        store.start_hermes_agent_turn(second["turn_id"], run_id="run-2")
+        store.complete_hermes_agent_turn(second["turn_id"], result={"status": "completed"})
         with pytest.raises((HermesDraftStaleError, HermesDraftStateError)):
             store.approve_hermes_case_draft(draft["draft_id"], approver="admin")
         assert store.get_hermes_draft(draft["draft_id"])["status"] == "stale"
@@ -403,6 +432,74 @@ class TestAgentTurnProcessor:
         with pytest.raises(HermesTurnDeferred):
             processor.process(agent_job)
         assert store.get_hermes_turn(handoff["turn_id"])["status"] == "cancel_requested"
+
+    def test_publication_gate_promotes_manual_draft_before_completion(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="investigation", route=None
+                )
+            elif phase == "persona":
+                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                with patch(
+                    "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                    side_effect=lambda *a, **k: {
+                        "decision": "approved_for_final_engineer_review",
+                        "blockers": [],
+                    },
+                ):
+                    tool_save_reply_draft(
+                        store,
+                        None,
+                        turn_id=handoff["turn_id"],
+                        content="Please share your device model and OS version.",
+                        basis={},
+                    )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "completed"
+        assert outcome["publication"]["status"] == "awaiting_approval"
+        assert outcome["publication"]["queued"] is False
+        drafts = store.get_hermes_case_review("123")["drafts"]
+        assert len(drafts) == 1
+        assert drafts[0]["status"] == "awaiting_approval"
+        assert drafts[0]["case_revision"] == 1
+        # the producing turn's completion must not stale its own promoted draft
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "completed"
+
+    def test_publication_gate_blocked_guardrail_parks_turn_in_human_review(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+            elif phase == "persona":
+                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                with patch(
+                    "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                    side_effect=lambda *a, **k: {
+                        "decision": "blocked",
+                        "blockers": ["No draft customer reply provided."],
+                    },
+                ):
+                    tool_save_reply_draft(
+                        store, None, turn_id=handoff["turn_id"], content="Draft", basis={}
+                    )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["reason"] == "guardrail_blocked"
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "failed"
 
 
 class TestExpiryRecovery:

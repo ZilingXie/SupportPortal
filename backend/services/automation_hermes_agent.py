@@ -10,6 +10,7 @@ arrive through durable tools, and every phase records a stable
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -29,6 +30,7 @@ from backend.services.automation_hermes_snapshot import (
     build_case_snapshot,
     render_snapshot_for_run,
 )
+from backend.services.automation_hermes_tools import publication_decision_for_turn
 from backend.services.hermes_agent_runtime import (
     TERMINAL_RUN_STATUSES,
     HermesAgentClient,
@@ -246,11 +248,30 @@ class HermesAgentTurnProcessor:
                         "error_code": "missing_direction",
                     }
 
+        publication = publication_decision_for_turn(
+            self.store,
+            self.repository,
+            turn_id=payload.turn_id,
+            environment=self.environment,
+            zendesk_side_effects_enabled=(
+                str(os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or "").strip() == "1"
+            ),
+        )
+        if str(publication.get("status")) == "human_review":
+            # The gate already parked the turn (guardrail blocked); completing
+            # it now would fail because the turn is no longer running.
+            return {
+                "engine": "hermes",
+                "turn_id": payload.turn_id,
+                "status": "human_review",
+                "reason": str(publication.get("reason") or "publication_gate"),
+            }
         result = {
             "engine": "hermes",
             "turn_id": payload.turn_id,
             "status": "completed",
             "case_revision": int(turn["case_revision"]),
+            "publication": publication,
         }
         self.store.complete_hermes_agent_turn(payload.turn_id, result=result)
         return result
