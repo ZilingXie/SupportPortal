@@ -133,6 +133,9 @@ class _AdminReader:
     def environment_config(self) -> dict[str, Any]:
         return self._reply("environment-config")
 
+    def release_notes(self) -> dict[str, Any]:
+        return self._reply("release-notes")
+
 def _client(
     *,
     dashboard_reader: DashboardCaseReader | None = None,
@@ -608,6 +611,7 @@ def test_admin_get_apis_share_dashboard_session_and_forward_filters() -> None:
         "account-automation?page=2&page_size=25&route_status=automated&category=automation&created_from=2026-09-01&created_to=2026-09-05",
         "agent-config",
         "environment-config",
+        "release-notes",
     )
     with client:
         for endpoint in endpoints:
@@ -635,6 +639,7 @@ def test_admin_get_apis_share_dashboard_session_and_forward_filters() -> None:
         ),
         ("agent-config", {}),
         ("environment-config", {}),
+        ("release-notes", {}),
     ]
 
 
@@ -652,6 +657,7 @@ def test_admin_business_write_methods_are_not_registered() -> None:
             "account-automation",
             "agent-config",
             "environment-config",
+            "release-notes",
         ):
             for method in ("POST", "PUT", "PATCH", "DELETE"):
                 response = client.request(method, f"{base}/{endpoint}", json={})

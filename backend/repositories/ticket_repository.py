@@ -11540,6 +11540,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT PRIMARY KEY, build_ref TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('candidate','active','superseded','failed')), previous_release_id TEXT REFERENCES {}(release_id), created_at TIMESTAMPTZ NOT NULL, activated_at TIMESTAMPTZ, failure_reason TEXT)").format(self._table("support_prompt_releases"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} ((status)) WHERE status='active'").format(sql.Identifier("idx_support_prompt_releases_one_active"), self._table("support_prompt_releases")))
                 cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT NOT NULL REFERENCES {}(release_id) ON DELETE CASCADE, prompt_key TEXT NOT NULL, prompt_version INTEGER NOT NULL, PRIMARY KEY (release_id, prompt_key), FOREIGN KEY (prompt_key, prompt_version) REFERENCES {}(prompt_key, version))").format(self._table("support_prompt_release_items"), self._table("support_prompt_releases"), self._table("support_prompt_versions")))
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (release_id TEXT PRIMARY KEY, git_commit TEXT NOT NULL, build_time TEXT, prompt_release_id TEXT, image_digests JSONB NOT NULL, changes JSONB NOT NULL, deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW())").format(self._table("support_release_notes")))
                 cur.execute(
                     sql.SQL(
                         """

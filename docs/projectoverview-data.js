@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T17:16:04Z",
-  "source_base_commit": "4553a18f529ecfb51fc6f09c2741c3a5b2ea0bce",
-  "registry_digest": "504280760a51669c5014efc3581bc488213a2e9c04fe5dc18629f6b51b0ffa84",
+  "generated_at": "2026-09-11T17:27:10Z",
+  "source_base_commit": "7184606d9cc24c70dc169a9893d6719ba9014eba",
+  "registry_digest": "988f2dcb063d274fc1356a7d5b40d4a237806f95ee5b1359e200dbd5f66564f5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2747,6 +2747,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction ECS rollout and live verification",
           "details": "PR #1152（main 2e781bf7）经正式 pipeline 发布 Preproduction release r20260911-2e781bf（prompt release pr-175312c491e7 保持 active，全阶段 passed：preflight/prompt_schema/route_worker_rollout/heartbeat/api_rollout/collector/activation，总 1219s）。线上验收 2026-09-11：GET /automation/preproduction/admin/ =200（System Admin 标题）+ app.js 含 isEcsAdmin 与 (preproduction|production) 派生检测；admin/admin 登录返回 Preproduction Admin；dashboard/api/runtime provenance=release r20260911-2e781bf/commit 2e781bf7/prompt pr-175312c491e7；admin/api/account-automation 返回 processing_profile=preproduction 且真实数据（total_account_cases=4, automated=1, not_automated=3，13424/13413/13400 在列）；/admin/api/cases =200（engineer cases 合法为空）；Production /automation/production/admin/ 仍 200 无回归。"
+        },
+        {
+          "type": "test",
+          "label": "Release notes chain coverage",
+          "details": "2026-09-12 实施：test_automation_release_notes 7 例（temp git 仓库 changes 计算/幂等 upsert 参数与 JSON/fail-closed 校验/DSN 必填）；reader release_notes 投影单测（SQL+清洗）；API release-notes 端点并入 GET 会话/只读矩阵；UI 合同（ECS-only 导航与端点派生、本地模式不接线、渲染与空态）。定向 93 passed + 2 skipped + repository configuration 123 passed。"
         }
       ],
       "source_refs": [
@@ -2759,7 +2764,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 7,
+      "task_count": 8,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -12000,6 +12005,52 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-153",
+      "title": "ECS Admin Release Notes tab（发布时自动落库）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-12",
+      "updated_at": "2026-09-12",
+      "summary": "ECS Admin 控制台新增 Release Notes tab（导航位于 Automated Cases 正下方，仅 ECS 两环境显示，本地 /workspace/admin 不显示）：deploy 管线在 activation 阶段通过后自动向环境库新表 support_release_notes 写权威发布记录（release_id/git_commit/build_time/prompt_release_id/三角色 image digests/自动 PR 变更列表=git log 上一 release..HEAD 的 squash 标题/部署时间，同 release_id 幂等 upsert），admin 只读 API /admin/api/release-notes 与 UI 懒加载渲染。新表走 ticket_storage.sql + repository initialize + ACCOUNT_RUNTIME_TABLES 幂等 bootstrap；deploy 增加 release_note 阶段（写入失败 fail-closed，且加 DEPLOY_COMPLETE 回滚护栏+activation 后统一置位 ACTIVATION_STARTED，避免部署完成后失败误回滚健康服务）。",
+      "next_action": "代码+测试已完成；定向测试通过后 finalize 合入并部署 Preproduction（--bootstrap-account-schema 建 DDL + 已 active prompt release 需 --resume 两段式），线上验收 tab 与首条自动写入的发布记录。",
+      "acceptance_criteria": [
+        "Preproduction admin 导航在 Automated Cases 下方出现 Release Notes（本地 /workspace/admin 无此 tab）。",
+        "部署完成后 /automation/preproduction/admin/api/release-notes 返回本次 release 自动写入的记录：release_id 与运行版本一致、三角色 digest 齐全、changes 为上一 release 以来的 PR 标题列表。",
+        "同 release_id 重复部署幂等 upsert（deploy 工具单测覆盖）。",
+        "Admin 只读契约不变：release-notes 仅 GET，写方法 405/404，前端无写入口。",
+        "Production 下次授权部署后其 admin 同样出现该 tab（本次不动 Production）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Release notes chain coverage",
+          "details": "2026-09-12 实施：test_automation_release_notes 7 例（temp git 仓库 changes 计算/幂等 upsert 参数与 JSON/fail-closed 校验/DSN 必填）；reader release_notes 投影单测（SQL+清洗）；API release-notes 端点并入 GET 会话/只读矩阵；UI 合同（ECS-only 导航与端点派生、本地模式不接线、渲染与空态）。定向 93 passed + 2 skipped + repository configuration 123 passed。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-12",
+          "event": "created",
+          "summary": "用户要求 admin 页面增加 release note tab（Automated Cases 下方）并协助规划；方案定为发布时 deploy 工具自动落库（用户拍板），仅 ECS 两环境显示。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/scripts/automation_release_notes.py",
+        "deployment/deploy_automation_ecs_release.sh",
+        "backend/services/automation_ecs_admin_reader.py",
+        "backend/automation_ecs_api.py",
+        "ui/workspace-ui/admin/app.js",
+        "backend/sql/ticket_storage.sql"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17390,7 +17441,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",
-        "ECS Production 与 Preproduction 均提供 `/automation/\u003cenvironment>/admin/` 与 Workspace Admin 一致的 10 栏只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。"
+        "ECS Production 与 Preproduction 均提供 `/automation/\u003cenvironment>/admin/` 与 Workspace Admin 一致的 10 栏只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。",
+        "ECS Admin 提供 Release Notes 栏（Automated Cases 下方，仅 ECS 两环境）：deploy 管线在每次发布 activation 通过后自动向环境库 `support_release_notes` 写权威记录（release/commit/build time/prompt release/三角色镜像 digest/自上一 release 以来的 PR 标题变更列表/部署时间，幂等 upsert），控制台只读展示；Admin 侧无任何写入口，本地 Workspace Admin 不显示该栏。"
       ],
       "planned": [
         "待补充。"

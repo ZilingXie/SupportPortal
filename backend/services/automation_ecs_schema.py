@@ -47,6 +47,7 @@ ACCOUNT_RUNTIME_TABLES = frozenset(
         "support_prompt_versions",
         "support_prompt_releases",
         "support_prompt_release_items",
+        "support_release_notes",
     }
 )
 

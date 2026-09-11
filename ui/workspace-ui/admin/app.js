@@ -43,11 +43,13 @@ const adminEndpoints = isEcsAdmin
       automation: `${ECS_ADMIN_ROOT}/account-automation`,
       agentConfig: `${ECS_ADMIN_ROOT}/agent-config`,
       environmentConfig: `${ECS_ADMIN_ROOT}/environment-config`,
+      releaseNotes: `${ECS_ADMIN_ROOT}/release-notes`,
     })
   : WORKSPACE_ADMIN_ENDPOINTS;
 const ADMIN_SECTION_TITLES = {
   overview: "Operations Overview",
   "automated-cases": "Automated Cases",
+  "release-notes": "Release Notes",
   "agent-config": "Agent Config",
   "environment-config": "Environment Config",
   engineers: "Engineer Management",
@@ -108,6 +110,9 @@ let personaCreateOpen = false;
 let environmentData = { names: [], items: [] };
 let environmentLoadError = "";
 let environmentQuery = "";
+let releaseNotesData = null;
+let releaseNotesLoading = false;
+let releaseNotesLoadError = "";
 let selectedEngineerId = "";
 let invitationResult = null;
 let scheduleNotice = null;
@@ -118,7 +123,8 @@ function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
   if (section === "route-strategy") return "agent-config";
   const rootSection = section.split("/")[0];
-  return ["overview", "automated-cases", "agent-config", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(rootSection)
+  if (rootSection === "release-notes" && !isEcsAdmin) return "overview";
+  return ["overview", "automated-cases", "release-notes", "agent-config", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(rootSection)
     ? rootSection
     : "overview";
 }
@@ -342,6 +348,7 @@ function renderAdminShell(content) {
   const navItems = [
     ["overview", "dashboard", "Operations Overview", "OV"],
     ["automated-cases", "automation", "Automated Cases", "AC"],
+    ["release-notes", "new_releases", "Release Notes", "RN"],
     ["agent-config", "smart_toy", "Agent Config", "AG"],
     ["environment-config", "settings", "Environment Config", "EC"],
     ["engineers", "groups", "Engineer Management", "EN"],
@@ -351,6 +358,7 @@ function renderAdminShell(content) {
     ["resolved", "task_alt", "Resolved", "RS"],
     ["audit", "history", "Audit", "AU"],
   ];
+  const visibleNavItems = isEcsAdmin ? navItems : navItems.filter(([id]) => id !== "release-notes");
   const activeNavSection = adminSection === "new-account" ? "engineers" : adminSection;
   const accountName = String(currentAccount?.display_name || currentAccount?.account_id || "Admin");
   const sectionTitle = ADMIN_SECTION_TITLES[adminSection] || ADMIN_SECTION_TITLES.overview;
@@ -363,7 +371,7 @@ function renderAdminShell(content) {
         </a>
         <div class="admin-sidebar-body">
           <nav class="admin-sidebar-nav" aria-label="Admin sections"><ul>
-            ${navItems
+            ${visibleNavItems
               .map(
                 ([id, icon, label, fallback]) => `
                   <li><a href="#${id}" data-section="${id}" class="${activeNavSection === id ? "is-active" : ""}" title="${escapeHtml(label)}">
@@ -1668,6 +1676,8 @@ function renderAdmin() {
     ? renderAudit()
     : adminSection === "automated-cases"
     ? renderAutomatedCases()
+    : adminSection === "release-notes"
+    ? renderReleaseNotes()
     : adminSection === "agent-config"
     ? renderAgentConfig()
     : adminSection === "environment-config"
@@ -1688,6 +1698,52 @@ async function loadEnvironmentConfig({ render = true } = {}) {
     environmentLoadError = error.message;
   }
   if (render) renderAdmin();
+}
+
+function renderReleaseNotes() {
+  const releases = Array.isArray(releaseNotesData?.releases) ? releaseNotesData.releases : [];
+  const header = `<header class="admin-main-header"><div><p class="admin-eyebrow">RELEASE NOTES</p><p>Deployment history recorded automatically by the release pipeline when each release finishes activating.</p></div></header>`;
+  if (releaseNotesLoading) {
+    return `${header}<section class="admin-ops-surface"><div class="list-state"><span class="spinner" aria-hidden="true"></span><strong>Loading release notes</strong></div></section>`;
+  }
+  if (releaseNotesLoadError) {
+    return `${header}<section class="admin-ops-surface"><p class="login-error" role="alert">${escapeHtml(releaseNotesLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-release-notes">Retry</button></section>`;
+  }
+  if (!releases.length) {
+    return `${header}<section class="admin-ops-surface"><p>No release notes recorded yet. Entries are written automatically when a deployment completes.</p></section>`;
+  }
+  return `${header}<section class="admin-ops-surface"><table class="admin-work-table admin-release-notes-table"><thead><tr><th>Release</th><th>Deployed</th><th>Commit</th><th>Prompt release</th><th>Changes</th></tr></thead><tbody>${releases.map(release => {
+    const digests = Object.entries(release.image_digests || {})
+      .map(([role, digest]) => `${role}: ${escapeHtml(String(digest).slice(0, 19))}…`)
+      .join("<br />");
+    const changes = Array.isArray(release.changes) && release.changes.length
+      ? `<ul class="admin-release-changes">${release.changes.map(change => `<li>${escapeHtml(change)}</li>`).join("")}</ul>`
+      : "<span class=\"admin-card-detail\">No change list recorded.</span>";
+    return `<tr>
+      <td><strong>${escapeHtml(release.release_id || "unknown")}</strong><small class="admin-card-detail">${digests}</small></td>
+      <td>${escapeHtml(formatDateTime(release.deployed_at) || "")}</td>
+      <td><code>${escapeHtml(String(release.git_commit || "").slice(0, 10))}</code></td>
+      <td>${escapeHtml(release.prompt_release_id || "—")}</td>
+      <td>${changes}</td>
+    </tr>`;
+  }).join("")}</tbody></table></section>`;
+}
+
+async function loadReleaseNotes({ render = true, force = false } = {}) {
+  if (!isEcsAdmin || releaseNotesLoading || (releaseNotesData && !force)) return;
+  releaseNotesLoading = true;
+  releaseNotesLoadError = "";
+  if (render) renderAdmin();
+  try {
+    const payload = await fetchJson(adminEndpoints.releaseNotes);
+    releaseNotesData = payload || { releases: [] };
+  } catch (error) {
+    releaseNotesData = null;
+    releaseNotesLoadError = error.message;
+  } finally {
+    releaseNotesLoading = false;
+    if (render) renderAdmin();
+  }
 }
 
 async function loadAgentConfig({ render = true, force = false } = {}) {
@@ -1738,6 +1794,7 @@ async function loadAdminData() {
     loading = false;
     renderAdmin();
     if (adminSection === "agent-config") loadAgentConfig();
+    if (adminSection === "release-notes") loadReleaseNotes();
   }
 }
 
@@ -1770,6 +1827,9 @@ function signOut(options = {}) {
   personaCreateOpen = false;
   environmentData = { names: [], items: [] };
   environmentLoadError = "";
+  releaseNotesData = null;
+  releaseNotesLoading = false;
+  releaseNotesLoadError = "";
   selectedEngineerId = "";
   invitationResult = null;
   if (options.render !== false) renderAdmin();
@@ -1911,6 +1971,7 @@ root.addEventListener("click", (event) => {
     if (globalThis.location) globalThis.location.hash = adminSection;
     renderAdmin();
     if (adminSection === "agent-config") loadAgentConfig();
+    if (adminSection === "release-notes") loadReleaseNotes();
     return;
   }
   const action = event.target.closest("[data-action]")?.dataset.action;
@@ -1930,6 +1991,8 @@ root.addEventListener("click", (event) => {
     loadAdminData();
   } else if (action === "retry-environment-config") {
     loadEnvironmentConfig();
+  } else if (action === "retry-release-notes") {
+    loadReleaseNotes({ force: true });
   } else if (action === "retry-agent-config") {
     loadAgentConfig({ force: true });
   } else if (action === "dispatch") {
@@ -2117,6 +2180,7 @@ window.addEventListener?.("hashchange", () => {
   normalizeAgentLocation(selection);
   renderAdmin();
   if (adminSection === "agent-config") loadAgentConfig();
+  if (adminSection === "release-notes") loadReleaseNotes();
 });
 
 normalizeAgentLocation(initialAgentSelection);
