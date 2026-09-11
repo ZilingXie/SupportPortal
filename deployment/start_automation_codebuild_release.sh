@@ -127,8 +127,10 @@ main() {
     --arg prompt_release_id "${PROMPT_RELEASE_ID}" \
     --arg prompt_build_ref "${prompt_build_ref}" \
     --arg prompt_content_fingerprint "${prompt_fingerprint}" \
+    --arg hotfix_baseline "${HOTFIX_BASELINE}" \
     --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{schema_version:$schema_version,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,prompt_build_ref:$prompt_build_ref,prompt_content_fingerprint:$prompt_content_fingerprint,created_at:$created_at}' \
+    '{schema_version:$schema_version,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,prompt_build_ref:$prompt_build_ref,prompt_content_fingerprint:$prompt_content_fingerprint,created_at:$created_at}
+      + (if $hotfix_baseline == "" then {} else {hotfix_baseline:$hotfix_baseline,hotfix_authorized_commit:$git_commit} end)' \
     >"${request_path}"
   request_key="requests/${RELEASE_ID}/request.json"
   verify_release_aws_mutation_ready 600 || fail "AWS identity/provider preflight failed before S3 request write"
@@ -144,6 +146,7 @@ main() {
     --arg bucket "${EVIDENCE_BUCKET}" \
     --arg key "${request_key}" \
     --arg version "${request_version}" \
+    --arg hotfix_baseline "${HOTFIX_BASELINE}" \
     '[
       {name:"AUTOMATION_RELEASE_GIT_COMMIT",value:$commit,type:"PLAINTEXT"},
       {name:"AUTOMATION_RELEASE_ID",value:$release,type:"PLAINTEXT"},
@@ -151,7 +154,10 @@ main() {
       {name:"AUTOMATION_RELEASE_REQUEST_BUCKET",value:$bucket,type:"PLAINTEXT"},
       {name:"AUTOMATION_RELEASE_REQUEST_KEY",value:$key,type:"PLAINTEXT"},
       {name:"AUTOMATION_RELEASE_REQUEST_VERSION",value:$version,type:"PLAINTEXT"}
-    ]')"
+    ] + (if $hotfix_baseline == "" then [] else [
+      {name:"AUTOMATION_RELEASE_HOTFIX_BASELINE",value:$hotfix_baseline,type:"PLAINTEXT"},
+      {name:"AUTOMATION_RELEASE_HOTFIX_AUTHORIZED",value:$commit,type:"PLAINTEXT"}
+    ] end)')"
   verify_release_aws_mutation_ready 600 || fail "AWS identity/provider preflight failed before CodeBuild start"
   build_id="$(aws codebuild start-build --region "${REGION}" --project-name "${PROJECT_NAME}" \
     --environment-variables-override "${overrides}" --query 'build.id' --output text)"

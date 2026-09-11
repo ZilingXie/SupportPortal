@@ -190,7 +190,14 @@ resource "aws_codebuild_project" "release" {
             - cd /tmp/supportportal
             - git fetch --quiet origin main
             - git cat-file -e "$AUTOMATION_RELEASE_GIT_COMMIT^{commit}"
-            - git merge-base --is-ancestor "$AUTOMATION_RELEASE_GIT_COMMIT" origin/main
+            - |
+              if test -n "$AUTOMATION_RELEASE_HOTFIX_BASELINE"; then
+                test "$AUTOMATION_RELEASE_HOTFIX_AUTHORIZED" = "$AUTOMATION_RELEASE_GIT_COMMIT"
+                git cat-file -e "$AUTOMATION_RELEASE_HOTFIX_BASELINE^{commit}"
+                git merge-base --is-ancestor "$AUTOMATION_RELEASE_HOTFIX_BASELINE" "$AUTOMATION_RELEASE_GIT_COMMIT"
+              else
+                git merge-base --is-ancestor "$AUTOMATION_RELEASE_GIT_COMMIT" origin/main
+              fi
             - git checkout --detach "$AUTOMATION_RELEASE_GIT_COMMIT"
             - test "$(git rev-parse HEAD)" = "$AUTOMATION_RELEASE_GIT_COMMIT"
         build:
