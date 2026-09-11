@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T02:33:24Z",
-  "source_base_commit": "f2b3a275bffbbe656d9e5c4e449b39d95a4cebd1",
-  "registry_digest": "bed6fac6ae696861798b58a6d071b433e756f2cb9cb5d0859bfd5af9ba2470c3",
+  "generated_at": "2026-09-11T03:44:59Z",
+  "source_base_commit": "c66ca6334c842716b14543a11a23b6ce32976977",
+  "registry_digest": "d65aa9cda59997c4b2b13a970bf315bbdd858ce784cbf10c0879475a10dff658",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1105,6 +1105,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Review round-3 fixes: five-finding regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py (+12 suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
           "details": "五项修复配套反例全绿（13 套件 404 passed/102 subtests + PG 真库 9 passed）：①claim_enablement_manual_completion 事务内取消 pending 回复 job（排除自身 job_id），worker 级并发双确认 Barrier 测试证明唯一完成 job 存活且 submission job 被胜者取消；②HTML 引用结构在去标签前转 -----Original Message----- 哨兵（嵌套 blockquote/appendonsend/border-left/stopspelling），中文头（发件人/发送时间/收件人/主题/日期/抄送）与 -----原始邮件-----/行内中文 From 头全识别，reviewer 的 blockquote+中文反例不判完成；③转人工三层：候选 SQL automation_status\u003c>human_review_required + _send_claimed 入口守卫（case_not_automation_owned）+ claim_account_internal_email_delivery 原子 WHERE 同条件（三实现）；④list_enablement_cases_by_email_status SQL 下推 workflow state ANY + human_review 排除，drain 拆释放/发送双独立扫描，25 条 legacy pending 不遮挡 email_released（真饥饿反例）；⑤claim 在 workflow 缺失时首次合法确认原子建立 {version:1,state:completed,legacy:true}，legacy 双确认恰一个完成 job。PG：并发释放恰一胜、绑定释放（无关回复不释放）、事务内取消、过滤查询、legacy claim 全过。坑：support_ticket_messages.id 是 bigint 需 ::text cast 对账本 message_id；readback 钩子在 record_ 内即释放，测试播种用 complete_direct 绕过钩子才能测并发释放。"
+        },
+        {
+          "type": "test",
+          "label": "Review round-4 fixes: four-finding regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_comment_sync.py (+13 targeted suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "四项修复配套验证全绿（13 套件 407/102 + 遗留四套件 337 + PG 真库 10/840s）：①claim_account_internal_email_delivery 三实现守卫参数化 require_automation_active（默认 False 完整恢复 Resume/重试路径——reviewer 三 handler 复现反例改为领取成功+sender 调用；drain 传 True 保留原子层处理权）；领取失败分支在 require_automation_active+human_review 时返回原持久化状态+known_not_sent+case_not_automation_owned（不再变成 delivery_unknown）；②list_enablement_cases_by_email_status 加 require_delivered_confirmation（PG EXISTS 绑定谓词 LIMIT 前过滤，InMemory 等价）+count_enablement_cases_by_email_status（still_gated=count-released）——25 条不可释放 gated 不遮挡第 26 条（reviewer 饥饿反例）；③并发测试单一共享 patch 提到池外+全局恢复断言；④PG 测试删除 hasattr 守卫改直查 schema（恰一 completion job persona_v8_queued+submission cancelled）+新增 legacy 双确认 PG 用例（首确认建立 legacy completed 标记，第二次拒绝，schema 直查恰一 job）。额外：遗留 /account 套件 9 个断言对齐人工流程契约（sent→awaiting_public_reply/not_applicable/自动化非转人工），补齐 #1128 以来的存量缺口。"
         },
         {
           "type": "test",
@@ -11510,7 +11516,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "SSO 根凭证（约 7 天绝对过期 JWT）2026-09-09 运行中失效导致 13386 失败后，将 Enablement Media Relay 从 Archer 自动直连回退为人工开通流程：信息齐全后先创建客户 review 确认回复 job，内部开通邮件以 awaiting_public_reply 门禁持久化，Zendesk 公开回复 readback 确认送达后才释放发送；人工开通后回复 enabled（仅限本次邮件 To/Cc 个人收件人、等待态、未引用正文段三重校验）触发最终公开回复与关单。Worker 移除 ARCHER_OAUTH_COOKIE 注入、发布探针移除 Archer 检查；不删 SSM 历史凭证、不回退历史提交（p1-15 prepare 协议被复用）。",
-      "next_action": "修复轮3（review 五项：完成 claim 事务内取消、HTML/中文引用哨兵、转人工三层校验、SQL 下推防饥饿、legacy 首确认建立 completed 标记）已实施：404 定向 + PG 真库回归全绿；合并后在新 SHA 上执行官方栈验证。4e2df33d 维持不部署；新部署 Prompt 等 owner 复验后生成。",
+      "next_action": "修复轮4（review 四项：共享领取守卫参数化恢复 Resume、释放扫描 SQL 下推送达证据防饥饿、并发测试池外单一 patch、PG 直查 schema 强断言+legacy 用例）已实施：13 套件 407+遗留四套件 337+PG 真库 10 全绿；合并后在新 SHA 上重做官方栈验证。剩余=owner 最后复验→授权 Production 发布→生成部署 Prompt→真实闭环验收。8d5b82c5/4e2df33d/ff8777f8 均不放行。",
       "acceptance_criteria": [
         "所有 Enablement 执行入口（intake、客户评论、Hermes 工具、main 旧入口/评论补投、rerun/resume/内部邮件重试、full reroute）对新请求 Archer 调用次数为零；App ID 32 位 hex 本地校验保留（非法格式零网络追问正确值）。",
         "信息齐全后创建 submission_confirmation 客户回复 job 并持久化内部邮件为 awaiting_public_reply（不可领取）；公开回复经 Zendesk readback 确认 delivered 后（事务钩子+有界兜底步）释放为 pending 并经 claim/send/complete 协议发送一次；确认送达时间早于邮件发送时间；进程重启可续走。",
@@ -11547,6 +11553,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Review round-3 fixes: five-finding regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py (+12 suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
           "details": "五项修复配套反例全绿（13 套件 404 passed/102 subtests + PG 真库 9 passed）：①claim_enablement_manual_completion 事务内取消 pending 回复 job（排除自身 job_id），worker 级并发双确认 Barrier 测试证明唯一完成 job 存活且 submission job 被胜者取消；②HTML 引用结构在去标签前转 -----Original Message----- 哨兵（嵌套 blockquote/appendonsend/border-left/stopspelling），中文头（发件人/发送时间/收件人/主题/日期/抄送）与 -----原始邮件-----/行内中文 From 头全识别，reviewer 的 blockquote+中文反例不判完成；③转人工三层：候选 SQL automation_status\u003c>human_review_required + _send_claimed 入口守卫（case_not_automation_owned）+ claim_account_internal_email_delivery 原子 WHERE 同条件（三实现）；④list_enablement_cases_by_email_status SQL 下推 workflow state ANY + human_review 排除，drain 拆释放/发送双独立扫描，25 条 legacy pending 不遮挡 email_released（真饥饿反例）；⑤claim 在 workflow 缺失时首次合法确认原子建立 {version:1,state:completed,legacy:true}，legacy 双确认恰一个完成 job。PG：并发释放恰一胜、绑定释放（无关回复不释放）、事务内取消、过滤查询、legacy claim 全过。坑：support_ticket_messages.id 是 bigint 需 ::text cast 对账本 message_id；readback 钩子在 record_ 内即释放，测试播种用 complete_direct 绕过钩子才能测并发释放。"
+        },
+        {
+          "type": "test",
+          "label": "Review round-4 fixes: four-finding regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_comment_sync.py (+13 targeted suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
+          "details": "四项修复配套验证全绿（13 套件 407/102 + 遗留四套件 337 + PG 真库 10/840s）：①claim_account_internal_email_delivery 三实现守卫参数化 require_automation_active（默认 False 完整恢复 Resume/重试路径——reviewer 三 handler 复现反例改为领取成功+sender 调用；drain 传 True 保留原子层处理权）；领取失败分支在 require_automation_active+human_review 时返回原持久化状态+known_not_sent+case_not_automation_owned（不再变成 delivery_unknown）；②list_enablement_cases_by_email_status 加 require_delivered_confirmation（PG EXISTS 绑定谓词 LIMIT 前过滤，InMemory 等价）+count_enablement_cases_by_email_status（still_gated=count-released）——25 条不可释放 gated 不遮挡第 26 条（reviewer 饥饿反例）；③并发测试单一共享 patch 提到池外+全局恢复断言；④PG 测试删除 hasattr 守卫改直查 schema（恰一 completion job persona_v8_queued+submission cancelled）+新增 legacy 双确认 PG 用例（首确认建立 legacy completed 标记，第二次拒绝，schema 直查恰一 job）。额外：遗留 /account 套件 9 个断言对齐人工流程契约（sent→awaiting_public_reply/not_applicable/自动化非转人工），补齐 #1128 以来的存量缺口。"
         }
       ],
       "source_refs": [
@@ -11586,6 +11598,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-10",
           "event": "review_round_3_fixes",
           "summary": "owner 二轮验收发现五项（并发取消唯一完成 job/HTML中文引用漏剥/转人工仍发送/SQL遮挡饥饿/legacy 重复完成）全部修复；4e2df33d 不放行维持。"
+        },
+        {
+          "at": "2026-09-11",
+          "event": "review_round_4_fixes",
+          "summary": "owner 三轮验收发现四项（守卫误伤 Resume/释放饥饿/测试竞态/PG 假断言）全部修复，并对齐遗留 /account 套件至人工流程契约；ff8777f8 不放行维持。"
         }
       ]
     },
