@@ -2,14 +2,16 @@
 
 - 首次实现：PR #1023（2026-09-02，任务 p2-134）；redirect host 白名单加固：2026-09-02
 - 生产状态：r20260902-46370fa 起上线（ECS worker:17），Mac 与 ECS Fargate 双侧端到端探针通过
-- **⚠ 已退役（2026-09-10，p2-149）**：SSO 根凭证为约 7 天绝对过期 JWT，2026-09-09 运行中失效
-  导致工单 13386 失败后，Enablement 回退为人工开通流程；Worker 不再注入
-  `ARCHER_OAUTH_COOKIE`、发布探针不再检查 Archer。本文件保留为该认证模式的
-  参考档案（若未来获得 service credential 可再评估），代码
-  `archer_direct_client.py`/executor 保留未接线，历史事件 `enablement_archer_result`
-  仍可读取。
-- 代码锚点：`backend/services/archer_direct_client.py`（凭证与传输）、`backend/services/enablement_archer_executor.py`（结果归一与脱敏）
-- 部署/轮换 runbook：已由 `docs/deploy_automation_ecs_release.md`「Enablement 人工开通流程发布门禁」章节取代
+- **休眠可切换（2026-09-11 起，p2-151）**：SSO 根凭证为约 7 天绝对过期 JWT，2026-09-09 运行中失效
+  导致工单 13386 失败后，Enablement 默认回退人工开通流程（p2-149）；p2-151 把 Archer 编排恢复为
+  `ENABLEMENT_WORKFLOW_MODE=archer` 可切换模式（默认 `manual`，两个 ECS 环境均可启用）——编排、
+  回复合同、失败告警与部署门禁全部保留在树上。切换步骤：① 创建 SSM SecureString
+  `/supportportal/{env}/archer-oauth-cookie`（根凭证，注意周级绝对过期风险，见 §6）；
+  ② 以 `--enablement-workflow-mode archer` 发布（发布前门禁校验 SSM 参数存在；
+  manual 渲染含该凭据一律 fail-closed；archer 渲染必须注入且 provider probe 强制
+  `archer_read_get_ok=true`）；③ 受控工单验收。历史事件 `enablement_archer_result` 仍可读取。
+- 代码锚点：`backend/services/archer_direct_client.py`（凭证与传输）、`backend/services/enablement_archer_executor.py`（结果归一与脱敏）、`backend/services/automation_account_intake.py` `_run_enablement_archer_workflow`（编排，经 `_run_enablement_workflow` 按模式分发）
+- 部署/轮换 runbook：见 `docs/deploy_automation_ecs_release.md`「Enablement 工作流模式」章节
 
 ## 1. 适用场景
 

@@ -54,10 +54,19 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
     "zendesk_basic_auth": "zendesk-basic-auth",
     "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
 }
-# Retired Enablement runtime dependencies (p2-149): formal upgrades must strip
-# these from an observed Worker task definition instead of carrying them into
-# the new revision, and the register-time contract must fail closed on them.
-RETIRED_WORKER_SECRET_NAMES = {"ARCHER_OAUTH_COOKIE"}
+# Enablement execution mode switch (p2-151): "manual" keeps the p2-149 human
+# review flow; "archer" restores the Archer auto-enablement workflow.
+ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
+ARCHER_SECRET_NAME = "ARCHER_OAUTH_COOKIE"
+ARCHER_SECRET_SUFFIX = "archer-oauth-cookie"
+# Retired Enablement runtime dependency gate (p2-149, conditioned by p2-151):
+# Worker task definitions must not carry the Archer credential unless the
+# rendered enablement workflow mode is "archer".  Formal upgrades strip it from
+# an observed Worker task definition in manual mode instead of carrying it into
+# the new revision, and the register-time contract fails closed in both
+# directions (credential without archer mode, or archer mode without the
+# credential).
+RETIRED_WORKER_SECRET_NAMES = {ARCHER_SECRET_NAME}
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -331,6 +340,7 @@ def _base_environment(
     environment: str,
     hermes_case_workflow_mode: str,
     automation_case_engine: str = "legacy",
+    enablement_workflow_mode: str = "manual",
 ) -> list[dict[str, str]]:
     values = {
         "AUTOMATION_RUNTIME_ALLOW_MEMORY": "0",
@@ -359,6 +369,7 @@ def _base_environment(
                 "ENGINEER_SLACK_OUTBOUND_ENABLED": "0" if environment == "production" else "1",
                 "ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS": "300",
                 "HERMES_CASE_WORKFLOW_MODE": hermes_case_workflow_mode,
+                "ENABLEMENT_WORKFLOW_MODE": enablement_workflow_mode,
             }
         )
     if role in {"route", "worker"}:
@@ -409,6 +420,7 @@ def render_initial_task_definition(
     hermes_persona_enabled: bool = False,
     automation_case_engine: str = "legacy",
     hermes_agent_enabled: bool = False,
+    enablement_workflow_mode: str = "manual",
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
 ) -> dict[str, Any]:
@@ -422,6 +434,8 @@ def render_initial_task_definition(
         raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
     if automation_case_engine not in AUTOMATION_CASE_ENGINES:
         raise ValueError("automation case engine must be legacy or hermes")
+    if enablement_workflow_mode not in ENABLEMENT_WORKFLOW_MODES:
+        raise ValueError("enablement workflow mode must be manual or archer")
     if automation_case_engine == "hermes" and not hermes_agent_enabled:
         raise ValueError("the hermes engine requires hermes agent credentials")
     if role == "worker" and not (graph_efs_file_system_id and graph_efs_access_point_id):
@@ -499,6 +513,8 @@ def render_initial_task_definition(
                 "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
             }
         )
+    if enablement_workflow_mode == "archer" and role == "worker":
+        secret_names[role][ARCHER_SECRET_NAME] = ARCHER_SECRET_SUFFIX
     container: dict[str, Any] = {
         "name": role,
         "image": (
@@ -514,6 +530,7 @@ def render_initial_task_definition(
             environment=environment,
             hermes_case_workflow_mode=hermes_case_workflow_mode,
             automation_case_engine=automation_case_engine,
+            enablement_workflow_mode=enablement_workflow_mode,
         ),
         "secrets": [
             {"name": name, "valueFrom": _parameter_arn(parameter_prefix_arn, suffix)}
@@ -593,6 +610,13 @@ def render_initial_task_definition(
     return rendered
 
 
+def _enablement_mode_from_environment(environment: dict[str, str]) -> str:
+    value = str(environment.get("ENABLEMENT_WORKFLOW_MODE") or "").strip().lower() or "manual"
+    if value not in ENABLEMENT_WORKFLOW_MODES:
+        raise ValueError(f"ENABLEMENT_WORKFLOW_MODE must be manual or archer, got {value!r}")
+    return value
+
+
 def validate_worker_contract(task_definition: dict[str, Any]) -> None:
     container = _container(task_definition, "worker")
     environment = _environment_map(container)
@@ -607,10 +631,17 @@ def validate_worker_contract(task_definition: dict[str, Any]) -> None:
         raise ValueError("Worker task definition contains a pilot-creds volume")
     if "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON" not in _secret_names(container):
         raise ValueError("Worker task definition is missing the Suspension recipients secret")
-    if RETIRED_WORKER_SECRET_NAMES & _secret_names(container):
+    enablement_mode = _enablement_mode_from_environment(environment)
+    carries_archer_secret = bool(RETIRED_WORKER_SECRET_NAMES & _secret_names(container))
+    if enablement_mode != "archer" and carries_archer_secret:
         raise ValueError(
             "Worker task definition contains retired Archer secrets "
             "(manual enablement flow must not carry Archer credentials)"
+        )
+    if enablement_mode == "archer" and not carries_archer_secret:
+        raise ValueError(
+            "Worker task definition is missing the Archer credential secret "
+            "(archer enablement mode requires ARCHER_OAUTH_COOKIE)"
         )
 
 
@@ -619,8 +650,10 @@ def _strip_retired_worker_secrets(task_definition: dict[str, Any]) -> dict[str, 
 
     Formal upgrades render from the live task definition, so an old revision
     that still injects ARCHER_OAUTH_COOKIE would otherwise carry the secret
-    into every new revision. Strip before validation so observed legacy
-    definitions upgrade cleanly while the rendered output stays fail-closed.
+    into every new revision.  Manual-mode renders strip before validation so
+    observed legacy definitions upgrade cleanly while the rendered output
+    stays fail-closed; archer-mode renders keep the credential (the mode
+    contract below then requires it).
     """
 
     container = _container(task_definition, "worker")
@@ -642,6 +675,7 @@ def render_task_definition(
     hermes_persona_enabled: bool | None = None,
     automation_case_engine: str | None = None,
     hermes_agent_enabled: bool | None = None,
+    enablement_workflow_mode: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -650,12 +684,38 @@ def render_task_definition(
     expected_repository = f"supportportal/{environment}"
     if repository != expected_repository:
         raise ValueError(f"repository must be {expected_repository}")
+    if (
+        enablement_workflow_mode is not None
+        and enablement_workflow_mode not in ENABLEMENT_WORKFLOW_MODES
+    ):
+        raise ValueError("enablement workflow mode must be manual or archer")
     source = _read_json(current_path)
     task_definition = source.get("taskDefinition") if "taskDefinition" in source else source
     if not isinstance(task_definition, dict):
         raise ValueError("taskDefinition object is required")
     if role == "worker":
-        _strip_retired_worker_secrets(task_definition)
+        worker_container = _container(task_definition, "worker")
+        observed_enablement_mode = _enablement_mode_from_environment(
+            _environment_map(worker_container)
+        )
+        effective_enablement_mode = enablement_workflow_mode or observed_enablement_mode
+        # Normalize the mode before the register-time contract so the archer
+        # credential requirement and the manual-mode strip rule both see the
+        # target mode, not whatever the observed revision carried.
+        _set_environment_value(
+            worker_container,
+            "ENABLEMENT_WORKFLOW_MODE",
+            effective_enablement_mode,
+        )
+        if effective_enablement_mode != "archer":
+            _strip_retired_worker_secrets(task_definition)
+        else:
+            prefix_arn = _parameter_prefix_arn(worker_container, environment=environment)
+            _set_secret_reference(
+                worker_container,
+                ARCHER_SECRET_NAME,
+                _parameter_arn(prefix_arn, ARCHER_SECRET_SUFFIX),
+            )
         validate_worker_contract(task_definition)
     if (
         hermes_case_workflow_mode is not None
@@ -777,6 +837,11 @@ def render_task_definition(
             "ENGINEER_SLACK_OUTBOUND_ENABLED",
             "0" if environment == "production" else "1",
         )
+    if role in {"api", "worker"} and enablement_workflow_mode is not None:
+        # Carry the requested enablement workflow mode (p2-151) onto every
+        # rendered api/worker revision; the worker contract above already
+        # normalized the mode and credential injection before validation.
+        _set_environment_value(container, "ENABLEMENT_WORKFLOW_MODE", enablement_workflow_mode)
     return rendered
 
 
@@ -807,8 +872,11 @@ def render_production_hermes_disabled_task_definition(
     _remove_environment_values(container, HERMES_SECRET_NAMES)
     _remove_secret_references(container, HERMES_SECRET_NAMES)
     _remove_secret_references(container, HERMES_AGENT_SECRET_NAMES)
-    _remove_secret_references(container, RETIRED_WORKER_SECRET_NAMES)
-    _remove_environment_values(container, RETIRED_WORKER_SECRET_NAMES)
+    if (
+        _enablement_mode_from_environment(_environment_map(container)) != "archer"
+    ):
+        _remove_secret_references(container, RETIRED_WORKER_SECRET_NAMES)
+        _remove_environment_values(container, RETIRED_WORKER_SECRET_NAMES)
     _set_environment_value(container, "HERMES_CASE_WORKFLOW_MODE", "disabled")
     if role == "worker":
         validate_worker_contract(rendered)
@@ -971,6 +1039,10 @@ def build_parser() -> argparse.ArgumentParser:
         const=True,
         default=None,
     )
+    render.add_argument(
+        "--enablement-workflow-mode",
+        choices=sorted(ENABLEMENT_WORKFLOW_MODES),
+    )
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -1001,6 +1073,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="legacy",
     )
     initial.add_argument("--hermes-agent-enabled", action="store_true")
+    initial.add_argument(
+        "--enablement-workflow-mode",
+        choices=sorted(ENABLEMENT_WORKFLOW_MODES),
+        default="manual",
+    )
     initial.add_argument("--graph-efs-file-system-id")
     initial.add_argument("--graph-efs-access-point-id")
     initial.add_argument("--output", required=True)
@@ -1047,6 +1124,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             hermes_persona_enabled=args.hermes_persona_enabled,
             automation_case_engine=args.automation_case_engine,
             hermes_agent_enabled=args.hermes_agent_enabled,
+            enablement_workflow_mode=args.enablement_workflow_mode,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -1079,6 +1157,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             hermes_persona_enabled=args.hermes_persona_enabled,
             automation_case_engine=args.automation_case_engine,
             hermes_agent_enabled=args.hermes_agent_enabled,
+            enablement_workflow_mode=args.enablement_workflow_mode,
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
         )

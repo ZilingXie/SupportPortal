@@ -446,6 +446,9 @@ def deploy_mode_args(args: argparse.Namespace) -> list[str]:
     values.extend(["--automation-case-engine", str(getattr(args, "automation_case_engine", "legacy") or "legacy")])
     if getattr(args, "hermes_agent_enabled", False):
         values.append("--hermes-agent-enabled")
+    values.extend(
+        ["--enablement-workflow-mode", str(getattr(args, "enablement_workflow_mode", "manual") or "manual")]
+    )
     return values
 
 
@@ -671,6 +674,9 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "hermes_persona_enabled": bool(args.hermes_persona_enabled),
                 "automation_case_engine": args.automation_case_engine,
                 "hermes_agent_enabled": bool(args.hermes_agent_enabled),
+                "enablement_workflow": str(
+                    getattr(args, "enablement_workflow_mode", "manual") or "manual"
+                ),
                 "codebuild_direct_production": direct_production,
             },
         }
@@ -925,6 +931,12 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--hermes-persona-enabled", action="store_true")
     pipeline.add_argument("--automation-case-engine", choices=("legacy", "hermes"), default="legacy")
     pipeline.add_argument("--hermes-agent-enabled", action="store_true")
+    pipeline.add_argument(
+        "--enablement-workflow-mode",
+        choices=("manual", "archer"),
+        default="manual",
+        help="Enablement execution mode deployed to the target environment (p2-151)",
+    )
     pipeline.add_argument("--resume", action="store_true")
     pipeline.add_argument("--keep-release-worktree", action="store_true", help=argparse.SUPPRESS)
     return parser

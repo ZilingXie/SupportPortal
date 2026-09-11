@@ -200,6 +200,94 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             repository.close()
             self._drop_schema(dsn, schema)
 
+    def test_enablement_failure_workflow_prepares_and_sends_on_postgres(self) -> None:
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        sender_calls: list[str] = []
+
+        def sender(payload: dict[str, object]) -> dict[str, str]:
+            sender_calls.append(str(payload.get("delivery_key") or ""))
+            return {"status": "sent", "reason": ""}
+
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-ARCHER-WORKFLOW",
+                    "customer_id": "customer@example.com",
+                    "requester": "customer@example.com",
+                    "subject": "Enable Media Relay",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                },
+                new_messages=[],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": "AC-ARCHER-WORKFLOW",
+                    "billing_ticket_id": "AC-ARCHER-WORKFLOW",
+                    "client_ticket_id": "T-ARCHER-WORKFLOW",
+                    "processing_profile": "production",
+                    "automation_status": "automation",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "automation_handler": "enablement",
+                    "route_classification": {"handler_binding_status": "active"},
+                    "collected_fields": {
+                        "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                        "requested_feature": "media_relay",
+                    },
+                    "internal_email_payload": None,
+                    "internal_email_send_status": "archer_pending",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                }
+            )
+            with patch(
+                "backend.services.automation_account_intake.execute_enablement_archer",
+                return_value=SimpleNamespace(outcome="enable_failed", detail="synthetic archer failure"),
+            ), patch(
+                "backend.services.automation_account_intake.send_enablement_internal_email",
+                side_effect=sender,
+            ), patch(
+                "backend.services.automation_account_intake.escalate_account_case_to_human_review",
+                return_value=SimpleNamespace(status="escalated"),
+            ), patch(
+                "backend.services.automation_account_intake.notify_account_failure",
+                return_value={"status": "alerted"},
+            ):
+                result, case, reply_job = asyncio.run(intake_module._run_enablement_archer_workflow(
+                    repository=repository,
+                    account_case=repository.get_account_case("AC-ARCHER-WORKFLOW"),
+                    ticket_id="T-ARCHER-WORKFLOW",
+                    fallback_email_payload={
+                        "subject": "[Enablement] manual action needed",
+                        "body": "Please enable the feature manually.",
+                    },
+                    persona_assignment=None,
+                    processing_profile="production",
+                    trigger_message_created_at="2026-09-10T00:00:00+00:00",
+                ))
+
+            self.assertEqual(result.outcome, "enable_failed")
+            self.assertIsNone(reply_job)
+            self.assertEqual(
+                sender_calls,
+                ["enablement:AC-ARCHER-WORKFLOW:v1"],
+            )
+            saved = repository.get_account_case("AC-ARCHER-WORKFLOW")
+            self.assertEqual(saved["internal_email_send_status"], "sent")
+            self.assertEqual(
+                saved["internal_email_payload"]["delivery_key"],
+                "enablement:AC-ARCHER-WORKFLOW:v1",
+            )
+            self.assertEqual(saved["execution_reason_code"], "archer_enable_failed")
+            self.assertEqual(saved["automation_status"], "human_review_required")
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
     def test_manual_review_gate_release_is_concurrency_safe(self) -> None:
         # p2-149: the awaiting_public_reply gate must be unclaimable before the
         # readback release and exactly one concurrent release may win.

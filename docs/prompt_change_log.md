@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+
+## 2026-09-11 - Enablement dual-flow mode switch (p2-151)
+
+- Behavior: All four enablement dispatch entries (split intake, customer-comment resume, Hermes tool, legacy main intake/rerun) route through one `ENABLEMENT_WORKFLOW_MODE` switch. Default (unset/blank) keeps the p2-149 manual review flow unchanged; `archer` restores the pre-p2-149 Archer auto-enablement behavior (enabled closes the ticket via the archer reply job, appid_invalid/project_not_found re-ask for the App ID, enable_failed records the owner failure alert, delivers the fallback internal email once through the claim protocol and escalates to human review). Unknown values fail closed at read time.
+- Completion input: unchanged in manual mode; archer mode uses the restored Archer reply intents (`enablement_archer_enabled` / `enablement_appid_invalid` / `enablement_appid_not_found`) with the existing persona contracts and App ID redaction.
+- Deployment: `--enablement-workflow-mode {manual,archer}` flows through the release pipeline into every rendered revision; manual renders must not carry `ARCHER_OAUTH_COOKIE` and archer renders must (register-time gate fails closed in both directions), and in archer mode the provider probe must report `archer_read_get_ok=true`.
+- Verification: restored Archer-era suites (intake outcomes, failure notification idempotency, PostgreSQL roundtrip, comment-sync resume, provider probe) plus new mode dispatch/helper tests; the manual zero-Archer-call guard is unchanged and green.
+
 ## 2026-09-11 - Restore manual enablement with one release path
 
 - Behavior: Public reply readback persists delivery evidence; the existing Worker cycle alone releases the matching manual request email. Existing claim/send/complete and atomic completion-job protocols remain authoritative.
