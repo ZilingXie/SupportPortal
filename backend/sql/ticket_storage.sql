@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
     failure_code TEXT,
     confirmed_at TIMESTAMPTZ,
     target_status TEXT CHECK (target_status IS NULL OR target_status = 'solved'),
-    source TEXT NOT NULL DEFAULT 'account' CHECK (source IN ('account', 'engineer')),
+    source TEXT NOT NULL DEFAULT 'account' CHECK (source IN ('account', 'engineer', 'hermes')),
     engineer_case_id TEXT,
     investigation_id TEXT,
     draft_version INTEGER,
