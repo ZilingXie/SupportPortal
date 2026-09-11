@@ -3147,6 +3147,7 @@ def _send_claimed_enablement_delivery(
         account_case_id=account_case_id,
         payload=payload,
         sender=send_enablement_internal_email,
+        require_automation_active=True,
     )
     if result.persisted:
         account_case["internal_email_payload"] = dict(result.payload)
@@ -3276,26 +3277,33 @@ def _drain_enablement_manual_review_emails(
 
     Two INDEPENDENT, SQL-targeted scans (so one phase can never starve the
     other, and records outside the manual flow never consume a window):
-    (1) release — cases gated on ``awaiting_public_reply`` whose workflow
-    state is the same; released only when THIS application's
-    submission_confirmation reply job's message is confirmed delivered (the
-    readback transaction hook normally did this; this belt covers missed
-    hooks and worker restarts);
+    (1) release — gated cases whose OWN submission_confirmation message is
+    already confirmed delivered (the SQL EXISTS filters them BEFORE the
+    LIMIT, so undeliverable gated cases never occupy the release window;
+    ``still_gated`` comes from a separate count for observability). The
+    readback transaction hook normally released these already; this belt
+    covers missed hooks and worker restarts;
     (2) send — cases whose workflow state is ``email_released`` with a
     claimable email status, sent through the normal claim/send/complete
     protocol. Cases escalated to human review are excluded by the repository
-    query and by the ownership guard; legacy todos without the workflow
-    context are excluded in SQL and never taken over.
+    query, the ownership guard, and the ownership-aware claim; legacy todos
+    without the workflow context are excluded in SQL and never taken over.
     """
     counts = {"released": 0, "sent": 0, "send_retried": 0, "still_gated": 0}
 
-    gated_cases = ticket_repository.list_enablement_cases_by_email_status(
+    gated_total = ticket_repository.count_enablement_cases_by_email_status(
+        ("awaiting_public_reply",),
+        processing_profile=processing_profile,
+        workflow_states=("awaiting_public_reply",),
+    )
+    releasable_cases = ticket_repository.list_enablement_cases_by_email_status(
         ("awaiting_public_reply",),
         processing_profile=processing_profile,
         limit=max(1, limit),
         workflow_states=("awaiting_public_reply",),
+        require_delivered_confirmation=True,
     )
-    for account_case in gated_cases:
+    for account_case in releasable_cases:
         case_id = str(
             account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ""
         ).strip()
@@ -3308,13 +3316,11 @@ def _drain_enablement_manual_review_emails(
         )
         if not str(payload.get("delivery_key") or "").strip():
             continue
-        if not _enablement_public_reply_delivered(account_case):
-            counts["still_gated"] += 1
-            continue
         if ticket_repository.release_account_internal_email_after_public_reply(
             case_id, released_at=now_iso()
         ):
             counts["released"] += 1
+    counts["still_gated"] = max(0, gated_total - counts["released"])
 
     send_cases = ticket_repository.list_enablement_cases_by_email_status(
         ("pending", "retry", "failed", "skipped_config_missing"),

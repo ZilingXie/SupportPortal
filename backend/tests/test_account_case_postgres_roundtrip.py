@@ -656,6 +656,21 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                     "updated_at": "2026-09-10T00:00:00+00:00",
                 }
             )
+            repository.save_account_reply_job(
+                {
+                    "job_id": "submission-job-done",
+                    "ticket_id": "T-MANUAL-DONE",
+                    "trigger_message_created_at": "2026-09-10T00:00:00+00:00",
+                    "status": "persona_v8_queued",
+                    "scheduled_for": "2026-09-10T00:01:00+00:00",
+                    "payload": {"reply_intent": "submission_confirmation"},
+                    "attempt_count": 0,
+                    "claimed_at": None,
+                    "published_at": None,
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                }
+            )
 
             def build_job(index: int) -> dict:
                 return {
@@ -691,18 +706,115 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
                 saved["automation_context"]["enablement_manual_workflow"]["state"],
                 "completed",
             )
-            stored_jobs = [
-                job
-                for _key, job in repository.list_account_reply_jobs_by_ticket("T-MANUAL-DONE").items()
-            ] if hasattr(repository, "list_account_reply_jobs_by_ticket") else []
-            if stored_jobs:
-                completion_jobs = [
-                    job
-                    for job in stored_jobs
-                    if (job.get("payload") or {}).get("reply_intent")
-                    == "enablement_completed_and_close"
-                ]
-                self.assertEqual(len(completion_jobs), 1)
+            # Direct schema assertions: exactly one completion job survives
+            # in persona_v8_queued (never cancelled), and a pending submission
+            # job seeded before the claim is cancelled by the winner.
+            with psycopg.connect(dsn) as jobs_conn:
+                with jobs_conn.cursor() as jobs_cur:
+                    jobs_cur.execute(
+                        f'SELECT status, payload->>\'reply_intent\' FROM "{schema}".support_account_reply_jobs '
+                        "WHERE ticket_id = 'T-MANUAL-DONE'"
+                    )
+                    job_rows = jobs_cur.fetchall()
+            completion_rows = [
+                row for row in job_rows if row[1] == "enablement_completed_and_close"
+            ]
+            self.assertEqual(len(completion_rows), 1)
+            self.assertEqual(completion_rows[0][0], "persona_v8_queued")
+            submission_rows = [
+                row for row in job_rows if row[1] == "submission_confirmation"
+            ]
+            self.assertEqual(len(submission_rows), 1)
+            self.assertEqual(submission_rows[0][0], "cancelled")
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
+    def test_legacy_completion_double_confirmation_on_postgres(self) -> None:
+        # p2-149 round-4: a legacy sent case WITHOUT a workflow must persist a
+        # completed marker on its FIRST accepted confirmation so a second
+        # confirmation is rejected; exactly one completion job row exists.
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-LEGACY-DONE",
+                    "customer_id": "customer@example.com",
+                    "requester": "customer@example.com",
+                    "subject": "Enable Media Relay",
+                    "status": "open",
+                    "created_at": "2026-09-10T00:00:00+00:00",
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                },
+                new_messages=[],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": "AC-LEGACY-DONE",
+                    "billing_ticket_id": "AC-LEGACY-DONE",
+                    "client_ticket_id": "T-LEGACY-DONE",
+                    "processing_profile": "production",
+                    "automation_status": "automation",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "automation_handler": "enablement",
+                    "internal_email_send_status": "sent",
+                    "internal_email_payload": {
+                        "delivery_key": "enablement:AC-LEGACY-DONE:v1",
+                        "to_addresses": ["reviewer@example.com"],
+                    },
+                    "updated_at": "2026-09-10T00:00:00+00:00",
+                }
+            )
+
+            def build_job(index: int) -> dict:
+                return {
+                    "job_id": f"account-reply-legacy-{index}",
+                    "ticket_id": "T-LEGACY-DONE",
+                    "trigger_message_created_at": "2026-09-10T00:05:00+00:00",
+                    "status": "persona_v8_queued",
+                    "scheduled_for": "2026-09-10T00:06:00+00:00",
+                    "payload": {"reply_intent": "enablement_completed_and_close"},
+                    "attempt_count": 0,
+                    "claimed_at": None,
+                    "published_at": None,
+                    "created_at": "2026-09-10T00:05:00+00:00",
+                    "updated_at": "2026-09-10T00:05:00+00:00",
+                }
+
+            self.assertTrue(
+                repository.claim_enablement_manual_completion(
+                    "AC-LEGACY-DONE",
+                    job=build_job(1),
+                    completed_at="2026-09-10T00:05:30+00:00",
+                )
+            )
+            self.assertFalse(
+                repository.claim_enablement_manual_completion(
+                    "AC-LEGACY-DONE",
+                    job=build_job(2),
+                    completed_at="2026-09-10T00:06:30+00:00",
+                )
+            )
+            saved = repository.get_account_case("AC-LEGACY-DONE")
+            workflow = saved["automation_context"]["enablement_manual_workflow"]
+            self.assertEqual(workflow["state"], "completed")
+            self.assertTrue(workflow.get("legacy"))
+            with psycopg.connect(dsn) as jobs_conn:
+                with jobs_conn.cursor() as jobs_cur:
+                    jobs_cur.execute(
+                        f'SELECT status, payload->>\'reply_intent\' FROM "{schema}".support_account_reply_jobs '
+                        "WHERE ticket_id = 'T-LEGACY-DONE'"
+                    )
+                    job_rows = jobs_cur.fetchall()
+            completion_rows = [
+                row for row in job_rows if row[1] == "enablement_completed_and_close"
+            ]
+            self.assertEqual(len(completion_rows), 1)
+            self.assertEqual(completion_rows[0][0], "persona_v8_queued")
         finally:
             repository.close()
             self._drop_schema(dsn, schema)

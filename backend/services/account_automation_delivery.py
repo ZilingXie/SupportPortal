@@ -257,6 +257,7 @@ def _claim(
     claim_token: str,
     payload: dict[str, Any],
     claimed_at: str,
+    require_automation_active: bool = False,
 ) -> bool:
     return bool(repo.claim_account_internal_email_delivery(
         account_case_id,
@@ -271,6 +272,7 @@ def _claim(
             DELIVERY_NOT_READY,
             "skipped_config_missing",
         ),
+        require_automation_active=require_automation_active,
     ))
 
 
@@ -321,8 +323,15 @@ def deliver_account_internal_email(
     now: str | None = None,
     claim_token: str | None = None,
     reuse_claim: bool = False,
+    require_automation_active: bool = False,
 ) -> AccountAutomationDeliveryResult:
-    """Synchronously claim, send and complete one delivery attempt."""
+    """Synchronously claim, send and complete one delivery attempt.
+
+    ``require_automation_active=True`` is for BACKGROUND auto-advancement
+    only (the worker drain): the claim then fail-closes when the case has
+    been escalated to human review. Explicitly authorized recovery paths
+    (Resume/retry entries) keep the default and are never blocked.
+    """
 
     normalized_id = _clean(account_case_id)
     attempt_at = _clean(now) or _now_iso()
@@ -378,6 +387,7 @@ def deliver_account_internal_email(
             claim_token=effective_claim,
             payload=attempt_payload,
             claimed_at=attempt_at,
+            require_automation_active=require_automation_active,
         ):
             refreshed = _case(repo, normalized_id)
             refreshed_status = _current_delivery_status(refreshed)
@@ -390,6 +400,23 @@ def deliver_account_internal_email(
                     claimed=False,
                     persisted=True,
                     delivery_state="sent",
+                )
+            if (
+                require_automation_active
+                and isinstance(refreshed, dict)
+                and str(refreshed.get("automation_status") or "").strip()
+                == "human_review_required"
+            ):
+                # Policy rejection is NOT an unknown send outcome: keep the
+                # persisted known-not-sent status as evidence so callers that
+                # write result.status back never corrupt the case.
+                return _result(
+                    status=refreshed_status or DELIVERY_NOT_READY,
+                    reason="case_not_automation_owned",
+                    payload=refreshed_payload or attempt_payload,
+                    claimed=False,
+                    persisted=False,
+                    delivery_state="known_not_sent",
                 )
             return _result(
                 status=DELIVERY_UNKNOWN,
@@ -465,6 +492,7 @@ async def deliver_account_internal_email_async(
     now: str | None = None,
     claim_token: str | None = None,
     reuse_claim: bool = False,
+    require_automation_active: bool = False,
 ) -> AccountAutomationDeliveryResult:
     """Async adapter preserving existing async sender/test injection points."""
 
@@ -525,6 +553,7 @@ async def deliver_account_internal_email_async(
             claim_token=effective_claim,
             payload=attempt_payload,
             claimed_at=attempt_at,
+            require_automation_active=require_automation_active,
         ):
             refreshed = _case(repo, normalized_id)
             refreshed_status = _current_delivery_status(refreshed)
@@ -537,6 +566,23 @@ async def deliver_account_internal_email_async(
                     claimed=False,
                     persisted=True,
                     delivery_state="sent",
+                )
+            if (
+                require_automation_active
+                and isinstance(refreshed, dict)
+                and str(refreshed.get("automation_status") or "").strip()
+                == "human_review_required"
+            ):
+                # Policy rejection is NOT an unknown send outcome: keep the
+                # persisted known-not-sent status as evidence so callers that
+                # write result.status back never corrupt the case.
+                return _result(
+                    status=refreshed_status or DELIVERY_NOT_READY,
+                    reason="case_not_automation_owned",
+                    payload=refreshed_payload or attempt_payload,
+                    claimed=False,
+                    persisted=False,
+                    delivery_state="known_not_sent",
                 )
             return _result(
                 status=DELIVERY_UNKNOWN,

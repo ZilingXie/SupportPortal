@@ -2707,6 +2707,7 @@ class TicketRepository(Protocol):
             "failed",
             "skipped_config_missing",
         ),
+        require_automation_active: bool = False,
     ) -> bool:
         ...
 
@@ -2966,7 +2967,17 @@ class TicketRepository(Protocol):
         processing_profile: str = "staging",
         limit: int = 25,
         workflow_states: tuple[str, ...] = (),
+        require_delivered_confirmation: bool = False,
     ) -> list[dict[str, Any]]:
+        ...
+
+    def count_enablement_cases_by_email_status(
+        self,
+        statuses: tuple[str, ...],
+        *,
+        processing_profile: str = "staging",
+        workflow_states: tuple[str, ...] = (),
+    ) -> int:
         ...
 
     def count_billing_tickets(
@@ -3198,6 +3209,7 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             "failed",
             "skipped_config_missing",
         ),
+        require_automation_active: bool = False,
     ) -> bool:
         normalized_id = str(account_case_id or "").strip()
         normalized_key = str(delivery_key or "").strip()
@@ -3226,9 +3238,13 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
             )
             if current_status not in set(allowed_statuses) and not same_claim_replay:
                 return False
-            if str(current.get("automation_status") or "").strip() == "human_review_required":
-                # Fail-closed: a case escalated to human review must never be
-                # auto-claimed for sending (mirrors the Postgres WHERE clause).
+            if require_automation_active and str(
+                current.get("automation_status") or ""
+            ).strip() == "human_review_required":
+                # Fail-closed for BACKGROUND auto-advancement only: a case
+                # escalated to human review must never be auto-claimed by the
+                # drain. Explicitly authorized recovery (Resume/retry entries)
+                # uses the default False and is never blocked here.
                 if not same_claim_replay:
                     return False
             claimed_payload = copy.deepcopy(payload)
@@ -7667,6 +7683,7 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
         processing_profile: str = "staging",
         limit: int = 25,
         workflow_states: tuple[str, ...] = (),
+        require_delivered_confirmation: bool = False,
     ) -> list[dict[str, Any]]:
         normalized_statuses = {
             str(status or "").strip() for status in statuses if str(status or "").strip()
@@ -7707,9 +7724,98 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
                     )
                     if state not in normalized_workflow_states:
                         continue
+                if require_delivered_confirmation and not self._enablement_confirmation_delivered(row):
+                    continue
                 rows.append(copy.deepcopy(row))
         rows.sort(key=lambda row: str(row.get("updated_at") or ""))
         return rows[:safe_limit]
+
+    def _enablement_confirmation_delivered(self, row: dict[str, Any]) -> bool:
+        """InMemory twin of the SQL EXISTS: the case's own confirmation
+        message (assistant meta.account_reply_job_id == workflow
+        reply_job_id) has a delivered public delivery row."""
+        workflow = (row.get("automation_context") or {}).get("enablement_manual_workflow")
+        reply_job_id = (
+            str(workflow.get("reply_job_id") or "").strip()
+            if isinstance(workflow, dict)
+            else ""
+        )
+        client_ticket_id = str(row.get("client_ticket_id") or "").strip()
+        case_id = str(row.get("account_case_id") or "").strip()
+        if not reply_job_id or not client_ticket_id or not case_id:
+            return False
+        ticket = self._tickets.get(client_ticket_id)
+        confirmation_message_ids: set[str] = set()
+        if isinstance(ticket, dict) and isinstance(ticket.get("messages"), list):
+            for message in ticket["messages"]:
+                if not isinstance(message, dict):
+                    continue
+                meta = message.get("meta") if isinstance(message.get("meta"), dict) else {}
+                if str(meta.get("account_reply_job_id") or "") != reply_job_id:
+                    continue
+                for candidate in (message.get("message_id"), message.get("id")):
+                    if str(candidate or "").strip():
+                        confirmation_message_ids.add(str(candidate).strip())
+        if not confirmation_message_ids:
+            return False
+        for delivery in self._account_zendesk_comment_deliveries.values():
+            if str(delivery.get("account_case_id") or "").strip() != case_id:
+                continue
+            if not bool(delivery.get("is_public")):
+                continue
+            if str(delivery.get("status") or "").strip().lower() != "delivered":
+                continue
+            if str(delivery.get("message_id") or "").strip() in confirmation_message_ids:
+                return True
+        return False
+
+    def count_enablement_cases_by_email_status(
+        self,
+        statuses: tuple[str, ...],
+        *,
+        processing_profile: str = "staging",
+        workflow_states: tuple[str, ...] = (),
+    ) -> int:
+        normalized_statuses = {
+            str(status or "").strip() for status in statuses if str(status or "").strip()
+        }
+        normalized_workflow_states = {
+            str(state or "").strip()
+            for state in workflow_states
+            if str(state or "").strip()
+        }
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
+        if not normalized_statuses:
+            return 0
+        with self._assignment_lock:
+            count = 0
+            for row in self._billing_tickets.values():
+                if str(row.get("automation_handler") or "").strip() != "enablement":
+                    continue
+                if str(row.get("internal_email_send_status") or "").strip() not in normalized_statuses:
+                    continue
+                if (
+                    str(row.get("processing_profile") or "staging").strip().lower()
+                    != normalized_profile
+                ):
+                    continue
+                if str(row.get("automation_status") or "").strip() == "human_review_required":
+                    continue
+                if normalized_workflow_states:
+                    workflow = (row.get("automation_context") or {}).get(
+                        "enablement_manual_workflow"
+                    )
+                    state = (
+                        str(workflow.get("state") or "").strip()
+                        if isinstance(workflow, dict)
+                        else ""
+                    )
+                    if state not in normalized_workflow_states:
+                        continue
+                count += 1
+            return count
 
     def list_billing_tickets(
         self,
@@ -8276,6 +8382,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             "failed",
             "skipped_config_missing",
         ),
+        require_automation_active: bool = False,
     ) -> bool:
         normalized_id = str(account_case_id or "").strip()
         normalized_key = str(delivery_key or "").strip()
@@ -8283,6 +8390,11 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             return False
         claimed_payload = copy.deepcopy(payload)
         claimed_payload["delivery_claim_token"] = str(claim_token).strip()
+        ownership_clause = (
+            sql.SQL("AND automation_status <> 'human_review_required'")
+            if require_automation_active
+            else sql.SQL("")
+        )
 
         def _operation(conn: psycopg.Connection[Any]) -> bool:
             with conn.transaction(), conn.cursor() as cur:
@@ -8295,7 +8407,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                             internal_email_send_reason = 'delivery_claimed',
                             updated_at = %s
                         WHERE (billing_ticket_id = %s OR account_case_id = %s)
-                          AND automation_status <> 'human_review_required'
+                          {}
                           AND (
                               internal_email_send_status = ANY(%s)
                               OR (
@@ -8305,7 +8417,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                           )
                           AND COALESCE(internal_email_payload->>'delivery_key', '') = %s
                         """
-                    ).format(self._table("support_account_cases")),
+                    ).format(self._table("support_account_cases"), ownership_clause),
                     (
                         Json(claimed_payload),
                         claimed_at,
@@ -16813,6 +16925,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         processing_profile: str = "staging",
         limit: int = 25,
         workflow_states: tuple[str, ...] = (),
+        require_delivered_confirmation: bool = False,
     ) -> list[dict[str, Any]]:
         """Filtered, starvation-free listing for the manual review drain.
 
@@ -16821,7 +16934,9 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
         ``enablement_manual_workflow.state`` jsonb path), and excluding cases
         escalated to human review. Orders oldest-updated first so stale
         gated/released todos always make progress even when newer unrelated
-        cases exist.
+        cases exist. ``require_delivered_confirmation=True`` additionally
+        requires the case's OWN confirmation message to be confirmed
+        delivered, so undeliverable gated cases never occupy the window.
         """
         normalized_statuses = tuple(
             dict.fromkeys(
@@ -16856,6 +16971,30 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                 )
             )
             params.append(list(normalized_workflow_states))
+        if require_delivered_confirmation:
+            # Only cases whose OWN submission_confirmation message is already
+            # confirmed delivered occupy the release window — undeliverable
+            # gated cases cannot starve the scan (they are counted instead).
+            clauses.append(
+                sql.SQL(
+                    "EXISTS ("
+                    "  SELECT 1 FROM {deliveries} d "
+                    "  WHERE d.account_case_id = bt.account_case_id "
+                    "  AND d.is_public = TRUE AND d.status = 'delivered' "
+                    "  AND EXISTS ("
+                    "    SELECT 1 FROM {messages} m "
+                    "    WHERE m.id::text = d.message_id AND m.ticket_id = bt.client_ticket_id "
+                    "    AND m.role = 'assistant' "
+                    "    AND COALESCE(m.meta->>'account_reply_job_id','') = "
+                    "        COALESCE(bt.automation_context"
+                    "->'enablement_manual_workflow'->>'reply_job_id','')"
+                    "  )"
+                    ")"
+                ).format(
+                    deliveries=self._table("support_account_zendesk_comment_deliveries"),
+                    messages=self._table("support_ticket_messages"),
+                )
+            )
 
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
@@ -16875,6 +17014,65 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
 
         return self._run_with_connection_retry(
             "list_enablement_cases_by_email_status", _operation
+        )
+
+    def count_enablement_cases_by_email_status(
+        self,
+        statuses: tuple[str, ...],
+        *,
+        processing_profile: str = "staging",
+        workflow_states: tuple[str, ...] = (),
+    ) -> int:
+        """Count twin of ``list_enablement_cases_by_email_status`` (same
+        membership predicates, no confirmation filter) for drain
+        observability — how many cases still sit at a given gate state."""
+        normalized_statuses = tuple(
+            dict.fromkeys(
+                str(status or "").strip() for status in statuses if str(status or "").strip()
+            )
+        )
+        normalized_profile = str(processing_profile or "staging").strip().lower()
+        if normalized_profile not in ACCOUNT_PROCESSING_PROFILES:
+            raise ValueError("processing_profile must be staging, preproduction, or production")
+        if not normalized_statuses:
+            return 0
+        normalized_workflow_states = tuple(
+            dict.fromkeys(
+                str(state or "").strip()
+                for state in workflow_states
+                if str(state or "").strip()
+            )
+        )
+        clauses = [
+            sql.SQL("automation_handler = 'enablement'"),
+            sql.SQL("internal_email_send_status = ANY(%s)"),
+            sql.SQL("processing_profile = %s"),
+            sql.SQL("automation_status <> 'human_review_required'"),
+        ]
+        params: list[Any] = [list(normalized_statuses), normalized_profile]
+        if normalized_workflow_states:
+            clauses.append(
+                sql.SQL(
+                    "COALESCE(automation_context"
+                    "->'enablement_manual_workflow'->>'state','') = ANY(%s)"
+                )
+            )
+            params.append(list(normalized_workflow_states))
+
+        def _operation(conn: psycopg.Connection[Any]) -> int:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT COUNT(*) FROM {} WHERE {}").format(
+                        self._table("support_account_cases"),
+                        sql.SQL(" AND ").join(clauses),
+                    ),
+                    tuple(params),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+
+        return self._run_with_connection_retry(
+            "count_enablement_cases_by_email_status", _operation
         )
 
     def count_billing_tickets(
