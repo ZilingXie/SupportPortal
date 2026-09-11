@@ -385,31 +385,69 @@ def post_engineer_slack_event(
 
 
 def notify_hermes_review_pending(
-    *, draft: dict[str, Any], direction: str, environment: str
+    *,
+    draft: dict[str, Any],
+    title: str,
+    question: str,
+    route_result: str,
+    investigation: dict[str, Any] | None,
+    environment: str,
 ) -> dict[str, Any]:
-    """Best-effort channel ping when a hermes draft starts awaiting approval.
+    """Best-effort review summons when a hermes draft starts awaiting approval.
 
-    Hermes-native cases have no engineer-case Slack thread (p2-148 design),
-    so the review summons posts as a channel root message. The caller must
-    treat any failure as non-blocking for the turn.
+    Follows the legacy engineer-collaboration format: one channel root message
+    (case title / customer question / zendesk link / route result) plus a
+    thread reply carrying the hermes investigation result and the review
+    entry point. Hermes-native cases have no engineer-case Slack thread
+    (p2-148 design), so the root message's own ts is the thread anchor. The
+    caller must treat any failure as non-blocking for the turn.
     """
     if not engineer_slack_configured():
         LOGGER.info("hermes_review_pending_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
     draft_id = str(draft.get("draft_id") or "").strip()
     ticket_id = str(draft.get("zendesk_ticket_id") or "").strip()
-    content_preview = _clean_text(draft.get("content"))[:700]
-    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
-    message_text = (
-        f":mag: Hermes reply draft awaiting review — Zendesk #{ticket_id} "
-        f"(direction: {_clean_text(direction) or 'unknown'})\n"
-        f">>> {content_preview}\n"
-        f"Review & approve: {review_url}"
-    )
-    return post_engineer_slack_event(
+    normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
+    normalized_question = _clean_text(question) or normalized_title
+
+    root_lines = [
+        _escape_slack_untrusted_text(normalized_title),
+        _escape_slack_untrusted_text(normalized_question),
+    ]
+    if ticket_id:
+        quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
+        root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
+    if _clean_text(route_result):
+        root_lines.append(f"route reason: {_clean_text(route_result)}")
+    root = post_engineer_slack_event(
         {
             "event_id": f"hermes-review-pending:{draft_id}",
             "event_type": HERMES_REVIEW_PENDING_EVENT_TYPE,
-            "message_text": message_text,
+            "message_text": "\n".join(root_lines),
         }
     )
+
+    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
+    record = investigation if isinstance(investigation, dict) else {}
+    thread_lines = [f"Hermes investigation — Zendesk #{ticket_id}"]
+    if _clean_text(record.get("summary")):
+        thread_lines.append(f"Summary: {_clean_text(record.get('summary'))}")
+    if record.get("blockers"):
+        thread_lines.append(
+            "Blockers: " + "; ".join(_clean_text(item) for item in record["blockers"])
+        )
+    if record.get("next_steps"):
+        thread_lines.append(
+            "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
+        )
+    thread_lines.append(f"Draft awaiting review: {_clean_text(draft.get('content'))[:700]}")
+    thread_lines.append(f"Review & approve: {review_url}")
+    thread = post_engineer_slack_event(
+        {
+            "event_id": f"hermes-review-pending:{draft_id}:investigation",
+            "event_type": "hermes_investigation_output",
+            "message_text": "\n".join(thread_lines),
+        },
+        thread_ts=str(root.get("slack_thread_ts") or "").strip() or None,
+    )
+    return {"root": root, "thread": thread}
