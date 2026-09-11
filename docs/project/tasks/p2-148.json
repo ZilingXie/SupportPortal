@@ -10,7 +10,7 @@
   "created_at": "2026-09-08",
   "updated_at": "2026-09-11",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "2026-09-11 用户以真实工单 13413 验收：Zendesk→webhook→intake 真实入口 57 秒全链贯通（awaiting_approval+dashboard 可审），并指出审阅者无通知缺口（第五缺口：旧 Slack 线程流随 Engineer Case 一起被移除，新 dashboard 无召唤机制）。本轮实施 Slack 审阅召唤：processor 在 awaiting_approval 时 best-effort 发频道根消息（工单号+方向+草稿预览+dashboard 入口），复用 post_engineer_slack_event（新 event type hermes_review_pending 获根消息权限），未配置静默跳过、失败仅告警不影响 turn。待合入部署后重放（13413 注入评论→新草稿→用户在频道 C0BS0N61D1R 确认收到）；approve 外发（13413 现存待审草稿或重放新草稿）仍待用户确认后执行以闭环验收点 6。",
+  "next_action": "2026-09-11 用户确认 Slack 召唤收到并授权 approve 后暴露第六缺口：dashboard approve 草稿已 approved 但 queue 500——API role 任务定义缺 zendesk_basic_auth 与 ZENDESK_AI_ASSIGNEE_EMAIL（仅 worker 接线），comments_revision 回退的 read_ticket_ownership_snapshot 抛 zendesk_assignee_config_missing。修复=render_task_definition 对 api role 确保 API_ZENDESK_READBACK_SECRET_SUFFIXES 两引用存在（含 initial 渲染映射同步），前缀不可推导时跳过让原校验报错。待部署后：解卡 draft-3c6e7ddf（approved 回 awaiting_approval 受控复位）→ 重 approve → ledger queued → worker 发送 → Zendesk 13413 读回闭环验收点 6。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -95,6 +95,11 @@
       "type": "deployment",
       "label": "Real-entry replay on 13413 (fifth gap: no reviewer notification)",
       "details": "2026-09-11 用户以真实 Zendesk 工单 13413 验收（非注入）：webhook→intake 真实入口 57 秒全链（05:36:19 intake→05:37:16 completed）：route→三阶段→draft_saved→publish_requested(awaiting_approval)→turn 带决策完成；draft-e891507d 存活（case_rev=1 盖章）、guardrail 通过、新 binding 会话、dashboard 可审、零外发。用户随即指出审阅者无通知=第五缺口：旧 Slack 线程流（engineer_case_opened 根消息+线程绑定，worker.py drain）随 p2-148 零 Engineer Case 设计一并移除，awaiting_approval 无任何召唤。修复：engineer_slack.py 新增 hermes_review_pending 根消息 event type 与 notify_hermes_review_pending（四要素：工单号/方向/草稿预览≤700 字符/dashboard 入口 URL；未配置 skipped；确定性 event_id）；processor 在 awaiting_approval 时调用并整体 try/except（失败仅 LOGGER.warning 不影响 turn 状态机）。测试 127 全绿（新增 engineer_slack 根消息/未配置两例+processor 调用/抛错不破/无草稿不调三例）。出界：deep-link、human_review 通知、邮件、outbox 重试。"
+    },
+    {
+      "type": "test",
+      "label": "Approve queue 500: API role missing Zendesk readback secrets (sixth gap)",
+      "details": "2026-09-11 用户在频道确认 Slack 召唤收到并授权 approve draft-3c6e7ddf：approve 事务中 approve_hermes_case_draft 成功（draft→approved, dashboard-admin）但 queue_hermes_draft_delivery 500——hermes 原生案例无 comment sync 行，回退 read_ticket_ownership_snapshot 需要 ZENDESK_AI_ASSIGNEE_EMAIL 与 zendesk_basic_auth，两者在任务定义仅 worker role 接线，API role 缺失→zendesk_assignee_config_missing。修复：render_task_definition 为 api role 无条件确保 zendesk_basic_auth/zendesk-ai-assignee-email 两个 SSM 引用（幂等 _set_secret_reference；前缀不可推导时跳过，让 bootstrap 等原校验保持报错语义；render_initial_task_definition 的 api secrets 映射同步补齐）；新增 api 渲染含两 secret 的回归测试。部署测试 88 全绿。"
     }
   ],
   "history": [
@@ -152,6 +157,11 @@
       "at": "2026-09-11",
       "event": "real_ticket_replay_and_slack_notify_planned",
       "summary": "13413 真实入口 57 秒全链贯通实证；用户指出审阅无通知缺口，本轮实施 awaiting_approval 的 Slack 频道根消息召唤（复用 engineer_slack 设施，best-effort 不阻断 turn），待部署重放验证。"
+    },
+    {
+      "at": "2026-09-11",
+      "event": "approve_queue_gapped_api_zendesk_env",
+      "summary": "用户确认 Slack 收到+授权 approve；approve 半成功（draft approved、queue 500）暴露 API role 缺 Zendesk 读回凭证（第六缺口）；渲染器补接线待部署重试。"
     }
   ],
   "legacy_ids": [],

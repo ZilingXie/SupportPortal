@@ -48,6 +48,12 @@ HERMES_AGENT_SECRET_SUFFIXES = {
     "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
     "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
 }
+# Zendesk readback credentials required by the API-role hermes-review approve
+# path when it falls back to the live ownership snapshot for comments_revision.
+API_ZENDESK_READBACK_SECRET_SUFFIXES = {
+    "zendesk_basic_auth": "zendesk-basic-auth",
+    "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
+}
 # Retired Enablement runtime dependencies (p2-149): formal upgrades must strip
 # these from an observed Worker task definition instead of carrying them into
 # the new revision, and the register-time contract must fail closed on them.
@@ -441,6 +447,11 @@ def render_initial_task_definition(
             "AUTOMATION_DASHBOARD_SESSION_SECRET": "dashboard-session-secret",
             "TICKET_DB_DSN": "automation-db-dsn",
             "n8n_request_token": "n8n-request-token",
+            # The dashboard hermes-review approve path resolves the current
+            # Zendesk comments revision when no sync row exists yet, which
+            # needs the Zendesk credentials and configured assignee email.
+            "zendesk_basic_auth": "zendesk-basic-auth",
+            "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
         },
         "route": {
             "AUTOMATION_DB_DSN": "automation-db-dsn",
@@ -738,6 +749,21 @@ def render_task_definition(
                     name,
                     _parameter_arn(prefix_arn, HERMES_AGENT_SECRET_SUFFIXES[name]),
                 )
+    if role == "api":
+        # The dashboard hermes-review approve path resolves the current Zendesk
+        # comments revision on the API role when no comment-sync row exists yet
+        # (read_ticket_ownership_snapshot); ensure the readback credentials are
+        # present on every rendered revision instead of relying on the current
+        # task definition already carrying them. Skip when the current
+        # definition's SSM prefix cannot be derived so its own validation
+        # errors surface unchanged.
+        try:
+            prefix_arn = _parameter_prefix_arn(container, environment=environment)
+        except ValueError:
+            prefix_arn = None
+        if prefix_arn:
+            for name, suffix in sorted(API_ZENDESK_READBACK_SECRET_SUFFIXES.items()):
+                _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
     return rendered
 
 
