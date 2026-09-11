@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tarfile
 from datetime import datetime
@@ -64,7 +65,7 @@ class AutomationReleaseManifest(BaseModel):
     git_commit: str = Field(min_length=7, max_length=64)
     build_time: datetime
     prompt_release_id: str = Field(min_length=1, max_length=160)
-    schema_revision: Literal[SCHEMA_REVISION] = SCHEMA_REVISION
+    schema_revision: Literal[SCHEMA_REVISION, "automation-ecs-002"] = SCHEMA_REVISION
     platform: Literal["linux/amd64"] = "linux/amd64"
     contracts: dict[str, str]
     components: dict[str, ReleaseComponent]
@@ -78,6 +79,11 @@ class AutomationReleaseManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_components(self) -> "AutomationReleaseManifest":
+        if self.schema_revision != SCHEMA_REVISION and (
+            not re.fullmatch(r"[0-9a-f]{40}", self.git_commit)
+            or os.environ.get("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED") != self.git_commit
+        ):
+            raise ValueError("schema 002 requires authorization for the exact hotfix SHA")
         if set(self.components) != {"api", "route", "worker"}:
             raise ValueError("release must contain api, route, and worker")
         for role, component in self.components.items():

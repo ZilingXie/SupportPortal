@@ -639,11 +639,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     if hotfix_baseline:
         if not direct_production:
             raise ValueError("--hotfix-baseline requires --codebuild-direct-production")
-        state.bind_identity(
-            {
-                "hotfix_baseline": _git(project_root, "rev-parse", f"{hotfix_baseline}^{{commit}}"),
-            }
-        )
+        hotfix_baseline = _git(project_root, "rev-parse", f"{hotfix_baseline}^{{commit}}")
+        if _hotfix_authorization_sha() != release_commit:
+            raise ValueError(f"{HOTFIX_AUTHORIZED_ENV} must equal the reviewed hotfix SHA")
+        env["AUTOMATION_ECS_HOTFIX_BASELINE"] = hotfix_baseline
+    else:
+        # An inherited deploy-only override must not change the normal source gate.
+        env.pop("AUTOMATION_ECS_HOTFIX_BASELINE", None)
     release_id = f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"
     if args.resume:
         candidates = sorted(
@@ -660,6 +662,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     state = PipelineState(state_path)
     state.bind_identity(
         {
+            **({"hotfix_baseline": hotfix_baseline} if hotfix_baseline else {}),
             "release_commit": release_commit,
             "prompt_release_id": args.prompt_release_id,
             "mode": {
@@ -734,6 +737,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     release_id,
                     "--output-dir",
                     str(release_dir),
+                    *(["--hotfix-baseline", hotfix_baseline] if hotfix_baseline else []),
                 ],
                 cwd=project_root,
                 env=env,
