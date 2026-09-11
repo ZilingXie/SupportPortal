@@ -213,6 +213,42 @@ class TestDraftTools:
             )
         assert draft["publish_policy"] == "manual" and draft["guardrail_decision"] == "approved_for_final_engineer_review"
 
+    def test_draft_readiness_derives_from_recorded_work(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def capture_guardrail(*, draft_customer_reply, reply_readiness, **kwargs):
+            captured.update(reply_readiness)
+            return _guardrail_pass(draft_customer_reply)
+
+        store, repository, turn_id = _setup_case()
+        tool_save_investigation_progress(
+            store,
+            repository,
+            turn_id=turn_id,
+            summary="Reproduced the relay enablement failure.",
+            evidence=[],
+            blockers=[],
+            next_steps=["ask for app id"],
+        )
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=capture_guardrail,
+        ):
+            tool_save_reply_draft(store, repository, turn_id=turn_id, content="Draft", basis={})
+        assert captured["ready_for_customer_reply"] is True
+        assert captured["summary"].startswith("Reproduced")
+
+        # no recorded work (fresh turn, no investigation, no work_result) stays blocked
+        fresh_store, fresh_repository, fresh_turn = _setup_case()
+        fresh_store._hermes_turns[fresh_turn]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=capture_guardrail,
+        ):
+            tool_save_reply_draft(fresh_store, fresh_repository, turn_id=fresh_turn, content="Draft", basis={})
+        assert captured["ready_for_customer_reply"] is False
+
     def _persona_draft(self, store, repository, turn_id, *, content="Draft", guardrail=None):
         store._hermes_turns[turn_id]["phase"] = "persona"
         with patch(
