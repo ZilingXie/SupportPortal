@@ -513,11 +513,19 @@ async def _process_account_customer_reply_impl(
     prior_automation_context["reply_conversation_context"] = persona_context(conversation_context,
         [str(v) for k, v in prior_collected_fields.items() if k in {"app_id", "customer_email"}])
     billing_ticket["automation_context"] = dict(prior_automation_context)
-    enablement_archer_recoverable = (
+    enablement_appid_recoverable = (
         prior_handler == "enablement"
-        and isinstance(prior_archer, dict)
-        and str(prior_archer.get("outcome") or "").strip()
-        in {"appid_invalid", "project_not_found"}
+        and (
+            (
+                isinstance(prior_archer, dict)
+                and str(prior_archer.get("outcome") or "").strip()
+                in {"appid_invalid", "project_not_found"}
+            )
+            or (
+                billing_ticket.get("internal_email_send_status") == "not_applicable"
+                and billing_ticket.get("internal_email_send_reason") == "appid_invalid_format"
+            )
+        )
     )
 
     if not await _sync(
@@ -755,10 +763,10 @@ async def _process_account_customer_reply_impl(
         if registration.implementation == "enablement":
             enablement_existing_fields = dict(prior_collected_fields)
             enablement_customer_messages = customer_messages
-            if enablement_archer_recoverable:
+            if enablement_appid_recoverable:
                 # A rejected App ID is not a trusted current value. Re-extract
                 # only from this comment so an unrelated question cannot
-                # revive the old Archer attempt from accumulated history.
+                # revive a rejected value from accumulated history.
                 enablement_existing_fields.pop("app_id", None)
             try:
                 attempt = _build_enablement_attempt(
@@ -1058,8 +1066,8 @@ async def _process_account_customer_reply_impl(
             and prior_handler == str(billing_ticket.get("automation_handler") or "").strip()
         )
         prior_send_status = str(billing_ticket.get("internal_email_send_status") or "").strip()
-        archer_recoverable = (
-            enablement_archer_recoverable
+        appid_recoverable = (
+            enablement_appid_recoverable
             and "app_id" in current_handler_progress_fields
         )
         should_send_internal_email = not same_automation or prior_send_status in {
@@ -1070,7 +1078,7 @@ async def _process_account_customer_reply_impl(
             "retry",
             "failed",
             "skipped_config_missing",
-        } or archer_recoverable
+        } or appid_recoverable
         if should_send_internal_email:
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]

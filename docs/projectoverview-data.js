@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T07:17:28Z",
-  "source_base_commit": "f22091592671c6c09b665f0ed86872e7968e5735",
-  "registry_digest": "48e905becbc3335ab96b2e07cb897a94b7ffb01a5bb4b25e975d9b6dda4c51d4",
+  "generated_at": "2026-09-11T07:28:13Z",
+  "source_base_commit": "205690df7e684c3b9cfdf927ff6bc32e93ff5eea",
+  "registry_digest": "e334b0faa1741171179eadf8041e84285dccac8e71b6cad072191bf37841bcef",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1111,6 +1111,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Review round-4 fixes: four-finding regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_comment_sync.py (+13 targeted suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
           "details": "四项修复配套验证全绿（13 套件 407/102 + 遗留四套件 337 + PG 真库 10/840s）：①claim_account_internal_email_delivery 三实现守卫参数化 require_automation_active（默认 False 完整恢复 Resume/重试路径——reviewer 三 handler 复现反例改为领取成功+sender 调用；drain 传 True 保留原子层处理权）；领取失败分支在 require_automation_active+human_review 时返回原持久化状态+known_not_sent+case_not_automation_owned（不再变成 delivery_unknown）；②list_enablement_cases_by_email_status 加 require_delivered_confirmation（PG EXISTS 绑定谓词 LIMIT 前过滤，InMemory 等价）+count_enablement_cases_by_email_status（still_gated=count-released）——25 条不可释放 gated 不遮挡第 26 条（reviewer 饥饿反例）；③并发测试单一共享 patch 提到池外+全局恢复断言；④PG 测试删除 hasattr 守卫改直查 schema（恰一 completion job persona_v8_queued+submission cancelled）+新增 legacy 双确认 PG 用例（首确认建立 legacy completed 标记，第二次拒绝，schema 直查恰一 job）。额外：遗留 /account 套件 9 个断言对齐人工流程契约（sent→awaiting_public_reply/not_applicable/自动化非转人工），补齐 #1128 以来的存量缺口。"
+        },
+        {
+          "type": "test",
+          "label": "Hotfix pipeline entry and schema-002 manifest regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_codebuild_release.py backend/tests/test_automation_release_manifest.py",
+          "details": "93 passed. Real temporary Git repository and checkpoint exercise run/resume with only external AWS/release stages replaced. Covers state initialization, one complete identity binding, changed-baseline resume rejection, CodeBuild argument and deploy environment propagation, default-main behavior, unauthorized rejection before local state creation, schema 002 allowed only for the exact authorized full SHA, and unknown-schema rejection. No Production mutations."
+        },
+        {
+          "type": "test",
+          "label": "Local App ID correction resumes manual review",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_rag_resume.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_comment_sync.py",
+          "details": "78 passed / 2 subtests. The previous suite could not start after the Archer entry was removed; updated it to preserve RAG, ownership, failure-alert, idempotency and manual-email gating assertions. Reproduced and repaired valid correction after local appid_invalid_format remaining stuck in not_applicable. Recovery requires the current customer comment to contribute app_id and discards rejected historical values. Repeated invalid corrections remain missing; legacy Archer project_not_found resumes into manual review without an Archer call."
         },
         {
           "type": "test",
@@ -11238,7 +11250,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "SSO 根凭证（约 7 天绝对过期 JWT）2026-09-09 运行中失效导致 13386 失败后，将 Enablement Media Relay 从 Archer 自动直连回退为人工开通流程：信息齐全后先创建客户 review 确认回复 job，内部开通邮件以 awaiting_public_reply 门禁持久化，Zendesk 公开回复 readback 确认送达后才释放发送；人工开通后回复 enabled（仅限本次邮件 To/Cc 个人收件人、等待态、未引用正文段三重校验）触发最终公开回复与关单。Worker 移除 ARCHER_OAUTH_COOKIE 注入、发布探针移除 Archer 检查；不删 SSM 历史凭证、不回退历史提交（p1-15 prepare 协议被复用）。",
-      "next_action": "修复轮4（review 四项：共享领取守卫参数化恢复 Resume、释放扫描 SQL 下推送达证据防饥饿、并发测试池外单一 patch、PG 直查 schema 强断言+legacy 用例）已实施：13 套件 407+遗留四套件 337+PG 真库 10 全绿；合并后在新 SHA 上重做官方栈验证。剩余=owner 最后复验→授权 Production 发布→生成部署 Prompt→真实闭环验收。8d5b82c5/4e2df33d/ff8777f8 均不放行。",
+      "next_action": "Production schema-002 热修复续作：Phase A 入口/来源透传/002 Manifest 修复已合并 #1139。Phase B 已从线上 3adc2c9 移植人工开通、通知和120秒超时；补查发现本地 App ID 格式拒绝后的补正无法恢复，已补恢复条件并对齐旧 RAG-resume 套件。待合并后官方栈验证、热修复 PG 与回退包复验，再由 owner 按具体 SHA 授权发布。",
       "acceptance_criteria": [
         "所有 Enablement 执行入口（intake、客户评论、Hermes 工具、main 旧入口/评论补投、rerun/resume/内部邮件重试、full reroute）对新请求 Archer 调用次数为零；App ID 32 位 hex 本地校验保留（非法格式零网络追问正确值）。",
         "信息齐全后创建 submission_confirmation 客户回复 job 并持久化内部邮件为 awaiting_public_reply（不可领取）；公开回复经 Zendesk readback 确认 delivered 后（事务钩子+有界兜底步）释放为 pending 并经 claim/send/complete 协议发送一次；确认送达时间早于邮件发送时间；进程重启可续走。",
@@ -11281,6 +11293,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Review round-4 fixes: four-finding regression",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_manual_review_flow.py backend/tests/test_account_intake.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_repository_configuration.py backend/tests/test_account_zendesk_comment_sync.py (+13 targeted suites); RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest -q backend/tests/test_account_case_postgres_roundtrip.py",
           "details": "四项修复配套验证全绿（13 套件 407/102 + 遗留四套件 337 + PG 真库 10/840s）：①claim_account_internal_email_delivery 三实现守卫参数化 require_automation_active（默认 False 完整恢复 Resume/重试路径——reviewer 三 handler 复现反例改为领取成功+sender 调用；drain 传 True 保留原子层处理权）；领取失败分支在 require_automation_active+human_review 时返回原持久化状态+known_not_sent+case_not_automation_owned（不再变成 delivery_unknown）；②list_enablement_cases_by_email_status 加 require_delivered_confirmation（PG EXISTS 绑定谓词 LIMIT 前过滤，InMemory 等价）+count_enablement_cases_by_email_status（still_gated=count-released）——25 条不可释放 gated 不遮挡第 26 条（reviewer 饥饿反例）；③并发测试单一共享 patch 提到池外+全局恢复断言；④PG 测试删除 hasattr 守卫改直查 schema（恰一 completion job persona_v8_queued+submission cancelled）+新增 legacy 双确认 PG 用例（首确认建立 legacy completed 标记，第二次拒绝，schema 直查恰一 job）。额外：遗留 /account 套件 9 个断言对齐人工流程契约（sent→awaiting_public_reply/not_applicable/自动化非转人工），补齐 #1128 以来的存量缺口。"
+        },
+        {
+          "type": "test",
+          "label": "Hotfix pipeline entry and schema-002 manifest regression",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_codebuild_release.py backend/tests/test_automation_release_manifest.py",
+          "details": "93 passed. Real temporary Git repository and checkpoint exercise run/resume with only external AWS/release stages replaced. Covers state initialization, one complete identity binding, changed-baseline resume rejection, CodeBuild argument and deploy environment propagation, default-main behavior, unauthorized rejection before local state creation, schema 002 allowed only for the exact authorized full SHA, and unknown-schema rejection. No Production mutations."
+        },
+        {
+          "type": "test",
+          "label": "Local App ID correction resumes manual review",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_rag_resume.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_comment_sync.py",
+          "details": "78 passed / 2 subtests. The previous suite could not start after the Archer entry was removed; updated it to preserve RAG, ownership, failure-alert, idempotency and manual-email gating assertions. Reproduced and repaired valid correction after local appid_invalid_format remaining stuck in not_applicable. Recovery requires the current customer comment to contribute app_id and discards rejected historical values. Repeated invalid corrections remain missing; legacy Archer project_not_found resumes into manual review without an Archer call."
         }
       ],
       "source_refs": [
