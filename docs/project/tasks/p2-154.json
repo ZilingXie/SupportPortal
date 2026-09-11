@@ -9,7 +9,7 @@
   "acceptance_criteria": [
     "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
     "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
-    "dashboard 审阅页提供「继续生成客户回复」动作：turn.case_revision 与 mirror 不一致 → 409 stale；调查不完备（summary 空/存在未解决 blockers）→ 422 带原因；重复续跑 → 409；通过后创建 investigation_reply turn（phases=[persona]）在同一 hermes session 续跑。",
+    "dashboard 审阅页提供「继续生成客户回复」动作：turn.case_revision 与 mirror 不一致 → 409 stale；调查无 summary → 422；open blockers 为审阅信息不作硬门禁（点击确认弹窗列出，人自行决定）——2026-09-12 受控重放实证调整，见 history；重复续跑 → 409；通过后创建 investigation_reply turn（phases=[persona]）在同一 hermes session 续跑。",
     "续跑 turn 走既有 persona→tool_save_reply_draft（guardrail+readiness 派生）→publication gate（investigation⇒manual 审批）→Slack review ping（p2-148 根+线程格式不变）→approve→发送门禁与 delivery ledger（source=hermes），零语义变更。",
     "automation 各方向、investigation_feedback（request-changes）turn 行为零回归；one-active fence/revision 栅栏语义不变。",
     "Preproduction 受控重放实证：技术问题工单→工具加载可见→Slack 调查结果 delivered→继续按钮→草稿→review ping→approve→Zendesk delivered；负路径：按钮前新客户评论→continue 409 且新 turn 自动重新调查。",
@@ -56,6 +56,11 @@
       "at": "2026-09-12",
       "event": "created",
       "summary": "用户指出 preproduction Hermes 调查能力未就绪，要求按 docs/projectoverview.html#investigation-workflow 设计做第一版；澄清目标流为：Hermes 调查→结果发 Slack→人点按钮→guardrail 把关→persona 组装客户回复→Slack 等工程师审批。多子 Agent 方案（设计 tab #08 全量）与 AgentRelay fan-out（2026-09-05 plan-2）明确不在 v1 范围。"
+    },
+    {
+      "at": "2026-09-12",
+      "event": "amended",
+      "summary": "Preproduction 三轮受控重放实证：调查手册『缺证据即列追问』契约使调查几乎恒带 4-5 个 blockers，原『无未解决 blockers 才能 continue』门禁导致正链不可达。经 AskUserQuestion 未获作答，按计划意图（人是满意与否的决策者）自主放宽：服务端门禁仅保留 summary 非空，UI 按钮常显并在确认弹窗列出 blockers 由人二次确认；人审按钮+guardrail+草稿人工审批三道关不变。"
     }
   ]
 }

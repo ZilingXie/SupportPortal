@@ -1074,21 +1074,15 @@ def create_app(    *,
                     detail=f"stale_case_revision: turn {turn_revision} != case {current_revision}",
                 )
             # Deterministic completeness gate before any persona run: the
-            # investigation must actually carry a conclusion and no unresolved
-            # blockers — the human first resolves or accepts them in Zendesk.
+            # investigation must actually carry a conclusion. Blockers stay
+            # review information — the manual's "ask for what is missing"
+            # contract means real investigations almost always list open
+            # questions, and the dashboard click (with a confirmation that
+            # surfaces them) is the human decision to proceed anyway.
             if not str(investigation.get("summary") or "").strip():
                 raise HTTPException(
                     status_code=422,
                     detail="investigation has no summary; nothing to draft a reply from",
-                )
-            unresolved_blockers = [str(item) for item in investigation.get("blockers") or [] if str(item).strip()]
-            if unresolved_blockers:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "investigation has unresolved blockers: "
-                        + "; ".join(unresolved_blockers[:5])
-                    ),
                 )
             try:
                 created = coordination_store.create_investigation_reply_turn(

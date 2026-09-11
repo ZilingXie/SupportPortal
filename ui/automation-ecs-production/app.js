@@ -624,8 +624,8 @@ function renderHermesReview() {
   const investigationReviewBlock = awaitingReviewTurn
     ? `<article class="message message-support hermes-draft">
         <header><strong>Investigation ${escapeHtml(String(awaitingReviewTurn.turn_id).slice(0, 18))}</strong><span>human gate</span>${statusMarkup("pending")}</header>
-        <p class="message-body">The Hermes investigation result above is awaiting your review${investigation?.blockers?.length ? " (unresolved blockers must be cleared first)" : ""}. Continue only when the result is good enough to draft the customer reply from.</p>
-        ${canAct && !investigation?.blockers?.length
+        <p class="message-body">The Hermes investigation result above is awaiting your review${investigation?.blockers?.length ? ` (note: ${investigation.blockers.length} open blocker${investigation.blockers.length > 1 ? "s" : ""} listed above)` : ""}. Continue only when the result is good enough to draft the customer reply from.</p>
+        ${canAct
           ? `<button class="button button-secondary" data-hermes-continue-turn-id="${escapeHtml(awaitingReviewTurn.turn_id)}" type="button">Continue to customer reply</button>`
           : ""}
       </article>`
@@ -772,7 +772,12 @@ function bindEvents() {
     button.addEventListener("click", async () => {
       const ticketId = state.selectedTicketId;
       if (!ticketId) return;
-      if (!window.confirm("Continue this investigation into a customer reply draft?")) return;
+      const review = state.hermesReview || {};
+      const blockers = review.binding?.investigation?.blockers || [];
+      const confirmText = blockers.length
+        ? `Continue this investigation into a customer reply draft?\n\nThe investigation still lists ${blockers.length} open blocker${blockers.length > 1 ? "s" : ""}:\n${blockers.slice(0, 5).map((item) => `- ${item}`).join("\n")}${blockers.length > 5 ? "\n- …" : ""}\n\nContinue anyway?`
+        : "Continue this investigation into a customer reply draft?";
+      if (!window.confirm(confirmText)) return;
       state.error = "";
       try {
         await request(`/dashboard/api/cases/${encodeURIComponent(ticketId)}/hermes-review/investigation/continue`, {
