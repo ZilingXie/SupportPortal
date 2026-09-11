@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T10:52:30Z",
-  "source_base_commit": "10b149383fe8e8994679b56472e1eab3be437642",
-  "registry_digest": "01080dccf43a6ecef9b62e74657b7db161693fad06881b218ab67f0054472200",
+  "generated_at": "2026-09-11T14:01:27Z",
+  "source_base_commit": "ece4f5e2b90c9d5bce269818c05fefaab102f38f",
+  "registry_digest": "7b8a4b7a0e66730b90611d0dde6b16802572eb3909f7416d0bb94e0d24d60a07",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1129,6 +1129,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Manual enablement restoration simplification",
           "command": ".venv/bin/python -m pytest -q \u003c22 targeted suites>; RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest \u003c7 targeted PostgreSQL contracts>",
           "details": "22 套件 851 passed / 137 subtests。闭环覆盖 customer confirmation delivered 后 Worker 唯一释放、真实 claim/send、重复扫描只发一封、重复 enabled 只建一个 completion job、完成公开回复在 Zendesk solved readback 后才本地关闭；孤立 Date/To/Subject/中文标签后的撤销正文不再被截断。真库 7 个目标契约全部通过：组合运行 6 passed，唯一旧用例仍期待已删除的 readback 事务释放；改为显式 Worker 原子释放并验证无关 job false/本次 job true 后单跑 1 passed。另验证 InMemory 与 PostgreSQL 均拒绝 human-review case 的同 token 后台 replay，显式 Resume 保持原行为。未执行 Production、真实邮件或真实工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production manual Enablement hotfix",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 42f2f114f80832c903c048a562970a28d3e33ac7 --hotfix-baseline 3adc2c9d48661dc52844e540a9fce8ba2e806ec2 --prompt-release-id pr-ef75242faa67 --through production --codebuild-direct-production --hermes-case-workflow-mode disabled --resume",
+          "details": "Release r20260911-42f2f11 完成。API/Route/Worker 由 :43/:37/:41 升级为 :44/:38/:42，三服务均为单一 PRIMARY/COMPLETED、1/1/0；运行 digest 与 Manifest 一致。/health/live、/health/release、/health/ready 均 ok，Route/Worker heartbeat 新鲜且无 provenance mismatch，ALB 最终仅一个 healthy target。Prompt pr-ef75242faa67 保持唯一 active，schema 保持 automation-ecs-002/supportportal_production，Hermes 保持 disabled。官方 evidence 记录 Terraform 发布前/后零漂移、CloudWatch 三角色 0 error、provider probe/ECR/EC2 backup/suspension recipients 全部 passed。production-deploy state 保留精确 old/new ARN，可立即回退至 :43/:37/:41。未创建真实工单或发送业务邮件。"
         },
         {
           "type": "test",
@@ -11639,7 +11645,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "SSO 根凭证（约 7 天绝对过期 JWT）2026-09-09 运行中失效导致 13386 失败后，将 Enablement Media Relay 从 Archer 自动直连回退为人工开通流程：信息齐全后先创建客户 review 确认回复 job，内部开通邮件以 awaiting_public_reply 门禁持久化，Zendesk 公开回复 readback 确认送达后才释放发送；人工开通后回复 enabled（仅限本次邮件 To/Cc 个人收件人、等待态、未引用正文段三重校验）触发最终公开回复与关单。Worker 移除 ARCHER_OAUTH_COOKIE 注入、发布探针移除 Archer 检查；不删 SSM 历史凭证、不回退历史提交（p1-15 prepare 协议被复用）。",
-      "next_action": "人工流程简化与隔离 PostgreSQL 验证已完成；待合并后官方栈验证并生成 schema-002 热修复新 SHA 与安全回退包，再由 owner 按具体基线及 SHA 授权 Production 发布。",
+      "next_action": "Production 热修复 r20260911-42f2f11 已发布并通过平台验收；待 owner 单独授权专用测试工单与邮件真实闭环（客户确认→内部收信→人工 enabled→AI 最终回复→solved），全部通过后转 done。",
       "acceptance_criteria": [
         "所有 Enablement 执行入口（intake、客户评论、Hermes 工具、main 旧入口/评论补投、rerun/resume/内部邮件重试、full reroute）对新请求 Archer 调用次数为零；App ID 32 位 hex 本地校验保留（非法格式零网络追问正确值）。",
         "信息齐全后创建 submission_confirmation 客户回复 job 并持久化内部邮件为 awaiting_public_reply（不可领取）；公开回复经 Zendesk readback 确认 delivered 后（Worker 唯一有界释放入口）释放为 pending 并经 claim/send/complete 协议发送一次；确认送达时间早于邮件发送时间；进程重启可续走。",
@@ -11650,7 +11656,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "存量边界：已发内部邮件等待回信的旧 Case 保留处理能力（无 To/Cc 快照的回信停止自动完成转人工核对）；Archer 已成功的存量 Case 继续回复链；已转人工/失败/unknown 不动；13379/13386 不重放不补发。"
       ],
       "blockers": [
-        "Production 发布与真实闭环验收（专用测试工单+邮件）由用户另行授权执行。"
+        "真实闭环验收（专用测试工单+邮件）尚未授权；本次发布未创建真实工单、未发送业务邮件。"
       ],
       "evidence": [
         {
@@ -11700,6 +11706,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Manual enablement restoration simplification",
           "command": ".venv/bin/python -m pytest -q \u003c22 targeted suites>; RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003croot .env> .venv/bin/python -m pytest \u003c7 targeted PostgreSQL contracts>",
           "details": "22 套件 851 passed / 137 subtests。闭环覆盖 customer confirmation delivered 后 Worker 唯一释放、真实 claim/send、重复扫描只发一封、重复 enabled 只建一个 completion job、完成公开回复在 Zendesk solved readback 后才本地关闭；孤立 Date/To/Subject/中文标签后的撤销正文不再被截断。真库 7 个目标契约全部通过：组合运行 6 passed，唯一旧用例仍期待已删除的 readback 事务释放；改为显式 Worker 原子释放并验证无关 job false/本次 job true 后单跑 1 passed。另验证 InMemory 与 PostgreSQL 均拒绝 human-review case 的同 token 后台 replay，显式 Resume 保持原行为。未执行 Production、真实邮件或真实工单。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production manual Enablement hotfix",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 42f2f114f80832c903c048a562970a28d3e33ac7 --hotfix-baseline 3adc2c9d48661dc52844e540a9fce8ba2e806ec2 --prompt-release-id pr-ef75242faa67 --through production --codebuild-direct-production --hermes-case-workflow-mode disabled --resume",
+          "details": "Release r20260911-42f2f11 完成。API/Route/Worker 由 :43/:37/:41 升级为 :44/:38/:42，三服务均为单一 PRIMARY/COMPLETED、1/1/0；运行 digest 与 Manifest 一致。/health/live、/health/release、/health/ready 均 ok，Route/Worker heartbeat 新鲜且无 provenance mismatch，ALB 最终仅一个 healthy target。Prompt pr-ef75242faa67 保持唯一 active，schema 保持 automation-ecs-002/supportportal_production，Hermes 保持 disabled。官方 evidence 记录 Terraform 发布前/后零漂移、CloudWatch 三角色 0 error、provider probe/ECR/EC2 backup/suspension recipients 全部 passed。production-deploy state 保留精确 old/new ARN，可立即回退至 :43/:37/:41。未创建真实工单或发送业务邮件。"
         }
       ],
       "source_refs": [
@@ -11749,6 +11761,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-11",
           "event": "manual_flow_simplification",
           "summary": "复用原人工邮件与完成回复链，仅保留 Worker 释放门禁；删除 readback 释放钩子、计数接口、重复状态写回及未使用 helper。孤立邮件头标签保留正文撤销说明；后台同 token replay 仍受人工处理权守卫约束。生产闭环未执行，维持 active。"
+        },
+        {
+          "at": "2026-09-11",
+          "event": "production_hotfix_deployed",
+          "summary": "用户按 baseline 3adc2c9d48661dc52844e540a9fce8ba2e806ec2 与 candidate 42f2f114f80832c903c048a562970a28d3e33ac7 显式授权紧急 Production 热修复。Release r20260911-42f2f11 发布并完成平台验收，回退 state 锁定 API/Route/Worker :43/:37/:41。真实工单与邮件闭环未授权，p2-149 维持 active。"
         }
       ]
     },
