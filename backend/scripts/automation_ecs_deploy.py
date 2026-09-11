@@ -353,6 +353,10 @@ def _base_environment(
             {
                 "ENGINEER_SLACK_CHANNEL_ID": "C0BS0N61D1R",
                 "ENGINEER_SLACK_TEAM_ID": "T1CBEDLJY",
+                # Production keeps credentials wired but stops posting to the
+                # engineer channel (p2-150); preproduction stays on so the
+                # hermes review summons keeps working.
+                "ENGINEER_SLACK_OUTBOUND_ENABLED": "0" if environment == "production" else "1",
                 "ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS": "300",
                 "HERMES_CASE_WORKFLOW_MODE": hermes_case_workflow_mode,
             }
@@ -764,6 +768,15 @@ def render_task_definition(
         if prefix_arn:
             for name, suffix in sorted(API_ZENDESK_READBACK_SECRET_SUFFIXES.items()):
                 _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
+    if role in {"api", "worker"}:
+        # Ensure the outbound Slack kill switch reflects the target environment
+        # on every rendered revision (p2-150): off in Production, on in
+        # Preproduction, regardless of what the observed definition carried.
+        _set_environment_value(
+            container,
+            "ENGINEER_SLACK_OUTBOUND_ENABLED",
+            "0" if environment == "production" else "1",
+        )
     return rendered
 
 

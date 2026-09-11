@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T14:01:27Z",
-  "source_base_commit": "ece4f5e2b90c9d5bce269818c05fefaab102f38f",
-  "registry_digest": "7b8a4b7a0e66730b90611d0dde6b16802572eb3909f7416d0bb94e0d24d60a07",
+  "generated_at": "2026-09-11T15:29:37Z",
+  "source_base_commit": "f2981425f929069ef401b9ba6c9281884f5db00a",
+  "registry_digest": "c3135595eb595b865e4b570bef09421c8ce687fe40dd64748258b1a9eb53e97c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3165,6 +3165,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Kill switch implemented with dual-environment deploy wiring",
+          "details": "2026-09-11 实施：engineer_slack.py 新增 ENGINEER_SLACK_OUTBOUND_ENABLED_ENV 与 engineer_slack_outbound_disabled()（仅显式 '0' 视为关）；worker.py _drain_engineer_slack_events 在 configured 检查前加开关守卫（关闭=INFO engineer_slack_delivery_disabled + return，不打 WARNING 刷屏、不 claim、事件留 queued）；automation_ecs_deploy.py 双点接线——render_initial_task_definition 的 api/worker base env 与 render_task_definition 的 _set_environment_value ensure（发布路径渲染器只透传 observed env，必须显式 ensure，同 PR#1141 教训）均按 environment 注入 production='0'/preproduction='1'。测试 150 passed：开关助手三态、drain 关闭时 list_engineer_slack_events 未被调、deploy render 参数化（api/worker × production/preproduction）断言 env 值。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3507,7 +3512,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 24,
+      "task_count": 25,
       "done_count": 10,
       "blocked_count": 0
     },
@@ -11767,6 +11772,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "event": "production_hotfix_deployed",
           "summary": "用户按 baseline 3adc2c9d48661dc52844e540a9fce8ba2e806ec2 与 candidate 42f2f114f80832c903c048a562970a28d3e33ac7 显式授权紧急 Production 热修复。Release r20260911-42f2f11 发布并完成平台验收，回退 state 锁定 API/Route/Worker :43/:37/:41。真实工单与邮件闭环未授权，p2-149 维持 active。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-150",
+      "title": "关闭 Production 工程师频道 Slack 出站（保留 Preproduction）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "created_at": "2026-09-11",
+      "updated_at": "2026-09-11",
+      "summary": "为 Production ECS worker 的工程师频道 Slack 出站（support_engineer_slack_events drain：not_automated 工单根消息、客户评论/状态变更/关单线程事件）增加显式开关 ENGINEER_SLACK_OUTBOUND_ENABLED：worker drain 在开关为 0 时静默跳过（INFO 一条、事件留 queued 不发送）；部署渲染器对 production api/worker 注入 \"0\"、preproduction 注入 \"1\"（preproduction 的 Hermes 审阅召唤不受影响）。凭证（token/channel/team）保留接线，回滚=下次部署翻回 env。范围仅出站：n8n 入站端点、n8n_request_token、ACCOUNT_SLACK_N8N_*（fraud/suspension 的 n8n 事件转发）与 EC2 legacy 栈（其 drain 早已暂停）均不动。",
+      "next_action": "代码+渲染器+测试已完成待合入（150 passed）；合入后先部署 Preproduction 并以 13424 注入重放回归（Slack 召唤照常 root+thread delivered）；Production 发布单独等待用户授权后执行（管线 --through production），部署后三重验证=production 任务定义 env=0 读回 + worker 日志无新 engineer slack 出站（engineer_slack_delivery_disabled INFO）+ 频道无新消息。已知边界：关闭期间 support_engineer_slack_events 持续累积 queued 行（无发送无告警，后续可用一条 SQL 归档）。",
+      "acceptance_criteria": [
+        "Production worker 任务定义 ENGINEER_SLACK_OUTBOUND_ENABLED=0（读回确认），drain 静默跳过不发送任何消息到 C0BS0N61D1R；CloudWatch 无 engineer_slack chat.postMessage 新日志。",
+        "Preproduction 任务定义开关=1，Hermes 审阅召唤（根消息+线程回复）照常 delivered。",
+        "开关缺省=开（任意非 0 值视为开），仅显式 \"0\" 关闭；回滚路径=翻 env 重新部署，无需动 SSM 凭证。",
+        "n8n 入站 Slack 端点与 ACCOUNT_SLACK_N8N_* 转发不受影响（范围外）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Kill switch implemented with dual-environment deploy wiring",
+          "details": "2026-09-11 实施：engineer_slack.py 新增 ENGINEER_SLACK_OUTBOUND_ENABLED_ENV 与 engineer_slack_outbound_disabled()（仅显式 '0' 视为关）；worker.py _drain_engineer_slack_events 在 configured 检查前加开关守卫（关闭=INFO engineer_slack_delivery_disabled + return，不打 WARNING 刷屏、不 claim、事件留 queued）；automation_ecs_deploy.py 双点接线——render_initial_task_definition 的 api/worker base env 与 render_task_definition 的 _set_environment_value ensure（发布路径渲染器只透传 observed env，必须显式 ensure，同 PR#1141 教训）均按 environment 注入 production='0'/preproduction='1'。测试 150 passed：开关助手三态、drain 关闭时 list_engineer_slack_events 未被调、deploy render 参数化（api/worker × production/preproduction）断言 env 值。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-11",
+          "event": "created",
+          "summary": "用户要求关闭 Production 的 Slack 发送；实施 ENGINEER_SLACK_OUTBOUND_ENABLED 显式开关（production 关/preproduction 开），待合入与双环境部署验证。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/services/engineer_slack.py",
+        "backend/worker.py",
+        "backend/scripts/automation_ecs_deploy.py",
+        "docs/agent_workflow_details.md"
       ]
     },
     {

@@ -141,6 +141,7 @@ from backend.services.engineer_slack import (
     EngineerSlackDeliveryError,
     build_engineer_case_thread_event,
     engineer_slack_configured,
+    engineer_slack_outbound_disabled,
     post_engineer_slack_event,
 )
 from backend.services.hermes_case_workflow import (
@@ -2238,6 +2239,9 @@ def _drain_account_slack_deliveries(*, limit: int = 20) -> None:
 
 def _drain_engineer_slack_events(*, limit: int = 20) -> None:
     if not is_live_account_processing_profile(os.getenv("ACCOUNT_DEFAULT_PROCESSING_PROFILE")):
+        return
+    if engineer_slack_outbound_disabled():
+        LOGGER.info("engineer_slack_delivery_disabled")
         return
     if not engineer_slack_configured():
         LOGGER.warning("engineer_slack_delivery_paused failure_code=engineer_slack_config_incomplete")

@@ -47,6 +47,14 @@ def engineer_slack_configured() -> bool:
     return token.startswith(("xoxb-", "xoxp-")) and bool(team_id and channel_id)
 
 
+ENGINEER_SLACK_OUTBOUND_ENABLED_ENV = "ENGINEER_SLACK_OUTBOUND_ENABLED"
+
+
+def engineer_slack_outbound_disabled() -> bool:
+    """Explicit outbound kill switch; unset or any value other than 0 stays on."""
+    return str(os.getenv(ENGINEER_SLACK_OUTBOUND_ENABLED_ENV) or "").strip() == "0"
+
+
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 

@@ -25,6 +25,7 @@ from backend.services.engineer_slack import (
     build_engineer_case_opened_event,
     build_engineer_case_thread_event,
     engineer_slack_configured,
+    engineer_slack_outbound_disabled,
     notify_hermes_review_pending,
     post_engineer_slack_event,
 )
@@ -108,6 +109,33 @@ class EngineerSlackContractTests(unittest.TestCase):
                 clear=False,
             ):
                 self.assertFalse(engineer_slack_configured())
+
+    def test_outbound_kill_switch_defaults_on_and_disables_with_zero(self) -> None:
+        with patch.dict(
+            os.environ, {"ENGINEER_SLACK_OUTBOUND_ENABLED": ""}, clear=False
+        ):
+            self.assertFalse(engineer_slack_outbound_disabled())
+        with patch.dict(
+            os.environ, {"ENGINEER_SLACK_OUTBOUND_ENABLED": "1"}, clear=False
+        ):
+            self.assertFalse(engineer_slack_outbound_disabled())
+        with patch.dict(
+            os.environ, {"ENGINEER_SLACK_OUTBOUND_ENABLED": "0"}, clear=False
+        ):
+            self.assertTrue(engineer_slack_outbound_disabled())
+
+    def test_drain_skips_silently_when_outbound_disabled(self) -> None:
+        repository = Mock()
+        environment = {
+            **DIRECT_ENV,
+            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production",
+            "ENGINEER_SLACK_OUTBOUND_ENABLED": "0",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            worker, "ticket_repository", repository
+        ):
+            worker._drain_engineer_slack_events(limit=20)
+        repository.list_engineer_slack_events.assert_not_called()
 
     def test_root_event_uses_allowlist_and_excludes_customer_identity(self) -> None:
         event = build_engineer_case_opened_event(
