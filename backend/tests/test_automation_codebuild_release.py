@@ -189,6 +189,10 @@ def test_codebuild_trigger_is_fixed_sha_secret_free_and_does_not_deploy() -> Non
     assert "batch-get-builds" in script
     assert "validate-preproduction-publish" in script
     assert 'TICKET_DB_DSN is required for source Prompt validation' in script
+    assert '--prompt-code-root is required with --hotfix-baseline' in script
+    assert 'Prompt code root must be a worktree of the release repository' in script
+    assert 'Prompt code root HEAD must equal the reviewed hotfix commit' in script
+    assert 'cd "${PROMPT_CODE_ROOT}"' in script
     assert "update-service" not in script
     assert "register-task-definition" not in script
     assert "TICKET_DB_DSN" not in script.split("environment-variables-override", 1)[1]

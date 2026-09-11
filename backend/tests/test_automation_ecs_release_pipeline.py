@@ -257,8 +257,12 @@ def test_pipeline_runs_and_resumes_with_source_identity_at_every_stage(
     codebuild_command = stages[0][1]
     if hotfix_mode:
         assert codebuild_command[codebuild_command.index("--hotfix-baseline") + 1] == baseline
+        assert Path(
+            codebuild_command[codebuild_command.index("--prompt-code-root") + 1]
+        ) == next((repo / ".deployments").glob("ecs-pipeline-*/release-worktree"))
     else:
         assert "--hotfix-baseline" not in codebuild_command
+        assert "--prompt-code-root" not in codebuild_command
     for name, command, env in stages:
         if name in {"production_preflight", "production_deploy"}:
             assert env.get("AUTOMATION_ECS_HOTFIX_BASELINE") == (baseline if hotfix_mode else None)
