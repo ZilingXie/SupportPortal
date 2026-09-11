@@ -333,8 +333,8 @@ task definition 不再注入 `ARCHER_OAUTH_COOKIE`，Provider 探针不再检查
 机制要点：
 
 - 内部邮件先以 `awaiting_public_reply` 状态持久化（prepare 协议），claim 协议
-  在该状态下不可领取；Zendesk 公开回复 readback 事务内条件释放为 `pending`，
-  Worker 周期中的有界兜底步覆盖钩子丢失与进程重启。
+  在该状态下不可领取；Zendesk 公开回复 readback 仅持久化送达账本；
+  Worker 周期中的有界扫描是唯一自动释放入口，确认本次申请已送达后原子释放为 `pending`，进程重启可继续。
 - 回信处理执行三重校验：发件人精确匹配本次邮件 To/Cc 快照（不扩展组员）、
   Case 处于等待人工确认态（`sent`/`delivery_unknown`）、完成识别只看未引用正文段；
   任一不过即终止自动处理并留 `enablement_reply_processing_stopped` 事件。
