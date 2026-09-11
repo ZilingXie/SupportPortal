@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import socket
@@ -11,9 +12,14 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+LOGGER = logging.getLogger("supportportal.engineer_slack")
+
 
 ENGINEER_SLACK_SCHEMA_VERSION = 1
 SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
+HERMES_REVIEW_PENDING_EVENT_TYPE = "hermes_review_pending"
+PUBLIC_DASHBOARD_BASE_URL = "https://supportcenter.stellarix.space"
+_ROOT_EVENT_TYPES = frozenset({"engineer_case_opened", HERMES_REVIEW_PENDING_EVENT_TYPE})
 _SLACK_ACTIONS = frozenset({
     "summarize",
     "guardrail",
@@ -298,7 +304,7 @@ def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[st
     message_text = str(event.get("message_text") or "").strip()
     if not all((event_id, event_type, message_text)):
         raise EngineerSlackDeliveryError("engineer_slack_event_invalid")
-    is_root = event_type == "engineer_case_opened"
+    is_root = event_type in _ROOT_EVENT_TYPES
     normalized_thread_ts = str(thread_ts or "").strip()
     if not is_root and not normalized_thread_ts:
         raise EngineerSlackDeliveryError("engineer_slack_thread_binding_missing")
@@ -376,3 +382,34 @@ def post_engineer_slack_event(
         "slack_message_ts": message_ts,
         "slack_thread_ts": str(thread_ts or "").strip() or message_ts,
     }
+
+
+def notify_hermes_review_pending(
+    *, draft: dict[str, Any], direction: str, environment: str
+) -> dict[str, Any]:
+    """Best-effort channel ping when a hermes draft starts awaiting approval.
+
+    Hermes-native cases have no engineer-case Slack thread (p2-148 design),
+    so the review summons posts as a channel root message. The caller must
+    treat any failure as non-blocking for the turn.
+    """
+    if not engineer_slack_configured():
+        LOGGER.info("hermes_review_pending_skipped reason=engineer_slack_not_configured")
+        return {"status": "skipped_not_configured"}
+    draft_id = str(draft.get("draft_id") or "").strip()
+    ticket_id = str(draft.get("zendesk_ticket_id") or "").strip()
+    content_preview = _clean_text(draft.get("content"))[:700]
+    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
+    message_text = (
+        f":mag: Hermes reply draft awaiting review — Zendesk #{ticket_id} "
+        f"(direction: {_clean_text(direction) or 'unknown'})\n"
+        f">>> {content_preview}\n"
+        f"Review & approve: {review_url}"
+    )
+    return post_engineer_slack_event(
+        {
+            "event_id": f"hermes-review-pending:{draft_id}",
+            "event_type": HERMES_REVIEW_PENDING_EVENT_TYPE,
+            "message_text": message_text,
+        }
+    )

@@ -25,6 +25,7 @@ from backend.services.engineer_slack import (
     build_engineer_case_opened_event,
     build_engineer_case_thread_event,
     engineer_slack_configured,
+    notify_hermes_review_pending,
     post_engineer_slack_event,
 )
 from backend.services.hermes_case_workflow import (
@@ -231,6 +232,47 @@ class EngineerSlackContractTests(unittest.TestCase):
         self.assertTrue(payload["client_msg_id"])
         self.assertEqual(result["slack_message_ts"], "100.200")
         self.assertEqual(result["slack_thread_ts"], "100.200")
+
+    def test_hermes_review_pending_posts_channel_root_with_review_link(self) -> None:
+        draft = {
+            "draft_id": "draft-abc123",
+            "zendesk_ticket_id": "13413",
+            "content": "Hi Ziling,\n\nPlease provide the affected product and OS version.",
+        }
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.300"}),
+        ) as urlopen:
+            result = notify_hermes_review_pending(
+                draft=draft, direction="investigation", environment="preproduction"
+            )
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(payload["channel"], "C-TEST")
+        self.assertNotIn("thread_ts", payload)
+        self.assertIn("#13413", payload["text"])
+        self.assertIn("investigation", payload["text"])
+        self.assertIn("Please provide the affected product", payload["text"])
+        self.assertIn(
+            "https://supportcenter.stellarix.space/automation/preproduction/",
+            payload["text"],
+        )
+        self.assertEqual(result["status"], "delivered")
+        self.assertEqual(result["slack_message_ts"], "100.300")
+        self.assertEqual(result["event_id"], "hermes-review-pending:draft-abc123")
+
+    def test_hermes_review_pending_skips_when_not_configured(self) -> None:
+        cleared = {key: "" for key in DIRECT_ENV}
+        with patch.dict(os.environ, cleared, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen"
+        ) as urlopen:
+            result = notify_hermes_review_pending(
+                draft={"draft_id": "d", "zendesk_ticket_id": "1", "content": "x"},
+                direction="investigation",
+                environment="preproduction",
+            )
+        urlopen.assert_not_called()
+        self.assertEqual(result["status"], "skipped_not_configured")
 
     def test_direct_post_sends_actions_in_bound_thread(self) -> None:
         event = build_engineer_case_thread_event(

@@ -501,6 +501,99 @@ class TestAgentTurnProcessor:
         assert outcome["reason"] == "guardrail_blocked"
         assert store.get_hermes_turn(handoff["turn_id"])["status"] == "failed"
 
+    def test_awaiting_approval_sends_slack_review_ping(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="investigation", route=None
+                )
+                store.record_hermes_case_direction(
+                    handoff["turn_id"], direction="investigation", reason="technical"
+                )
+            elif phase == "persona":
+                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                with patch(
+                    "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                    side_effect=lambda *a, **k: {
+                        "decision": "approved_for_final_engineer_review",
+                        "blockers": [],
+                    },
+                ):
+                    tool_save_reply_draft(
+                        store, None, turn_id=handoff["turn_id"], content="Draft", basis={}
+                    )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_review_pending",
+            return_value={"status": "delivered", "slack_message_ts": "1.2"},
+        ) as notify:
+            outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "completed"
+        assert outcome["publication"]["status"] == "awaiting_approval"
+        notify.assert_called_once()
+        kwargs = notify.call_args.kwargs
+        assert kwargs["draft"]["zendesk_ticket_id"] == "123"
+        assert kwargs["draft"]["status"] == "awaiting_approval"
+        assert kwargs["direction"] == "investigation"
+        assert kwargs["environment"] == "preproduction"
+
+    def test_slack_review_ping_failure_does_not_break_turn(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="investigation", route=None
+                )
+            elif phase == "persona":
+                store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+                with patch(
+                    "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                    side_effect=lambda *a, **k: {
+                        "decision": "approved_for_final_engineer_review",
+                        "blockers": [],
+                    },
+                ):
+                    tool_save_reply_draft(
+                        store, None, turn_id=handoff["turn_id"], content="Draft", basis={}
+                    )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_review_pending",
+            side_effect=RuntimeError("slack down"),
+        ):
+            outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "completed"
+        assert store.get_hermes_turn(handoff["turn_id"])["status"] == "completed"
+        drafts = store.get_hermes_case_review("123")["drafts"]
+        assert drafts and drafts[0]["status"] == "awaiting_approval"
+
+    def test_no_slack_ping_without_pending_draft(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.rsplit(":", 1)[-1] == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_review_pending"
+        ) as notify:
+            outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "completed"
+        notify.assert_not_called()
+
 
 class TestExpiryRecovery:
     def test_expired_external_agent_turn_job_marks_outcome_unknown(self) -> None:
