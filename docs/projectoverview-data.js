@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T15:53:14Z",
-  "source_base_commit": "8bd2e10ba1e1293500696f5be025fbdad079115e",
-  "registry_digest": "d30e3b6c2300fccd53b470d165ff6d0101fad131e86d5d138d082090bac1c0fa",
+  "generated_at": "2026-09-11T16:35:04Z",
+  "source_base_commit": "3cd627349ad6fd9b29a794ae98cfd979cd1130d7",
+  "registry_digest": "7b8a35e13e905c99385ead50d0de6fd7bac5b4e918a65d05c8746203b68f1ea9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2712,6 +2712,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Dual-environment admin coverage",
           "details": "2026-09-11 实施：test_automation_ecs_admin_reader fail-closed 参数化改为环境错配（含 preproduction 变体）+ SQL 参数断言 (environment, namespace)；postgres 集成测试对称参数化双环境（schema/namespace trap 不变）；test_automation_ecs_api 新增 preproduction admin 挂载/会话/只读用例；UI 合同测试更新为派生端点断言并新增 preproduction 与本地 workspace pathname 用例。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction ECS rollout and live verification",
+          "details": "PR #1152（main 2e781bf7）经正式 pipeline 发布 Preproduction release r20260911-2e781bf（prompt release pr-175312c491e7 保持 active，全阶段 passed：preflight/prompt_schema/route_worker_rollout/heartbeat/api_rollout/collector/activation，总 1219s）。线上验收 2026-09-11：GET /automation/preproduction/admin/ =200（System Admin 标题）+ app.js 含 isEcsAdmin 与 (preproduction|production) 派生检测；admin/admin 登录返回 Preproduction Admin；dashboard/api/runtime provenance=release r20260911-2e781bf/commit 2e781bf7/prompt pr-175312c491e7；admin/api/account-automation 返回 processing_profile=preproduction 且真实数据（total_account_cases=4, automated=1, not_automated=3，13424/13413/13400 在列）；/admin/api/cases =200（engineer cases 合法为空）；Production /automation/production/admin/ 仍 200 无回归。"
         }
       ],
       "source_refs": [
@@ -2725,7 +2730,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 7,
-      "done_count": 4,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -11826,7 +11831,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-151",
       "title": "Preproduction 挂载 ECS Admin 只读控制台",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
@@ -11834,7 +11839,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-11",
       "updated_at": "2026-09-11",
       "summary": "在 `/automation/preproduction/admin/` 挂载与 Production 同款的 ECS Admin 10 栏只读控制台：去掉 automation_ecs_api 的 production-only 挂载门；AutomationEcsAdminReader 构造守卫改为按环境匹配 schema/namespace（fail-closed 不变）；account case 的 processing_profile 过滤从硬编码 'production' 改为按 settings.environment 派生（否则 preproduction Automated Cases/metrics 恒空）；admin app.js 的 ECS 路径检测仿 dashboard 的 environmentMatch 模式按环境派生端点。两环境 admin 均保持只读（后端仅 GET 端点），Production 行为零变化。",
-      "next_action": "代码+测试+文档已完成待验证；定向测试通过后 finalize 合入，部署 Preproduction 并线上验收 `/automation/preproduction/admin/`（登录 admin/admin、cases/account-automation 返回真实数据），同时确认 Production admin 无回归。",
+      "next_action": "",
       "acceptance_criteria": [
         "`https://supportcenter.stellarix.space/automation/preproduction/admin/` 返回 Admin UI（System Admin 标题，非 dashboard），dashboard session admin/admin 登录后 `/automation/preproduction/admin/api/*` GET 返回 200 且数据来自 preproduction schema。",
         "preproduction admin 的 Automated Cases/metrics 含真实 preproduction 工单（processing_profile 按环境派生的直接证据）。 ",
@@ -11847,6 +11852,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Dual-environment admin coverage",
           "details": "2026-09-11 实施：test_automation_ecs_admin_reader fail-closed 参数化改为环境错配（含 preproduction 变体）+ SQL 参数断言 (environment, namespace)；postgres 集成测试对称参数化双环境（schema/namespace trap 不变）；test_automation_ecs_api 新增 preproduction admin 挂载/会话/只读用例；UI 合同测试更新为派生端点断言并新增 preproduction 与本地 workspace pathname 用例。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction ECS rollout and live verification",
+          "details": "PR #1152（main 2e781bf7）经正式 pipeline 发布 Preproduction release r20260911-2e781bf（prompt release pr-175312c491e7 保持 active，全阶段 passed：preflight/prompt_schema/route_worker_rollout/heartbeat/api_rollout/collector/activation，总 1219s）。线上验收 2026-09-11：GET /automation/preproduction/admin/ =200（System Admin 标题）+ app.js 含 isEcsAdmin 与 (preproduction|production) 派生检测；admin/admin 登录返回 Preproduction Admin；dashboard/api/runtime provenance=release r20260911-2e781bf/commit 2e781bf7/prompt pr-175312c491e7；admin/api/account-automation 返回 processing_profile=preproduction 且真实数据（total_account_cases=4, automated=1, not_automated=3，13424/13413/13400 在列）；/admin/api/cases =200（engineer cases 合法为空）；Production /automation/production/admin/ 仍 200 无回归。"
         }
       ],
       "history": [
@@ -11854,6 +11864,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-11",
           "event": "created",
           "summary": "用户要求 preproduction 也有 admin 页面（用于在晋级 Production 前验证 admin 页面调整）；实施环境参数化挂载与读取。"
+        },
+        {
+          "at": "2026-09-11",
+          "event": "done",
+          "summary": "PR #1152 合并（main=2e781bf7），定向测试全绿（86 passed），Preproduction 发布 r20260911-2e781bf 并完成线上验收（admin 页面 200、登录、真实 account-automation 数据、Production 无回归）。"
         }
       ],
       "legacy_ids": [],
