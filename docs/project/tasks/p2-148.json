@@ -10,7 +10,7 @@
   "created_at": "2026-09-08",
   "updated_at": "2026-09-11",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "2026-09-11 readiness 修复（第四缺口）已实施：r20260911-c66ca63 重放实证 gate 运行但 guardrail proof 恒败——legacy 引擎的 ready_for_customer_reply 模型自报在 Hermes 链路无设置点，每份草稿必 blocked。修法（不动手册/prompt/跨仓）：tool_save_reply_draft 服务端从持久工作记录推导 readiness（binding.investigation 或 turn.work_result 非空），automation 工具收尾补 record_hermes_turn_work 落盘；真实 guardrail（无桩）实证 investigation 记录在时 decision=approved_for_final_engineer_review。待合入部署后重放：注入 13400 客户评论→draft awaiting_approval→dashboard approve→delivery ledger queued；approve 会触发 13400 真实公开回复（side-effects=1，受控测试工单），执行前需用户确认。",
+  "next_action": "2026-09-11 技术运行态验收链路全通：r20260911-8e65811（PR#1134 readiness 推导+#1135）第五次注入 49 秒全链实证 draft_saved→publish_requested(awaiting_approval)→turn 完成且 result.publication 记录决策→草稿存活（case_rev=4、未被自己 turn 扫 stale）→dashboard review 可审（admin/admin）。**唯一剩余=验收点 6 的最后一步：用户确认后 approve draft（side-effects=1 将在 13400 真实发布公开回复，两次问询无答复按外发边界停在待审零外发）→验证 delivery ledger queued/发送/Zendesk 读回**；注意新客户评论会使当前待审草稿 stale（届时需新 turn 重出）。后续增强留 owner 决策：真模型自报 readiness（工具参数+手册+prompt release+hermes 插件 schema 跨仓）、agent.turn step 完成账目、Hermes 会话内工具名回退 HTTP 端点。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -85,6 +85,11 @@
       "type": "test",
       "label": "Readiness derived from durable work record (fourth gap)",
       "details": "r20260911-c66ca63 重放暴露第四缺口：guardrail proof 检查要求 reply_readiness.ready_for_customer_reply（engineer_guardrail_agent.py:177，legacy 引擎由模型按 prompt 契约自报），而 Hermes 链路无任何设置点（tool_save_reply_draft 只传 summary、save_investigation_progress 无该参数、7 份手册无指引）→ proof 恒败、每份草稿必 blocked、approve 路径不可达。修复（最小面，不动手册/prompt release/跨仓插件）：tool_save_reply_draft 服务端推导 readiness=非空 binding.investigation 或 turn.work_result（Hermes 原生自报等价物=persona 只基于已记录工作起草；无工作证据保持 blocked=失败关闭）；tool_execute_automation_action 收尾补 store.record_hermes_turn_work 落盘结果（该方法此前无生产调用方）。真实 guardrail（无桩）端到端实证：investigation 记录在→decision=approved_for_final_engineer_review 零 blockers；新增推导回归测试（有/无工作记录两态），InMemory 97 全绿。真模型自报（工具参数+手册+prompt release+hermes 插件 schema）作为后续增强留待 owner 决策。"
+    },
+    {
+      "type": "deployment",
+      "label": "r20260911-8e65811 replay proves awaiting_approval chain end to end",
+      "details": "2026-09-11 r20260911-8e65811（PR#1134+#1135，随并发 p2-149 轮3 按管线延续规则从最新 main HEAD 重建）部署全阶段 passed；13400 第五次注入（exec-c6e81376）49 秒全链：intake→route→三阶段→draft_saved→agent_turn.publish_requested(awaiting_approval)→turn 完成且 result.publication 记录决策→delivery.hermes_agent_turn.confirmed→automation.completed。草稿 draft-a2c5bc04 存活（case_revision=4 盖章、conversation_version 2→3 未被自己 turn 扫 stale、guardrail 生产环境通过=readiness 推导生效）；binding 复用同一 hermes-session:ca6031bf conv=3；dashboard review（admin/admin）实证草稿可见 awaiting_approval/manual 未批准。验收点 1-5+7 全部实证；点 6 停在待审：approve 因 side-effects=1 将在 13400 真实发布公开回复，两次问询无答复按外发边界未执行（Zendesk 保持 1 条原始评论零外发）。"
     }
   ],
   "history": [
@@ -132,6 +137,11 @@
       "at": "2026-09-11",
       "event": "readiness_derived_from_work_record",
       "summary": "第四缺口修复：guardrail proof 的 ready_for_customer_reply 改由服务端从持久工作记录（investigation/work_result）推导，automation 工具补落 turn 工作记录；真实 guardrail 实证通过；待部署重放至 approve（外发前需用户确认）。"
+    },
+    {
+      "at": "2026-09-11",
+      "event": "awaiting_approval_chain_verified",
+      "summary": "r20260911-8e65811 第五次注入重放 49 秒全链实证：draft_saved→publish_requested(awaiting_approval)→turn 带决策完成→dashboard 可审；验收点 1-5+7 全过，点 6 停在待审（approve 外发待用户确认，零未授权外发）。"
     }
   ],
   "legacy_ids": [],
