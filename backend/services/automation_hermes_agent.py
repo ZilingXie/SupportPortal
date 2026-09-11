@@ -266,6 +266,8 @@ class HermesAgentTurnProcessor:
                 "status": "human_review",
                 "reason": str(publication.get("reason") or "publication_gate"),
             }
+        if str(publication.get("status")) == "awaiting_approval" and publication.get("draft_id"):
+            self._notify_review_pending(payload, str(publication["draft_id"]))
         result = {
             "engine": "hermes",
             "turn_id": payload.turn_id,
@@ -275,6 +277,40 @@ class HermesAgentTurnProcessor:
         }
         self.store.complete_hermes_agent_turn(payload.turn_id, result=result)
         return result
+
+    def _notify_review_pending(self, payload: AgentTurnJobPayload, draft_id: str) -> None:
+        # Summons only: a failed ping must never affect the turn state machine.
+        from backend.services.engineer_slack import notify_hermes_review_pending
+
+        try:
+            draft = self.store.get_hermes_draft(draft_id)
+            if not isinstance(draft, dict):
+                LOGGER.warning(
+                    "hermes_review_pending_notify_skipped turn_id=%s draft_id=%s reason=draft_missing",
+                    payload.turn_id,
+                    draft_id,
+                )
+                return
+            binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+            outcome = notify_hermes_review_pending(
+                draft=draft,
+                direction=str(binding.get("direction") or ""),
+                environment=self.environment,
+            )
+            LOGGER.info(
+                "hermes_review_pending_notified turn_id=%s draft_id=%s status=%s message_ts=%s",
+                payload.turn_id,
+                draft_id,
+                outcome.get("status"),
+                outcome.get("slack_message_ts"),
+            )
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_review_pending_notify_failed turn_id=%s draft_id=%s",
+                payload.turn_id,
+                draft_id,
+                exc_info=True,
+            )
 
     # ----------------------------------------------------------------- phases
 
