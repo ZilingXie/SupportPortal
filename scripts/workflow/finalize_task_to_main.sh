@@ -243,12 +243,14 @@ else
 fi
 
 task_worktree="$(repo_root)"
-git -C "$root_workspace" worktree remove "$task_worktree"
 
-if git -C "$root_workspace" show-ref --verify --quiet "refs/heads/$expected_branch"; then
-  git -C "$root_workspace" branch -D "$expected_branch"
-fi
+# The task workspace and branch are intentionally retained here. The caller's
+# shell sits inside $task_worktree while this script runs; deleting that
+# directory from underneath a persistent shell cwd breaks the caller's next
+# shell spawn (ZCode harness "spawn /bin/zsh ENOENT" — the deletion must run
+# from the root workspace via scripts/workflow/cleanup_task_worktree.sh).
 
 info "Merged PR $pr_url into main."
 info "Updated root main at $root_workspace."
-info "Removed task workspace $task_worktree and deleted local branch $expected_branch."
+info "Task workspace $task_worktree and branch $expected_branch are retained for a separate cleanup step."
+info "From the root workspace run: cd $root_workspace && scripts/workflow/cleanup_task_worktree.sh $expected_branch"
