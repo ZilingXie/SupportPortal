@@ -64,9 +64,13 @@ class FakeRepository:
     def get_account_case_comment_sync(self, client_ticket_id: str) -> dict[str, Any]:
         return {"comments_revision": self.comment_revisions.get(client_ticket_id, "rev-1")}
 
-    def create_account_zendesk_comment_delivery(self, **kwargs: Any) -> dict[str, Any]:
-        self.deliveries.append(kwargs)
-        return {"created": True, **kwargs}
+    def create_account_zendesk_comment_delivery(
+        self, *, created_at: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        # created_at is keyword-only required on the Postgres repository; the
+        # fake mirrors that contract so callers cannot omit it silently.
+        self.deliveries.append({"created_at": created_at, **kwargs})
+        return {"created": True, "created_at": created_at, **kwargs}
 
 
 def _setup_case() -> tuple[InMemoryAutomationEcsStore, FakeRepository, str]:
