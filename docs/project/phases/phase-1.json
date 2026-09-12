@@ -3,7 +3,7 @@
   "phase_id": "phase-1",
   "title": "Phase 1：核心交付闭环",
   "status": "active",
-  "summary": "当前交付阶段，聚焦 Account Automation、Admin Operations 和 Platform Delivery；这三个 Module 的 Task 属于本阶段完成范围。",
+  "summary": "核心交付闭环能力（Account Automation、Admin Operations、Platform Delivery）已上线 ECS Production 运行，承载第一阶段能力；本阶段存量 Task 处于收尾与维护，这三个 Module 的 Task 属于本阶段完成范围。",
   "target_date": null,
   "exit_criteria": [
     "Account Automation 的路由、执行、人工审核、Zendesk 交付与受控发布任务完成，并有对应 evidence。",
