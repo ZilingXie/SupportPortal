@@ -13,7 +13,7 @@ Read it only when the concise hot-path rules in `AGENTS.md` point here.
 1. Do not add project-level fixed startup checks. The concise `AGENTS.md` hot path intentionally avoids default AgentMemory, `using-superpowers`, `codegraph_status`, and Git/worktree preflights.
 2. AgentMemory is on demand: search or write memory only when the user asks for memory, a durable memory write is needed, or the task clearly depends on historical preferences/global rules that are not already in the prompt.
 3. Skills are trigger-based, not disabled: if the current platform's skill rules require a skill, the user names a skill, or the task semantically matches a skill, use that skill exactly as required. Never interpret on-demand preflight as permission to skip an applicable skill.
-4. CodeGraph status is diagnostic only. Use CodeGraph for code understanding, symbol lookup, call flow, impact analysis, and code-change context, but check `codegraph_status` only when CodeGraph fails, appears unavailable/stale, or the task is to diagnose indexing.
+4. CodeGraph status is diagnostic only. Use CodeGraph for symbol lookup, call flow, data flow, and symbol-level impact; use the `AGENTS.md` Context On Demand table for other context. Check `codegraph_status` only when CodeGraph fails, appears unavailable/stale, or the task is to diagnose indexing.
 5. Git/worktree state is safety-gated. Run `git status --short --branch`, `git branch -vv`, and `git worktree list --porcelain` before repo-tracked edits, resuming a paused task, finalization, cleanup, or any workspace-safety decision; do not run them for ordinary chat, pure planning, or read-only documentation inspection.
 6. Native `rg` is preferred for docs, literal text, comments, config keys, logs, and rule-file searches. CodeGraph is not required for those non-structural lookups.
 
@@ -39,8 +39,8 @@ The completed-implementation review and finalization process lives in the projec
 5. Report the old and new source/release identifiers, why a rebuild was needed, the relevant diff assessment, and the verification outcome in normal progress/evidence reporting. This provides visibility without adding an approval checkpoint for routine work already authorized.
 
 ## CodeGraph First For Code Context
-1. For any task that requires understanding, locating, tracing, or changing code, prefer the project CodeGraph tools before native file search or broad file reads. Use CodeGraph for structural questions such as where a symbol is defined, who calls it, what it calls, how data flows between symbols, what would be affected by a change, or which files and symbols are relevant to a task.
-2. Use native search such as `rg` primarily for literal text, comments, log messages, configuration keys, documentation wording, or after CodeGraph has already identified the specific files that need direct inspection.
+1. Use CodeGraph first for structural symbol questions: definitions, callers/callees, data flow between symbols, and symbol-level impact. This is not a prerequisite for every code-related task; use [Context On Demand](../AGENTS.md#context-on-demand) for project-surface inventories, operations knowledge, and live-state questions.
+2. Use `rg` for literal text, comments, log messages, configuration keys, and documentation. Read the relevant current task-workspace source after locating it; generated root-main maps may not reflect unmerged task changes.
 3. If CodeGraph is unavailable, uninitialized, or stale, report that explicitly and fall back to the narrowest native search needed. Check `codegraph_status` only as a diagnostic when failure/staleness is suspected. Do not initialize a CodeGraph index unless the user explicitly requests it; for an initialized project, use `codegraph sync` to refresh changed files.
 
 ## Branch Workflow

@@ -1,5 +1,14 @@
 # Prompt Change Log
 
+## 2026-09-12 - Route repository context through maintained operations knowledge
+
+- Area/version: Repository agent instructions in `AGENTS.md` and `docs/agent_workflow_details.md`; no application prompt or model version change.
+- Reason: The new `docs/operations/` directory needed an explicit reading entry, while the older blanket CodeGraph-first instruction conflicted with CodeSight inventory navigation.
+- Behavior: Select context by task: operations index and referenced runbooks, CodeSight inventories, CodeGraph symbol relationships, targeted text search, or timestamped live evidence. Read only the relevant material and verify current task-workspace source before implementation.
+- Maintenance: Keep `.codesight/` generated and gitignored; maintained operations knowledge stays under `docs/operations/`. The agent refreshes CodeSight once from root main after finalized code changes; documentation-only changes do not refresh it. Changes to operations contracts update the relevant maintained page and affected runbook in the same PR.
+- Boundaries: Existing ECS authorization, workspace ownership, PR/cleanup workflow, and verification requirements remain intact. No new startup scan, CodeSight fork/configuration, runtime change, or release-note change.
+- Verification: Direct wording and context-selection review, document-link and scope checks, preservation of existing authorization/workflow sections, and `git diff --check`. Documentation-only change; no application tests, build, restart, or deployment required.
+
 
 ## 2026-09-11 - Enablement dual-flow mode switch (p2-152)
 

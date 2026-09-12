@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-12T11:24:52Z",
-  "source_base_commit": "b5f238f6c9fa47e03c0e77dcdd6f742f3e55ba7f",
-  "registry_digest": "d3d9ce3f4b8e2a20ab9aabfb1902b4f451dc08676318a6053559892d939e4077",
+  "generated_at": "2026-09-12T11:25:17Z",
+  "source_base_commit": "8252baedaccddaef6c883a1dec0b3ab6b1a9edf1",
+  "registry_digest": "55b6ccfae8e0da0a024060a0c50e1cac66618864f82f596f25cd95a0027c6f57",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -34,7 +34,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       7,
       30
     ],
-    "current_phase_id": "phase-1"
+    "current_phase_id": "phase-2"
   },
   "phases": [
     {
@@ -42,7 +42,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "title": "Phase 1：核心交付闭环",
       "status": "active",
-      "summary": "当前交付阶段，聚焦 Account Automation、Admin Operations 和 Platform Delivery；这三个 Module 的 Task 属于本阶段完成范围。",
+      "summary": "核心交付闭环能力（Account Automation、Admin Operations、Platform Delivery）已上线 ECS Production 运行，承载第一阶段能力；本阶段存量 Task 处于收尾与维护，这三个 Module 的 Task 属于本阶段完成范围。",
       "target_date": null,
       "exit_criteria": [
         "Account Automation 的路由、执行、人工审核、Zendesk 交付与受控发布任务完成，并有对应 evidence。",
@@ -60,8 +60,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "phase_id": "phase-2",
       "title": "Phase 2：Client、Knowledge 与 Engineer AI 演进",
-      "status": "planned",
-      "summary": "在 Phase 1 完成后，推进 Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace；当前全部 Task 标记为未开始。",
+      "status": "active",
+      "summary": "Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace 的演进能力持续交付中，当前部署在 ECS Preproduction 验证（Hermes 调查链、Engineer Slack 协作、Admin 控制台增强等），验证通过后按不可变 release 晋级 ECS Production；Production 仍承载第一阶段能力。",
       "target_date": null,
       "exit_criteria": [
         "Client Experience 的对话能力和附件/流式交互可验证。",
@@ -2842,6 +2842,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Project Overview registry regeneration and contract tests",
+          "command": "python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract",
+          "result": "全部通过；data.js 中 phase-2 status=active、current_phase_id=phase-2。"
+        },
+        {
+          "type": "document",
+          "label": "阶段与部署环境对应文案",
+          "details": "phase-1/phase-2 summary、project.json current_phase_id 与 projectoverview.html 部署架构标签页（ECS Production/Preproduction 泳道与\"当前发布状态\"卡）按\"Production=第一阶段 / Preproduction=第二阶段\"修正，环境事实对照 docs/ecs_production_status_report.md 与 p2-151~154 任务 evidence 核对。"
+        },
+        {
+          "type": "test",
           "label": "Single-host restart reliability regression coverage",
           "command": "python3 -m unittest backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rebuilds_with_current_main_build_metadata backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_health_failure_restores_previous_image backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_same_tag_failure_restores_previous_image_id backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rejects_remote_health_missing_contract backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rejects_active_deploy_lock",
           "details": "覆盖 core-first/worker-second 启动、严格 remote health、回滚阶段顺序、活动部署锁和 stale lock 隔离。"
@@ -2879,8 +2890,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 4,
-      "done_count": 3,
+      "task_count": 5,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -3263,6 +3274,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "v1.1 preproduction release + dual-path controlled replay",
           "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-fecedfc，同 hermes flags）+ 13424 两次注入（p2154-v5/v6）",
           "details": "①消息修复实证：turn-14b40b89 direction_reason 持久化模型理由（'The customer reports a new technical iOS screen-sharing crash…'），调查结果消息 delivered（问题行=注入评论原文、route reason=technical — 理由，格式由单测锁定）；②dashboard 路径：continue→turn-ab828c71 草稿消息（hermes_draft_pending_notified）→dashboard approve→Zendesk 评论 53499116840980 delivered；③回调端点路径（n8n 将转发的确切契约）：POST /api/integrations/slack/hermes-cases/actions prepare_draft→200 prepared（turn-4c2a2f99）→草稿→approve_draft→200 approved→评论 53499230327700 delivered→重复 approve→200 already=queued 幂等。本地官方栈 health ref=fecedfcbb69e matched。"
+        },
+        {
+          "type": "deployment",
+          "label": "v1.2 preproduction release + thread-loop controlled replay",
+          "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-b5f238f，schema-006）+ 13424 注入（p2154-v7）+ 三段回调端点链",
+          "details": "①线程绑定：route investigation 后 case-opened 根消息发布并绑定（slack_thread_ts=1789209192.717819，worker log hermes_case_thread_bound，set-once）；②调查结果作为线程回复 delivered（turn-fb33e959 park）；③反馈循环：POST hermes-cases/messages（真实 team/channel，team 不符 403 负路径先证）→ investigation_feedback turn（turn-209bff79 仅 work）再调查→再 park→新结果回同线程；④prepare_draft 自 feedback turn → 200（turn-c8a30080）→草稿 awaiting_approval；⑤approve_draft → Zendesk 评论 53501355724436 delivered。本地栈 health ref=b5f238f6c9fa matched；PG 全套 8/8（schema-006 真库迁移）。"
         },
         {
           "type": "test",
@@ -7907,6 +7924,62 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p1-55",
+      "title": "Project Overview 阶段与部署环境标注修正",
+      "status": "done",
+      "owner": "Zac",
+      "summary": "修正 phase-2 过时的 planned 状态与\"全部 Task 未开始\"描述，并在 Phase summary、current_phase_id 和部署架构标签页标注第一阶段（ECS Production）/第二阶段（ECS Preproduction）的部署环境对应关系。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "phase-2 状态从 planned 修正为 active，summary 移除\"当前全部 Task 标记为未开始\"并标注能力部署在 ECS Preproduction 验证。",
+        "phase-1 summary 标注核心交付闭环能力已上线 ECS Production、承载第一阶段能力。",
+        "project.current_phase_id 切换为 phase-2，页面默认看板与头部\"当前阶段\"随之切换。",
+        "部署架构标签页移除过时断言（n8n 尚未切换、Preproduction 与 EC2 Staging 仍待建立、零流量上线），三处文案标注第一阶段/第二阶段环境对应。",
+        "generate_project_overview.py --write 后 --check 通过，Project Overview 契约测试通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Project Overview registry regeneration and contract tests",
+          "command": "python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract",
+          "result": "全部通过；data.js 中 phase-2 status=active、current_phase_id=phase-2。"
+        },
+        {
+          "type": "document",
+          "label": "阶段与部署环境对应文案",
+          "details": "phase-1/phase-2 summary、project.json current_phase_id 与 projectoverview.html 部署架构标签页（ECS Production/Preproduction 泳道与\"当前发布状态\"卡）按\"Production=第一阶段 / Preproduction=第二阶段\"修正，环境事实对照 docs/ecs_production_status_report.md 与 p2-151~154 任务 evidence 核对。"
+        }
+      ],
+      "source_refs": [
+        "docs/project/phases/phase-1.json",
+        "docs/project/phases/phase-2.json",
+        "docs/project/project.json",
+        "docs/projectoverview.html",
+        "backend/tests/test_project_overview_contract.py"
+      ],
+      "created_at": "2026-09-12",
+      "updated_at": "2026-09-12",
+      "history": [
+        {
+          "at": "2026-09-12",
+          "event": "created",
+          "summary": "为 Project Overview 阶段状态修正与部署环境标注建立独立任务记录。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "completed",
+          "summary": "完成 phase-2 状态修正（planned→active）、current_phase_id 切换与部署架构标签页第一阶段/第二阶段文案标注。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "project-governance"
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-100",
       "title": "内部邮件 Billing 前缀修正与 Zendesk 评论代码块渲染",
       "status": "active",
@@ -12122,7 +12195,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "按用户澄清流程为 Preproduction Hermes investigation 方向落地第一版调查链：修复 work run 工具加载（补 common+memory toolset，恢复 case context 与 TencentDB memory 检索/知识写可见性）；调查回合结束后 turn 结构性收口为 awaiting_investigation_review 并把调查结果（summary/evidence/blockers/next_steps）直达发送到工程师 Slack 频道；人在 dashboard 审阅页点「继续生成客户回复」按钮（前置确定性完备性检查：summary 非空、无未解决 blockers、case_revision 未过期）后创建 investigation_reply turn（仅 persona phase）在同一 session/revision 续跑，走既有草稿 guardrail→manual 审批→Slack review ping→approve→Zendesk 发送链。不做子 Agent（设计 tab #08 的多子任务调查为后续版本）；Slack 原生按钮因 preprod 无交互回调通道列为后续；调查证据源仍限 case context + memory（真实检索源另行规划）。",
-      "next_action": "v1.2（Slack thread 绑定+线程内反馈循环）实施中：测试全绿待 finalize→发布→受控重放；用户导入更新版 interaction+mention 两份 n8n workflow 后真点按钮/线程反馈复验。",
+      "next_action": "v1.2 全链完成（PR#1167，r20260912-b5f238f，13424 线程拓扑+反馈循环实证）。待用户：①频道确认单线程消息流（case opened 根消息 + 结果/草稿/按钮全部线程内 + @bot 反馈触发再调查）；②n8n 导入两份更新版 workflow（interaction+mention，补 preprod base URL）后真点按钮/真回反馈复验。确认后置 done。",
       "acceptance_criteria": [
         "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
         "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
@@ -12169,6 +12242,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "v1.1 preproduction release + dual-path controlled replay",
           "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-fecedfc，同 hermes flags）+ 13424 两次注入（p2154-v5/v6）",
           "details": "①消息修复实证：turn-14b40b89 direction_reason 持久化模型理由（'The customer reports a new technical iOS screen-sharing crash…'），调查结果消息 delivered（问题行=注入评论原文、route reason=technical — 理由，格式由单测锁定）；②dashboard 路径：continue→turn-ab828c71 草稿消息（hermes_draft_pending_notified）→dashboard approve→Zendesk 评论 53499116840980 delivered；③回调端点路径（n8n 将转发的确切契约）：POST /api/integrations/slack/hermes-cases/actions prepare_draft→200 prepared（turn-4c2a2f99）→草稿→approve_draft→200 approved→评论 53499230327700 delivered→重复 approve→200 already=queued 幂等。本地官方栈 health ref=fecedfcbb69e matched。"
+        },
+        {
+          "type": "deployment",
+          "label": "v1.2 preproduction release + thread-loop controlled replay",
+          "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-b5f238f，schema-006）+ 13424 注入（p2154-v7）+ 三段回调端点链",
+          "details": "①线程绑定：route investigation 后 case-opened 根消息发布并绑定（slack_thread_ts=1789209192.717819，worker log hermes_case_thread_bound，set-once）；②调查结果作为线程回复 delivered（turn-fb33e959 park）；③反馈循环：POST hermes-cases/messages（真实 team/channel，team 不符 403 负路径先证）→ investigation_feedback turn（turn-209bff79 仅 work）再调查→再 park→新结果回同线程；④prepare_draft 自 feedback turn → 200（turn-c8a30080）→草稿 awaiting_approval；⑤approve_draft → Zendesk 评论 53501355724436 delivered。本地栈 health ref=b5f238f6c9fa matched；PG 全套 8/8（schema-006 真库迁移）。"
         }
       ],
       "source_refs": [
@@ -12216,6 +12295,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-12",
           "event": "amended",
           "summary": "用户对齐 production 旧设计：v1.2=每 investigation case 一条 Slack 根消息（case opened 四行头）+绑定 thread，调查结果/草稿/blocked 全部作为线程回复（各带按钮）；工程师在线程 @bot 回 feedback → investigation_feedback turn 改为仅 work（再调查+park，persona 只经 Prepare draft），新结果回同线程；新增 hermes-cases/thread-bindings/resolve 与 messages 端点（n8n mention workflow 加 preprod 分支，复用同一 postgres 幂等账本，HERMES-{ticket} 前缀）；schema-006=bindings 加 slack_channel_id/slack_thread_ts（set-once 绑定+反查索引）。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "deployed",
+          "summary": "v1.2 线程绑定+反馈循环发布并全链实证；Slack 真实按钮/反馈待用户导入更新版 n8n workflow 后复验。"
         }
       ]
     },
