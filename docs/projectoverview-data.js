@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-12T06:41:27Z",
-  "source_base_commit": "dc9a430756a4df812d8e9c051e02641f893cd26c",
-  "registry_digest": "b96d1d3025bcb61f71d99cc8946523888791c8414c9a4d96d8ae495928c260c7",
+  "generated_at": "2026-09-12T07:28:34Z",
+  "source_base_commit": "fecedfcbb69e25d07590b5a7f19ea17f2b942d73",
+  "registry_digest": "f4332ea7f8dab700aafd4c5163e6a8e1c388a29bfdc133ca211ba44a9e4e4e46",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3247,6 +3247,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction controlled replay on 13424 (4 rounds)",
           "command": "POST /automation/preproduction/v1/intake（4 次客户评论注入）+ dashboard continue/approve + PG/日志读回",
           "details": "①工具加载：investigation work run 以 [supportportal_work, common, memory] 提交并被 gateway 接受（memory 不在平台允许集会被拒——提交成功即探针通过），模型自述 'Investigation progress saved'，四轮调查均产出高质量 summary/evidence/blockers/next_steps；②人审门禁：三轮 turn 均收口 awaiting_investigation_review（recorded_turn_id 盖章、零 persona 提交），Slack 调查结果 delivered（hermes_investigation_result_notified ts=1789152307.738549）；③门禁负路径：blockers 422 live 实证（后按证据放宽为确认弹窗）；④continue 200→investigation_reply turn 仅 persona 单跑→草稿 awaiting_approval→review ping delivered；⑤approve→投递 delivered：Zendesk 公开评论 53486793539860（source=hermes 账本）；⑥途中发现并修复续跑 turn 投递身份缺陷（draft_version=conv+1 误判 stale，PR#1163，修复前 draft-e43d14af failed/修复后 draft-8f2b10a3 delivered 对照实证）。"
+        },
+        {
+          "type": "deployment",
+          "label": "v1.1 preproduction release + dual-path controlled replay",
+          "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-fecedfc，同 hermes flags）+ 13424 两次注入（p2154-v5/v6）",
+          "details": "①消息修复实证：turn-14b40b89 direction_reason 持久化模型理由（'The customer reports a new technical iOS screen-sharing crash…'），调查结果消息 delivered（问题行=注入评论原文、route reason=technical — 理由，格式由单测锁定）；②dashboard 路径：continue→turn-ab828c71 草稿消息（hermes_draft_pending_notified）→dashboard approve→Zendesk 评论 53499116840980 delivered；③回调端点路径（n8n 将转发的确切契约）：POST /api/integrations/slack/hermes-cases/actions prepare_draft→200 prepared（turn-4c2a2f99）→草稿→approve_draft→200 approved→评论 53499230327700 delivered→重复 approve→200 already=queued 幂等。本地官方栈 health ref=fecedfcbb69e matched。"
         },
         {
           "type": "test",
@@ -12106,7 +12112,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "按用户澄清流程为 Preproduction Hermes investigation 方向落地第一版调查链：修复 work run 工具加载（补 common+memory toolset，恢复 case context 与 TencentDB memory 检索/知识写可见性）；调查回合结束后 turn 结构性收口为 awaiting_investigation_review 并把调查结果（summary/evidence/blockers/next_steps）直达发送到工程师 Slack 频道；人在 dashboard 审阅页点「继续生成客户回复」按钮（前置确定性完备性检查：summary 非空、无未解决 blockers、case_revision 未过期）后创建 investigation_reply turn（仅 persona phase）在同一 session/revision 续跑，走既有草稿 guardrail→manual 审批→Slack review ping→approve→Zendesk 发送链。不做子 Agent（设计 tab #08 的多子任务调查为后续版本）；Slack 原生按钮因 preprod 无交互回调通道列为后续；调查证据源仍限 case context + memory（真实检索源另行规划）。",
-      "next_action": "v1.1（Slack 原生按钮流+消息修复）实施中：测试全绿，待 finalize→Preproduction 发布→受控重放；Slack 按钮真实点击需用户导入更新版 n8n interaction workflow（同 webhook，Slack App 零改动）。",
+      "next_action": "v1.1 全链完成（PR#1165，r20260912-fecedfc，dashboard+回调端点双路实证）。待用户：①工程师频道确认新版消息（问题行=客户评论、route reason=technical — 理由、[Prepare draft]/[Approve & send] 按钮）；②在 n8n 导入更新版 Slack_Interaction_To_SupportPortal_Engineer.json（同 webhook、Slack App 零改动、补 REPLACE_WITH_SUPPORTPORTAL_PREPRODUCTION_BASE_URL）后真点按钮复验。确认后置 done。",
       "acceptance_criteria": [
         "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
         "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
@@ -12147,6 +12153,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction controlled replay on 13424 (4 rounds)",
           "command": "POST /automation/preproduction/v1/intake（4 次客户评论注入）+ dashboard continue/approve + PG/日志读回",
           "details": "①工具加载：investigation work run 以 [supportportal_work, common, memory] 提交并被 gateway 接受（memory 不在平台允许集会被拒——提交成功即探针通过），模型自述 'Investigation progress saved'，四轮调查均产出高质量 summary/evidence/blockers/next_steps；②人审门禁：三轮 turn 均收口 awaiting_investigation_review（recorded_turn_id 盖章、零 persona 提交），Slack 调查结果 delivered（hermes_investigation_result_notified ts=1789152307.738549）；③门禁负路径：blockers 422 live 实证（后按证据放宽为确认弹窗）；④continue 200→investigation_reply turn 仅 persona 单跑→草稿 awaiting_approval→review ping delivered；⑤approve→投递 delivered：Zendesk 公开评论 53486793539860（source=hermes 账本）；⑥途中发现并修复续跑 turn 投递身份缺陷（draft_version=conv+1 误判 stale，PR#1163，修复前 draft-e43d14af failed/修复后 draft-8f2b10a3 delivered 对照实证）。"
+        },
+        {
+          "type": "deployment",
+          "label": "v1.1 preproduction release + dual-path controlled replay",
+          "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-fecedfc，同 hermes flags）+ 13424 两次注入（p2154-v5/v6）",
+          "details": "①消息修复实证：turn-14b40b89 direction_reason 持久化模型理由（'The customer reports a new technical iOS screen-sharing crash…'），调查结果消息 delivered（问题行=注入评论原文、route reason=technical — 理由，格式由单测锁定）；②dashboard 路径：continue→turn-ab828c71 草稿消息（hermes_draft_pending_notified）→dashboard approve→Zendesk 评论 53499116840980 delivered；③回调端点路径（n8n 将转发的确切契约）：POST /api/integrations/slack/hermes-cases/actions prepare_draft→200 prepared（turn-4c2a2f99）→草稿→approve_draft→200 approved→评论 53499230327700 delivered→重复 approve→200 already=queued 幂等。本地官方栈 health ref=fecedfcbb69e matched。"
         }
       ],
       "source_refs": [
@@ -12184,6 +12196,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-12",
           "event": "amended",
           "summary": "用户反馈两处消息缺陷与按钮流需求：①审批 ping 问题行回落 ticket.description（SyntheticTurnEvent 无 comment snapshot）→ 统一从 turn.input_snapshot.conversation 取最近客户评论；②route reason 显示 binding 可变方向（work 回合 escalate 翻成 human）→ 改用 turn 稳定方向+短码（investigation→technical）+持久化模型理由（此前被丢弃，schema-005 新增 turns.direction_reason）。③Slack 原生按钮链：调查结果消息带 [Prepare draft]（根消息可挂 actions）；点击→续跑 persona→guardrail 通过则发带 [Approve & send] 的草稿消息、不过则发原因（guardrail_blocked/missing_draft 均可见）；点击 Approve 直发 Zendesk；回调经更新版 n8n interaction workflow（按按钮 environment 分流 preprod/production，legacy 链零改动）。dashboard 按钮保留兜底；automation 方向 review-ping 旧格式不动。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "deployed",
+          "summary": "v1.1 Slack 按钮流发布并双路径实证（dashboard + n8n 回调端点契约）；Slack 真实按钮点击待用户导入更新版 n8n workflow。"
         }
       ]
     },
