@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-12T11:25:17Z",
-  "source_base_commit": "8252baedaccddaef6c883a1dec0b3ab6b1a9edf1",
-  "registry_digest": "55b6ccfae8e0da0a024060a0c50e1cac66618864f82f596f25cd95a0027c6f57",
+  "generated_at": "2026-09-12T12:02:30Z",
+  "source_base_commit": "3fb48abe7bb5742ec88d305727a58d426d9e6df8",
+  "registry_digest": "0ba63c34eb7fa96f1f3c178da5de8c0cc1e1054366eb08400ea6ca7f056dcf21",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2767,6 +2767,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Dual-suite green after data-source switch",
           "details": "test_workspace_api 28+ 用例（fake reader 注入、503 fail-closed、写端点 405 矩阵、release-notes 组合与文件错误、数据文件契约）；test_workspace_admin_ui_contract 34 用例（本地模式只读+双视图渲染、ECS 模式隐藏 release-notes、生产 reader 端点表）；合计定向 244 passed。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 rollout and live acceptance",
+          "details": "2026-09-12 EC2 ~/SupportPortal .env 注入 ECS_PRODUCTION_ADMIN_DSN（SSM /supportportal/production/ec2-admin-read-dsn，stdin 传递不落命令行）+ deploy_ec2.sh --branch main（0d80f354→e255c221，Prompt Release pr-175312c491e7 同步验证，健康检查内外网 200）。线上验收：support.stellarix.space/health build ref=e255c221af56 匹配；/workspace/admin/ 提供新 app.js（指纹 20260912-ecs-production-console-1）；登录后 release-notes 返回 versions=[1.0.0/r20260911-42f2f11]+deployments=[]（实时读 production 库）；account-automation 返回真实 production 数据（56 单）；dispatch POST=405。production 库 support_release_notes 表已提前幂等建好（下次 production bootstrap no-op），deployments 视图待 production 下次授权部署写入首条记录。"
         }
       ],
       "source_refs": [
@@ -2780,7 +2785,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 9,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -12307,7 +12312,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-155",
       "title": "workspace admin 切换为 ECS Production 只读控制台 + 版本化 Release Notes",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
@@ -12315,7 +12320,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-12",
       "updated_at": "2026-09-12",
       "summary": "workspace admin（support.stellarix.space/workspace/admin/）整体切换为 ECS Production 的只读控制台：9 个读端点（accounts/cases/metrics/audit/engineer-schedules/account-automation/agent-config + 新 admin/cases）改经 AutomationEcsAdminReader 直读 ECS production schema（新只读角色 supportportal_ec2_admin_read，仅 USAGE+SELECT，SSM /supportportal/production/ec2-admin-read-dsn，env ECS_PRODUCTION_ADMIN_DSN 注入，缺失 503 fail-closed）；全部业务写端点 405（dispatch/reassign-due/invitations/schedule/assignment/prompt 草稿与调度/persona 全套），前端两模式统一只读；prompt/persona 变更仅走发布通道。Release Notes 双视图（本地模式独有，ECS 页隐藏）：人读 versions（docs/release_notes.json，英文 semver 声网风格，基线 1.0.0=r20260911-42f2f11，agent 按 docs/agent_workflow_details.md 版本规则在每次授权 production 部署后维护）+ 机器 deployments（实时读 production 库 support_release_notes）。工程师工作台 /api/workspace/cases 原样保留（角色可见性契约不变）；EC2 本地 auth 保留；删死代码 _account_production_repository/_attach_account_case_token_usage。",
-      "next_action": "定向测试全绿；finalize 合入后本地官方栈重启验证（root .env 注入只读 DSN）：/health+build ref+admin 页渲染 ECS production 数据+release-notes 双视图+写操作 405。残余：EC2 生效需其 .env 加 ECS_PRODUCTION_ADMIN_DSN 并部署（每日 timer/用户）；ECS 页 release-notes tab 移除随下次 ECS 部署生效。",
+      "next_action": "",
       "acceptance_criteria": [
         "本地官方栈 /workspace/admin/ 登录后各栏目渲染 ECS production 数据（reader 口径：automation namespace 过滤、token usage automation 侧、Engineer Management 为空为真实态）。",
         "GET /api/workspace/admin/release-notes 返回 {versions:[docs/release_notes.json], deployments:[production 库实时记录]}；versions 契约测试锁 semver/倒序/无 deployments 镜像。",
@@ -12334,6 +12339,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Dual-suite green after data-source switch",
           "details": "test_workspace_api 28+ 用例（fake reader 注入、503 fail-closed、写端点 405 矩阵、release-notes 组合与文件错误、数据文件契约）；test_workspace_admin_ui_contract 34 用例（本地模式只读+双视图渲染、ECS 模式隐藏 release-notes、生产 reader 端点表）；合计定向 244 passed。"
+        },
+        {
+          "type": "deployment",
+          "label": "EC2 rollout and live acceptance",
+          "details": "2026-09-12 EC2 ~/SupportPortal .env 注入 ECS_PRODUCTION_ADMIN_DSN（SSM /supportportal/production/ec2-admin-read-dsn，stdin 传递不落命令行）+ deploy_ec2.sh --branch main（0d80f354→e255c221，Prompt Release pr-175312c491e7 同步验证，健康检查内外网 200）。线上验收：support.stellarix.space/health build ref=e255c221af56 匹配；/workspace/admin/ 提供新 app.js（指纹 20260912-ecs-production-console-1）；登录后 release-notes 返回 versions=[1.0.0/r20260911-42f2f11]+deployments=[]（实时读 production 库）；account-automation 返回真实 production 数据（56 单）；dispatch POST=405。production 库 support_release_notes 表已提前幂等建好（下次 production bootstrap no-op），deployments 视图待 production 下次授权部署写入首条记录。"
         }
       ],
       "history": [
@@ -12341,6 +12351,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-12",
           "event": "created",
           "summary": "用户决策：admin 页统一到 workspace admin、整页切读 ECS production 库（EC2 直连 RDS）、整页只读、新建只读角色、人读 release note 英文 semver 且 agent 按规则自动定版本；p2-153 的 ECS 页 tab 移除、后端落库保留为数据源。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "done",
+          "summary": "用户授权由 agent 完成 EC2 交接（.env DSN + deploy_ec2.sh）；support.stellarix.space 线上验收全绿，任务闭环。"
         }
       ],
       "legacy_ids": [],
