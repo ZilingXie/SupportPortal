@@ -229,7 +229,6 @@ from backend.services.workspace_auth import (
 )
 from backend.services.account_admin import (
     AccountPersonaUnavailableError,
-    account_automation_payload,
     environment_config_entries,
     route_execution_from_decision,
     routing_config_payload,
@@ -290,7 +289,8 @@ from backend.services.account_case_filters import (
     account_case_filter_definitions,
     normalize_account_case_filter,
 )
-from backend.services.agent_config import build_agent_config_payload
+from backend.services.automation_ecs_admin_reader import AutomationEcsAdminReader
+from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.prompt_runtime import (
     initialize_prompt_runtime,
     initialize_prompt_runtime_from_environment,
@@ -348,7 +348,7 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_pricing import estimate_token_usage_cost_usd, model_pricing_payload
+from backend.services.llm_pricing import estimate_token_usage_cost_usd
 from backend.services.llm_usage_capture import (
     CaseUsageCapture,
     begin_case_usage_capture,
@@ -398,6 +398,7 @@ from backend.services.token_usage import aggregate_usage_ledger, resolve_ticket_
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOCS_DIR = BASE_DIR / "docs"
+RELEASE_NOTES_PATH = DOCS_DIR / "release_notes.json"
 ROADMAP_DIR = DOCS_DIR / "roadmap"
 ROADMAP_HTML = DOCS_DIR / "roadmap.html"
 PROJECT_OVERVIEW_HTML = DOCS_DIR / "projectoverview.html"
@@ -5395,40 +5396,6 @@ def _default_account_processing_profile() -> str:
     return "staging"
 
 
-_account_production_repository_instance: PostgresTicketRepository | None = None
-_ACCOUNT_PRODUCTION_REPOSITORY_LOCK = threading.Lock()
-
-
-def _account_production_repository() -> TicketRepository:
-    """Return the repository holding production account-case rows.
-
-    The production stack already targets the production database through the
-    default repository; the staging stack opens PRODUCTION_TICKET_DB_DSN
-    lazily so workspace-admin automation views report live production data
-    instead of legacy staging rows. Missing or ambiguous configuration fails
-    closed instead of silently falling back to staging data.
-    """
-    global _account_production_repository_instance
-    if _default_account_processing_profile() == "production":
-        return ticket_repository
-    production_dsn = (os.getenv("PRODUCTION_TICKET_DB_DSN") or "").strip()
-    if not production_dsn or production_dsn == (os.getenv("TICKET_DB_DSN") or "").strip():
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "PRODUCTION_TICKET_DB_DSN is not configured (or equals TICKET_DB_DSN); "
-                "workspace admin account-automation data requires the production ticket database."
-            ),
-        )
-    with _ACCOUNT_PRODUCTION_REPOSITORY_LOCK:
-        if _account_production_repository_instance is None:
-            _account_production_repository_instance = PostgresTicketRepository(
-                dsn=production_dsn,
-                schema=(os.getenv("TICKET_DB_SCHEMA") or "supportportal").strip() or "supportportal",
-                migration_dsn=production_dsn,
-                application_name="supportportal-api-admin-production",
-            )
-    return _account_production_repository_instance
 
 
 def _account_intake_zendesk_ticket_id(request: AccountIntakeRequest) -> str | None:
@@ -12441,6 +12408,63 @@ def cancel_automation_test_scenario_run(run_id: str) -> dict[str, Any]:
     return {"run": automation_test_scenario_run_store.get_run(run_id)}
 
 
+_workspace_admin_reader_instance: AutomationEcsAdminReader | None = None
+_WORKSPACE_ADMIN_READER_LOCK = threading.Lock()
+
+
+def _workspace_admin_reader() -> AutomationEcsAdminReader:
+    """Return the read-only reader over the ECS production schema.
+
+    The workspace admin console reports live ECS production data through the
+    same reader the ECS admin API uses. Configuration fails closed when the
+    dedicated read-only DSN is missing; the reader never needs more than the
+    four fields validated by its constructor.
+    """
+    global _workspace_admin_reader_instance
+    with _WORKSPACE_ADMIN_READER_LOCK:
+        if _workspace_admin_reader_instance is None:
+            dsn = (os.getenv("ECS_PRODUCTION_ADMIN_DSN") or "").strip()
+            if not dsn:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "ECS_PRODUCTION_ADMIN_DSN is not configured; workspace admin reads "
+                        "require the ECS production read-only database role."
+                    ),
+                )
+            _workspace_admin_reader_instance = AutomationEcsAdminReader(
+                AutomationEcsSettings(
+                    environment="production",
+                    service_role="api",
+                    base_path="/automation/production",
+                    intake_shared_token="unused-by-admin-reader",
+                    db_dsn=dsn,
+                    migration_dsn="",
+                    db_resource_id="n8n-postgres-db",
+                    db_schema="supportportal_production",
+                    job_namespace="supportportal-production",
+                    runtime_identity="workspace-admin-console",
+                    release_id="unknown",
+                    git_commit="unknown",
+                    image_digest="unknown",
+                    build_time="",
+                    prompt_release_id="unknown",
+                    allow_memory=False,
+                )
+            )
+    return _workspace_admin_reader_instance
+
+
+def _workspace_admin_read_only() -> None:
+    raise HTTPException(
+        status_code=405,
+        detail=(
+            "The workspace admin console is a read-only view of ECS production; "
+            "prompts and personas change only through the release pipeline."
+        ),
+    )
+
+
 @app.get("/api/workspace/cases")
 def list_workspace_cases(
     assignment_status: str = Query(
@@ -12489,12 +12513,7 @@ def get_workspace_case(
 def list_workspace_admin_accounts(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return {
-        "accounts": [
-            _public_workspace_account(account)
-            for account in ticket_repository.list_workspace_accounts()
-        ]
-    }
+    return _workspace_admin_reader().accounts()
 
 
 @app.get("/api/workspace/schedule")
@@ -12512,22 +12531,12 @@ def create_workspace_admin_account_retired(
     raise HTTPException(status_code=410, detail="Use the workspace invitation flow")
 
 
-@app.post("/api/workspace/admin/invitations", status_code=201)
+@app.post("/api/workspace/admin/invitations")
 def create_workspace_invitation(
-    request: WorkspaceInvitationCreateRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _request: WorkspaceInvitationCreateRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    try:
-        invitation = _workspace_invitation_service().create(
-            email=request.email,
-            role=request.role,
-            created_by=principal.account_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"invitation": invitation}
+    _workspace_admin_read_only()
 
 
 @app.get("/api/workspace/invitations/{token}")
@@ -12564,104 +12573,39 @@ def complete_workspace_invitation(
 def list_workspace_engineer_schedules(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return _workspace_schedule_payload()
+    return _workspace_admin_reader().engineer_schedules()
 
 
 @app.put("/api/workspace/admin/engineers/{engineer_id}/schedule")
 def replace_workspace_engineer_schedule(
     engineer_id: str,
-    request: EngineerScheduleUpdateRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _request: EngineerScheduleUpdateRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    weekdays = [shift.weekday for shift in request.shifts]
-    if len(weekdays) != len(set(weekdays)):
-        raise HTTPException(status_code=422, detail="Each weekday can have only one shift")
-    normalized_shifts = []
-    for shift in request.shifts:
-        start_minute = time_to_minutes(shift.start)
-        end_minute = time_to_minutes(shift.end, allow_24=True)
-        if start_minute == end_minute:
-            raise HTTPException(status_code=422, detail="Shift start and end must differ")
-        normalized_shifts.append(
-            {
-                "weekday": shift.weekday,
-                "start_minute": start_minute,
-                "end_minute": end_minute,
-            }
-        )
-    updated_at = now_iso()
-    schedule = ticket_repository.replace_engineer_schedule(
-        engineer_id,
-        timezone_name=WORKSPACE_SCHEDULE_TIMEZONE,
-        shifts=normalized_shifts,
-        actor_id=principal.account_id,
-        updated_at=updated_at,
-    )
-    if schedule is None:
-        raise HTTPException(status_code=404, detail="Engineer account not found")
-    reassigned = _engineer_assignment_service().reassign_off_schedule_cases()
-    dispatched = _engineer_assignment_service().dispatch_pending_cases()
-    return {
-        **_workspace_schedule_payload(),
-        "assignment_updates": reassigned + dispatched,
-    }
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/cases/{engineer_case_id}/assignment")
 def update_workspace_admin_assignment(
     engineer_case_id: str,
-    request: EngineerAdminAssignmentRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _request: EngineerAdminAssignmentRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    assigned_engineer_id = str(request.engineer_id or "").strip() or None
-    if assigned_engineer_id:
-        account = ticket_repository.get_workspace_account(assigned_engineer_id)
-        on_schedule = on_schedule_engineer_ids(ticket_repository.list_engineer_schedules())
-        if (
-            not isinstance(account, dict)
-            or account.get("role") != "engineer"
-            or not bool(account.get("active", True))
-            or assigned_engineer_id not in on_schedule
-        ):
-            raise HTTPException(status_code=409, detail="Engineer is not on schedule")
-    updated_at = datetime.now(timezone.utc)
-    engineer_case = ticket_repository.update_engineer_case_assignment(
-        engineer_case_id,
-        expected_version=request.expected_version,
-        assignment_status="assigned" if assigned_engineer_id else "pending",
-        assigned_engineer_id=assigned_engineer_id,
-        assigned_at=updated_at.isoformat() if assigned_engineer_id else None,
-        sla_due_at=(updated_at + timedelta(hours=3)).isoformat() if assigned_engineer_id else None,
-        reason=request.reason,
-        updated_at=updated_at.isoformat(),
-        actor=principal.account_id,
-        event_type="engineer_case_admin_reassigned",
-        dispatch_status="assigned" if assigned_engineer_id else "pending",
-    )
-    if engineer_case is None:
-        current = ticket_repository.get_engineer_case(
-            engineer_case_id, include_client_messages=False
-        )
-        if current is None:
-            raise HTTPException(status_code=404, detail="Engineer Case not found")
-        raise HTTPException(status_code=409, detail="Engineer Case assignment version changed")
-    return {"case": engineer_case}
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/dispatch")
 def dispatch_workspace_pending_cases(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    cases = _engineer_assignment_service().dispatch_pending_cases()
-    return {"cases": cases, "dispatched_count": len(cases)}
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/reassign-due")
 def reassign_workspace_due_cases(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    cases = _engineer_assignment_service().reassign_due_cases()
-    return {"cases": cases, "reassigned_count": len(cases)}
+    _workspace_admin_read_only()
 
 
 @app.get("/api/workspace/admin/audit")
@@ -12669,166 +12613,14 @@ def list_workspace_admin_audit(
     limit: int = Query(default=100, ge=1, le=1000),
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    events = ticket_repository.list_workspace_audit_events(limit=limit)
-    for engineer_case in ticket_repository.list_engineer_case_headers():
-        engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip()
-        if not engineer_case_id:
-            continue
-        for event in ticket_repository.list_engineer_case_events(
-            engineer_case_id, limit=min(limit, 500)
-        ):
-            event_type = str(event.get("event_type") or "")
-            if "assign" not in event_type and "dispatch" not in event_type and "sla" not in event_type:
-                continue
-            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-            events.append(
-                {
-                    "event_type": event_type,
-                    "actor_id": str(payload.get("actor") or "system"),
-                    "target_id": engineer_case_id,
-                    "payload": payload,
-                    "created_at": str(event.get("created_at") or payload.get("created_at") or ""),
-                }
-            )
-    events.sort(key=lambda event: str(event.get("created_at") or ""), reverse=True)
-    return {"events": events[:limit]}
+    return _workspace_admin_reader().audit(limit=limit)
 
 
 @app.get("/api/workspace/admin/metrics")
 def get_workspace_admin_metrics(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    engineer_cases = ticket_repository.list_engineer_case_headers()
-    accounts = ticket_repository.list_workspace_accounts()
-    client_tickets = ticket_repository.list_tickets(include_messages=False)
-    billing_tickets = _account_production_repository().list_billing_tickets(
-        limit=10000,
-        processing_profile="production",
-    )
-    assignment_counts = {"pending": 0, "assigned": 0, "resolved": 0}
-    client_status_counts = {
-        "open": 0,
-        "communicating": 0,
-        "escalated": 0,
-        "investigating": 0,
-        "resolved": 0,
-    }
-    overdue_count = 0
-    first_assignment_seconds: list[float] = []
-    resolution_seconds: list[float] = []
-    sla_reassign_count = 0
-    schedule_reassign_count = 0
-    guardrail_reject_count = 0
-    now = datetime.now(timezone.utc)
-
-    def _metric_datetime(value: Any) -> datetime | None:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-
-    for client_ticket in client_tickets:
-        client_status = normalize_ticket_status(client_ticket.get("status"))
-        if client_status in client_status_counts:
-            client_status_counts[client_status] += 1
-    for engineer_case in engineer_cases:
-        assignment_status = str(engineer_case.get("assignment_status") or "pending")
-        if assignment_status in assignment_counts:
-            assignment_counts[assignment_status] += 1
-        sla_due_at = _metric_datetime(engineer_case.get("sla_due_at"))
-        if assignment_status == "assigned" and sla_due_at and sla_due_at <= now:
-            overdue_count += 1
-        opened_at = _metric_datetime(engineer_case.get("opened_at"))
-        assigned_at = _metric_datetime(engineer_case.get("assigned_at"))
-        closed_at = _metric_datetime(engineer_case.get("closed_at"))
-        if opened_at and assigned_at and assigned_at >= opened_at:
-            first_assignment_seconds.append((assigned_at - opened_at).total_seconds())
-        if opened_at and closed_at and closed_at >= opened_at:
-            resolution_seconds.append((closed_at - opened_at).total_seconds())
-        for event in ticket_repository.list_engineer_case_events(
-            str(engineer_case.get("engineer_case_id") or ""), limit=500
-        ):
-            event_type = str(event.get("event_type") or "").lower()
-            sla_reassign_count += int(event_type == "engineer_case_sla_reassigned")
-            schedule_reassign_count += int(
-                event_type == "engineer_case_schedule_reassigned"
-            )
-            guardrail_reject_count += int(
-                "guardrail" in event_type and ("reject" in event_type or "fail" in event_type)
-            )
-    engineer_accounts = [account for account in accounts if account.get("role") == "engineer"]
-    active_engineer_ids = {
-        str(account.get("account_id") or "").strip()
-        for account in engineer_accounts
-        if bool(account.get("active", True))
-    }
-    on_schedule = on_schedule_engineer_ids(ticket_repository.list_engineer_schedules(), now)
-    on_schedule.intersection_update(active_engineer_ids)
-    billing_automation_count = sum(
-        1
-        for ticket in billing_tickets
-        if (ticket.get("route_status") or automation_metadata(
-            route_family=ticket.get("route_family"),
-            execution_action=ticket.get("execution_action") or ticket.get("route"),
-        )["route_status"]) == "automated"
-    )
-    billing_not_automated_count = len(billing_tickets) - billing_automation_count
-    return {
-        "client_tickets": {
-            **client_status_counts,
-            "total": len(client_tickets),
-            "not_automated": billing_not_automated_count,
-        },
-        "engineer_cases": {
-            **assignment_counts,
-            "total": len(engineer_cases),
-            "sla_overdue": overdue_count,
-            "dispatch_failed": sum(
-                1 for case in engineer_cases if case.get("dispatch_status") == "failed"
-            ),
-            "rollout_created": sum(
-                1
-                for case in engineer_cases
-                if case.get("trigger_source") == "account_not_automated"
-            ),
-            "average_first_assignment_seconds": (
-                round(sum(first_assignment_seconds) / len(first_assignment_seconds), 2)
-                if first_assignment_seconds
-                else None
-            ),
-            "average_resolution_seconds": (
-                round(sum(resolution_seconds) / len(resolution_seconds), 2)
-                if resolution_seconds
-                else None
-            ),
-            "sla_reassigned": sla_reassign_count,
-            "schedule_reassigned": schedule_reassign_count,
-        },
-        "engineers": {
-            "total": len(engineer_accounts),
-            "on_schedule": len(on_schedule),
-            "off_schedule": len(active_engineer_ids - on_schedule),
-            "dispatch_eligible": len(on_schedule),
-        },
-        "billing": {
-            "total": len(billing_tickets),
-            "automation": billing_automation_count,
-            "not_automated": billing_not_automated_count,
-            "internal_email_failed": sum(
-                1
-                for ticket in billing_tickets
-                if str(ticket.get("internal_email_send_status") or "").lower() == "failed"
-            ),
-        },
-        "guardrail": {"rejected": guardrail_reject_count},
-        "generated_at": now.isoformat(),
-    }
+    return _workspace_admin_reader().metrics()
 
 
 def _merge_account_case_token_by_model(
@@ -12860,110 +12652,6 @@ def _merge_account_case_token_by_model(
     return list(merged.values())
 
 
-def _attach_account_case_token_usage(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    """Merge per-case RAG and automation token usage onto admin case records."""
-    page_total = {
-        "total_input_tokens": 0,
-        "total_cached_input_tokens": 0,
-        "total_output_tokens": 0,
-        "total_embedding_tokens": 0,
-        "cost_usd_total": 0.0,
-        "cost_usd_available": True,
-    }
-    if not cases:
-        return page_total
-    production_repository = _account_production_repository()
-    billing_ids = [
-        str(record.get("billing_ticket_id") or "").strip()
-        for record in cases
-        if str(record.get("billing_ticket_id") or "").strip()
-    ]
-    try:
-        automation_summaries = production_repository.account_case_llm_usage_summaries(billing_ids)
-    except Exception:
-        LOGGER.exception("account case automation token usage lookup failed")
-        automation_summaries = {}
-    families = [
-        {
-            "ticket_id": str(record.get("client_ticket_id") or "").strip(),
-            "client_ticket_id": str(record.get("client_ticket_id") or "").strip(),
-        }
-        for record in cases
-        if str(record.get("client_ticket_id") or "").strip()
-    ]
-    rag_summaries: dict[str, dict[str, Any]] = {}
-    rag_error: str | None = None
-    if families:
-        try:
-            rag_summaries = dict(
-                rag_service_client.get_ticket_family_token_summaries(families).get("summaries") or {}
-            )
-        except RagServiceError as exc:
-            rag_error = f"rag token usage unavailable: {exc}"
-            LOGGER.warning("admin account automation RAG token usage failed: %s", exc)
-    for record in cases:
-        client_ticket_id = str(record.get("client_ticket_id") or "").strip()
-        billing_ticket_id = str(record.get("billing_ticket_id") or "").strip()
-        rag_summary = rag_summaries.get(client_ticket_id)
-        automation_summary = automation_summaries.get(billing_ticket_id)
-        rag_stage_totals = dict((rag_summary or {}).get("stage_totals") or {})
-        rag_source = {
-            "available": rag_summary is not None,
-            "total_input_tokens": int((rag_summary or {}).get("total_input_tokens") or 0),
-            "total_cached_input_tokens": int((rag_summary or {}).get("total_cached_input_tokens") or 0),
-            "total_output_tokens": int((rag_summary or {}).get("total_output_tokens") or 0),
-            "total_embedding_tokens": int((rag_summary or {}).get("total_embedding_tokens") or 0),
-            "stage_totals": rag_stage_totals,
-        }
-        automation_source = {
-            "available": True,
-            "call_count": int((automation_summary or {}).get("call_count") or 0),
-            "total_input_tokens": int((automation_summary or {}).get("total_input_tokens") or 0),
-            "total_cached_input_tokens": int((automation_summary or {}).get("total_cached_input_tokens") or 0),
-            "total_output_tokens": int((automation_summary or {}).get("total_output_tokens") or 0),
-            "stage_totals": dict((automation_summary or {}).get("stage_totals") or {}),
-        }
-        available = rag_summary is not None
-        error_reason = None if available else (
-            rag_error
-            if rag_error
-            else ("rag token usage summary failed" if client_ticket_id else "case has no linked client ticket")
-        )
-        total_input = rag_source["total_input_tokens"] + automation_source["total_input_tokens"]
-        total_cached = rag_source["total_cached_input_tokens"] + automation_source["total_cached_input_tokens"]
-        total_output = rag_source["total_output_tokens"] + automation_source["total_output_tokens"]
-        total_embedding = rag_source["total_embedding_tokens"]
-        record["token_usage"] = {
-            "available": available,
-            "error_reason": error_reason,
-            "total_input_tokens": total_input if available else 0,
-            "total_cached_input_tokens": total_cached if available else 0,
-            "total_output_tokens": total_output if available else 0,
-            "total_embedding_tokens": total_embedding if available else 0,
-            "token_by_model": _merge_account_case_token_by_model(
-                rag_summary if available else None,
-                automation_summary if available else None,
-            ),
-            "sources": {"rag": rag_source, "automation": automation_source},
-        }
-        if available:
-            cost_estimate = estimate_token_usage_cost_usd(record["token_usage"])
-            record["token_usage"]["cost_usd"] = cost_estimate
-            if cost_estimate["available"]:
-                page_total["cost_usd_total"] += float(cost_estimate["total_usd"] or 0.0)
-            else:
-                page_total["cost_usd_available"] = False
-        else:
-            record["token_usage"]["cost_usd"] = {"available": False, "total_usd": None, "by_model": []}
-            page_total["cost_usd_available"] = False
-        if available:
-            page_total["total_input_tokens"] += total_input
-            page_total["total_cached_input_tokens"] += total_cached
-            page_total["total_output_tokens"] += total_output
-            page_total["total_embedding_tokens"] += total_embedding
-    return page_total
-
-
 @app.get("/api/workspace/admin/account-automation")
 def get_workspace_admin_account_automation(
     page: int = Query(default=1, ge=1),
@@ -12974,21 +12662,40 @@ def get_workspace_admin_account_automation(
     created_to: str | None = Query(default=None, max_length=64),
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    payload = account_automation_payload(
-        _account_production_repository(),
+    return _workspace_admin_reader().account_automation(
         page=page,
         page_size=page_size,
         route_status=route_status,
         category=category,
         created_from=created_from,
         created_to=created_to,
-        processing_profile="production",
     )
-    payload["token_usage_page_total"] = _attach_account_case_token_usage(
-        list(payload.get("cases") or [])
-    )
-    payload["model_pricing"] = model_pricing_payload()
-    return payload
+
+
+@app.get("/api/workspace/admin/cases")
+def list_workspace_admin_cases(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    return _workspace_admin_reader().cases()
+
+
+@app.get("/api/workspace/admin/release-notes")
+def get_workspace_admin_release_notes(
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    try:
+        versions = json.loads(RELEASE_NOTES_PATH.read_text(encoding="utf-8")).get("versions")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"release notes data file is unreadable: {exc}",
+        ) from exc
+    if not isinstance(versions, list):
+        raise HTTPException(status_code=500, detail="release notes data file has no versions list")
+    return {
+        "versions": versions,
+        "deployments": _workspace_admin_reader().release_notes()["releases"],
+    }
 
 
 @app.get("/api/workspace/admin/account-routing/config")
@@ -13002,12 +12709,7 @@ def get_workspace_admin_account_routing_config(
 def get_workspace_admin_agent_config(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    prompt_service = PromptVersionService(ticket_repository)
-    prompt_service.sync_catalog()
-    return build_agent_config_payload(
-        ticket_repository.list_account_personas(),
-        prompt_service.list_prompts(),
-    )
+    return _workspace_admin_reader().agent_config()
 
 
 @app.get("/api/workspace/admin/prompts")
@@ -13036,87 +12738,37 @@ def get_workspace_admin_prompt(
 @app.post("/api/workspace/admin/prompts/{prompt_key}/drafts")
 def create_workspace_admin_prompt_draft(
     prompt_key: str,
-    request: PromptDraftRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _request: PromptDraftRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    timestamp = now_iso()
-    try:
-        version = PromptVersionService(ticket_repository).create_draft(
-            prompt_key,
-            content=request.content,
-            change_note=request.change_note,
-            based_on_version=request.based_on_version,
-            actor_id=principal.account_id,
-            created_at=timestamp,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ticket_repository.record_workspace_audit_event(
-        "prompt_draft_created",
-        actor_id=principal.account_id,
-        target_id=prompt_key,
-        payload={"version": version["version"], "change_note": request.change_note},
-        created_at=timestamp,
-    )
-    return {"version": version}
-
-
-def _workspace_admin_prompt_version_action(
-    prompt_key: str,
-    version: int,
-    principal: WorkspacePrincipal,
-    action: str,
-) -> dict[str, Any]:
-    timestamp = now_iso()
-    prompt_service = PromptVersionService(ticket_repository)
-    try:
-        if action == "schedule":
-            result = prompt_service.schedule(prompt_key, version, actor_id=principal.account_id, scheduled_at=timestamp)
-        elif action == "unschedule":
-            result = prompt_service.unschedule(prompt_key, version)
-        elif action == "restore":
-            result = prompt_service.restore(prompt_key, version, actor_id=principal.account_id, created_at=timestamp)
-        else:  # pragma: no cover - internal caller contract
-            raise ValueError("unsupported prompt version action")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ticket_repository.record_workspace_audit_event(
-        f"prompt_version_{action}d" if action != "schedule" else "prompt_version_scheduled",
-        actor_id=principal.account_id,
-        target_id=prompt_key,
-        payload={"version": result["version"]},
-        created_at=timestamp,
-    )
-    return {"version": result}
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/prompts/{prompt_key}/versions/{version}/schedule")
 def schedule_workspace_admin_prompt_version(
     prompt_key: str,
     version: int,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return _workspace_admin_prompt_version_action(prompt_key, version, principal, "schedule")
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/prompts/{prompt_key}/versions/{version}/unschedule")
 def unschedule_workspace_admin_prompt_version(
     prompt_key: str,
     version: int,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return _workspace_admin_prompt_version_action(prompt_key, version, principal, "unschedule")
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/prompts/{prompt_key}/versions/{version}/restore")
 def restore_workspace_admin_prompt_version(
     prompt_key: str,
     version: int,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    return _workspace_admin_prompt_version_action(prompt_key, version, principal, "restore")
+    _workspace_admin_read_only()
 
 
 @app.get("/api/workspace/admin/prompt-releases")
@@ -13162,62 +12814,46 @@ def get_workspace_admin_account_personas(
 
 @app.post("/api/workspace/admin/account-personas")
 def create_workspace_admin_account_persona(
-    request: AccountPersonaCreateRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _request: AccountPersonaCreateRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    timestamp = now_iso()
-    try:
-        version = ticket_repository.create_account_persona(request.persona_key, request.display_name, content=request.content.model_dump(), actor_id=principal.account_id, created_at=timestamp)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ticket_repository.record_workspace_audit_event("account_persona_created", actor_id=principal.account_id, target_id=request.persona_key, payload={"version": version["version"]}, created_at=timestamp)
-    return {"version": version}
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/account-personas/{persona_key}/drafts")
 def create_workspace_admin_account_persona_draft(
     persona_key: str,
-    request: AccountPersonaDraftRequest,
-    principal: WorkspacePrincipal = Depends(require_workspace_admin),
+    _request: AccountPersonaDraftRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
 ) -> dict[str, Any]:
-    timestamp = now_iso()
-    try:
-        version = ticket_repository.create_account_persona_draft(persona_key, content=request.content.model_dump(), change_note=request.change_note, based_on_version=request.based_on_version, actor_id=principal.account_id, created_at=timestamp)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ticket_repository.record_workspace_audit_event("account_persona_draft_created", actor_id=principal.account_id, target_id=persona_key, payload={"version": version["version"], "change_note": request.change_note}, created_at=timestamp)
-    return {"version": version}
-
-
-def _account_persona_version_action(persona_key: str, version: int, principal: WorkspacePrincipal, action: str) -> dict[str, Any]:
-    timestamp = now_iso()
-    method = ticket_repository.publish_account_persona_version if action == "publish" else ticket_repository.rollback_account_persona_version
-    try:
-        result = method(persona_key, version, actor_id=principal.account_id, published_at=timestamp)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ticket_repository.record_workspace_audit_event(f"account_persona_{action}ed", actor_id=principal.account_id, target_id=persona_key, payload={"version": result["version"], "source_version": version}, created_at=timestamp)
-    return {"version": result}
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/account-personas/{persona_key}/versions/{version}/publish")
-def publish_workspace_admin_account_persona(persona_key: str, version: int, principal: WorkspacePrincipal = Depends(require_workspace_admin)) -> dict[str, Any]:
-    return _account_persona_version_action(persona_key, version, principal, "publish")
+def publish_workspace_admin_account_persona(
+    persona_key: str,
+    version: int,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    _workspace_admin_read_only()
 
 
 @app.post("/api/workspace/admin/account-personas/{persona_key}/versions/{version}/rollback")
-def rollback_workspace_admin_account_persona(persona_key: str, version: int, principal: WorkspacePrincipal = Depends(require_workspace_admin)) -> dict[str, Any]:
-    return _account_persona_version_action(persona_key, version, principal, "rollback")
+def rollback_workspace_admin_account_persona(
+    persona_key: str,
+    version: int,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    _workspace_admin_read_only()
 
 
 @app.patch("/api/workspace/admin/account-personas/{persona_key}")
-def set_workspace_admin_account_persona_enabled(persona_key: str, request: AccountPersonaEnabledRequest, principal: WorkspacePrincipal = Depends(require_workspace_admin)) -> dict[str, Any]:
-    try:
-        persona = ticket_repository.set_account_persona_enabled(persona_key, request.enabled)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ticket_repository.record_workspace_audit_event("account_persona_enabled_changed", actor_id=principal.account_id, target_id=persona_key, payload={"enabled": request.enabled}, created_at=now_iso())
-    return {"persona": persona}
+def set_workspace_admin_account_persona_enabled(
+    persona_key: str,
+    _request: AccountPersonaEnabledRequest,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    _workspace_admin_read_only()
 
 
 @app.get("/api/workspace/admin/environment-config")

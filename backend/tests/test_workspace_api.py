@@ -22,13 +22,70 @@ from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 from backend.services.workspace_auth import hash_workspace_password
 
 
+class _FakeAdminReader:
+    """Deterministic stand-in for the ECS production admin reader."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self.accounts_payload = {"accounts": []}
+        self.cases_payload = {"cases": [], "assignment_status_filter": "all"}
+        self.metrics_payload: dict = {}
+        self.audit_payload = {"events": []}
+        self.schedules_payload = {"timezone": "Asia/Shanghai", "engineers": []}
+        self.automation_payload: dict = {
+            "metrics": {"total_account_cases": 0, "automated_cases": 0, "not_automated_cases": 0, "automation_rate": 0},
+            "automation_subcategories": [],
+            "cases": [],
+        }
+        self.agent_config_payload: dict = {}
+        self.release_notes_payload = {"releases": []}
+
+    def _record(self, name: str, **kwargs: dict) -> None:
+        self.calls.append((name, kwargs))
+
+    def accounts(self) -> dict:
+        self._record("accounts")
+        return self.accounts_payload
+
+    def cases(self) -> dict:
+        self._record("cases")
+        return self.cases_payload
+
+    def metrics(self) -> dict:
+        self._record("metrics")
+        return self.metrics_payload
+
+    def audit(self, *, limit: int) -> dict:
+        self._record("audit", limit=limit)
+        return self.audit_payload
+
+    def engineer_schedules(self) -> dict:
+        self._record("engineer_schedules")
+        return self.schedules_payload
+
+    def account_automation(self, **kwargs: dict) -> dict:
+        self._record("account_automation", **kwargs)
+        return self.automation_payload
+
+    def agent_config(self) -> dict:
+        self._record("agent_config")
+        return self.agent_config_payload
+
+    def release_notes(self) -> dict:
+        self._record("release_notes")
+        return self.release_notes_payload
+
+
 class WorkspaceApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = InMemoryTicketRepository()
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
-        self.original_account_production_repository = main._account_production_repository
-        main._account_production_repository = lambda: self.repository
+        self.admin_reader = _FakeAdminReader()
+        self.original_admin_reader_factory = main._workspace_admin_reader
+        main._workspace_admin_reader = lambda: self.admin_reader
+        self.original_admin_reader_instance = main._workspace_admin_reader_instance
+        main._workspace_admin_reader_instance = None
         now = "2026-07-18T00:00:00+00:00"
         self.repository.save_workspace_account(
             {
@@ -44,7 +101,8 @@ class WorkspaceApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         main.ticket_repository = self.original_repository
-        main._account_production_repository = self.original_account_production_repository
+        main._workspace_admin_reader = self.original_admin_reader_factory
+        main._workspace_admin_reader_instance = self.original_admin_reader_instance
 
     def _login(self, email: str, password: str) -> str:
         response = self.client.post(
@@ -99,65 +157,26 @@ class WorkspaceApiTests(unittest.TestCase):
             }
         )
 
-    def _set_schedule_now(self, account_id: str, headers: dict[str, str]) -> None:
+    def _set_schedule_now(self, account_id: str, _headers: dict[str, str]) -> None:
         local_now = datetime.now(ZoneInfo("Asia/Shanghai"))
         start_minute = ((local_now.hour * 60 + local_now.minute) // 30) * 30
-        end_minute = (start_minute + 30) % 1440
-        response = self.client.put(
-            f"/api/workspace/admin/engineers/{account_id}/schedule",
-            headers=headers,
-            json={
-                "shifts": [
-                    {
-                        "weekday": local_now.weekday(),
-                        "start": f"{start_minute // 60:02d}:{start_minute % 60:02d}",
-                        "end": f"{end_minute // 60:02d}:{end_minute % 60:02d}",
-                    }
-                ]
-            },
+        self.repository.replace_engineer_schedule(
+            account_id,
+            timezone_name="Asia/Shanghai",
+            shifts=[{"weekday": local_now.weekday(), "start_minute": start_minute, "end_minute": (start_minute + 30) % 1440}],
+            actor_id="admin-1",
+            updated_at="2026-07-18T00:00:00+00:00",
         )
-        self.assertEqual(response.status_code, 200, response.text)
 
-    def test_admin_invites_engineer_and_setup_link_creates_account(self) -> None:
-        headers = self._admin_headers()
-        sent_mail: dict[str, str] = {}
-        with patch(
-            "backend.services.workspace_invitations.send_graph_mail",
-            side_effect=lambda **kwargs: sent_mail.update(kwargs),
-        ):
-            invited = self.client.post(
-                "/api/workspace/admin/invitations",
-                headers=headers,
-                json={"email": "Maya@Example.com", "role": "engineer"},
-            )
-        token_match = re.search(r"[?&]token=([^\s]+)", sent_mail.get("body", ""))
-        self.assertIsNotNone(token_match)
-        assert token_match is not None
-        setup = self.client.post(
-            "/api/workspace/invitations/complete",
-            json={
-                "token": token_match.group(1),
-                "account_id": "client-controlled-value",
-                "display_name": "Maya",
-                "password": "engineer-password-1",
-                "confirm_password": "engineer-password-1",
-            },
+    def test_admin_invitations_are_read_only(self) -> None:
+        response = self.client.post(
+            "/api/workspace/admin/invitations",
+            headers=self._admin_headers(),
+            json={"email": "Maya@Example.com", "role": "engineer"},
         )
-        self._set_schedule_now("maya@example.com", headers)
-        audit = self.client.get("/api/workspace/admin/audit", headers=headers)
 
-        self.assertEqual(invited.status_code, 201, invited.text)
-        self.assertEqual(invited.json()["invitation"]["email"], "maya@example.com")
-        self.assertEqual(setup.status_code, 201, setup.text)
-        self.assertNotIn("password_hash", setup.json()["account"])
-        self.assertEqual(setup.json()["account"]["account_id"], "maya@example.com")
-        self.assertEqual(setup.json()["account"]["email"], "maya@example.com")
-        self.assertNotIn("availability", setup.json()["account"])
-        self.assertNotIn("availability_reason", setup.json()["account"])
-        self._login("maya@example.com", "engineer-password-1")
-        self.assertFalse(
-            any("availability" in event["event_type"] for event in audit.json()["events"])
-        )
+        self.assertEqual(response.status_code, 405, response.text)
+        self.assertIn("read-only", response.json()["detail"])
 
     def test_direct_admin_account_creation_is_retired(self) -> None:
         response = self.client.post(
@@ -175,10 +194,39 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertIn("invitation", response.json()["detail"].lower())
 
     def test_engineer_only_sees_cases_assigned_by_system(self) -> None:
-        self._seed_case()
-        headers = self._admin_headers()
         self._seed_engineer()
-        self._set_schedule_now("Maya", headers)
+        now = "2026-07-18T00:00:00+00:00"
+        self.repository.save_ticket(
+            {
+                "ticket_id": "TK-WORKSPACE-001",
+                "customer_id": "customer-1",
+                "requester": "customer-1",
+                "subject": "Workspace assignment",
+                "status": "open",
+                "created_at": now,
+                "updated_at": now,
+                "messages": [],
+            }
+        )
+        self.repository.save_engineer_case(
+            {
+                "engineer_case_id": "TK-WORKSPACE-001-1",
+                "client_ticket_id": "TK-WORKSPACE-001",
+                "case_sequence": 1,
+                "title": "Workspace assignment",
+                "status": "open",
+                "trigger_source": "account_not_automated",
+                "trigger_reason": "rollout",
+                "assignment_status": "assigned",
+                "assigned_engineer_id": "Maya",
+                "assignment_version": 1,
+                "assigned_at": now,
+                "assignment_updated_at": now,
+                "opened_at": now,
+                "updated_at": now,
+                "messages": [],
+            }
+        )
         engineer_token = self._login("Maya", "engineer-password-1")
         engineer_headers = {"Authorization": f"Bearer {engineer_token}"}
         cases = self.client.get("/api/workspace/cases", headers=engineer_headers)
@@ -199,33 +247,21 @@ class WorkspaceApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404, response.text)
 
-    def test_admin_manual_assignment_uses_schedule_as_the_only_runtime_gate(self) -> None:
-        headers = self._admin_headers()
-        self._seed_engineer("Maya")
-        self._set_schedule_now("Maya", headers)
-        self._seed_case()
-
-        response = self.client.post(
-            "/api/workspace/admin/cases/TK-WORKSPACE-001-1/assignment",
-            headers=headers,
-            json={"engineer_id": "Maya", "expected_version": 0, "reason": "admin_assignment"},
-        )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["case"]["assigned_engineer_id"], "Maya")
-
-    def test_admin_manual_assignment_rejects_off_schedule_engineer(self) -> None:
+    def test_admin_manual_assignment_is_read_only(self) -> None:
         self._seed_engineer("Maya")
         self._seed_case()
 
-        response = self.client.post(
-            "/api/workspace/admin/cases/TK-WORKSPACE-001-1/assignment",
-            headers=self._admin_headers(),
-            json={"engineer_id": "Maya", "expected_version": 0, "reason": "admin_assignment"},
-        )
-
-        self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()["detail"], "Engineer is not on schedule")
+        for payload in (
+            {"engineer_id": "Maya", "expected_version": 0, "reason": "admin_assignment"},
+            {"engineer_id": "", "expected_version": 0, "reason": "admin_assignment"},
+        ):
+            response = self.client.post(
+                "/api/workspace/admin/cases/TK-WORKSPACE-001-1/assignment",
+                headers=self._admin_headers(),
+                json=payload,
+            )
+            self.assertEqual(response.status_code, 405, response.text)
+            self.assertIn("read-only", response.json()["detail"])
 
     def test_manual_claim_endpoint_is_gone(self) -> None:
         response = self.client.post(
@@ -258,16 +294,19 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403, response.text)
 
     def test_engineer_reads_only_personal_schedule(self) -> None:
-        headers = self._admin_headers()
         self._seed_engineer("Maya")
         self._seed_engineer("Leo")
-        for engineer_id, weekday in (("Maya", 0), ("Leo", 2)):
-            response = self.client.put(
-                f"/api/workspace/admin/engineers/{engineer_id}/schedule",
-                headers=headers,
-                json={"shifts": [{"weekday": weekday, "start": "09:00", "end": "17:00"}]},
+        for engineer_id, weekday, start, end in (
+            ("Maya", 0, 9 * 60, 17 * 60),
+            ("Leo", 2, 9 * 60, 17 * 60),
+        ):
+            self.repository.replace_engineer_schedule(
+                engineer_id,
+                timezone_name="Asia/Shanghai",
+                shifts=[{"weekday": weekday, "start_minute": start, "end_minute": end}],
+                actor_id="admin-1",
+                updated_at="2026-07-18T00:00:00+00:00",
             )
-            self.assertEqual(response.status_code, 200, response.text)
 
         engineer_token = self._login("Maya", "engineer-password-1")
         response = self.client.get(
@@ -286,7 +325,7 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertNotIn("availability", response.json()["engineer"])
         self.assertNotIn("availability_reason", response.json()["engineer"])
 
-    def test_admin_schedule_accepts_half_hour_and_24_hour_end(self) -> None:
+    def test_admin_schedule_update_is_read_only(self) -> None:
         self._seed_engineer("Maya")
         response = self.client.put(
             "/api/workspace/admin/engineers/Maya/schedule",
@@ -294,19 +333,18 @@ class WorkspaceApiTests(unittest.TestCase):
             json={"shifts": [{"weekday": 0, "start": "00:00", "end": "24:00"}]},
         )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        engineer = next(item for item in response.json()["engineers"] if item["account_id"] == "Maya")
-        self.assertEqual(engineer["shifts"], [{"weekday": 0, "start": "00:00", "end": "24:00"}])
+        self.assertEqual(response.status_code, 405, response.text)
+        self.assertIn("read-only", response.json()["detail"])
 
     def test_admin_metrics_expose_schedule_driven_engineer_state_only(self) -> None:
-        headers = self._admin_headers()
-        self._seed_engineer("Maya")
-        self._seed_engineer("Leo")
-        self._set_schedule_now("Maya", headers)
-
-        response = self.client.get("/api/workspace/admin/metrics", headers=headers)
+        self.admin_reader.metrics_payload = {
+            "engineers": {"on_schedule": 1, "off_schedule": 1, "dispatch_eligible": 1},
+            "engineer_cases": {"total": 0},
+        }
+        response = self.client.get("/api/workspace/admin/metrics", headers=self._admin_headers())
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([call[0] for call in self.admin_reader.calls], ["metrics"])
         engineer_metrics = response.json()["engineers"]
         self.assertEqual(engineer_metrics["on_schedule"], 1)
         self.assertEqual(engineer_metrics["off_schedule"], 1)
@@ -316,65 +354,16 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertNotIn("availability_reassigned", response.json()["engineer_cases"])
 
     def test_account_admin_endpoints_are_admin_only_and_expose_real_data(self) -> None:
-        self.repository.save_billing_ticket({
-            "billing_ticket_id": "BT-TK-AUTO",
-            "client_ticket_id": "TK-AUTO",
-            "title": "Fraud account review",
-            "question": "Please review this fraud account request.",
-            "scope_label": "billing",
-            "route_family": "automated",
-            "execution_action": "fraud_account",
-            "tooling_profile": "deterministic_fraud_account",
-            "category": "automation",
-            "subcategory": "fraud_account",
-            "route_status": "automated",
-            "automation_status": "automation",
-            "automation_handler": "billing",
-            "route_classification": {"route_target": "automation"},
+        self.admin_reader.automation_payload = {
             "processing_profile": "production",
-            "created_at": "2026-07-21T00:00:00+00:00",
-        })
-        self.repository.save_billing_ticket({
-            "billing_ticket_id": "BT-TK-ENAB",
-            "client_ticket_id": "TK-ENAB",
-            "title": "Enablement request",
-            "question": "Please enable the project.",
-            "scope_label": "billing",
-            "route_family": "automated",
-            "execution_action": "enablement",
-            "category": "backend_operation",
-            "subcategory": "enablement",
-            "route_status": "automated",
-            "automation_handler": "enablement",
-            "processing_profile": "production",
-            "created_at": "2026-07-21T01:00:00+00:00",
-        })
-        self.repository.save_billing_ticket({
-            "billing_ticket_id": "BT-TK-SUSP",
-            "client_ticket_id": "TK-SUSP",
-            "title": "Suspend the account",
-            "question": "Please suspend this account.",
-            "scope_label": "billing",
-            "route_family": "billing_automation",
-            "execution_action": "account_suspension",
-            "category": "account_billing",
-            "subcategory": "account_suspension",
-            "route_status": "not_automated",
-            "processing_profile": "production",
-            "created_at": "2026-07-21T02:00:00+00:00",
-        })
-        self.repository.save_billing_ticket({
-            "billing_ticket_id": "BT-TK-HUMAN",
-            "client_ticket_id": "TK-HUMAN",
-            "title": "Unclear request",
-            "question": "Not sure what this is about.",
-            "scope_label": "billing",
-            "category": "human_review",
-            "subcategory": "uncategorized",
-            "route_status": "not_automated",
-            "processing_profile": "production",
-            "created_at": "2026-07-21T03:00:00+00:00",
-        })
+            "metrics": {"total_account_cases": 4, "automated_cases": 2, "not_automated_cases": 2, "automation_rate": 0.5},
+            "automation_subcategories": [
+                {"subcategory": "fraud_account", "label": "Fraud Account", "total": 1, "automated": 1, "not_automated": 0, "automation_rate": 1},
+                {"subcategory": "enablement", "label": "Enablement", "total": 1, "automated": 1, "not_automated": 0, "automation_rate": 1},
+                {"subcategory": "account_suspension", "label": "Account Suspension", "total": 1, "automated": 0, "not_automated": 1, "automation_rate": 0},
+            ],
+            "cases": [],
+        }
         self.assertEqual(self.client.get("/api/workspace/admin/account-automation").status_code, 401)
 
         response = self.client.get("/api/workspace/admin/account-automation", headers=self._admin_headers())
@@ -382,292 +371,134 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(response.json()["metrics"]["total_account_cases"], 4)
         self.assertEqual(response.json()["metrics"]["automated_cases"], 2)
         self.assertEqual(response.json()["metrics"]["automation_rate"], 0.5)
-
-        subcategories = response.json()["automation_subcategories"]
         self.assertEqual(
-            [row["subcategory"] for row in subcategories],
+            [row["subcategory"] for row in response.json()["automation_subcategories"]],
             ["fraud_account", "enablement", "account_suspension"],
         )
-        by_subcategory = {row["subcategory"]: row for row in subcategories}
-        self.assertEqual(
-            by_subcategory["fraud_account"],
-            {
-                "subcategory": "fraud_account",
-                "label": "Fraud Account",
-                "total": 1,
-                "automated": 1,
-                "not_automated": 0,
-                "automation_rate": 1,
-            },
-        )
-        self.assertEqual(by_subcategory["enablement"]["total"], 1)
-        self.assertEqual(by_subcategory["enablement"]["automated"], 1)
-        self.assertEqual(by_subcategory["enablement"]["automation_rate"], 1)
-        self.assertEqual(by_subcategory["account_suspension"]["total"], 1)
-        self.assertEqual(by_subcategory["account_suspension"]["automated"], 0)
-        self.assertEqual(by_subcategory["account_suspension"]["not_automated"], 1)
-        self.assertEqual(by_subcategory["account_suspension"]["automation_rate"], 0)
 
-        filtered_response = self.client.get(
-            "/api/workspace/admin/account-automation?route_status=automated",
+        filtered = self.client.get(
+            "/api/workspace/admin/account-automation?route_status=automated&page=2&page_size=25&category=automation&created_from=2026-09-01&created_to=2026-09-05",
             headers=self._admin_headers(),
         )
+        self.assertEqual(filtered.status_code, 200, filtered.text)
+        forwarded = dict(self.admin_reader.calls[-1][1])
         self.assertEqual(
-            [row["total"] for row in filtered_response.json()["automation_subcategories"]],
-            [1, 1, 1],
+            forwarded,
+            {
+                "page": 2,
+                "page_size": 25,
+                "route_status": "automated",
+                "category": "automation",
+                "created_from": "2026-09-01",
+                "created_to": "2026-09-05",
+            },
         )
 
         routing = self.client.get("/api/workspace/admin/account-routing/config", headers=self._admin_headers())
         self.assertEqual(routing.status_code, 200, routing.text)
         self.assertIn("router_prompt_version", routing.json())
-        self.assertIn("system_prompt", routing.json())
-        self.assertEqual(routing.json()["stages"], [stage["name"] for stage in routing.json()["stage_details"]])
-        self.assertTrue(all(stage["description"] for stage in routing.json()["stage_details"]))
         self.assertEqual(routing.json()["route_categories"][0]["name"], "conversation")
 
         personas = self.client.get("/api/workspace/admin/account-personas", headers=self._admin_headers())
         self.assertEqual(personas.status_code, 200, personas.text)
         persona_map = {item["persona_key"]: item for item in personas.json()["personas"]}
         self.assertEqual(set(persona_map), {"default-support", "sid-bright", "sid-precise"})
-        for preset in ACCOUNT_PERSONA_PRESETS:
-            persona = persona_map[preset.persona_key]
-            self.assertEqual(persona["display_name"], preset.display_name)
-            self.assertTrue(persona["enabled"])
-            self.assertEqual(persona["published_version"], 1)
-            self.assertEqual(persona["versions"][0]["content"], preset.content)
-            self.assertEqual(persona["versions"][0]["change_note"], preset.seed_marker)
 
-    def test_account_admin_endpoints_fail_closed_without_production_dsn(self) -> None:
-        main._account_production_repository = self.original_account_production_repository
-        original_instance = main._account_production_repository_instance
-        main._account_production_repository_instance = None
+    def test_admin_reads_fail_closed_without_ecs_production_dsn(self) -> None:
+        main._workspace_admin_reader = self.original_admin_reader_factory
+        original_instance = main._workspace_admin_reader_instance
+        main._workspace_admin_reader_instance = None
         headers = self._admin_headers()
         try:
-            env = {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging", "PRODUCTION_TICKET_DB_DSN": ""}
-            with patch.dict(os.environ, env):
-                response = self.client.get("/api/workspace/admin/account-automation", headers=headers)
-                self.assertEqual(response.status_code, 503, response.text)
-                self.assertIn("PRODUCTION_TICKET_DB_DSN", response.json()["detail"])
-
-                metrics = self.client.get("/api/workspace/admin/metrics", headers=headers)
-                self.assertEqual(metrics.status_code, 503, metrics.text)
-                self.assertIn("PRODUCTION_TICKET_DB_DSN", metrics.json()["detail"])
+            with patch.dict(os.environ, {"ECS_PRODUCTION_ADMIN_DSN": ""}):
+                for endpoint in ("account-automation", "metrics", "accounts", "audit"):
+                    response = self.client.get(f"/api/workspace/admin/{endpoint}", headers=headers)
+                    self.assertEqual(response.status_code, 503, response.text)
+                    self.assertIn("ECS_PRODUCTION_ADMIN_DSN", response.json()["detail"])
         finally:
-            main._account_production_repository_instance = original_instance
-            main._account_production_repository = lambda: self.repository
+            main._workspace_admin_reader_instance = original_instance
+            main._workspace_admin_reader = lambda: self.admin_reader
 
-    def _seed_token_usage_case(self) -> None:
-        self.repository.save_billing_ticket({
-            "billing_ticket_id": "BT-TK-TOKEN",
-            "client_ticket_id": "TK-TOKEN",
-            "title": "Token usage case",
-            "question": "Quota question.",
-            "scope_label": "billing",
-            "route_family": "automated",
-            "execution_action": "quota_increase",
-            "category": "automation",
-            "subcategory": "fraud_account",
-            "route_status": "automated",
-            "processing_profile": "production",
-            "created_at": "2026-08-24T00:00:00+00:00",
-        })
-        self.repository.record_account_case_llm_usage_entries(
-            billing_ticket_id="BT-TK-TOKEN",
-            client_ticket_id="TK-TOKEN",
-            entries=[
+    def test_admin_write_endpoints_are_read_only(self) -> None:
+        headers = self._admin_headers()
+        for method, url, payload in (
+            ("post", "/api/workspace/admin/dispatch", None),
+            ("post", "/api/workspace/admin/reassign-due", None),
+            ("post", "/api/workspace/admin/prompts/route-system/drafts", {"content": "x", "change_note": "x", "based_on_version": 1}),
+            ("post", "/api/workspace/admin/prompts/route-system/versions/1/schedule", None),
+            ("post", "/api/workspace/admin/prompts/route-system/versions/1/unschedule", None),
+            ("post", "/api/workspace/admin/prompts/route-system/versions/1/restore", None),
+            ("post", "/api/workspace/admin/account-personas", {"persona_key": "legacy-key", "display_name": "X", "content": {"instruction": "x"}}),
+            ("post", "/api/workspace/admin/account-personas/default-support/drafts", {"content": {"instruction": "x"}, "change_note": "x", "based_on_version": 1}),
+            ("post", "/api/workspace/admin/account-personas/default-support/versions/1/publish", None),
+            ("post", "/api/workspace/admin/account-personas/default-support/versions/1/rollback", None),
+            ("patch", "/api/workspace/admin/account-personas/default-support", {"enabled": False}),
+        ):
+            response = getattr(self.client, method)(url, headers=headers, json=payload)
+            self.assertEqual(response.status_code, 405, (method, url, response.text))
+            self.assertIn("read-only", response.json()["detail"])
+
+    def test_release_notes_data_file_contract(self) -> None:
+        import json as _json
+
+        data = _json.loads(Path("docs/release_notes.json").read_text(encoding="utf-8"))
+        versions = data["versions"]
+        self.assertTrue(versions, "release notes must carry at least the 1.0.0 baseline")
+        for index, version in enumerate(versions):
+            self.assertRegex(version["version"], r"^\d+\.\d+\.\d+$")
+            self.assertIn("released_at", version)
+            self.assertIn("summary", version)
+            self.assertIsInstance(version.get("sections", []), list)
+        # newest first
+        self.assertGreaterEqual(
+            versions[0]["released_at"], versions[-1]["released_at"]
+        )
+        self.assertEqual(versions[0]["version"], "1.0.0")
+        self.assertNotIn("deployments", data, "machine records are read live from the production database")
+
+    def test_release_notes_combine_file_versions_with_live_deployments(self) -> None:
+        self.admin_reader.release_notes_payload = {
+            "releases": [
                 {
-                    "provider": "openai",
-                    "model": "gpt-test",
-                    "stage": "quota_field_extractor",
-                    "prompt_tokens": 100,
-                    "completion_tokens": 40,
-                    "cached_input_tokens": 40,
-                },
-                {
-                    "provider": "openai",
-                    "model": "gpt-test",
-                    "stage": "account_route",
-                    "prompt_tokens": 60,
-                    "completion_tokens": 20,
-                    "cached_input_tokens": 20,
-                },
-            ],
-        )
-
-    def test_account_admin_token_usage_merges_rag_and_automation(self) -> None:
-        self._seed_token_usage_case()
-        rag_summary = {
-            "canonical_ticket_id": "TK-TOKEN",
-            "total_input_tokens": 900,
-            "total_output_tokens": 300,
-            "total_prompt_tokens": 900,
-            "total_completion_tokens": 300,
-            "total_cached_input_tokens": 400,
-            "total_reasoning_tokens": 0,
-            "total_tool_tokens": 0,
-            "total_embedding_tokens": 50,
-            "token_by_model": [
-                {"provider": "openai", "model": "gpt-rag", "input_tokens": 900, "cached_input_tokens": 400, "output_tokens": 300, "embedding_tokens": 50},
-            ],
-            "stage_totals": {
-                "rag_answer": {"input_tokens": 900, "output_tokens": 300, "calls": 1},
-            },
+                    "release_id": "r20260911-42f2f11",
+                    "git_commit": "42f2f114f80832c903c048a562970a28d3e33ac7",
+                    "build_time": "2026-09-11T13:29:36Z",
+                    "prompt_release_id": "pr-ef75242faa67",
+                    "image_digests": {"api": "sha256:4b6e", "route": "sha256:f361", "worker": "sha256:d620"},
+                    "changes": ["Baseline (r20260911-42f2f11)"],
+                    "deployed_at": "2026-09-11T00:00:00+00:00",
+                }
+            ]
         }
-        requested_families: list[dict] = []
+        versions = [{"version": "1.0.0", "released_at": "2026-09-11", "release_id": "r20260911-42f2f11", "summary": "Baseline", "sections": []}]
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            import json as _json
+            handle.write(_json.dumps({"versions": versions}))
+            tmp_path = handle.name
+        original_path = main.RELEASE_NOTES_PATH
+        main.RELEASE_NOTES_PATH = Path(tmp_path)
+        try:
+            response = self.client.get("/api/workspace/admin/release-notes", headers=self._admin_headers())
+        finally:
+            main.RELEASE_NOTES_PATH = original_path
 
-        def _fake_batch(families):
-            requested_families.extend(families)
-            return {"summaries": {"TK-TOKEN": rag_summary}, "errors": []}
-
-        with patch.object(main.rag_service_client, "get_ticket_family_token_summaries", side_effect=_fake_batch):
-            response = self.client.get(
-                "/api/workspace/admin/account-automation",
-                headers=self._admin_headers(),
-            )
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(
-            requested_families,
-            [{"ticket_id": "TK-TOKEN", "client_ticket_id": "TK-TOKEN"}],
-        )
-        case = next(
-            item for item in payload["cases"] if item["billing_ticket_id"] == "BT-TK-TOKEN"
-        )
-        usage = case["token_usage"]
-        self.assertTrue(usage["available"])
-        self.assertIsNone(usage["error_reason"])
-        self.assertEqual(usage["total_input_tokens"], 900 + 160)
-        self.assertEqual(usage["total_cached_input_tokens"], 400 + 60)
-        self.assertEqual(usage["total_output_tokens"], 300 + 60)
-        self.assertEqual(usage["total_embedding_tokens"], 50)
-        self.assertEqual(usage["sources"]["rag"]["total_input_tokens"], 900)
-        self.assertEqual(usage["sources"]["rag"]["total_cached_input_tokens"], 400)
-        self.assertEqual(usage["sources"]["automation"]["call_count"], 2)
-        self.assertEqual(usage["sources"]["automation"]["total_cached_input_tokens"], 60)
-        self.assertEqual(
-            usage["sources"]["automation"]["stage_totals"]["quota_field_extractor"]["input_tokens"],
-            100,
-        )
-        by_model = {(row["provider"], row["model"]): row for row in usage["token_by_model"]}
-        self.assertEqual(by_model[("openai", "gpt-test")]["input_tokens"], 160)
-        self.assertEqual(by_model[("openai", "gpt-test")]["cached_input_tokens"], 60)
-        self.assertEqual(by_model[("openai", "gpt-rag")]["input_tokens"], 900)
-        self.assertEqual(by_model[("openai", "gpt-rag")]["cached_input_tokens"], 400)
-        page_total = payload["token_usage_page_total"]
-        self.assertEqual(page_total["total_input_tokens"], 900 + 160)
-        self.assertEqual(page_total["total_cached_input_tokens"], 400 + 60)
-        self.assertEqual(page_total["total_output_tokens"], 300 + 60)
-        self.assertEqual(page_total["total_embedding_tokens"], 50)
-        cost = usage["cost_usd"]
-        self.assertFalse(cost["available"])
-        self.assertIsNone(cost["total_usd"])
-        cost_map = {(row["provider"], row["model"]): row["usd"] for row in cost["by_model"]}
-        self.assertIsNone(cost_map[("openai", "gpt-test")])
-        self.assertIsNone(cost_map[("openai", "gpt-rag")])
-        self.assertFalse(page_total["cost_usd_available"])
+        self.assertEqual(payload["versions"], versions)
+        self.assertEqual(payload["deployments"][0]["release_id"], "r20260911-42f2f11")
+        self.assertIn("deployments", payload)
+        self.assertNotIn("releases", payload)
 
-    def test_account_admin_token_cost_usd_when_models_priced(self) -> None:
-        self._seed_token_usage_case()
-        rag_summary = {
-            "canonical_ticket_id": "TK-TOKEN",
-            "total_input_tokens": 900,
-            "total_output_tokens": 300,
-            "total_embedding_tokens": 0,
-            "token_by_model": [
-                {"provider": "openai", "model": "gpt-rag", "input_tokens": 900, "output_tokens": 300, "embedding_tokens": 0},
-            ],
-            "stage_totals": {},
-        }
-        pricing_patch = {
-            "openai:gpt-rag": {"input": 1.0, "output": 2.0, "cached_input": 0.1},
-            "openai:gpt-test": {"input": 0.5, "output": 1.0, "cached_input": None},
-        }
-        with patch.object(
-            main.rag_service_client,
-            "get_ticket_family_token_summaries",
-            return_value={"summaries": {"TK-TOKEN": rag_summary}, "errors": []},
-        ), patch.dict(
-            "backend.services.llm_pricing.LLM_PRICING_USD_PER_1M",
-            pricing_patch,
-        ):
-            response = self.client.get(
-                "/api/workspace/admin/account-automation",
-                headers=self._admin_headers(),
-            )
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        case = next(
-            item for item in payload["cases"] if item["billing_ticket_id"] == "BT-TK-TOKEN"
-        )
-        cost = case["token_usage"]["cost_usd"]
-        self.assertTrue(cost["available"])
-        # RAG: 900*1 + 300*2 = 1500; automation: 160*0.5 + 60*1 = 140 → 1640/1M.
-        self.assertAlmostEqual(cost["total_usd"], 1640 / 1_000_000)
-        page_total = payload["token_usage_page_total"]
-        self.assertTrue(page_total["cost_usd_available"])
-        self.assertAlmostEqual(page_total["cost_usd_total"], 1640 / 1_000_000)
+    def test_release_notes_fail_closed_when_data_file_unreadable(self) -> None:
+        original_path = main.RELEASE_NOTES_PATH
+        main.RELEASE_NOTES_PATH = Path("/nonexistent/release_notes.json")
+        try:
+            response = self.client.get("/api/workspace/admin/release-notes", headers=self._admin_headers())
+        finally:
+            main.RELEASE_NOTES_PATH = original_path
 
-    def test_account_admin_model_pricing_exposes_configured_rates(self) -> None:
-        self._seed_token_usage_case()
-        with patch.object(
-            main.rag_service_client,
-            "get_ticket_family_token_summaries",
-            return_value={"summaries": {}, "errors": []},
-        ):
-            response = self.client.get(
-                "/api/workspace/admin/account-automation",
-                headers=self._admin_headers(),
-            )
-        self.assertEqual(response.status_code, 200, response.text)
-        pricing_map = {
-            (row["provider"], row["model"]): row
-            for row in response.json()["model_pricing"]
-        }
-        self.assertEqual(
-            pricing_map[("openai", "gpt-5.6-luna")],
-            {
-                "provider": "openai",
-                "model": "gpt-5.6-luna",
-                "input_usd_per_1m": 0.2,
-                "cached_input_usd_per_1m": 0.02,
-                "output_usd_per_1m": 1.2,
-                "embedding_usd_per_1m": None,
-                "priced": True,
-            },
-        )
-        legacy = pricing_map[("openai", "gpt-5.4")]
-        self.assertFalse(legacy["priced"])
-        self.assertIsNone(legacy["input_usd_per_1m"])
-
-    def test_account_admin_token_usage_marks_unavailable_when_rag_fails(self) -> None:
-        self._seed_token_usage_case()
-        with patch.object(
-            main.rag_service_client,
-            "get_ticket_family_token_summaries",
-            side_effect=main.RagServiceError("RAG service is not configured"),
-        ):
-            response = self.client.get(
-                "/api/workspace/admin/account-automation",
-                headers=self._admin_headers(),
-            )
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        case = next(
-            item for item in payload["cases"] if item["billing_ticket_id"] == "BT-TK-TOKEN"
-        )
-        usage = case["token_usage"]
-        self.assertFalse(usage["available"])
-        self.assertIn("rag token usage unavailable", usage["error_reason"])
-        self.assertEqual(usage["total_input_tokens"], 0)
-        self.assertEqual(usage["total_output_tokens"], 0)
-        self.assertEqual(usage["token_by_model"], [])
-        # Automation-side numbers stay visible for diagnosis.
-        self.assertEqual(usage["sources"]["automation"]["call_count"], 2)
-        self.assertEqual(payload["token_usage_page_total"]["total_input_tokens"], 0)
-        self.assertFalse(usage["cost_usd"]["available"])
-        self.assertIsNone(usage["cost_usd"]["total_usd"])
-        self.assertFalse(payload["token_usage_page_total"]["cost_usd_available"])
-
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertIn("release notes data file", response.json()["detail"])
     def test_agent_config_is_admin_only_and_places_personas_on_automation_router(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/agent-config").status_code, 401)
         self._seed_engineer()
@@ -680,6 +511,17 @@ class WorkspaceApiTests(unittest.TestCase):
             403,
         )
 
+        self.admin_reader.agent_config_payload = {
+            "agents": [
+                {"key": "route-agent", "is_agent": True},
+                {"key": "client-agent", "is_agent": True},
+                {"key": "engineer-agent", "is_agent": True},
+                {"key": "guardrail-agent", "is_agent": True},
+            ],
+            "route_navigation": {"key": "route-agent", "is_agent": True, "children": [{"key": "agora-router", "is_agent": False}]},
+            "automation_personas": [{"persona_key": "sid-precise", "enabled": True, "published_version": 1}],
+            "automation_workflows": [],
+        }
         response = self.client.get(
             "/api/workspace/admin/agent-config",
             headers=self._admin_headers(),
@@ -693,83 +535,44 @@ class WorkspaceApiTests(unittest.TestCase):
         )
         self.assertNotIn("related_services", payload)
         self.assertEqual(payload["route_navigation"]["key"], "route-agent")
-        self.assertTrue(payload["route_navigation"]["is_agent"])
-        self.assertFalse(payload["route_navigation"]["children"][0]["is_agent"])
         personas = {item["persona_key"]: item for item in payload["automation_personas"]}
-        self.assertEqual(set(personas), {"default-support", "sid-bright", "sid-precise"})
-        self.assertTrue(all(item["enabled"] and item["published_version"] == 1 for item in personas.values()))
-        self.assertTrue(
-            all(set(item["versions"][0]["content"]) == {"instruction", "opener"} for item in personas.values())
-        )
+        self.assertEqual(set(personas), {"sid-precise"})
+        self.assertEqual([call[0] for call in self.admin_reader.calls], ["agent_config"])
         self.assertNotIn("OPENAI_API_KEY", response.text)
 
-    def test_prompt_version_api_manages_next_deploy_without_changing_active_runtime(self) -> None:
+    def test_prompt_version_api_is_read_only_for_writes(self) -> None:
         self.assertEqual(self.client.get("/api/workspace/admin/prompts").status_code, 401)
         headers = self._admin_headers()
         catalog = self.client.get("/api/workspace/admin/prompts", headers=headers)
         self.assertEqual(catalog.status_code, 200, catalog.text)
         route = next(item for item in catalog.json()["prompts"] if item["prompt_key"] == "route-system")
         active_version = route["active_version"]["version"]
-        active_release_id = catalog.json()["active_release"]["release_id"]
-
-        stale = self.client.post(
-            "/api/workspace/admin/prompts/route-system/drafts",
-            headers=headers,
-            json={"content": "stale", "change_note": "stale", "based_on_version": 999},
-        )
-        self.assertEqual(stale.status_code, 409, stale.text)
 
         draft = self.client.post(
             "/api/workspace/admin/prompts/route-system/drafts",
             headers=headers,
             json={"content": "Updated route prompt", "change_note": "Improve routing", "based_on_version": active_version},
         )
-        self.assertEqual(draft.status_code, 200, draft.text)
-        version = draft.json()["version"]["version"]
+        self.assertEqual(draft.status_code, 405, draft.text)
         scheduled = self.client.post(
-            f"/api/workspace/admin/prompts/route-system/versions/{version}/schedule", headers=headers
+            f"/api/workspace/admin/prompts/route-system/versions/{active_version}/schedule", headers=headers
         )
-        self.assertEqual(scheduled.status_code, 200, scheduled.text)
-        refreshed = self.client.get("/api/workspace/admin/prompts", headers=headers).json()
-        route = next(item for item in refreshed["prompts"] if item["prompt_key"] == "route-system")
-        self.assertEqual(route["active_version"]["version"], active_version)
-        self.assertEqual(route["scheduled_version"]["version"], version)
-        self.assertEqual(refreshed["active_release"]["release_id"], active_release_id)
-
+        self.assertEqual(scheduled.status_code, 405, scheduled.text)
         unscheduled = self.client.post(
-            f"/api/workspace/admin/prompts/route-system/versions/{version}/unschedule", headers=headers
+            f"/api/workspace/admin/prompts/route-system/versions/{active_version}/unschedule", headers=headers
         )
-        self.assertEqual(unscheduled.status_code, 200, unscheduled.text)
+        self.assertEqual(unscheduled.status_code, 405, unscheduled.text)
         restored = self.client.post(
             f"/api/workspace/admin/prompts/route-system/versions/{active_version}/restore", headers=headers
         )
-        self.assertEqual(restored.status_code, 200, restored.text)
-        self.assertEqual(restored.json()["version"]["status"], "draft")
+        self.assertEqual(restored.status_code, 405, restored.text)
 
-    def test_account_persona_api_publishes_and_rolls_back_without_overwriting_history(self) -> None:
+        releases = self.client.get("/api/workspace/admin/prompt-releases", headers=headers)
+        self.assertEqual(releases.status_code, 200, releases.text)
+        self.assertIn("releases", releases.json())
+
+    def test_account_persona_api_writes_are_read_only(self) -> None:
         headers = self._admin_headers()
-        create_rejected = self.client.post(
-            "/api/workspace/admin/account-personas",
-            headers=headers,
-            json={
-                "persona_key": "legacy-signature",
-                "display_name": "Legacy Signature",
-                "content": {"instruction": "Direct", "signoff_name": "Sid"},
-            },
-        )
-        self.assertEqual(create_rejected.status_code, 422, create_rejected.text)
-
-        rejected = self.client.post(
-            "/api/workspace/admin/account-personas/default-support/drafts",
-            headers=headers,
-            json={
-                "content": {"instruction": "Direct", "signature": "Best,\nSid"},
-                "change_note": "Legacy signature",
-                "based_on_version": 1,
-            },
-        )
-        self.assertEqual(rejected.status_code, 422, rejected.text)
-
         draft = self.client.post(
             "/api/workspace/admin/account-personas/default-support/drafts",
             headers=headers,
@@ -779,34 +582,25 @@ class WorkspaceApiTests(unittest.TestCase):
                 "based_on_version": 1,
             },
         )
-        self.assertEqual(draft.status_code, 200, draft.text)
-        self.assertEqual(
-            draft.json()["version"]["content"],
-            {"instruction": "Direct", "opener": "Thanks for contacting us."},
-        )
-        version = draft.json()["version"]["version"]
+        self.assertEqual(draft.status_code, 405, draft.text)
         published = self.client.post(
-            f"/api/workspace/admin/account-personas/default-support/versions/{version}/publish", headers=headers
+            "/api/workspace/admin/account-personas/default-support/versions/1/publish", headers=headers
         )
-        self.assertEqual(published.status_code, 200, published.text)
-        self.repository._account_persona_versions["default-support"][0]["content"]["signature"] = "Legacy"
+        self.assertEqual(published.status_code, 405, published.text)
         rollback = self.client.post(
             "/api/workspace/admin/account-personas/default-support/versions/1/rollback", headers=headers
         )
-        self.assertEqual(rollback.status_code, 200, rollback.text)
+        self.assertEqual(rollback.status_code, 405, rollback.text)
+
         personas = {
             item["persona_key"]: item
             for item in self.client.get(
                 "/api/workspace/admin/account-personas", headers=headers
             ).json()["personas"]
         }
-        versions = personas["default-support"]["versions"]
-        self.assertEqual([item["version"] for item in versions], [1, 2, 3])
-        self.assertEqual(versions[0]["content"]["signature"], "Legacy")
-        self.assertEqual(
-            versions[2]["content"],
-            {"instruction": ACCOUNT_PERSONA_PRESETS[2].instruction, "opener": ""},
-        )
+        self.assertEqual(set(personas), {"default-support", "sid-bright", "sid-precise"})
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            self.assertEqual(personas[preset.persona_key]["published_version"], 1)
 
     def test_environment_config_api_never_returns_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -939,57 +733,6 @@ class WorkspaceApiTests(unittest.TestCase):
         token = self._login("admin-1", "admin-password-1")
         with self.client.websocket_connect(f"/ws/workspace?access_token={token}") as websocket:
             websocket.send_text("ping")
-
-
-class AccountProductionRepositoryResolutionTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.original_instance = main._account_production_repository_instance
-        main._account_production_repository_instance = None
-
-    def tearDown(self) -> None:
-        main._account_production_repository_instance = self.original_instance
-
-    def test_production_profile_stack_uses_default_repository(self) -> None:
-        with patch.dict(os.environ, {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "production"}):
-            self.assertIs(main._account_production_repository(), main.ticket_repository)
-
-    def test_staging_stack_opens_production_dsn_singleton(self) -> None:
-        env = {
-            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging",
-            "TICKET_DB_DSN": "postgresql://example.invalid/staging",
-            "PRODUCTION_TICKET_DB_DSN": "postgresql://example.invalid/production",
-        }
-        with patch.dict(os.environ, env), patch.object(main, "PostgresTicketRepository") as repo_cls:
-            first = main._account_production_repository()
-            second = main._account_production_repository()
-            self.assertIs(first, second)
-            self.assertIs(first, repo_cls.return_value)
-            self.assertEqual(repo_cls.call_count, 1)
-            kwargs = repo_cls.call_args.kwargs
-            self.assertEqual(kwargs["dsn"], "postgresql://example.invalid/production")
-            self.assertEqual(kwargs["migration_dsn"], "postgresql://example.invalid/production")
-            self.assertEqual(kwargs["application_name"], "supportportal-api-admin-production")
-
-    def test_staging_stack_without_production_dsn_fails_closed(self) -> None:
-        env = {"ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging", "PRODUCTION_TICKET_DB_DSN": ""}
-        with patch.dict(os.environ, env):
-            with self.assertRaises(HTTPException) as ctx:
-                main._account_production_repository()
-        self.assertEqual(ctx.exception.status_code, 503)
-        self.assertIn("PRODUCTION_TICKET_DB_DSN", str(ctx.exception.detail))
-
-    def test_staging_stack_with_dsn_equal_to_staging_fails_closed(self) -> None:
-        shared_dsn = "postgresql://example.invalid/shared"
-        env = {
-            "ACCOUNT_DEFAULT_PROCESSING_PROFILE": "staging",
-            "TICKET_DB_DSN": shared_dsn,
-            "PRODUCTION_TICKET_DB_DSN": shared_dsn,
-        }
-        with patch.dict(os.environ, env):
-            with self.assertRaises(HTTPException) as ctx:
-                main._account_production_repository()
-        self.assertEqual(ctx.exception.status_code, 503)
-        self.assertIn("PRODUCTION_TICKET_DB_DSN", str(ctx.exception.detail))
 
 
 if __name__ == "__main__":
