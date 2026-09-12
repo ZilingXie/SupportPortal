@@ -73,7 +73,7 @@ class ProjectOverviewContractTests(unittest.TestCase):
         self.assertIn("/blob/main/", html)
         self.assertNotIn("fetch(", html)
         self.assertNotIn("localStorage", html)
-        for marker in ("项目动态", "任务看板", "会议记录", "系统地图", "工作流程", "用户手册", "汇报模式"):
+        for marker in ("项目动态", "任务看板", "会议记录", "系统地图", "Hermes 流程", "用户手册", "汇报模式"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, html)
         self.assertNotIn("项目资料", html)
@@ -91,13 +91,13 @@ class ProjectOverviewContractTests(unittest.TestCase):
 
     def test_hermes_workflow_tab_preserves_current_design_contract(self) -> None:
         html = (ROOT / "docs/projectoverview.html").read_text(encoding="utf-8")
-        self.assertIn('{ id: "workflow", label: "工作流程" }', html)
+        self.assertIn('{ id: "workflow", label: "Hermes 流程" }', html)
         self.assertIn("function renderWorkflow()", html)
         self.assertIn("superseded / cancel_requested", html)
-        self.assertIn("继续调查或重新调查", html)
-        self.assertIn("Case revision 未变化", html)
-        self.assertIn("立即发送 Zendesk 公开回复", html)
-        self.assertEqual(html.count("发送前唯一检查"), 1)
+        self.assertIn("继续调查", html)
+        self.assertIn("revision 未变化", html)
+        self.assertIn("发送 Zendesk 公开回复", html)
+        self.assertEqual(html.count("发送前最终检查"), 1)
 
     def test_compact_board_meeting_dialog_and_full_feature_list_contract(self) -> None:
         html = (ROOT / "docs/projectoverview.html").read_text(encoding="utf-8")
