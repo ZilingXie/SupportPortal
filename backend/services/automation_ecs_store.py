@@ -977,6 +977,7 @@ class InMemoryAutomationEcsStore:
                 "phase": None,
                 "direction": None,
                 "route": None,
+                "direction_reason": None,
                 "work_result": None,
                 "input_snapshot": None,
                 "request_id": request_id,
@@ -1166,7 +1167,7 @@ class InMemoryAutomationEcsStore:
                 turn["updated_at"] = _iso()
 
     def record_hermes_turn_direction(
-        self, turn_id: str, *, direction: str, route: str | None
+        self, turn_id: str, *, direction: str, route: str | None, reason: str | None = None
     ) -> dict[str, Any]:
         if direction not in {"automation", "investigation", "human"}:
             raise ValueError("invalid hermes turn direction")
@@ -1174,7 +1175,13 @@ class InMemoryAutomationEcsStore:
             turn = self._hermes_turns.get(turn_id)
             if turn is None or turn["status"] not in {"pending", "running", "cancel_requested"}:
                 raise HermesTurnStateError(turn_id, "turn is not active")
-            turn.update(direction=direction, route=route, updated_at=_iso())
+            normalized_reason = str(reason or "").strip() or f"turn_direction:{direction}"
+            turn.update(
+                direction=direction,
+                route=route,
+                direction_reason=normalized_reason,
+                updated_at=_iso(),
+            )
             self._append_event(
                 turn["execution_id"],
                 "agent_turn.direction_recorded",
@@ -1258,6 +1265,14 @@ class InMemoryAutomationEcsStore:
                 "phase": "work",
                 "direction": "investigation",
                 "route": None,
+                "direction_reason": next(
+                    (
+                        item.get("direction_reason")
+                        for item in reversed(self._turn_rows(zendesk_ticket_id))
+                        if item.get("direction_reason")
+                    ),
+                    None,
+                ),
                 "work_result": {"reviewer_feedback": feedback[:4000]},
                 "input_snapshot": None,
                 "request_id": request_id,
@@ -1385,6 +1400,7 @@ class InMemoryAutomationEcsStore:
                 "phase": "persona",
                 "direction": "investigation",
                 "route": None,
+                "direction_reason": source_turn.get("direction_reason"),
                 "work_result": None,
                 "input_snapshot": None,
                 "request_id": request_id,
@@ -1750,7 +1766,7 @@ class InMemoryAutomationEcsStore:
 
 class PostgresAutomationEcsStore:
     _UPGRADABLE_SCHEMA_REVISIONS = frozenset(
-        {"automation-ecs-001", "automation-ecs-002", "automation-ecs-003"}
+        {"automation-ecs-001", "automation-ecs-002", "automation-ecs-003", "automation-ecs-004"}
     )
 
     def __init__(self, settings: AutomationEcsSettings) -> None:
@@ -1961,6 +1977,7 @@ class PostgresAutomationEcsStore:
                 phase TEXT,
                 direction TEXT,
                 route TEXT,
+                direction_reason TEXT,
                 work_result JSONB,
                 input_snapshot JSONB,
                 request_id TEXT NOT NULL UNIQUE,
@@ -2018,6 +2035,7 @@ class PostgresAutomationEcsStore:
                 )
             )
         self._apply_schema_004_migrations(cursor)
+        self._apply_schema_005_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -2130,6 +2148,27 @@ class PostgresAutomationEcsStore:
                 self._table("automation_hermes_case_drafts"),
                 self._table("automation_hermes_agent_turns"),
             )
+        )
+
+    def _apply_schema_005_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 004→005 evolution: stable route-time direction reason.
+
+        The route phase's free-text reason used to be discarded (the binding
+        only kept a synthetic `turn_direction:*` string that later escalations
+        overwrite); the turn row is the stable home for the header line.
+        """
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS direction_reason TEXT"
+            ).format(self._table("automation_hermes_agent_turns"))
+        )
+        cursor.execute(
+            sql.SQL(
+                """
+                UPDATE {} SET direction_reason = 'turn_direction:' || direction
+                WHERE direction_reason IS NULL AND direction IS NOT NULL
+                """
+            ).format(self._table("automation_hermes_agent_turns"))
         )
 
     def check_schema(self) -> None:
@@ -3148,10 +3187,11 @@ class PostgresAutomationEcsStore:
                 )
 
     def record_hermes_turn_direction(
-        self, turn_id: str, *, direction: str, route: str | None
+        self, turn_id: str, *, direction: str, route: str | None, reason: str | None = None
     ) -> dict[str, Any]:
         if direction not in {"automation", "investigation", "human"}:
             raise ValueError("invalid hermes turn direction")
+        normalized_reason = str(reason or "").strip() or f"turn_direction:{direction}"
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
                 turn = self._lock_turn(cursor, turn_id)
@@ -3159,13 +3199,13 @@ class PostgresAutomationEcsStore:
                     raise HermesTurnStateError(turn_id, "turn is not active")
                 cursor.execute(
                     sql.SQL(
-                        "UPDATE {} SET direction=%s,route=%s,updated_at=NOW() WHERE turn_id=%s RETURNING *"
+                        "UPDATE {} SET direction=%s,route=%s,direction_reason=%s,updated_at=NOW() WHERE turn_id=%s RETURNING *"
                     ).format(self._table("automation_hermes_agent_turns")),
-                    (direction, route, turn_id),
+                    (direction, route, normalized_reason, turn_id),
                 )
                 row = cursor.fetchone()
                 binding_update = self.record_hermes_case_direction(
-                    turn_id, direction=direction, reason=f"turn_direction:{direction}"
+                    turn_id, direction=direction, reason=normalized_reason
                 )
                 self._insert_timeline(
                     cursor,
@@ -3262,6 +3302,15 @@ class PostgresAutomationEcsStore:
                 )
                 if cursor.fetchone() is not None:
                     raise HermesTurnConflictError("")
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT direction_reason FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "AND direction_reason IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+                    ).format(self._table("automation_hermes_agent_turns")),
+                    (namespace, zendesk_ticket_id),
+                )
+                reason_row = cursor.fetchone()
+                inherited_reason = str(reason_row["direction_reason"]) if reason_row else None
                 execution_id = _new_id("exec")
                 turn_id = _new_id("turn")
                 request_id = _new_id("hmreq")
@@ -3290,8 +3339,8 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
-                            input_version,case_revision,turn_kind,phase,direction,request_id,prompt_release_id,status,work_result)
-                        VALUES (%s,%s,%s,%s,%s,'investigation_feedback',%s,%s,'investigation_feedback','work','investigation',%s,%s,'pending',%s)
+                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status,work_result)
+                        VALUES (%s,%s,%s,%s,%s,'investigation_feedback',%s,%s,'investigation_feedback','work','investigation',%s,%s,%s,'pending',%s)
                         """
                     ).format(self._table("automation_hermes_agent_turns")),
                     (
@@ -3302,6 +3351,7 @@ class PostgresAutomationEcsStore:
                         f"feedback:{turn_id}",
                         int(binding["conversation_version"]),
                         revision,
+                        inherited_reason,
                         request_id,
                         str(prompt_release_id or "") or None,
                         Jsonb({"reviewer_feedback": feedback[:4000]}),
@@ -3439,8 +3489,8 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
-                            input_version,case_revision,turn_kind,phase,direction,request_id,prompt_release_id,status)
-                        VALUES (%s,%s,%s,%s,%s,'investigation_reply',%s,%s,'investigation_reply','persona','investigation',%s,%s,'pending')
+                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status)
+                        VALUES (%s,%s,%s,%s,%s,'investigation_reply',%s,%s,'investigation_reply','persona','investigation',%s,%s,%s,'pending')
                         """
                     ).format(self._table("automation_hermes_agent_turns")),
                     (
@@ -3451,6 +3501,7 @@ class PostgresAutomationEcsStore:
                         f"investigation-reply:{turn_id}",
                         int(binding["conversation_version"]),
                         revision,
+                        source_turn.get("direction_reason"),
                         request_id,
                         str(prompt_release_id or "") or None,
                     ),

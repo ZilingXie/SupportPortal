@@ -26,6 +26,9 @@ from backend.services.engineer_slack import (
     build_engineer_case_thread_event,
     engineer_slack_configured,
     engineer_slack_outbound_disabled,
+    notify_hermes_draft_blocked,
+    notify_hermes_draft_pending,
+    notify_hermes_investigation_result,
     notify_hermes_review_pending,
     post_engineer_slack_event,
 )
@@ -1157,6 +1160,120 @@ class EngineerSlackWorkerTests(unittest.TestCase):
         ), patch.object(worker, "ticket_repository", repository):
             worker._drain_engineer_slack_events(limit=20)
         repository.list_engineer_slack_events.assert_not_called()
+
+
+    def test_hermes_investigation_result_root_carries_prepare_draft_button(self) -> None:
+        investigation = {
+            "summary": "Uplink publish fails after successful join.",
+            "evidence": [{"source": "memory", "detail": "known regression"}],
+            "blockers": ["missing sdk logs"],
+            "next_steps": ["ask for logs"],
+        }
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.400"}),
+        ) as urlopen:
+            result = notify_hermes_investigation_result(
+                ticket_id="13424",
+                turn_id="turn-1",
+                title="Zac Test",
+                question="I got black screen, what should I do?",
+                route_result="technical — Customer reports SDK behavior",
+                investigation=investigation,
+                environment="preproduction",
+            )
+        self.assertEqual(urlopen.call_count, 1)
+        payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        self.assertNotIn("thread_ts", payload)
+        lines = payload["text"].split("\n")
+        self.assertEqual(lines[0], "Zac Test")
+        self.assertEqual(lines[1], "I got black screen, what should I do?")
+        self.assertEqual(lines[3], "route reason: technical — Customer reports SDK behavior")
+        self.assertIn("Summary: Uplink publish fails", payload["text"])
+        self.assertIn("- known regression", payload["text"])
+        button = payload["blocks"][-1]["elements"][0]
+        self.assertEqual(button["action_id"], "prepare_draft")
+        self.assertEqual(button["text"]["text"], "Prepare draft")
+        value = json.loads(button["value"])
+        self.assertEqual(
+            value,
+            {
+                "action": "prepare_draft",
+                "environment": "preproduction",
+                "zendesk_ticket_id": "13424",
+                "turn_id": "turn-1",
+            },
+        )
+        self.assertEqual(result["slack_message_ts"], "100.400")
+
+    def test_hermes_draft_pending_root_carries_approve_button(self) -> None:
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.410"}),
+        ) as urlopen:
+            notify_hermes_draft_pending(
+                ticket_id="13424",
+                turn_id="turn-2",
+                draft_id="draft-2",
+                title="Zac Test",
+                question="I got black screen, what should I do?",
+                route_result="technical",
+                draft_content="Hi Ziling,\n\nWe reproduced the issue.",
+                guardrail={"decision": "approved_for_final_engineer_review", "blockers": []},
+                environment="preproduction",
+            )
+        payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        self.assertNotIn("thread_ts", payload)
+        self.assertIn("Hermes draft awaiting approval — Zendesk #13424", payload["text"])
+        self.assertIn(
+            "Guardrail: approved_for_final_engineer_review", payload["text"]
+        )
+        self.assertIn("Draft: Hi Ziling,", payload["text"])
+        button = payload["blocks"][-1]["elements"][0]
+        self.assertEqual(button["action_id"], "approve_draft")
+        self.assertEqual(button["text"]["text"], "Approve & send")
+        self.assertEqual(button.get("style"), "primary")
+        value = json.loads(button["value"])
+        self.assertEqual(value["draft_id"], "draft-2")
+        self.assertEqual(value["environment"], "preproduction")
+        self.assertEqual(value["zendesk_ticket_id"], "13424")
+
+    def test_hermes_draft_blocked_root_has_reason_and_no_button(self) -> None:
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.420"}),
+        ) as urlopen:
+            notify_hermes_draft_blocked(
+                ticket_id="13424",
+                turn_id="turn-3",
+                title="Zac Test",
+                question="I got black screen, what should I do?",
+                route_result="technical",
+                reason="guardrail_blocked",
+                blockers=["No draft customer reply provided."],
+                environment="preproduction",
+            )
+        payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        self.assertNotIn("thread_ts", payload)
+        self.assertIn("Hermes draft blocked — Zendesk #13424", payload["text"])
+        self.assertIn("Reason: guardrail_blocked", payload["text"])
+        self.assertIn("- No draft customer reply provided.", payload["text"])
+        self.assertNotIn("blocks", payload)
+
+    def test_hermes_action_requires_environment_and_ticket(self) -> None:
+        event = {
+            "event_id": "hermes-investigation-result:turn-x",
+            "event_type": "hermes_investigation_result",
+            "message_text": "x",
+            "action": "prepare_draft",
+            "environment": "",
+            "zendesk_ticket_id": "13424",
+            "turn_id": "turn-x",
+        }
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), self.assertRaises(
+            EngineerSlackDeliveryError
+        ):
+            post_engineer_slack_event(event)
 
 
 if __name__ == "__main__":

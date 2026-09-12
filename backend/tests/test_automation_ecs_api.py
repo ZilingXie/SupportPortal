@@ -1080,3 +1080,145 @@ def test_continue_hermes_investigation_rejects_blockers_stale_and_missing_state(
         assert stale.status_code == 409
         assert "stale_case_revision" in stale.json()["detail"]
         assert stale_turn
+
+
+class _HermesSlackRepository:
+    def get_account_case_by_ticket_id(self, ticket_id: str) -> dict[str, Any]:
+        return {
+            "account_case_id": f"AC-{ticket_id}",
+            "billing_ticket_id": f"AC-{ticket_id}",
+            "client_ticket_id": ticket_id,
+            "zendesk_ticket_id": ticket_id,
+        }
+
+    def get_account_case_comment_sync(self, client_ticket_id: str) -> dict[str, Any]:
+        return {"comments_revision": "rev-1"}
+
+    def create_account_zendesk_comment_delivery(self, **kwargs: Any) -> dict[str, Any]:
+        self.delivery = kwargs
+        return kwargs
+
+
+def test_hermes_slack_action_endpoint_gates_and_prepare(monkeypatch) -> None:
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    turn_id = _park_investigation_turn(store)
+    client = _preproduction_dashboard_client(store)
+    path = "/automation/preproduction/api/integrations/slack/hermes-cases/actions"
+
+    with client:
+        assert client.post(path, json={}).status_code == 401
+
+        monkeypatch.setenv("n8n_request_token", "token-1")
+        headers = {"X-N8n-Request-Token": "token-1"}
+
+        wrong_env = client.post(
+            path,
+            headers=headers,
+            json={
+                "interaction_id": "i1",
+                "action": "prepare_draft",
+                "environment": "production",
+                "zendesk_ticket_id": "123",
+                "turn_id": turn_id,
+            },
+        )
+        assert wrong_env.status_code == 422
+        assert "environment mismatch" in wrong_env.json()["detail"]
+
+        prepared = client.post(
+            path,
+            headers=headers,
+            json={
+                "interaction_id": "i1",
+                "action": "prepare_draft",
+                "environment": "preproduction",
+                "zendesk_ticket_id": "123",
+                "turn_id": turn_id,
+            },
+        )
+        assert prepared.status_code == 200, prepared.text
+        body = prepared.json()
+        assert body["ok"] is True and body["prepared"] is True
+        assert body["source_turn_id"] == turn_id
+        reply_turn = store.get_hermes_turn(body["reply_turn_id"])
+        assert reply_turn["turn_kind"] == "investigation_reply" and reply_turn["status"] == "pending"
+
+        # repeated click (or Slack interaction retry) is a friendly no-op
+        repeated = client.post(
+            path,
+            headers=headers,
+            json={
+                "interaction_id": "i2",
+                "action": "prepare_draft",
+                "environment": "preproduction",
+                "zendesk_ticket_id": "123",
+                "turn_id": turn_id,
+            },
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["ok"] is True and repeated.json()["already"] == "continued"
+
+
+def test_hermes_slack_action_endpoint_approves_draft(monkeypatch) -> None:
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    repository = _HermesSlackRepository()
+    client = _preproduction_dashboard_client(store)
+    path = "/automation/preproduction/api/integrations/slack/hermes-cases/actions"
+    monkeypatch.setenv("n8n_request_token", "token-1")
+    headers = {"X-N8n-Request-Token": "token-1"}
+
+    # drive a fresh turn to an awaiting-approval draft through the store
+    store.accept_intake(_event(), store.settings.provenance())
+    route_job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=30)
+    assert route_job is not None
+    draft_turn = store.hand_off_to_hermes_agent(route_job, prompt_release_id="prompt-1")["turn_id"]
+    claimed = store.claim_job(JobKind.AGENT_TURN, worker_id="route-1", lease_seconds=30)
+    assert claimed is not None and claimed.payload["turn_id"] == draft_turn
+    store.start_hermes_agent_turn(draft_turn, run_id=None)
+    store.record_hermes_turn_direction(draft_turn, direction="investigation", route=None)
+    store._hermes_turns[draft_turn]["phase"] = "persona"
+    from backend.services.automation_hermes_tools import tool_save_reply_draft
+
+    with patch(
+        "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+        return_value={"decision": "approved_for_final_engineer_review", "blockers": []},
+    ):
+        draft = tool_save_reply_draft(store, None, turn_id=draft_turn, content="Draft", basis={})
+    store.request_hermes_draft_publish(draft["draft_id"])
+
+    with client, patch(
+        "backend.automation_ecs_api._engineer_ticket_repository", return_value=repository
+    ):
+        approved = client.post(
+            path,
+            headers=headers,
+            json={
+                "interaction_id": "i3",
+                "action": "approve_draft",
+                "environment": "preproduction",
+                "zendesk_ticket_id": "123",
+                "draft_id": draft["draft_id"],
+            },
+        )
+        assert approved.status_code == 200, approved.text
+        body = approved.json()
+        assert body["ok"] is True and body["approved"] is True
+        assert repository.delivery["source"] == "hermes"
+        assert repository.delivery["message_id"] == draft["draft_id"]
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "queued"
+
+        repeated = client.post(
+            path,
+            headers=headers,
+            json={
+                "interaction_id": "i4",
+                "action": "approve_draft",
+                "environment": "preproduction",
+                "zendesk_ticket_id": "123",
+                "draft_id": draft["draft_id"],
+            },
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["already"] == "queued"
