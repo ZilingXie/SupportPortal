@@ -16,6 +16,11 @@ Configure these only in n8n or its deployment environment:
 - the PostgreSQL credential and SupportPortal `X-N8n-Request-Token` header
   credential
 - `REPLACE_WITH_SUPPORTPORTAL_BASE_URL`
+- `REPLACE_WITH_SUPPORTPORTAL_PREPRODUCTION_BASE_URL` (only for the Hermes
+  investigation buttons; `prepare_draft`/`approve_draft` clicks route to this
+  environment's `/automation/preproduction/api/integrations/slack/hermes-cases/actions`
+  endpoint, legacy `guardrail`/`final_approve` clicks keep going to the
+  production base URL)
 
 Configure these in the SupportPortal production environment:
 

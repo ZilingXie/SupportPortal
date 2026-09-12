@@ -13,6 +13,7 @@ from typing import Any
 from backend.services.automation_ecs_store import (
     AutomationEcsStore,
     HermesDraftStateError,
+    HermesTurnConflictError,
     HermesTurnStateError,
 )
 from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
@@ -138,7 +139,7 @@ def tool_record_direction(
                 "invalid_route", f"route {normalized_route} has no registered automation handler"
             )
     store.record_hermes_turn_direction(
-        turn_id, direction=normalized_direction, route=normalized_route
+        turn_id, direction=normalized_direction, route=normalized_route, reason=normalized_reason
     )
     account_case = _require_account_case(context)
     if normalized_direction == "automation":
@@ -533,7 +534,13 @@ def publication_decision_for_turn(
             error_code="guardrail_blocked",
             error_message=str(guardrail.get("blockers") or "guardrail blocked the draft"),
         )
-        return {"status": "human_review", "queued": False, "reason": "guardrail_blocked"}
+        return {
+            "status": "human_review",
+            "queued": False,
+            "reason": "guardrail_blocked",
+            "draft_id": draft["draft_id"],
+            "blockers": list(guardrail.get("blockers") or []),
+        }
     updated = store.request_hermes_draft_publish(draft["draft_id"])
     if str(updated.get("publish_policy")) != "auto":
         return {"status": "awaiting_approval", "queued": False, "draft_id": draft["draft_id"]}
@@ -545,6 +552,70 @@ def publication_decision_for_turn(
         store, repository, draft_id=updated["draft_id"], environment=environment
     )
     return {"status": "queued", "queued": True, "draft_id": draft["draft_id"]}
+
+
+def resolve_awaiting_investigation_turn(
+    store: AutomationEcsStore, zendesk_ticket_id: str
+) -> dict[str, Any] | None:
+    """The newest normal investigation turn parked for human review, if any."""
+    review = store.get_hermes_case_review(zendesk_ticket_id) or {}
+    for turn in review.get("turns") or []:
+        result = turn.get("result") if isinstance(turn.get("result"), dict) else {}
+        if (
+            str(turn.get("turn_kind") or "") == "normal"
+            and str(turn.get("direction") or "") == "investigation"
+            and str(turn.get("status") or "") == "completed"
+            and str(result.get("status") or "") == "awaiting_investigation_review"
+            and not result.get("continued_turn_id")
+        ):
+            return turn
+    return None
+
+
+def continue_hermes_investigation(
+    store: AutomationEcsStore,
+    zendesk_ticket_id: str,
+    *,
+    base_event: dict[str, Any],
+    prompt_release_id: str | None = None,
+) -> dict[str, Any]:
+    """Open the persona-only reply turn for the reviewed investigation.
+
+    Shared by the dashboard continue button and the Slack Prepare draft
+    button. Raises HermesTurnStateError for a missing/incomplete/stale
+    review and HermesTurnConflictError when the case or the source turn
+    already moved on; the store stamps `continued_turn_id` so a repeated
+    click conflicts instead of duplicating a customer-reply turn.
+    """
+    review = store.get_hermes_case_review(zendesk_ticket_id)
+    if review is None:
+        raise HermesTurnStateError(zendesk_ticket_id, "hermes case review not found")
+    source_turn = resolve_awaiting_investigation_turn(store, zendesk_ticket_id)
+    if source_turn is None:
+        # distinguish "already continued" (a repeated click) from "nothing to do"
+        for turn in review.get("turns") or []:
+            result = turn.get("result") if isinstance(turn.get("result"), dict) else {}
+            if (
+                str(turn.get("turn_kind") or "") == "normal"
+                and str(result.get("status") or "") == "awaiting_investigation_review"
+                and result.get("continued_turn_id")
+            ):
+                raise HermesTurnConflictError(str(result["continued_turn_id"]))
+        raise HermesTurnStateError(zendesk_ticket_id, "no investigation is awaiting review")
+    investigation = (
+        (review.get("binding") or {}).get("investigation")
+        if isinstance((review.get("binding") or {}).get("investigation"), dict)
+        else {}
+    )
+    if not str(investigation.get("summary") or "").strip():
+        raise HermesTurnStateError(zendesk_ticket_id, "investigation has no summary")
+    created = store.create_investigation_reply_turn(
+        zendesk_ticket_id,
+        source_turn_id=str(source_turn["turn_id"]),
+        base_event=base_event,
+        prompt_release_id=prompt_release_id,
+    )
+    return created
 
 
 def tool_escalate_human(

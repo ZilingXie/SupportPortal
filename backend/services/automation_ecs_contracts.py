@@ -21,7 +21,7 @@ HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
 REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
 PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
-SCHEMA_REVISION = "automation-ecs-004"
+SCHEMA_REVISION = "automation-ecs-005"
 
 DEFAULT_ZENDESK_INSTANCE = "agoraio.zendesk.com"
 

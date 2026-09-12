@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-11T20:18:43Z",
-  "source_base_commit": "e78488d78c875d59ed47e19e8dc77a965d54d9c0",
-  "registry_digest": "6c4247c8f62c67388f101437ebae1124775f8beacc0180d57897bbd487591f61",
+  "generated_at": "2026-09-12T06:41:27Z",
+  "source_base_commit": "dc9a430756a4df812d8e9c051e02641f893cd26c",
+  "registry_digest": "b96d1d3025bcb61f71d99cc8946523888791c8414c9a4d96d8ae495928c260c7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12106,7 +12106,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "按用户澄清流程为 Preproduction Hermes investigation 方向落地第一版调查链：修复 work run 工具加载（补 common+memory toolset，恢复 case context 与 TencentDB memory 检索/知识写可见性）；调查回合结束后 turn 结构性收口为 awaiting_investigation_review 并把调查结果（summary/evidence/blockers/next_steps）直达发送到工程师 Slack 频道；人在 dashboard 审阅页点「继续生成客户回复」按钮（前置确定性完备性检查：summary 非空、无未解决 blockers、case_revision 未过期）后创建 investigation_reply turn（仅 persona phase）在同一 session/revision 续跑，走既有草稿 guardrail→manual 审批→Slack review ping→approve→Zendesk 发送链。不做子 Agent（设计 tab #08 的多子任务调查为后续版本）；Slack 原生按钮因 preprod 无交互回调通道列为后续；调查证据源仍限 case context + memory（真实检索源另行规划）。",
-      "next_action": "代码/测试/部署/受控重放全链完成（PR#1160+#1162+#1163，r20260911-e78488d）。待用户：①工程师频道 eyeball 调查结果消息与审批 ping 格式（13424，评论 53486793539860 已送达）；②决策 v1.1：调查证据源（RAGFlow/pilot 检索）、Slack 原生按钮（需交互回调通道）、旧工程师流线程统一。确认后置 done。",
+      "next_action": "v1.1（Slack 原生按钮流+消息修复）实施中：测试全绿，待 finalize→Preproduction 发布→受控重放；Slack 按钮真实点击需用户导入更新版 n8n interaction workflow（同 webhook，Slack App 零改动）。",
       "acceptance_criteria": [
         "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
         "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
@@ -12179,6 +12179,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-12",
           "event": "deployed",
           "summary": "三次 Preproduction 发布与 13424 四轮受控重放完成全链验收：调查→工具加载→Slack 直达→dashboard 继续→persona→审批→Zendesk 送达。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "amended",
+          "summary": "用户反馈两处消息缺陷与按钮流需求：①审批 ping 问题行回落 ticket.description（SyntheticTurnEvent 无 comment snapshot）→ 统一从 turn.input_snapshot.conversation 取最近客户评论；②route reason 显示 binding 可变方向（work 回合 escalate 翻成 human）→ 改用 turn 稳定方向+短码（investigation→technical）+持久化模型理由（此前被丢弃，schema-005 新增 turns.direction_reason）。③Slack 原生按钮链：调查结果消息带 [Prepare draft]（根消息可挂 actions）；点击→续跑 persona→guardrail 通过则发带 [Approve & send] 的草稿消息、不过则发原因（guardrail_blocked/missing_draft 均可见）；点击 Approve 直发 Zendesk；回调经更新版 n8n interaction workflow（按按钮 environment 分流 preprod/production，legacy 链零改动）。dashboard 按钮保留兜底；automation 方向 review-ping 旧格式不动。"
         }
       ]
     },
@@ -17501,7 +17506,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。多子 Agent 调查（设计 tab #08 全量）与 Slack 原生按钮为后续版本。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生按钮链（p2-154 v1.1）：调查结果消息带 [Prepare draft]，点击续跑 persona 并经 guardrail——通过则把带 [Approve & send] 的草稿消息发回频道，点击直接送 Zendesk，不过则发原因（回调经 n8n interaction workflow 按 environment 分流）；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。多子 Agent 调查（设计 tab #08 全量）为后续版本。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

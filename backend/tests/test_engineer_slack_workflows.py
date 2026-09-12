@@ -105,10 +105,30 @@ class EngineerSlackWorkflowContractTests(unittest.TestCase):
         backend_body = raw[raw.index("JSON.stringify({interaction_id:") :]
         for forbidden in ("team_id:", "channel_id:", "thread_ts:"):
             self.assertNotIn(forbidden, backend_body.split("}) }}", 1)[0])
+        # the hermes button branch routes by environment before the legacy chain
+        self.assertIn("prepare_draft", raw)
+        self.assertIn("approve_draft", raw)
+        self.assertIn("REPLACE_WITH_SUPPORTPORTAL_PREPRODUCTION_BASE_URL", raw)
+        self.assertIn("hermes-cases/actions", raw)
+        hermes_body = raw[raw.index("Send Hermes Action To SupportPortal") :]
+        for forbidden in ("team_id:", "channel_id:", "thread_ts:"):
+            self.assertNotIn(forbidden, hermes_body.split("}) }}", 1)[0])
         connections = workflow["connections"]
         self.assertEqual(
             connections["Eligible Interaction"]["main"][0][0]["node"],
+            "Hermes Interaction",
+        )
+        self.assertEqual(
+            connections["Hermes Interaction"]["main"][0][0]["node"],
+            "Send Hermes Action To SupportPortal",
+        )
+        self.assertEqual(
+            connections["Hermes Interaction"]["main"][1][0]["node"],
             "Resolve Active Binding",
+        )
+        self.assertEqual(
+            connections["Send Hermes Action To SupportPortal"]["main"][0][0]["node"],
+            "ACK Hermes Interaction",
         )
         self.assertEqual(
             connections["Bound Case Thread"]["main"][0][0]["node"],

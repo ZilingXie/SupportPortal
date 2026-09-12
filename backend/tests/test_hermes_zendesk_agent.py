@@ -578,9 +578,9 @@ class TestAgentTurnProcessor:
             "backend.services.engineer_slack.notify_hermes_investigation_result",
             return_value={"status": "delivered", "slack_message_ts": "1.0"},
         ) as notify_result, patch(
-            "backend.services.engineer_slack.notify_hermes_review_pending",
-            return_value={"root": {"slack_message_ts": "1.1"}, "thread": {"slack_message_ts": "1.2"}},
-        ) as notify:
+            "backend.services.engineer_slack.notify_hermes_draft_pending",
+            return_value={"status": "delivered", "slack_message_ts": "1.3"},
+        ) as notify_draft:
             outcome = self._processor(store, client).process(agent_job)
             assert outcome["status"] == "awaiting_investigation_review"
             created = store.create_investigation_reply_turn(
@@ -599,17 +599,20 @@ class TestAgentTurnProcessor:
         assert result_kwargs["environment"] == "preproduction"
         assert result_kwargs["title"] == "Enable Media Relay"
         assert result_kwargs["question"] == "Please enable Media Relay for app 123."
-        assert result_kwargs["route_result"] == "investigation"
+        assert result_kwargs["route_result"] == "technical"
         assert result_kwargs["investigation"]["summary"].startswith("Reproduced")
-        notify.assert_called_once()
-        kwargs = notify.call_args.kwargs
-        assert kwargs["draft"]["zendesk_ticket_id"] == "123"
-        assert kwargs["draft"]["status"] == "awaiting_approval"
-        assert kwargs["environment"] == "preproduction"
-        assert kwargs["title"] == "Enable Media Relay"
-        assert kwargs["question"] == "Please enable Media Relay for app 123."
-        assert kwargs["route_result"] == "investigation"
-        assert kwargs["investigation"]["summary"].startswith("Reproduced")
+        # the draft message carries the approve button payload for the reply turn
+        notify_draft.assert_called_once()
+        draft_kwargs = notify_draft.call_args.kwargs
+        assert draft_kwargs["ticket_id"] == "123"
+        assert draft_kwargs["turn_id"] == created["turn_id"]
+        assert draft_kwargs["draft_id"]
+        assert draft_kwargs["environment"] == "preproduction"
+        assert draft_kwargs["title"] == "Enable Media Relay"
+        assert draft_kwargs["question"] == "Please enable Media Relay for app 123."
+        assert draft_kwargs["route_result"] == "technical"
+        assert draft_kwargs["draft_content"].startswith("Hi Customer,")
+        assert draft_kwargs["guardrail"]["decision"] == "approved_for_final_engineer_review"
 
     def test_slack_review_ping_failure_does_not_break_turn(self) -> None:
         store = _store()
@@ -915,6 +918,120 @@ class TestInvestigationReviewGate:
         payload = AgentTurnJobPayload.model_validate(job.payload)
         assert payload.event.event_type == "investigation_feedback"
         assert payload.event.ticket.id == "123"
+
+    def test_direction_reason_is_persisted_on_the_turn(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.endswith(":route"):
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"],
+                    direction="investigation",
+                    route=None,
+                    reason="Customer reports SDK behavior needing reproduction.",
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["direction_reason"] == "Customer reports SDK behavior needing reproduction."
+
+    def test_route_reason_survives_escalation_during_work(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"],
+                    direction="investigation",
+                    route=None,
+                    reason="Technical product question needing analysis.",
+                )
+            elif phase == "work":
+                tool_save_investigation_progress(
+                    store, None, turn_id=handoff["turn_id"],
+                    summary="Investigated.", evidence=[], blockers=[], next_steps=[],
+                )
+                # the work run escalates after saving — this used to corrupt the
+                # notify header because it read the mutable binding direction
+                store.escalate_hermes_case(handoff["turn_id"], reason="needs an SDK engineer")
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_investigation_result",
+            return_value={"status": "delivered"},
+        ) as notify_result:
+            outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "awaiting_investigation_review"
+        kwargs = notify_result.call_args.kwargs
+        assert kwargs["route_result"] == "technical — Technical product question needing analysis."
+        binding = store.get_hermes_case_binding("123")
+        assert binding["direction"] == "human"  # escalation intact; header unaffected
+
+    def test_guardrail_blocked_reply_turn_notifies_blocked_reason(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        created = store.create_investigation_reply_turn(
+            "123", source_turn_id=handoff["turn_id"], base_event={}
+        )
+
+        def on_reply_run_completed(run_id, idempotency_key):
+            turn_id = idempotency_key.split(":")[1]
+            store._hermes_turns[turn_id]["phase"] = "persona"
+            with patch(
+                "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                side_effect=lambda *a, **k: {
+                    "decision": "blocked",
+                    "blockers": ["No draft customer reply provided."],
+                },
+            ):
+                tool_save_reply_draft(store, None, turn_id=turn_id, content="Draft", basis={})
+
+        reply_client = FakeHermesClient(on_run_completed=on_reply_run_completed)
+        reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_draft_blocked",
+            return_value={"status": "delivered"},
+        ) as notify_blocked:
+            outcome = self._processor(store, reply_client).process(reply_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["reason"] == "guardrail_blocked"
+        notify_blocked.assert_called_once()
+        kwargs = notify_blocked.call_args.kwargs
+        assert kwargs["reason"] == "guardrail_blocked"
+        assert "No draft customer reply provided." in kwargs["blockers"]
+        assert kwargs["route_result"] == "technical"
+
+    def test_missing_draft_reply_turn_fails_visibly(self) -> None:
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        client = self._investigation_client(store, handoff["turn_id"])
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(agent_job)
+        created = store.create_investigation_reply_turn(
+            "123", source_turn_id=handoff["turn_id"], base_event={}
+        )
+        reply_client = FakeHermesClient()  # persona completes without saving a draft
+        reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_draft_blocked",
+            return_value={"status": "delivered"},
+        ) as notify_blocked:
+            outcome = self._processor(store, reply_client).process(reply_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["error_code"] == "missing_draft"
+        assert store.get_hermes_turn(created["turn_id"])["status"] == "failed"
+        notify_blocked.assert_called_once()
+        assert notify_blocked.call_args.kwargs["reason"] == "missing_draft"
 
 
 class TestExpiryRecovery:

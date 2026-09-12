@@ -84,6 +84,63 @@ def toolsets_for_phase(phase: str, *, direction: str | None) -> list[str] | None
         return INVESTIGATION_WORK_TOOLSETS
     return PHASE_TOOLSETS.get(phase)
 
+
+_ROUTE_SHORT_CODES = {"investigation": "technical", "human": "manual"}
+_CUSTOMER_ROLES = frozenset({"end-user", "end_user", "customer", "requester", "user"})
+_AGENT_ROLES = frozenset({"agent", "staff", "admin", "support"})
+
+
+def _customer_author(author: Any) -> bool:
+    """Dict mirror of the store's customer-author rule for snapshot rows."""
+    if not isinstance(author, dict):
+        return False
+    role = str(author.get("role") or "").strip().lower()
+    is_agent = author.get("is_agent")
+    if role in _CUSTOMER_ROLES:
+        return is_agent is not False
+    if role in _AGENT_ROLES or is_agent is True:
+        return False
+    return is_agent is False
+
+
+def _latest_customer_question(turn: dict[str, Any], payload: AgentTurnJobPayload) -> str:
+    """The customer question this turn answers: latest customer comment first."""
+    snapshot = turn.get("input_snapshot") if isinstance(turn.get("input_snapshot"), dict) else {}
+    for item in reversed(snapshot.get("conversation") or []):
+        if not isinstance(item, dict):
+            continue
+        body = str(item.get("body") or "").strip()
+        if body and _customer_author(item.get("author")):
+            return body
+    if payload.event.comment_snapshot is not None:
+        trigger = next(
+            (
+                comment
+                for comment in payload.event.comment_snapshot.comments
+                if comment.id == payload.event.comment_snapshot.trigger_comment_id
+            ),
+            None,
+        )
+        if trigger is not None and str(trigger.body or "").strip():
+            return str(trigger.body)
+    return str(payload.event.ticket.description or "")
+
+
+def _route_reason_value(turn: dict[str, Any]) -> str:
+    """Stable route line value from the turn row, never the mutable binding.
+
+    Escalations during the work phase flip the binding direction (observed
+    live as `route reason: human`); the turn keeps the route-time decision.
+    """
+    direction = str(turn.get("direction") or "").strip()
+    code = _ROUTE_SHORT_CODES.get(direction) or str(turn.get("route") or direction or "unknown")
+    reason = str(turn.get("direction_reason") or "").strip()
+    if reason.startswith("turn_direction:"):
+        reason = ""
+    if reason:
+        return f"{code} — {reason[:300]}"
+    return code
+
 _WORKSPACE_KEY_RE = re.compile(r"[^a-z0-9_-]+")
 
 
@@ -281,17 +338,47 @@ class HermesAgentTurnProcessor:
                 str(os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or "").strip() == "1"
             ),
         )
+        final_turn = self.store.get_hermes_turn(payload.turn_id) or turn
+        turn_direction = str(final_turn.get("direction") or "")
         if str(publication.get("status")) == "human_review":
             # The gate already parked the turn (guardrail blocked); completing
             # it now would fail because the turn is no longer running.
+            if turn_direction == "investigation":
+                self._notify_draft_blocked(payload, final_turn, publication)
             return {
                 "engine": "hermes",
                 "turn_id": payload.turn_id,
                 "status": "human_review",
                 "reason": str(publication.get("reason") or "publication_gate"),
             }
+        if (
+            str(publication.get("status")) == "no_draft"
+            and str(final_turn.get("turn_kind") or "normal") == "investigation_reply"
+        ):
+            # A Prepare draft click must visibly produce a draft; silence here
+            # would strand the human after their Slack action.
+            self.store.fail_hermes_agent_turn(
+                payload.turn_id,
+                status="failed",
+                error_code="missing_draft",
+                error_message="persona run finished without saving a reply draft",
+            )
+            self._notify_draft_blocked(
+                payload,
+                final_turn,
+                {"reason": "missing_draft", "blockers": ["persona run finished without saving a reply draft"]},
+            )
+            return {
+                "engine": "hermes",
+                "turn_id": payload.turn_id,
+                "status": "human_review",
+                "error_code": "missing_draft",
+            }
         if str(publication.get("status")) == "awaiting_approval" and publication.get("draft_id"):
-            self._notify_review_pending(payload, str(publication["draft_id"]))
+            if turn_direction == "investigation":
+                self._notify_draft_pending(payload, final_turn, publication)
+            else:
+                self._notify_review_pending(payload, str(publication["draft_id"]))
         result = {
             "engine": "hermes",
             "turn_id": payload.turn_id,
@@ -316,29 +403,14 @@ class HermesAgentTurnProcessor:
                 )
                 return
             ticket = payload.event.ticket
-            question = ticket.description
-            if payload.event.comment_snapshot is not None:
-                trigger = next(
-                    (
-                        comment
-                        for comment in payload.event.comment_snapshot.comments
-                        if comment.id == payload.event.comment_snapshot.trigger_comment_id
-                    ),
-                    None,
-                )
-                if trigger is not None and str(trigger.body or "").strip():
-                    question = trigger.body
-            binding = self.store.get_hermes_case_binding(ticket.id) or {}
             turn = self.store.get_hermes_turn(str(draft.get("turn_id") or "")) or {}
-            route_result = str(binding.get("direction") or turn.get("direction") or "")
-            turn_route = str(turn.get("route") or "").strip()
-            if turn_route:
-                route_result = f"{route_result} ({turn_route})" if route_result else turn_route
+            question = _latest_customer_question(turn, payload)
+            binding = self.store.get_hermes_case_binding(ticket.id) or {}
             outcome = notify_hermes_review_pending(
                 draft=draft,
                 title=str(ticket.subject or ""),
                 question=str(question or ""),
-                route_result=route_result,
+                route_result=_route_reason_value(turn),
                 investigation=binding.get("investigation")
                 if isinstance(binding.get("investigation"), dict)
                 else None,
@@ -358,6 +430,116 @@ class HermesAgentTurnProcessor:
                 "hermes_review_pending_notify_failed turn_id=%s draft_id=%s",
                 payload.turn_id,
                 draft_id,
+                exc_info=True,
+            )
+
+    def _notify_investigation_result(
+        self, payload: AgentTurnJobPayload, investigation: dict[str, Any]
+    ) -> None:
+        # Summons only: a failed ping must never affect the turn state machine.
+        from backend.services.engineer_slack import notify_hermes_investigation_result
+
+        try:
+            ticket = payload.event.ticket
+            turn = self.store.get_hermes_turn(payload.turn_id) or {}
+            outcome = notify_hermes_investigation_result(
+                ticket_id=ticket.id,
+                turn_id=payload.turn_id,
+                title=str(ticket.subject or ""),
+                question=_latest_customer_question(turn, payload),
+                route_result=_route_reason_value(turn),
+                investigation=investigation,
+                environment=self.environment,
+            )
+            LOGGER.info(
+                "hermes_investigation_result_notified turn_id=%s status=%s ts=%s",
+                payload.turn_id,
+                outcome.get("status"),
+                outcome.get("slack_message_ts"),
+            )
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_investigation_result_notify_failed turn_id=%s",
+                payload.turn_id,
+                exc_info=True,
+            )
+
+    def _notify_draft_pending(
+        self,
+        payload: AgentTurnJobPayload,
+        turn: dict[str, Any],
+        publication: dict[str, Any],
+    ) -> None:
+        # Summons only: a failed ping must never affect the turn state machine.
+        from backend.services.engineer_slack import notify_hermes_draft_pending
+
+        try:
+            draft_id = str(publication.get("draft_id") or "")
+            draft = self.store.get_hermes_draft(draft_id)
+            if not isinstance(draft, dict):
+                LOGGER.warning(
+                    "hermes_draft_pending_notify_skipped turn_id=%s draft_id=%s reason=draft_missing",
+                    payload.turn_id,
+                    draft_id,
+                )
+                return
+            ticket = payload.event.ticket
+            outcome = notify_hermes_draft_pending(
+                ticket_id=ticket.id,
+                turn_id=payload.turn_id,
+                draft_id=draft_id,
+                title=str(ticket.subject or ""),
+                question=_latest_customer_question(turn, payload),
+                route_result=_route_reason_value(turn),
+                draft_content=str(draft.get("content") or ""),
+                guardrail=draft.get("guardrail") if isinstance(draft.get("guardrail"), dict) else None,
+                environment=self.environment,
+            )
+            LOGGER.info(
+                "hermes_draft_pending_notified turn_id=%s draft_id=%s status=%s ts=%s",
+                payload.turn_id,
+                draft_id,
+                outcome.get("status"),
+                outcome.get("slack_message_ts"),
+            )
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_draft_pending_notify_failed turn_id=%s",
+                payload.turn_id,
+                exc_info=True,
+            )
+
+    def _notify_draft_blocked(
+        self,
+        payload: AgentTurnJobPayload,
+        turn: dict[str, Any],
+        publication: dict[str, Any],
+    ) -> None:
+        # Summons only: a failed ping must never affect the turn state machine.
+        from backend.services.engineer_slack import notify_hermes_draft_blocked
+
+        try:
+            ticket = payload.event.ticket
+            outcome = notify_hermes_draft_blocked(
+                ticket_id=ticket.id,
+                turn_id=payload.turn_id,
+                title=str(ticket.subject or ""),
+                question=_latest_customer_question(turn, payload),
+                route_result=_route_reason_value(turn),
+                reason=str(publication.get("reason") or ""),
+                blockers=list(publication.get("blockers") or []),
+                environment=self.environment,
+            )
+            LOGGER.info(
+                "hermes_draft_blocked_notified turn_id=%s status=%s ts=%s",
+                payload.turn_id,
+                outcome.get("status"),
+                outcome.get("slack_message_ts"),
+            )
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_draft_blocked_notify_failed turn_id=%s",
+                payload.turn_id,
                 exc_info=True,
             )
 
@@ -392,54 +574,6 @@ class HermesAgentTurnProcessor:
         self.store.complete_hermes_agent_turn(turn_id, result=result)
         self._notify_investigation_result(payload, investigation)
         return result
-
-    def _notify_investigation_result(
-        self, payload: AgentTurnJobPayload, investigation: dict[str, Any]
-    ) -> None:
-        # Summons only: a failed ping must never affect the turn state machine.
-        from backend.services.engineer_slack import notify_hermes_investigation_result
-
-        try:
-            ticket = payload.event.ticket
-            question = ticket.description
-            if payload.event.comment_snapshot is not None:
-                trigger = next(
-                    (
-                        comment
-                        for comment in payload.event.comment_snapshot.comments
-                        if comment.id == payload.event.comment_snapshot.trigger_comment_id
-                    ),
-                    None,
-                )
-                if trigger is not None and str(trigger.body or "").strip():
-                    question = trigger.body
-            binding = self.store.get_hermes_case_binding(ticket.id) or {}
-            turn = self.store.get_hermes_turn(payload.turn_id) or {}
-            route_result = str(binding.get("direction") or turn.get("direction") or "")
-            turn_route = str(turn.get("route") or "").strip()
-            if turn_route:
-                route_result = f"{route_result} ({turn_route})" if route_result else turn_route
-            outcome = notify_hermes_investigation_result(
-                ticket_id=ticket.id,
-                turn_id=payload.turn_id,
-                title=str(ticket.subject or ""),
-                question=str(question or ""),
-                route_result=route_result,
-                investigation=investigation,
-                environment=self.environment,
-            )
-            LOGGER.info(
-                "hermes_investigation_result_notified turn_id=%s status=%s ts=%s",
-                payload.turn_id,
-                outcome.get("status"),
-                outcome.get("slack_message_ts"),
-            )
-        except Exception:  # noqa: BLE001 - best-effort channel ping
-            LOGGER.warning(
-                "hermes_investigation_result_notify_failed turn_id=%s",
-                payload.turn_id,
-                exc_info=True,
-            )
 
     # ----------------------------------------------------------------- phases
 
