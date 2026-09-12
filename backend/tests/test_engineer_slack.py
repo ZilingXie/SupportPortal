@@ -1181,10 +1181,11 @@ class EngineerSlackWorkerTests(unittest.TestCase):
                 route_result="technical — Customer reports SDK behavior",
                 investigation=investigation,
                 environment="preproduction",
+                thread_ts="100.000",
             )
         self.assertEqual(urlopen.call_count, 1)
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
-        self.assertNotIn("thread_ts", payload)
+        self.assertEqual(payload["thread_ts"], "100.000")
         lines = payload["text"].split("\n")
         self.assertEqual(lines[0], "Zac Test")
         self.assertEqual(lines[1], "I got black screen, what should I do?")
@@ -1221,9 +1222,10 @@ class EngineerSlackWorkerTests(unittest.TestCase):
                 draft_content="Hi Ziling,\n\nWe reproduced the issue.",
                 guardrail={"decision": "approved_for_final_engineer_review", "blockers": []},
                 environment="preproduction",
+                thread_ts="100.000",
             )
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
-        self.assertNotIn("thread_ts", payload)
+        self.assertEqual(payload["thread_ts"], "100.000")
         self.assertIn("Hermes draft awaiting approval — Zendesk #13424", payload["text"])
         self.assertIn(
             "Guardrail: approved_for_final_engineer_review", payload["text"]
@@ -1252,9 +1254,10 @@ class EngineerSlackWorkerTests(unittest.TestCase):
                 reason="guardrail_blocked",
                 blockers=["No draft customer reply provided."],
                 environment="preproduction",
+                thread_ts="100.000",
             )
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
-        self.assertNotIn("thread_ts", payload)
+        self.assertEqual(payload["thread_ts"], "100.000")
         self.assertIn("Hermes draft blocked — Zendesk #13424", payload["text"])
         self.assertIn("Reason: guardrail_blocked", payload["text"])
         self.assertIn("- No draft customer reply provided.", payload["text"])

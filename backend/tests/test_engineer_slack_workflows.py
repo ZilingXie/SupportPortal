@@ -72,9 +72,26 @@ class EngineerSlackWorkflowContractTests(unittest.TestCase):
             connections["Bound Case Thread"]["main"][0][0]["node"],
             "Claim Bound Mention",
         )
+        # unbound-on-production mentions fall through to the hermes thread
+        # branch (preproduction bindings) before being rejected
+        self.assertIn("hermes-cases/thread-bindings/resolve", raw)
+        self.assertIn("hermes-cases/messages", raw)
+        self.assertIn("'HERMES-' ||", raw)
         self.assertEqual(
             connections["Bound Case Thread"]["main"][1][0]["node"],
+            "Resolve Hermes Binding",
+        )
+        self.assertEqual(
+            connections["Hermes Bound Thread"]["main"][0][0]["node"],
+            "Claim Hermes Mention",
+        )
+        self.assertEqual(
+            connections["Hermes Bound Thread"]["main"][1][0]["node"],
             "ACK Rejected Mention",
+        )
+        self.assertEqual(
+            connections["Forward Hermes Once"]["main"][0][0]["node"],
+            "Send Hermes Message To SupportPortal",
         )
         self.assertEqual(
             connections["Claim Bound Mention"]["main"][0][0]["node"],
