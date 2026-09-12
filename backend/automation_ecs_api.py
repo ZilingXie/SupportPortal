@@ -1101,6 +1101,51 @@ def create_app(    *,
                 content=result, headers={"Cache-Control": "no-store"}
             )
 
+        @app.get(
+            f"{base}/api/integrations/slack/hermes-cases/thread-bindings/resolve",
+            dependencies=[Depends(_require_n8n_request_token)],
+        )
+        async def ecs_resolve_hermes_thread_binding(
+            team_id: str, channel_id: str, thread_ts: str
+        ) -> JSONResponse:
+            """Resolve a hermes investigation case from its bound Slack thread."""
+            from backend.services.automation_hermes_slack_actions import (
+                resolve_hermes_thread_binding,
+            )
+
+            result = await asyncio.to_thread(
+                resolve_hermes_thread_binding,
+                coordination_store,
+                team_id=team_id,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                expected_team_id=str(os.getenv("ENGINEER_SLACK_TEAM_ID") or "").strip(),
+                expected_channel_id=str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip(),
+            )
+            return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+        @app.post(
+            f"{base}/api/integrations/slack/hermes-cases/messages",
+            dependencies=[Depends(_require_n8n_request_token)],
+        )
+        async def ecs_post_hermes_case_message(http_request: Request) -> JSONResponse:
+            """An engineer's thread reply becomes investigation feedback."""
+            from backend.services.automation_hermes_slack_actions import (
+                handle_slack_hermes_message,
+            )
+
+            payload = await http_request.json()
+            result = await asyncio.to_thread(
+                handle_slack_hermes_message,
+                coordination_store,
+                payload,
+                expected_team_id=str(os.getenv("ENGINEER_SLACK_TEAM_ID") or "").strip(),
+                expected_channel_id=str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip(),
+            )
+            if not result.get("ok"):
+                raise HTTPException(status_code=int(result.get("status_code") or 422), detail=result.get("detail"))
+            return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     ui_root = FilePath(__file__).resolve().parents[1] / "ui"
     if admin_data_reader is not None:
         admin_dir = ui_root / "workspace-ui" / "admin"

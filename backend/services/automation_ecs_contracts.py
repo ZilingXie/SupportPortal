@@ -21,7 +21,7 @@ HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
 REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
 PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
-SCHEMA_REVISION = "automation-ecs-005"
+SCHEMA_REVISION = "automation-ecs-006"
 
 DEFAULT_ZENDESK_INSTANCE = "agoraio.zendesk.com"
 
@@ -91,7 +91,10 @@ class HermesTurnPhase(StrEnum):
     @classmethod
     def phases_for(cls, turn_kind: str) -> tuple["HermesTurnPhase", ...]:
         if turn_kind == HermesTurnKind.INVESTIGATION_FEEDBACK.value:
-            return (cls.WORK, cls.PERSONA)
+            # feedback means "investigate again": the turn parks for review
+            # after the work phase, exactly like a fresh investigation; the
+            # persona phase only runs via the Prepare draft button.
+            return (cls.WORK,)
         if turn_kind == HermesTurnKind.INVESTIGATION_REPLY.value:
             return (cls.PERSONA,)
         return (cls.ROUTE, cls.WORK, cls.PERSONA)

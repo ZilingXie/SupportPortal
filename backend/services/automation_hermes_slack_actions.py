@@ -148,3 +148,91 @@ def _approve_draft(
         "draft_id": draft_id,
         "status": str((result.get("queued") or {}).get("status") or "queued"),
     }
+
+
+def handle_slack_hermes_message(
+    store: AutomationEcsStore,
+    payload: dict[str, Any],
+    *,
+    expected_team_id: str,
+    expected_channel_id: str,
+) -> dict[str, Any]:
+    """An engineer's thread reply becomes reviewer feedback: re-investigate.
+
+    Reached through the n8n app-mention workflow after it resolves the
+    thread binding and claims the event in its inbound ledger. The reply
+    opens an investigation_feedback turn (work-only) that parks for review
+    and posts the new investigation result back into the same thread.
+    """
+    team_id = str((payload or {}).get("team_id") or "").strip()
+    channel_id = str((payload or {}).get("channel_id") or "").strip()
+    thread_ts = str((payload or {}).get("thread_ts") or "").strip()
+    text = str((payload or {}).get("text") or "").strip()
+    if not (team_id and channel_id and thread_ts):
+        return _invalid("team_id, channel_id, and thread_ts are required")
+    if expected_team_id and team_id != expected_team_id:
+        return _invalid("team mismatch", status_code=403)
+    if expected_channel_id and channel_id != expected_channel_id:
+        return _invalid("channel mismatch", status_code=403)
+    ticket_id = store.find_hermes_ticket_by_thread(channel_id, thread_ts)
+    if not ticket_id:
+        return {"ok": True, "status": "ignored_unbound"}
+    if not text:
+        return _invalid("feedback text is required")
+    if len(text) > 4000:
+        return _invalid("feedback text exceeds 4000 characters")
+    review = store.get_hermes_case_review(ticket_id) or {}
+    for turn in review.get("turns") or []:
+        if (
+            str(turn.get("turn_kind") or "") == "investigation_feedback"
+            and str(turn.get("status") or "") in {"pending", "running"}
+            and str((turn.get("work_result") or {}).get("reviewer_feedback") or "") == text
+        ):
+            # Slack event retry / double submit of the same feedback
+            return _already("duplicate", "an identical feedback turn is already in flight")
+    try:
+        created = store.create_investigation_feedback_turn(
+            ticket_id,
+            feedback=text,
+            base_event={
+                "provenance": {"service_role": "slack", "source": "thread_reply"}
+            },
+        )
+    except HermesTurnConflictError:
+        return _already("busy", "a turn is already running for this case")
+    except HermesTurnStateError as exc:
+        return _invalid(str(exc))
+    LOGGER.info(
+        "hermes_slack_feedback ticket_id=%s feedback_turn_id=%s", ticket_id, created["turn_id"]
+    )
+    return {
+        "ok": True,
+        "status": "feedback_turn_created",
+        "zendesk_ticket_id": ticket_id,
+        "turn_id": created["turn_id"],
+    }
+
+
+def resolve_hermes_thread_binding(
+    store: AutomationEcsStore,
+    *,
+    team_id: str,
+    channel_id: str,
+    thread_ts: str,
+    expected_team_id: str,
+    expected_channel_id: str,
+) -> dict[str, Any]:
+    """Mirror of the legacy thread-bindings/resolve contract for hermes cases."""
+    team_id = str(team_id or "").strip()
+    channel_id = str(channel_id or "").strip()
+    thread_ts = str(thread_ts or "").strip()
+    if not (team_id and channel_id and thread_ts):
+        return {"status": "ignored_unbound"}
+    if expected_team_id and team_id != expected_team_id:
+        return {"status": "ignored_unbound"}
+    if expected_channel_id and channel_id != expected_channel_id:
+        return {"status": "ignored_unbound"}
+    ticket_id = store.find_hermes_ticket_by_thread(channel_id, thread_ts)
+    if not ticket_id:
+        return {"status": "ignored_unbound"}
+    return {"status": "bound", "zendesk_ticket_id": ticket_id}

@@ -174,6 +174,32 @@ class AutomationEcsStore(Protocol):
     settings: AutomationEcsSettings
 
     def migrate(self) -> None: ...
+    def _apply_schema_006_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 005→006 evolution: per-case Slack thread binding.
+
+        One root message per investigation case; every later notification
+        posts into the bound thread (legacy engineer-flow topology).
+        """
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS slack_channel_id TEXT"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS slack_thread_ts TEXT"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {} ON {} (slack_channel_id, slack_thread_ts) "
+                "WHERE slack_thread_ts IS NOT NULL"
+            ).format(
+                sql.Identifier("automation_hermes_bindings_thread_idx"),
+                self._table("automation_hermes_case_bindings"),
+            )
+        )
+
     def check_schema(self) -> None: ...
     def accept_intake(self, event: AutomationIntakeEvent, provenance: RuntimeProvenance) -> IntakeReceipt: ...
     def get_execution(self, execution_id: str) -> dict[str, Any] | None: ...
@@ -194,6 +220,8 @@ class AutomationEcsStore(Protocol):
     def hand_off_to_hermes_agent(self, job: ClaimedJob, *, zendesk_instance: str | None, prompt_release_id: str | None) -> dict[str, Any]: ...
     def defer_job(self, job: ClaimedJob, *, delay_seconds: int) -> None: ...
     def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
+    def bind_hermes_case_thread(self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str) -> dict[str, Any]: ...
+    def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None: ...
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
@@ -242,6 +270,32 @@ class InMemoryAutomationEcsStore:
 
     def migrate(self) -> None:
         self._migrated = True
+
+    def _apply_schema_006_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 005→006 evolution: per-case Slack thread binding.
+
+        One root message per investigation case; every later notification
+        posts into the bound thread (legacy engineer-flow topology).
+        """
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS slack_channel_id TEXT"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS slack_thread_ts TEXT"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {} ON {} (slack_channel_id, slack_thread_ts) "
+                "WHERE slack_thread_ts IS NOT NULL"
+            ).format(
+                sql.Identifier("automation_hermes_bindings_thread_idx"),
+                self._table("automation_hermes_case_bindings"),
+            )
+        )
 
     def check_schema(self) -> None:
         if not self._migrated:
@@ -957,6 +1011,8 @@ class InMemoryAutomationEcsStore:
                     "status": "active",
                     "escalation": None,
                     "investigation": None,
+                    "slack_channel_id": None,
+                    "slack_thread_ts": None,
                     "created_at": _iso(),
                     "updated_at": _iso(),
                 }
@@ -1077,6 +1133,35 @@ class InMemoryAutomationEcsStore:
     def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._lock:
             return self._binding_row(zendesk_ticket_id)
+
+    def bind_hermes_case_thread(
+        self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str
+    ) -> dict[str, Any]:
+        """Bind the case's Slack thread once; later calls keep the first anchor."""
+        with self._lock:
+            key = (self.settings.job_namespace, zendesk_ticket_id)
+            binding = self._hermes_bindings.get(key)
+            if binding is None:
+                raise HermesTurnStateError(zendesk_ticket_id, "case binding not found")
+            if not binding.get("slack_thread_ts"):
+                binding.update(
+                    slack_channel_id=str(channel_id or "").strip(),
+                    slack_thread_ts=str(thread_ts or "").strip(),
+                    updated_at=_iso(),
+                )
+            return copy.deepcopy(binding)
+
+    def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None:
+        with self._lock:
+            namespace = self.settings.job_namespace
+            for (ns, ticket_id), binding in self._hermes_bindings.items():
+                if (
+                    ns == namespace
+                    and str(binding.get("slack_channel_id") or "") == str(channel_id or "")
+                    and str(binding.get("slack_thread_ts") or "") == str(thread_ts or "")
+                ):
+                    return ticket_id
+        return None
 
     def get_case_mirror(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -1766,7 +1851,13 @@ class InMemoryAutomationEcsStore:
 
 class PostgresAutomationEcsStore:
     _UPGRADABLE_SCHEMA_REVISIONS = frozenset(
-        {"automation-ecs-001", "automation-ecs-002", "automation-ecs-003", "automation-ecs-004"}
+        {
+            "automation-ecs-001",
+            "automation-ecs-002",
+            "automation-ecs-003",
+            "automation-ecs-004",
+            "automation-ecs-005",
+        }
     )
 
     def __init__(self, settings: AutomationEcsSettings) -> None:
@@ -1959,6 +2050,8 @@ class PostgresAutomationEcsStore:
                 status TEXT NOT NULL DEFAULT 'active',
                 escalation JSONB,
                 investigation JSONB,
+                slack_channel_id TEXT,
+                slack_thread_ts TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 PRIMARY KEY (namespace, zendesk_ticket_id),
@@ -2036,6 +2129,7 @@ class PostgresAutomationEcsStore:
             )
         self._apply_schema_004_migrations(cursor)
         self._apply_schema_005_migrations(cursor)
+        self._apply_schema_006_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -2169,6 +2263,32 @@ class PostgresAutomationEcsStore:
                 WHERE direction_reason IS NULL AND direction IS NOT NULL
                 """
             ).format(self._table("automation_hermes_agent_turns"))
+        )
+
+    def _apply_schema_006_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 005→006 evolution: per-case Slack thread binding.
+
+        One root message per investigation case; every later notification
+        posts into the bound thread (legacy engineer-flow topology).
+        """
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS slack_channel_id TEXT"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS slack_thread_ts TEXT"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {} ON {} (slack_channel_id, slack_thread_ts) "
+                "WHERE slack_thread_ts IS NOT NULL"
+            ).format(
+                sql.Identifier("automation_hermes_bindings_thread_idx"),
+                self._table("automation_hermes_case_bindings"),
+            )
         )
 
     def check_schema(self) -> None:
@@ -3565,6 +3685,47 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
         return dict(row) if row is not None else None
+
+    def bind_hermes_case_thread(
+        self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str
+    ) -> dict[str, Any]:
+        """Bind the case's Slack thread once; later calls keep the first anchor."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET slack_channel_id=COALESCE(slack_channel_id,%s),"
+                        "slack_thread_ts=COALESCE(slack_thread_ts,%s),updated_at=NOW() "
+                        "WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (
+                        str(channel_id or "").strip() or None,
+                        str(thread_ts or "").strip() or None,
+                        self.settings.job_namespace,
+                        zendesk_ticket_id,
+                    ),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise HermesTurnStateError(zendesk_ticket_id, "case binding not found")
+        return dict(row)
+
+    def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT zendesk_ticket_id FROM {} WHERE namespace=%s "
+                        "AND slack_channel_id=%s AND slack_thread_ts=%s LIMIT 1"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (
+                        self.settings.job_namespace,
+                        str(channel_id or "").strip(),
+                        str(thread_ts or "").strip(),
+                    ),
+                )
+                row = cursor.fetchone()
+        return str(row["zendesk_ticket_id"]) if row is not None else None
 
     def get_case_mirror(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:

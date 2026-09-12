@@ -17,10 +17,14 @@ Configure these only in n8n or its deployment environment:
   credential
 - `REPLACE_WITH_SUPPORTPORTAL_BASE_URL`
 - `REPLACE_WITH_SUPPORTPORTAL_PREPRODUCTION_BASE_URL` (only for the Hermes
-  investigation buttons; `prepare_draft`/`approve_draft` clicks route to this
+  investigation flow; `prepare_draft`/`approve_draft` clicks route to this
   environment's `/automation/preproduction/api/integrations/slack/hermes-cases/actions`
   endpoint, legacy `guardrail`/`final_approve` clicks keep going to the
-  production base URL)
+  production base URL). The app-mention workflow has the same hermes branch:
+  mentions that do not resolve a production engineer-case thread are retried
+  against `/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve`
+  and, when bound, forwarded to `.../hermes-cases/messages` as investigation
+  feedback (claimed in the same inbound ledger under `HERMES-{ticket}`).
 
 Configure these in the SupportPortal production environment:
 

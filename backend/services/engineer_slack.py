@@ -18,6 +18,7 @@ LOGGER = logging.getLogger("supportportal.engineer_slack")
 ENGINEER_SLACK_SCHEMA_VERSION = 1
 SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 HERMES_REVIEW_PENDING_EVENT_TYPE = "hermes_review_pending"
+HERMES_CASE_OPENED_EVENT_TYPE = "hermes_case_opened"
 HERMES_INVESTIGATION_RESULT_EVENT_TYPE = "hermes_investigation_result"
 HERMES_DRAFT_PENDING_EVENT_TYPE = "hermes_draft_pending"
 HERMES_DRAFT_BLOCKED_EVENT_TYPE = "hermes_draft_blocked"
@@ -26,6 +27,13 @@ _ROOT_EVENT_TYPES = frozenset(
     {
         "engineer_case_opened",
         HERMES_REVIEW_PENDING_EVENT_TYPE,
+        HERMES_CASE_OPENED_EVENT_TYPE,
+    }
+)
+# Hermes investigation cases bind one root message per case; every later
+# notification is a reply in that thread (legacy engineer-flow topology).
+_HERMES_THREAD_EVENT_TYPES = frozenset(
+    {
         HERMES_INVESTIGATION_RESULT_EVENT_TYPE,
         HERMES_DRAFT_PENDING_EVENT_TYPE,
         HERMES_DRAFT_BLOCKED_EVENT_TYPE,
@@ -349,6 +357,10 @@ def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[st
     normalized_thread_ts = str(thread_ts or "").strip()
     if not is_root and not normalized_thread_ts:
         raise EngineerSlackDeliveryError("engineer_slack_thread_binding_missing")
+    if event_type in _HERMES_THREAD_EVENT_TYPES and not normalized_thread_ts:
+        # a hermes thread event without its case's thread anchor would spill
+        # into the channel root; refuse instead of double-rooting the case
+        raise EngineerSlackDeliveryError("engineer_slack_thread_binding_missing")
     payload: dict[str, Any] = {
         "channel": str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip(),
         "text": message_text,
@@ -516,8 +528,47 @@ def _investigation_evidence_lines(record: dict[str, Any], *, limit: int = 5) -> 
     return lines
 
 
+def notify_hermes_case_opened(
+    *,
+    ticket_id: str,
+    turn_id: str,
+    title: str,
+    question: str,
+    route_result: str,
+    environment: str,
+) -> dict[str, Any]:
+    """Post the case's single root message; its ts becomes the thread anchor.
+
+    Best-effort: the caller binds the returned slack_message_ts once and
+    every later notification for the case replies in that thread.
+    """
+    if not engineer_slack_configured():
+        LOGGER.info("hermes_case_opened_skipped reason=engineer_slack_not_configured")
+        return {"status": "skipped_not_configured"}
+    normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
+    normalized_question = _clean_text(question) or normalized_title
+
+    root_lines = [
+        _escape_slack_untrusted_text(normalized_title),
+        _escape_slack_untrusted_text(normalized_question),
+    ]
+    if ticket_id:
+        quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
+        root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
+    if _clean_text(route_result):
+        root_lines.append(f"route reason: {_clean_text(route_result)}")
+    return post_engineer_slack_event(
+        {
+            "event_id": f"hermes-case-opened:{ticket_id}",
+            "event_type": HERMES_CASE_OPENED_EVENT_TYPE,
+            "message_text": "\n".join(root_lines),
+        }
+    )
+
+
 def notify_hermes_investigation_result(
     *,
+    thread_ts: str,
     ticket_id: str,
     turn_id: str,
     title: str,
@@ -579,12 +630,14 @@ def notify_hermes_investigation_result(
             "environment": environment,
             "zendesk_ticket_id": ticket_id,
             "turn_id": turn_id,
-        }
+        },
+        thread_ts=thread_ts,
     )
 
 
 def notify_hermes_draft_pending(
     *,
+    thread_ts: str,
     ticket_id: str,
     turn_id: str,
     draft_id: str,
@@ -638,12 +691,14 @@ def notify_hermes_draft_pending(
             "zendesk_ticket_id": ticket_id,
             "turn_id": turn_id,
             "draft_id": draft_id,
-        }
+        },
+        thread_ts=thread_ts,
     )
 
 
 def notify_hermes_draft_blocked(
     *,
+    thread_ts: str,
     ticket_id: str,
     turn_id: str,
     title: str,
@@ -684,5 +739,6 @@ def notify_hermes_draft_blocked(
             "event_id": f"hermes-draft-blocked:{turn_id}",
             "event_type": HERMES_DRAFT_BLOCKED_EVENT_TYPE,
             "message_text": message_text,
-        }
+        },
+        thread_ts=thread_ts,
     )

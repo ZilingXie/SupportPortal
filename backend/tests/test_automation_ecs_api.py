@@ -1222,3 +1222,93 @@ def test_hermes_slack_action_endpoint_approves_draft(monkeypatch) -> None:
         )
         assert repeated.status_code == 200
         assert repeated.json()["already"] == "queued"
+
+
+def _bind_thread_for(store: InMemoryAutomationEcsStore, ticket_id: str = "123") -> None:
+    store.bind_hermes_case_thread(ticket_id, channel_id="C-TEST", thread_ts="777.000")
+
+
+def test_hermes_slack_resolve_and_feedback_messages(monkeypatch) -> None:
+    from backend.services.automation_hermes_slack_actions import (
+        handle_slack_hermes_message,
+        resolve_hermes_thread_binding,
+    )
+
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    turn_id = _park_investigation_turn(store)
+    _bind_thread_for(store)
+    client = _preproduction_dashboard_client(store)
+    base = "/automation/preproduction/api/integrations/slack/hermes-cases"
+    monkeypatch.setenv("n8n_request_token", "token-1")
+    monkeypatch.setenv("ENGINEER_SLACK_TEAM_ID", "T-TEST")
+    monkeypatch.setenv("ENGINEER_SLACK_CHANNEL_ID", "C-TEST")
+    headers = {"X-N8n-Request-Token": "token-1"}
+
+    with client:
+        resolve_params = {"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "777.000"}
+        assert (
+            client.get(f"{base}/thread-bindings/resolve", params=resolve_params).status_code
+            == 401
+        )
+        assert client.post(f"{base}/messages", json={}).status_code == 401
+        # unbound team is ignored
+        wrong_team = client.get(
+            f"{base}/thread-bindings/resolve",
+            headers=headers,
+            params={"team_id": "OTHER", "channel_id": "C-TEST", "thread_ts": "777.000"},
+        )
+        assert wrong_team.status_code == 200 and wrong_team.json()["status"] == "ignored_unbound"
+        # bound thread resolves to the case
+        bound = client.get(
+            f"{base}/thread-bindings/resolve",
+            headers=headers,
+            params={"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "777.000"},
+        )
+        assert bound.status_code == 200
+        assert bound.json() == {"status": "bound", "zendesk_ticket_id": "123"}
+
+        # an engineer's thread reply opens a re-investigation turn
+        feedback = client.post(
+            f"{base}/messages",
+            headers=headers,
+            json={
+                "team_id": "T-TEST",
+                "channel_id": "C-TEST",
+                "thread_ts": "777.000",
+                "zendesk_ticket_id": "123",
+                "slack_user_id": "U-1",
+                "text": "Check the audio session category first.",
+                "occurred_at": "2026-09-12T10:00:00Z",
+            },
+        )
+        assert feedback.status_code == 200, feedback.text
+        body = feedback.json()
+        assert body["status"] == "feedback_turn_created"
+        turn = store.get_hermes_turn(body["turn_id"])
+        assert turn["turn_kind"] == "investigation_feedback"
+        assert turn["status"] == "pending"
+        assert turn["work_result"]["reviewer_feedback"] == "Check the audio session category first."
+
+        # the identical feedback while in flight is a friendly duplicate
+        duplicate = handle_slack_hermes_message(
+            store,
+            {
+                "team_id": "T-TEST",
+                "channel_id": "C-TEST",
+                "thread_ts": "777.000",
+                "text": "Check the audio session category first.",
+            },
+            expected_team_id="T-TEST",
+            expected_channel_id="C-TEST",
+        )
+        assert duplicate["ok"] is True and duplicate["already"] == "duplicate"
+
+        # unbound thread is ignored (legacy threads stay on production)
+        unbound = handle_slack_hermes_message(
+            store,
+            {"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "1.000", "text": "hi"},
+            expected_team_id="T-TEST",
+            expected_channel_id="C-TEST",
+        )
+        assert unbound == {"ok": True, "status": "ignored_unbound"}

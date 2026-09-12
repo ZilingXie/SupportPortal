@@ -304,13 +304,15 @@ class HermesAgentTurnProcessor:
             if (
                 phase == HermesTurnPhase.WORK
                 and outcome == _PHASE_COMPLETED
-                and str(refreshed.get("turn_kind") or "normal") == "normal"
+                and str(refreshed.get("turn_kind") or "normal")
+                in {"normal", "investigation_feedback"}
                 and str(refreshed.get("direction") or "") == "investigation"
             ):
                 # Human gate: the investigation result must be reviewed (Slack
-                # + dashboard) before any customer reply is drafted. The
-                # persona phase runs later, on the investigation_reply turn
-                # opened by the dashboard continue action.
+                # thread + dashboard) before any customer reply is drafted.
+                # The persona phase runs later, on the investigation_reply
+                # turn opened by the Prepare draft action. Feedback turns are
+                # re-investigations and park the same way.
                 return self._complete_investigation_review(payload, refreshed)
             if phase == HermesTurnPhase.ROUTE.value:
                 refreshed = self.store.get_hermes_turn(payload.turn_id) or {}
@@ -328,6 +330,10 @@ class HermesAgentTurnProcessor:
                         "status": "human_review",
                         "error_code": "missing_direction",
                     }
+                if direction == "investigation":
+                    # bind the case's Slack thread before investigating, so
+                    # every later notification lands in one thread
+                    self._ensure_case_thread(payload, refreshed)
 
         publication = publication_decision_for_turn(
             self.store,
@@ -388,6 +394,49 @@ class HermesAgentTurnProcessor:
         }
         self.store.complete_hermes_agent_turn(payload.turn_id, result=result)
         return result
+
+    def _ensure_case_thread(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> str | None:
+        """Return the case's bound Slack thread ts, posting the root once.
+
+        Best-effort: a failed root post only logs; the next notification
+        retries the binding, and the dashboard flow never depends on it.
+        """
+        binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+        thread_ts = str(binding.get("slack_thread_ts") or "").strip()
+        if thread_ts:
+            return thread_ts
+        from backend.services.engineer_slack import notify_hermes_case_opened
+
+        try:
+            outcome = notify_hermes_case_opened(
+                ticket_id=payload.event.ticket.id,
+                turn_id=payload.turn_id,
+                title=str(payload.event.ticket.subject or ""),
+                question=_latest_customer_question(turn, payload),
+                route_result=_route_reason_value(turn),
+                environment=self.environment,
+            )
+            root_ts = str(outcome.get("slack_message_ts") or "").strip()
+            channel_id = str(outcome.get("slack_channel_id") or "").strip()
+            if root_ts:
+                binding = self.store.bind_hermes_case_thread(
+                    payload.event.ticket.id, channel_id=channel_id, thread_ts=root_ts
+                )
+                LOGGER.info(
+                    "hermes_case_thread_bound turn_id=%s thread_ts=%s",
+                    payload.turn_id,
+                    binding.get("slack_thread_ts"),
+                )
+                return str(binding.get("slack_thread_ts") or "")
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_case_thread_bind_failed turn_id=%s",
+                payload.turn_id,
+                exc_info=True,
+            )
+        return None
 
     def _notify_review_pending(self, payload: AgentTurnJobPayload, draft_id: str) -> None:
         # Summons only: a failed ping must never affect the turn state machine.
@@ -450,6 +499,7 @@ class HermesAgentTurnProcessor:
                 route_result=_route_reason_value(turn),
                 investigation=investigation,
                 environment=self.environment,
+                thread_ts=self._ensure_case_thread(payload, turn) or "",
             )
             LOGGER.info(
                 "hermes_investigation_result_notified turn_id=%s status=%s ts=%s",
@@ -494,6 +544,7 @@ class HermesAgentTurnProcessor:
                 draft_content=str(draft.get("content") or ""),
                 guardrail=draft.get("guardrail") if isinstance(draft.get("guardrail"), dict) else None,
                 environment=self.environment,
+                thread_ts=self._ensure_case_thread(payload, turn) or "",
             )
             LOGGER.info(
                 "hermes_draft_pending_notified turn_id=%s draft_id=%s status=%s ts=%s",
@@ -529,6 +580,7 @@ class HermesAgentTurnProcessor:
                 reason=str(publication.get("reason") or ""),
                 blockers=list(publication.get("blockers") or []),
                 environment=self.environment,
+                thread_ts=self._ensure_case_thread(payload, turn) or "",
             )
             LOGGER.info(
                 "hermes_draft_blocked_notified turn_id=%s status=%s ts=%s",
