@@ -2141,6 +2141,28 @@ p {
   color: var(--ink-muted);
 }
 
+.admin-release-versions {
+  display: grid;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.admin-release-version {
+  border-left: 3px solid var(--ghost-border);
+  padding-left: 16px;
+}
+
+.admin-release-version > header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-release-version > header h3 {
+  margin: 0;
+}
+
 .admin-source-cell {
   display: flex;
   min-width: 96px;

@@ -4,13 +4,14 @@ const WORKSPACE_AUTH_KEY = "supportportal_admin_workspace_account_id";
 const WORKSPACE_ADMIN_ENDPOINTS = Object.freeze({
   authLogin: "/api/workspace/auth/login",
   accounts: "/api/workspace/admin/accounts",
-  cases: "/api/workspace/cases?assignment_status=all",
+  cases: "/api/workspace/admin/cases",
   metrics: "/api/workspace/admin/metrics",
   audit: "/api/workspace/admin/audit?limit=200",
   schedules: "/api/workspace/admin/engineer-schedules",
   automation: "/api/workspace/admin/account-automation",
   agentConfig: "/api/workspace/admin/agent-config",
   environmentConfig: "/api/workspace/admin/environment-config",
+  releaseNotes: "/api/workspace/admin/release-notes",
 });
 const currentPath = String(globalThis.location?.pathname || globalThis.window?.location?.pathname || "");
 const ecsAdminMatch = currentPath.match(/^\/automation\/(preproduction|production)\/admin(?:\/|$)/);
@@ -43,7 +44,6 @@ const adminEndpoints = isEcsAdmin
       automation: `${ECS_ADMIN_ROOT}/account-automation`,
       agentConfig: `${ECS_ADMIN_ROOT}/agent-config`,
       environmentConfig: `${ECS_ADMIN_ROOT}/environment-config`,
-      releaseNotes: `${ECS_ADMIN_ROOT}/release-notes`,
     })
   : WORKSPACE_ADMIN_ENDPOINTS;
 const ADMIN_SECTION_TITLES = {
@@ -123,7 +123,7 @@ function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
   if (section === "route-strategy") return "agent-config";
   const rootSection = section.split("/")[0];
-  if (rootSection === "release-notes" && !isEcsAdmin) return "overview";
+  if (rootSection === "release-notes" && isEcsAdmin) return "overview";
   return ["overview", "automated-cases", "release-notes", "agent-config", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(rootSection)
     ? rootSection
     : "overview";
@@ -186,11 +186,10 @@ function escapeHtml(value) {
 async function fetchJson(url, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (
-    isEcsAdmin &&
     method !== "GET" &&
     ![adminEndpoints.authLogin, adminEndpoints.authLogout].includes(String(url))
   ) {
-    throw new Error("ECS Admin is read-only");
+    throw new Error("Admin console is read-only");
   }
   const headers = new Headers(options.headers || {});
   if (!isEcsAdmin && accessToken) {
@@ -222,12 +221,11 @@ function isAdminAuthenticated() {
 }
 
 function applyReadOnlyControls() {
-  if (!isEcsAdmin) return;
   ECS_READ_ONLY_ACTIONS.forEach((action) => {
     root.querySelectorAll(`[data-action="${action}"]`).forEach((control) => {
       control.disabled = true;
       control.setAttribute("aria-disabled", "true");
-      control.title = "Read-only in ECS Admin";
+      control.title = "Read-only admin console";
     });
   });
   root.querySelectorAll("[data-invitation-form], [data-schedule-form], [data-prompt-draft-form], [data-persona-create-form], [data-persona-draft-form]").forEach((form) => {
@@ -358,7 +356,7 @@ function renderAdminShell(content) {
     ["resolved", "task_alt", "Resolved", "RS"],
     ["audit", "history", "Audit", "AU"],
   ];
-  const visibleNavItems = isEcsAdmin ? navItems : navItems.filter(([id]) => id !== "release-notes");
+  const visibleNavItems = isEcsAdmin ? navItems.filter(([id]) => id !== "release-notes") : navItems;
   const activeNavSection = adminSection === "new-account" ? "engineers" : adminSection;
   const accountName = String(currentAccount?.display_name || currentAccount?.account_id || "Admin");
   const sectionTitle = ADMIN_SECTION_TITLES[adminSection] || ADMIN_SECTION_TITLES.overview;
@@ -1701,18 +1699,29 @@ async function loadEnvironmentConfig({ render = true } = {}) {
 }
 
 function renderReleaseNotes() {
-  const releases = Array.isArray(releaseNotesData?.releases) ? releaseNotesData.releases : [];
-  const header = `<header class="admin-main-header"><div><p class="admin-eyebrow">RELEASE NOTES</p><p>Deployment history recorded automatically by the release pipeline when each release finishes activating.</p></div></header>`;
+  const versions = Array.isArray(releaseNotesData?.versions) ? releaseNotesData.versions : [];
+  const releases = Array.isArray(releaseNotesData?.deployments) ? releaseNotesData.deployments : [];
+  const header = `<header class="admin-main-header"><div><p class="admin-eyebrow">RELEASE NOTES</p><p>Versioned release notes maintained per release; deployment records are read live from the ECS production database.</p></div></header>`;
   if (releaseNotesLoading) {
     return `${header}<section class="admin-ops-surface"><div class="list-state"><span class="spinner" aria-hidden="true"></span><strong>Loading release notes</strong></div></section>`;
   }
   if (releaseNotesLoadError) {
     return `${header}<section class="admin-ops-surface"><p class="login-error" role="alert">${escapeHtml(releaseNotesLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-release-notes">Retry</button></section>`;
   }
-  if (!releases.length) {
-    return `${header}<section class="admin-ops-surface"><p>No release notes recorded yet. Entries are written automatically when a deployment completes.</p></section>`;
+  if (!versions.length && !releases.length) {
+    return `${header}<section class="admin-ops-surface"><p>No release notes recorded yet.</p></section>`;
   }
-  return `${header}<section class="admin-ops-surface"><table class="admin-work-table admin-release-notes-table"><thead><tr><th>Release</th><th>Deployed</th><th>Commit</th><th>Prompt release</th><th>Changes</th></tr></thead><tbody>${releases.map(release => {
+  const versionsMarkup = versions.length ? `<h2>Versions</h2><div class="admin-release-versions">${versions.map(version => {
+    const sections = Array.isArray(version.sections) && version.sections.length
+      ? version.sections.map(section => `<h3>${escapeHtml(section.title || "")}</h3><ul class="admin-release-changes">${(section.items || []).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`).join("")
+      : `<p>${escapeHtml(version.summary || "")}</p>`;
+    return `<article class="admin-release-version">
+      <header><h3>v${escapeHtml(version.version || "")}</h3><time>${escapeHtml(formatDateTime(version.released_at) || "")}</time>${version.release_id ? `<small class="admin-card-detail">${escapeHtml(version.release_id)}</small>` : ""}</header>
+      ${version.summary ? `<p>${escapeHtml(version.summary)}</p>` : ""}
+      ${sections}
+    </article>`;
+  }).join("")}</div>` : "";
+  const deploymentsMarkup = releases.length ? `<h2>Deployment records</h2><table class="admin-work-table admin-release-notes-table"><thead><tr><th>Release</th><th>Deployed</th><th>Commit</th><th>Prompt release</th><th>Changes</th></tr></thead><tbody>${releases.map(release => {
     const digests = Object.entries(release.image_digests || {})
       .map(([role, digest]) => `${role}: ${escapeHtml(String(digest).slice(0, 19))}…`)
       .join("<br />");
@@ -1726,11 +1735,12 @@ function renderReleaseNotes() {
       <td>${escapeHtml(release.prompt_release_id || "—")}</td>
       <td>${changes}</td>
     </tr>`;
-  }).join("")}</tbody></table></section>`;
+  }).join("")}</tbody></table>` : "";
+  return `${header}<section class="admin-ops-surface">${versionsMarkup}${deploymentsMarkup}</section>`;
 }
 
 async function loadReleaseNotes({ render = true, force = false } = {}) {
-  if (!isEcsAdmin || releaseNotesLoading || (releaseNotesData && !force)) return;
+  if (isEcsAdmin || releaseNotesLoading || (releaseNotesData && !force)) return;
   releaseNotesLoading = true;
   releaseNotesLoadError = "";
   if (render) renderAdmin();
@@ -1975,7 +1985,7 @@ root.addEventListener("click", (event) => {
     return;
   }
   const action = event.target.closest("[data-action]")?.dataset.action;
-  if (isEcsAdmin && ECS_READ_ONLY_ACTIONS.has(action)) return;
+  if (ECS_READ_ONLY_ACTIONS.has(action)) return;
   if (action === "sign-out") {
     handleSignOut();
   } else if (action === "edit-schedule") {
@@ -2136,7 +2146,6 @@ root.addEventListener("submit", (event) => {
     return;
   }
   if (
-    isEcsAdmin &&
     form.matches("[data-invitation-form], [data-schedule-form], [data-prompt-draft-form], [data-persona-create-form], [data-persona-draft-form]")
   ) return;
   if (form.matches("[data-invitation-form]")) {

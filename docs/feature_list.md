@@ -129,8 +129,9 @@
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。
-- ECS Production 与 Preproduction 均提供 `/automation/<environment>/admin/` 与 Workspace Admin 一致的 10 栏只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。
-- ECS Admin 提供 Release Notes 栏（Automated Cases 下方，仅 ECS 两环境）：deploy 管线在每次发布 activation 通过后自动向环境库 `support_release_notes` 写权威记录（release/commit/build time/prompt release/三角色镜像 digest/自上一 release 以来的 PR 标题变更列表/部署时间，幂等 upsert），控制台只读展示；Admin 侧无任何写入口，本地 Workspace Admin 不显示该栏。
+- ECS Production 与 Preproduction 均提供 `/automation/<environment>/admin/` 与 Workspace Admin 一致的只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。
+- Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读控制台：业务读端点经专用只读角色直读 ECS production schema（缺失配置 fail-closed），全部业务写端点 405，Prompt 与 Persona 仅经发布通道变更；工程师工作台的 case 可见性契约不变。
+- Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。
 
 ### 未完成
 - 待补充。

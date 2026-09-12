@@ -23,6 +23,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
                 handlers: {{}},
                 addEventListener(type, handler) {{ this.handlers[type] = handler; }},
                 querySelector() {{ return null; }},
+                querySelectorAll() {{ return []; }},
               }};
               const storage = new Map();
               const sandbox = {{
@@ -66,11 +67,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "/api/workspace/admin/accounts",
             "/api/workspace/admin/metrics",
             "/api/workspace/admin/audit",
-            "/api/workspace/admin/dispatch",
-            "/api/workspace/admin/reassign-due",
-            "/api/workspace/admin/invitations",
             "/api/workspace/admin/engineer-schedules",
-            "/api/workspace/cases?assignment_status=all",
+            "/api/workspace/admin/cases",
             "data-invitation-form",
             "data-schedule-form",
             "On Schedule Now",
@@ -89,7 +87,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "`${ECS_ENV_BASE_PATH}/dashboard/auth/session`",
             "`${ECS_ENV_BASE_PATH}/dashboard/auth/logout`",
             "`${ECS_ADMIN_ROOT}/accounts`",
-            "ECS Admin is read-only",
+            "Admin console is read-only",
             "applyReadOnlyControls",
             "ECS_READ_ONLY_ACTIONS",
             'rag.available === false',
@@ -114,7 +112,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!isEcsAdmin || !isAdminAuthenticated()) throw new Error('ECS session mode missing');
             if (adminEndpoints.accounts !== '/automation/production/admin/api/accounts') throw new Error('ECS accounts endpoint mismatch');
             let rejected = false;
-            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); } catch (error) { rejected = error.message === 'ECS Admin is read-only'; }
+            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); } catch (error) { rejected = error.message === 'Admin console is read-only'; }
             if (!rejected || calls.length !== 0) throw new Error('business write reached the network');
             await fetchJson(adminEndpoints.accounts);
             if (calls.length !== 1 || calls[0].method !== 'GET' || calls[0].authorization) throw new Error('ECS read did not use Cookie-only GET');
@@ -138,7 +136,7 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (adminEndpoints.authSession !== '/automation/preproduction/dashboard/auth/session') throw new Error('preproduction session endpoint mismatch');
             if (adminEndpoints.authLogout !== '/automation/preproduction/dashboard/auth/logout') throw new Error('preproduction logout endpoint mismatch');
             let rejected = false;
-            try { await fetchJson(adminEndpoints.accounts, { method: 'POST' }); } catch (error) { rejected = error.message === 'ECS Admin is read-only'; }
+            try { await fetchJson(adminEndpoints.accounts, { method: 'POST' }); } catch (error) { rejected = error.message === 'Admin console is read-only'; }
             if (!rejected) throw new Error('preproduction business write was not blocked');
             """,
             pathname="/automation/preproduction/admin/",
@@ -171,56 +169,138 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             pathname="/automation/production/admin/",
         )
 
-    def test_release_notes_section_is_ecs_only_and_renders_deploy_records(self) -> None:
+    def test_managed_prompt_diff_view_preserves_operator_context(self) -> None:
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            const managedPrompt = {
+              key: 'route-system', name: 'Route classifier', version: '1', component_key: 'route-classifier', content: 'header\\nold rule\\nfooter',
+              metadata: { managed: true, active_version: 1, scheduled_version: null, versions: [
+                { prompt_key: 'route-system', version: 2, status: 'draft', content: 'header\\nnew rule\\nfooter', change_note: 'Change rule', created_at: '2026-07-23T00:00:00Z' },
+                { prompt_key: 'route-system', version: 1, status: 'active', content: 'header\\nold rule\\nfooter', change_note: 'Initial', created_at: '2026-07-22T00:00:00Z' },
+              ] }
+            };
+            agentConfigData = {
+              agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', components: [], prompts: [managedPrompt], skills: [], mcp_servers: [] }],
+              route_navigation: { key: 'route-agent', kind: 'agent', is_agent: true, name: 'Route Agent', description: 'Routes.', status: 'active', prompt_keys: ['route-system'], capabilities: [], children: [] },
+              route_runtime: { router_prompt_version: 'v1', stage_details: [] }, automation_personas: []
+            };
+            selectedAgentPath = ['route-agent'];
+            selectedAgentViews['route-agent'] = 'prompts';
+            selectedPromptVersions['route-system'] = 2;
+            promptDiffKeys.add('route-system');
+            const diffMarkup = renderAgentConfig();
+            if (!diffMarkup.includes('is-removed') || !diffMarkup.includes('is-added')) throw new Error('line diff highlighting missing');
+            if (!diffMarkup.includes('old rule') || !diffMarkup.includes('new rule')) throw new Error('diff content missing');
+            """,
+            pathname="/workspace/admin/",
+        )
+
+    def test_release_notes_section_is_workspace_only_and_renders_both_views(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         for marker in (
-            '`${ECS_ADMIN_ROOT}/release-notes`',
+            'releaseNotes: "/api/workspace/admin/release-notes"',
+            'cases: "/api/workspace/admin/cases"',
             '"release-notes": "Release Notes"',
             '["release-notes", "new_releases", "Release Notes", "RN"]',
-            'rootSection === "release-notes" && !isEcsAdmin',
-            'navItems.filter(([id]) => id !== "release-notes")',
+            'rootSection === "release-notes" && isEcsAdmin',
+            'isEcsAdmin ? navItems.filter(([id]) => id !== "release-notes") : navItems',
             "renderReleaseNotes",
             "loadReleaseNotes",
             'data-action="retry-release-notes"',
             "admin-release-changes",
+            "admin-release-versions",
+            "Deployment records",
+            "Admin console is read-only",
+            "Read-only admin console",
         ):
             self.assertIn(marker, source)
-        self.assertNotIn("/api/workspace/admin/release-notes", source)
+        self.assertNotIn("`${ECS_ADMIN_ROOT}/release-notes`", source)
 
         self.run_admin_app_script(
             """
             await Promise.resolve();
             releaseNotesData = {
-              releases: [
+              versions: [
                 {
-                  release_id: 'r20260912-abcdef1',
-                  git_commit: 'a'.repeat(40),
-                  build_time: '2026-09-12T00:00:00Z',
-                  prompt_release_id: 'pr-1',
+                  version: '1.0.0',
+                  released_at: '2026-09-11',
+                  release_id: 'r20260911-42f2f11',
+                  summary: 'Baseline release.',
+                  sections: [
+                    { title: 'New features', items: ['Account case automation on ECS Production.'] },
+                    { title: 'Fixed', items: ['Fixed a routing edge case.'] },
+                  ],
+                },
+              ],
+              deployments: [
+                {
+                  release_id: 'r20260911-42f2f11',
+                  git_commit: '4'.repeat(40),
+                  build_time: '2026-09-11T13:29:36Z',
+                  prompt_release_id: 'pr-ef75242faa67',
                   image_digests: { api: 'sha256:1111111111111111', route: 'sha256:2222222222222222' },
-                  changes: ['Add release notes tab (p2-153) (#1160)', 'Fix thing (#1159)'],
-                  deployed_at: '2026-09-12T01:02:03+00:00',
+                  changes: ['Baseline (r20260911-42f2f11)'],
+                  deployed_at: '2026-09-11T00:00:00+00:00',
                 },
               ],
             };
             const markup = renderReleaseNotes();
-            if (!markup.includes('r20260912-abcdef1')) throw new Error('release id missing');
-            if (!markup.includes('Add release notes tab (p2-153) (#1160)')) throw new Error('change entry missing');
-            if (!markup.includes('pr-1')) throw new Error('prompt release missing');
+            if (!markup.includes('v1.0.0')) throw new Error('version heading missing');
+            if (!markup.includes('Account case automation on ECS Production.')) throw new Error('version item missing');
+            if (!markup.includes('Deployment records')) throw new Error('deployment view heading missing');
+            if (!markup.includes('r20260911-42f2f11')) throw new Error('deployment release id missing');
+            if (!markup.includes('pr-ef75242faa67')) throw new Error('prompt release missing');
             if (!markup.includes('sha256:111111111111')) throw new Error('digest summary missing');
-            releaseNotesData = { releases: [] };
+            releaseNotesData = { versions: [], deployments: [] };
             if (!renderReleaseNotes().includes('No release notes recorded yet')) throw new Error('empty state missing');
             """,
-            pathname="/automation/production/admin/",
+            pathname="/workspace/admin/",
         )
 
         self.run_admin_app_script(
             """
             await Promise.resolve();
-            if (adminEndpoints.releaseNotes !== undefined) throw new Error('release notes must not be wired for local workspace mode');
+            if (adminEndpoints.releaseNotes !== undefined) throw new Error('release notes must not be wired for ECS admin pages');
+            if (adminEndpoints.cases !== '/automation/production/admin/api/cases') throw new Error('ECS cases endpoint mismatch');
+            """,
+            pathname="/automation/production/admin/",
+        )
+
+    def test_workspace_admin_local_mode_is_read_only(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        # The read-only guards must not be gated on the ECS pathname anymore.
+        self.assertNotIn("if (!isEcsAdmin) return;", source[source.index("function applyReadOnlyControls"):source.index("function isAdminAuthenticated")])
+        self.assertNotIn("isEcsAdmin &&\n    method !== \"GET\"", source)
+
+        self.run_admin_app_script(
+            """
+            await Promise.resolve();
+            currentAccount = { account_id: 'admin', display_name: 'Admin', role: 'admin' };
+            let rejected = false;
+            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); }
+            catch (error) { rejected = error.message === 'Admin console is read-only'; }
+            if (!rejected) throw new Error('local mode write was not blocked');
+            const control = { disabled: false, title: '', attrs: {}, setAttribute(name, value) { this.attrs[name] = value; } };
+            root.querySelectorAll = (selector) => selector.includes('dispatch') ? [control] : [];
+            applyReadOnlyControls();
+            if (!control.disabled || control.attrs['aria-disabled'] !== 'true') throw new Error('write control was not disabled in local mode');
             """,
             pathname="/workspace/admin/",
         )
+
+    def test_workspace_admin_uses_production_reader_endpoints(self) -> None:
+        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
+        for marker in (
+            'accounts: "/api/workspace/admin/accounts"',
+            'metrics: "/api/workspace/admin/metrics"',
+            'audit: "/api/workspace/admin/audit?limit=200"',
+            'schedules: "/api/workspace/admin/engineer-schedules"',
+            'automation: "/api/workspace/admin/account-automation"',
+            'agentConfig: "/api/workspace/admin/agent-config"',
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn('cases: "/api/workspace/cases?assignment_status=all"', source)
 
     def test_account_automation_hierarchical_agent_config_and_environment_tabs_are_operational(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
@@ -511,93 +591,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             ] };
             const markup = renderAutomationPersonaPanel();
             if (!markup.includes('If no enabled Persona with a published version is available, the reply moves to Human Review and no customer copy is sent.')) throw new Error('Persona unavailable Human Review consequence missing');
-            """
-        )
-
-    def test_automation_router_persona_actions_use_persona_lifecycle_api(self) -> None:
-        self.run_admin_app_script(
-            """
-            accessToken = 'admin-token';
-            currentAccount = { account_id: 'admin', role: 'admin' };
-            adminSection = 'agent-config';
-            renderAdmin = () => {};
-            agentConfigData = { agents: [], route_navigation: null, route_runtime: {}, automation_personas: [] };
-            FormData = function FormData(form) { return { get(name) { return form.values[name]; }, entries() { return []; } }; };
-            const requests = [];
-            fetch = async (url, options = {}) => {
-              requests.push({ url: String(url), options });
-              if (String(url) === '/api/workspace/admin/agent-config') {
-                return { ok: true, status: 200, json: async () => agentConfigData };
-              }
-              if (String(url).includes('/drafts')) {
-                return { ok: true, status: 200, json: async () => ({ version: { version: 2, status: 'draft' } }) };
-              }
-              if (String(url).includes('/publish')) {
-                return { ok: true, status: 200, json: async () => ({ version: { version: 2, status: 'published' } }) };
-              }
-              return { ok: true, status: 200, json: async () => ({ persona: { enabled: false } }) };
-            };
-            const form = { dataset: { personaKey: 'sid-bright' }, values: {
-              instruction: 'Warm and direct', opener: 'Hello', change_note: 'Refine voice', based_on_version: '1'
-            } };
-            await createPersonaDraft(form);
-            const draftRequest = requests.find(item => item.url.includes('/drafts'));
-            if (!draftRequest.url.endsWith('/account-personas/sid-bright/drafts')) throw new Error('Persona draft used the wrong key');
-            const draftBody = JSON.parse(draftRequest.options.body);
-            if (draftBody.content.instruction !== 'Warm and direct' || draftBody.content.opener !== 'Hello' || Object.hasOwn(draftBody.content, 'signature')) throw new Error('Persona draft payload contains unsupported fields');
-            if (draftBody.based_on_version !== 1 || draftBody.change_note !== 'Refine voice') throw new Error('Persona draft version contract invalid');
-            await runPersonaVersionAction('publish', 'sid-precise', 2);
-            if (!requests.some(item => item.url.endsWith('/account-personas/sid-precise/versions/2/publish'))) throw new Error('Persona publish used the wrong key');
-            await setPersonaEnabled('custom-calm', false);
-            const toggleRequest = requests.find(item => item.url.endsWith('/account-personas/custom-calm'));
-            if (toggleRequest.options.method !== 'PATCH' || JSON.parse(toggleRequest.options.body).enabled !== false) throw new Error('Persona enabled PATCH invalid');
-            if (requests.filter(item => item.url === '/api/workspace/admin/agent-config').length < 3) throw new Error('Persona operations did not refresh Agent Config');
-            """
-        )
-
-    def test_managed_prompt_diff_restore_and_failed_draft_preserve_operator_context(self) -> None:
-        self.run_admin_app_script(
-            """
-            accessToken = 'admin-token';
-            currentAccount = { account_id: 'admin', role: 'admin' };
-            adminSection = 'agent-config';
-            const managedPrompt = {
-              key: 'route-system', name: 'Route classifier', version: '1', component_key: 'route-classifier', content: 'header\\nold rule\\nfooter',
-              metadata: { managed: true, active_version: 1, scheduled_version: null, versions: [
-                { prompt_key: 'route-system', version: 2, status: 'draft', content: 'header\\nnew rule\\nfooter', change_note: 'Change rule', created_at: '2026-07-23T00:00:00Z' },
-                { prompt_key: 'route-system', version: 1, status: 'active', content: 'header\\nold rule\\nfooter', change_note: 'Initial', created_at: '2026-07-22T00:00:00Z' },
-              ] }
-            };
-            agentConfigData = {
-              agents: [{ key: 'route-agent', kind: 'agent', name: 'Route Agent', description: 'Routes.', status: 'active', components: [], prompts: [managedPrompt], skills: [], mcp_servers: [] }],
-              route_navigation: { key: 'route-agent', kind: 'agent', is_agent: true, name: 'Route Agent', description: 'Routes.', status: 'active', prompt_keys: ['route-system'], capabilities: [], children: [] },
-              route_runtime: { router_prompt_version: 'v1', stage_details: [] }, automation_personas: []
-            };
-            selectedAgentPath = ['route-agent'];
-            selectedAgentViews['route-agent'] = 'prompts';
-            selectedPromptVersions['route-system'] = 2;
-            promptDiffKeys.add('route-system');
-            const diffMarkup = renderAgentConfig();
-            if (!diffMarkup.includes('is-removed') || !diffMarkup.includes('is-added')) throw new Error('line diff highlighting missing');
-            if (!diffMarkup.includes('old rule') || !diffMarkup.includes('new rule')) throw new Error('diff content missing');
-
-            FormData = function FormData(form) { return { get(name) { return form.values[name]; }, entries() { return []; } }; };
-            promptEditorKeys.add('route-system');
-            const form = { dataset: { promptKey: 'route-system', basedOnVersion: '1' }, values: { content: 'operator text', change_note: 'operator note' } };
-            fetch = async () => ({ ok: false, status: 409, json: async () => ({ detail: 'active prompt version changed' }) });
-            await createPromptDraft(form);
-            if (promptDraftValues['route-system'].content !== 'operator text' || promptDraftValues['route-system'].change_note !== 'operator note') throw new Error('failed draft lost operator input');
-            if (!promptEditorKeys.has('route-system') || promptOperationNotice['route-system'].tone !== 'error') throw new Error('failed draft state missing');
-
-            let fetchCount = 0;
-            fetch = async (url) => {
-              fetchCount += 1;
-              if (String(url).includes('/restore')) return { ok: true, status: 200, json: async () => ({ version: { version: 3, status: 'draft' } }) };
-              return { ok: true, status: 200, json: async () => agentConfigData };
-            };
-            await runPromptVersionAction('restore', 'route-system', 1);
-            if (selectedPromptVersions['route-system'] !== 3) throw new Error('restore did not select new draft');
-            if (fetchCount < 2) throw new Error('restore did not refresh agent config');
             """
         )
 

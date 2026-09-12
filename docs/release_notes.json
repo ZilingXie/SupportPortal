@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "versions": [
+    {
+      "version": "1.0.0",
+      "released_at": "2026-09-11",
+      "release_id": "r20260911-42f2f11",
+      "summary": "Baseline: SupportPortal automation running on ECS Production at release r20260911-42f2f11.",
+      "sections": [
+        {
+          "title": "Notes",
+          "items": [
+            "Version 1.0.0 is the baseline assigned to the current Production release; earlier history is not versioned.",
+            "Machine-readable deployment records (release id, commit, image digests, included PRs, deploy time) are read live from the Production database in the Deployment records view."
+          ]
+        },
+        {
+          "title": "Included capabilities",
+          "items": [
+            "Account case automation (Fraud Account, Account Suspension, Detailed Invoice, Enablement, Quota) on ECS Production with routed Persona replies.",
+            "Engineer Slack collaboration loop with Hermes investigation review, thread-bound summons, and publication gates.",
+            "Ticket-centric read-only dashboard and Admin console under /automation/production/.",
+            "CodeBuild release pipeline with immutable images, prompt-release gates, and deploy-time release-note records."
+          ]
+        }
+      ]
+    }
+  ]
+}

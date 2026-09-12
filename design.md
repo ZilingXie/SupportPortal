@@ -369,6 +369,8 @@
 12. `Agent Config` 窄屏使用逐级 Agent 进入模式，保留 Back、面包屑和当前 Agent 的直属子 Agent 入口；流程结果继续留在 Overview，禁止四层缩进压缩正文。树展开、详情切换和 chevron 反馈统一控制在 180ms 内，并在 reduced-motion 下取消；所有折叠与导航控件保持至少 `44x44px` 点击区域。
 13. Persona selector 固定优先展示 `Sid Precise / Precise`、`Sid Bright / Bright`、`Sid Warm / Warm`，每项同时显示 Enabled/Disabled 与 Published version；未知 custom Persona 排在三个 seed Persona 之后且不得套用错误 style。当前选择必须使用 `aria-pressed` 或等价文字语义，不得只靠颜色；Persona 不是 Agent，不得进入 Agent tree 或移动端 Agent 导航。
 14. Persona workspace 必须说明运行边界：首次 Account-only 客户可见回复只从 enabled 且已有 published version 的 Persona 中随机选择并 pin 精确版本；full rerun 清除 assignment 后可重新选择，reply-only recovery 保留 pin；Human Review 不分配 Persona。保留现有 Create Persona 与按 Persona key 隔离的 Draft、Publish、Rollback、Enable/Disable 能力。
+15. Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读运营控制台：全部业务读端点（accounts、cases、metrics、audit、engineer schedules、Automated Cases、Agent Config）必须从 ECS Production schema 经只读 reader 读取，不得读 EC2 本地业务库；登录与账号体系保留 EC2 本地。所有业务写操作（dispatch、reassign-due、invitation、engineer schedule、case assignment、Prompt 草稿/调度/恢复、Persona 编辑）前后端一律禁用——后端写端点 fail closed，前端复用 ECS Admin 的只读控件逻辑；Prompt 与 Persona 对 ECS Production 只经发布通道变更。`Environment Config` 维持读取 EC2 .env 的配置名 inventory（非业务库数据）。
+16. `Release Notes` 是 Workspace Admin 独有 section（ECS Admin 页不显示），位于 `Automated Cases` 正下方，含两个视图：`Versions` 人读视图按语义化版本（major.minor.patch）倒序展示，数据来自仓库 `docs/release_notes.json`，由发布 agent 按仓库规则维护（基线 1.0.0=当前 Production；新增能力→minor，修复/配置/开关/下架→patch，整体批次晋升或破坏性变更→major）；`Deployment records` 机器视图实时读取 ECS Production 的部署落库记录（release、commit、镜像 digest、PR 变更列表、部署时间）。两个视图都必须使用 `no-store`。
 
 ### 6.8 Account Ticket Conversation (`/account`)
 1. 所有 account ticket 都必须先展示 route 结果，再由 AI 尝试生成仅在 `/account` 内可见的回复；不得把 AI draft 或 assistant message 回传到来源 Zendesk / 客户邮件渠道。

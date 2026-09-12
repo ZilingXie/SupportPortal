@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-12T09:13:11Z",
-  "source_base_commit": "8aebb07d3de40309557617eae10a505c4428d2fa",
-  "registry_digest": "4f44e795a8180da7e0c2981f8a80c79e3d4ca59446c387cc10609995d940d87b",
+  "generated_at": "2026-09-12T11:24:52Z",
+  "source_base_commit": "b5f238f6c9fa47e03c0e77dcdd6f742f3e55ba7f",
+  "registry_digest": "d3d9ce3f4b8e2a20ab9aabfb1902b4f451dc08676318a6053559892d939e4077",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2757,6 +2757,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction rollout with auto-written release note",
           "details": "PR #1158+#1159（main d3f8247c）发布 r20260911-d3f8247（--bootstrap-account-schema 建 support_release_notes 表；全阶段 passed 含新增 release_note 阶段，总 1261s）。线上验收 2026-09-12：/admin/api/release-notes 返回部署自动写入的首条记录（release_id 与运行版本一致、api/route/worker 三 digest 齐全、changes=首条单 commit PR 标题、deployed_at 完整）；admin 导航含 Release Notes（app.js 含 release-notes 标记 13 处）；本地 workspace 模式不接线（合同测试覆盖）；Production admin 200 无回归。过程修复：#1144 漏改的 initialize() 内联 source_check（PR #1159，双源一致性回归测试）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Read-only role provisioned",
+          "details": "2026-09-12 在 n8n-postgres-db（database supportportal_production）创建 supportportal_ec2_admin_read（NOSUPERUSER/NOINHERIT，仅 GRANT USAGE+SELECT ON SCHEMA supportportal_production + default privileges），DSN 存 SSM SecureString /supportportal/production/ec2-admin-read-dsn；本机实测 SELECT 56 account cases 可读、INSERT/CREATE TABLE/UPDATE 全部 InsufficientPrivilege。"
+        },
+        {
+          "type": "test",
+          "label": "Dual-suite green after data-source switch",
+          "details": "test_workspace_api 28+ 用例（fake reader 注入、503 fail-closed、写端点 405 矩阵、release-notes 组合与文件错误、数据文件契约）；test_workspace_admin_ui_contract 34 用例（本地模式只读+双视图渲染、ECS 模式隐藏 release-notes、生产 reader 端点表）；合计定向 244 passed。"
         }
       ],
       "source_refs": [
@@ -2769,7 +2779,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -12211,6 +12221,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-155",
+      "title": "workspace admin 切换为 ECS Production 只读控制台 + 版本化 Release Notes",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-12",
+      "updated_at": "2026-09-12",
+      "summary": "workspace admin（support.stellarix.space/workspace/admin/）整体切换为 ECS Production 的只读控制台：9 个读端点（accounts/cases/metrics/audit/engineer-schedules/account-automation/agent-config + 新 admin/cases）改经 AutomationEcsAdminReader 直读 ECS production schema（新只读角色 supportportal_ec2_admin_read，仅 USAGE+SELECT，SSM /supportportal/production/ec2-admin-read-dsn，env ECS_PRODUCTION_ADMIN_DSN 注入，缺失 503 fail-closed）；全部业务写端点 405（dispatch/reassign-due/invitations/schedule/assignment/prompt 草稿与调度/persona 全套），前端两模式统一只读；prompt/persona 变更仅走发布通道。Release Notes 双视图（本地模式独有，ECS 页隐藏）：人读 versions（docs/release_notes.json，英文 semver 声网风格，基线 1.0.0=r20260911-42f2f11，agent 按 docs/agent_workflow_details.md 版本规则在每次授权 production 部署后维护）+ 机器 deployments（实时读 production 库 support_release_notes）。工程师工作台 /api/workspace/cases 原样保留（角色可见性契约不变）；EC2 本地 auth 保留；删死代码 _account_production_repository/_attach_account_case_token_usage。",
+      "next_action": "定向测试全绿；finalize 合入后本地官方栈重启验证（root .env 注入只读 DSN）：/health+build ref+admin 页渲染 ECS production 数据+release-notes 双视图+写操作 405。残余：EC2 生效需其 .env 加 ECS_PRODUCTION_ADMIN_DSN 并部署（每日 timer/用户）；ECS 页 release-notes tab 移除随下次 ECS 部署生效。",
+      "acceptance_criteria": [
+        "本地官方栈 /workspace/admin/ 登录后各栏目渲染 ECS production 数据（reader 口径：automation namespace 过滤、token usage automation 侧、Engineer Management 为空为真实态）。",
+        "GET /api/workspace/admin/release-notes 返回 {versions:[docs/release_notes.json], deployments:[production 库实时记录]}；versions 契约测试锁 semver/倒序/无 deployments 镜像。",
+        "全部业务写端点 405 且 detail 含 read-only；前端本地模式禁用写控件、fetchJson 拒绝非 GET。",
+        "ECS_PRODUCTION_ADMIN_DSN 缺失时读端点 503 fail-closed（不回退本地库）。",
+        "只读角色实测：SELECT 可用，INSERT/UPDATE/CREATE denied（已验证）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "Read-only role provisioned",
+          "details": "2026-09-12 在 n8n-postgres-db（database supportportal_production）创建 supportportal_ec2_admin_read（NOSUPERUSER/NOINHERIT，仅 GRANT USAGE+SELECT ON SCHEMA supportportal_production + default privileges），DSN 存 SSM SecureString /supportportal/production/ec2-admin-read-dsn；本机实测 SELECT 56 account cases 可读、INSERT/CREATE TABLE/UPDATE 全部 InsufficientPrivilege。"
+        },
+        {
+          "type": "test",
+          "label": "Dual-suite green after data-source switch",
+          "details": "test_workspace_api 28+ 用例（fake reader 注入、503 fail-closed、写端点 405 矩阵、release-notes 组合与文件错误、数据文件契约）；test_workspace_admin_ui_contract 34 用例（本地模式只读+双视图渲染、ECS 模式隐藏 release-notes、生产 reader 端点表）；合计定向 244 passed。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-12",
+          "event": "created",
+          "summary": "用户决策：admin 页统一到 workspace admin、整页切读 ECS production 库（EC2 直连 RDS）、整页只读、新建只读角色、人读 release note 英文 semver 且 agent 按规则自动定版本；p2-153 的 ECS 页 tab 移除、后端落库保留为数据源。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/main.py",
+        "ui/workspace-ui/admin/app.js",
+        "docs/release_notes.json",
+        "docs/agent_workflow_details.md",
+        "design.md"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17602,8 +17662,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",
-        "ECS Production 与 Preproduction 均提供 `/automation/\u003cenvironment>/admin/` 与 Workspace Admin 一致的 10 栏只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。",
-        "ECS Admin 提供 Release Notes 栏（Automated Cases 下方，仅 ECS 两环境）：deploy 管线在每次发布 activation 通过后自动向环境库 `support_release_notes` 写权威记录（release/commit/build time/prompt release/三角色镜像 digest/自上一 release 以来的 PR 标题变更列表/部署时间，幂等 upsert），控制台只读展示；Admin 侧无任何写入口，本地 Workspace Admin 不显示该栏。"
+        "ECS Production 与 Preproduction 均提供 `/automation/\u003cenvironment>/admin/` 与 Workspace Admin 一致的只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。",
+        "Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读控制台：业务读端点经专用只读角色直读 ECS production schema（缺失配置 fail-closed），全部业务写端点 405，Prompt 与 Persona 仅经发布通道变更；工程师工作台的 case 可见性契约不变。",
+        "Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。"
       ],
       "planned": [
         "待补充。"
