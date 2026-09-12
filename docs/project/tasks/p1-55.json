@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "task_id": "p1-55",
+  "title": "Project Overview 阶段与部署环境标注修正",
+  "status": "done",
+  "owner": "Zac",
+  "summary": "修正 phase-2 过时的 planned 状态与\"全部 Task 未开始\"描述，并在 Phase summary、current_phase_id 和部署架构标签页标注第一阶段（ECS Production）/第二阶段（ECS Preproduction）的部署环境对应关系。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "phase-2 状态从 planned 修正为 active，summary 移除\"当前全部 Task 标记为未开始\"并标注能力部署在 ECS Preproduction 验证。",
+    "phase-1 summary 标注核心交付闭环能力已上线 ECS Production、承载第一阶段能力。",
+    "project.current_phase_id 切换为 phase-2，页面默认看板与头部\"当前阶段\"随之切换。",
+    "部署架构标签页移除过时断言（n8n 尚未切换、Preproduction 与 EC2 Staging 仍待建立、零流量上线），三处文案标注第一阶段/第二阶段环境对应。",
+    "generate_project_overview.py --write 后 --check 通过，Project Overview 契约测试通过。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Project Overview registry regeneration and contract tests",
+      "command": "python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract",
+      "result": "全部通过；data.js 中 phase-2 status=active、current_phase_id=phase-2。"
+    },
+    {
+      "type": "document",
+      "label": "阶段与部署环境对应文案",
+      "details": "phase-1/phase-2 summary、project.json current_phase_id 与 projectoverview.html 部署架构标签页（ECS Production/Preproduction 泳道与\"当前发布状态\"卡）按\"Production=第一阶段 / Preproduction=第二阶段\"修正，环境事实对照 docs/ecs_production_status_report.md 与 p2-151~154 任务 evidence 核对。"
+    }
+  ],
+  "source_refs": [
+    "docs/project/phases/phase-1.json",
+    "docs/project/phases/phase-2.json",
+    "docs/project/project.json",
+    "docs/projectoverview.html",
+    "backend/tests/test_project_overview_contract.py"
+  ],
+  "created_at": "2026-09-12",
+  "updated_at": "2026-09-12",
+  "history": [
+    {
+      "at": "2026-09-12",
+      "event": "created",
+      "summary": "为 Project Overview 阶段状态修正与部署环境标注建立独立任务记录。"
+    },
+    {
+      "at": "2026-09-12",
+      "event": "completed",
+      "summary": "完成 phase-2 状态修正（planned→active）、current_phase_id 切换与部署架构标签页第一阶段/第二阶段文案标注。"
+    }
+  ],
+  "legacy_refs": [],
+  "legacy_ids": [],
+  "phase_id": "phase-1",
+  "module_id": "platform-delivery",
+  "function_id": "project-governance"
+}

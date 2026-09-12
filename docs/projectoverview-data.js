@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-12T10:46:33Z",
-  "source_base_commit": "b5f238f6c9fa47e03c0e77dcdd6f742f3e55ba7f",
-  "registry_digest": "a9fe31a6ce22321d7b5d16a9e22375169c95e52ede74c8f8b2225ee1e2462c7b",
+  "generated_at": "2026-09-12T11:14:33Z",
+  "source_base_commit": "abf97ab45b8e1fe515ff4bedd385bc49670b7430",
+  "registry_digest": "f0c5e05a41b93a3fd5699f521c0cb3ea7a8142b2f24c83683afae2de929db24a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -34,7 +34,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       7,
       30
     ],
-    "current_phase_id": "phase-1"
+    "current_phase_id": "phase-2"
   },
   "phases": [
     {
@@ -42,7 +42,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "title": "Phase 1：核心交付闭环",
       "status": "active",
-      "summary": "当前交付阶段，聚焦 Account Automation、Admin Operations 和 Platform Delivery；这三个 Module 的 Task 属于本阶段完成范围。",
+      "summary": "核心交付闭环能力（Account Automation、Admin Operations、Platform Delivery）已上线 ECS Production 运行，承载第一阶段能力；本阶段存量 Task 处于收尾与维护，这三个 Module 的 Task 属于本阶段完成范围。",
       "target_date": null,
       "exit_criteria": [
         "Account Automation 的路由、执行、人工审核、Zendesk 交付与受控发布任务完成，并有对应 evidence。",
@@ -60,8 +60,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "phase_id": "phase-2",
       "title": "Phase 2：Client、Knowledge 与 Engineer AI 演进",
-      "status": "planned",
-      "summary": "在 Phase 1 完成后，推进 Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace；当前全部 Task 标记为未开始。",
+      "status": "active",
+      "summary": "Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace 的演进能力持续交付中，当前部署在 ECS Preproduction 验证（Hermes 调查链、Engineer Slack 协作、Admin 控制台增强等），验证通过后按不可变 release 晋级 ECS Production；Production 仍承载第一阶段能力。",
       "target_date": null,
       "exit_criteria": [
         "Client Experience 的对话能力和附件/流式交互可验证。",
@@ -2832,6 +2832,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Project Overview registry regeneration and contract tests",
+          "command": "python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract",
+          "result": "全部通过；data.js 中 phase-2 status=active、current_phase_id=phase-2。"
+        },
+        {
+          "type": "document",
+          "label": "阶段与部署环境对应文案",
+          "details": "phase-1/phase-2 summary、project.json current_phase_id 与 projectoverview.html 部署架构标签页（ECS Production/Preproduction 泳道与\"当前发布状态\"卡）按\"Production=第一阶段 / Preproduction=第二阶段\"修正，环境事实对照 docs/ecs_production_status_report.md 与 p2-151~154 任务 evidence 核对。"
+        },
+        {
+          "type": "test",
           "label": "Single-host restart reliability regression coverage",
           "command": "python3 -m unittest backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rebuilds_with_current_main_build_metadata backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_health_failure_restores_previous_image backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_same_tag_failure_restores_previous_image_id backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rejects_remote_health_missing_contract backend.tests.test_workflow_scripts.WorkflowScriptTests.test_restart_single_host_stack_rejects_active_deploy_lock",
           "details": "覆盖 core-first/worker-second 启动、严格 remote health、回滚阶段顺序、活动部署锁和 stale lock 隔离。"
@@ -2869,8 +2880,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 4,
-      "done_count": 3,
+      "task_count": 5,
+      "done_count": 4,
       "blocked_count": 0
     },
     {
@@ -7900,6 +7911,62 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "case-route"
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p1-55",
+      "title": "Project Overview 阶段与部署环境标注修正",
+      "status": "done",
+      "owner": "Zac",
+      "summary": "修正 phase-2 过时的 planned 状态与\"全部 Task 未开始\"描述，并在 Phase summary、current_phase_id 和部署架构标签页标注第一阶段（ECS Production）/第二阶段（ECS Preproduction）的部署环境对应关系。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "phase-2 状态从 planned 修正为 active，summary 移除\"当前全部 Task 标记为未开始\"并标注能力部署在 ECS Preproduction 验证。",
+        "phase-1 summary 标注核心交付闭环能力已上线 ECS Production、承载第一阶段能力。",
+        "project.current_phase_id 切换为 phase-2，页面默认看板与头部\"当前阶段\"随之切换。",
+        "部署架构标签页移除过时断言（n8n 尚未切换、Preproduction 与 EC2 Staging 仍待建立、零流量上线），三处文案标注第一阶段/第二阶段环境对应。",
+        "generate_project_overview.py --write 后 --check 通过，Project Overview 契约测试通过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Project Overview registry regeneration and contract tests",
+          "command": "python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check && python3 -m unittest backend.tests.test_project_overview_contract",
+          "result": "全部通过；data.js 中 phase-2 status=active、current_phase_id=phase-2。"
+        },
+        {
+          "type": "document",
+          "label": "阶段与部署环境对应文案",
+          "details": "phase-1/phase-2 summary、project.json current_phase_id 与 projectoverview.html 部署架构标签页（ECS Production/Preproduction 泳道与\"当前发布状态\"卡）按\"Production=第一阶段 / Preproduction=第二阶段\"修正，环境事实对照 docs/ecs_production_status_report.md 与 p2-151~154 任务 evidence 核对。"
+        }
+      ],
+      "source_refs": [
+        "docs/project/phases/phase-1.json",
+        "docs/project/phases/phase-2.json",
+        "docs/project/project.json",
+        "docs/projectoverview.html",
+        "backend/tests/test_project_overview_contract.py"
+      ],
+      "created_at": "2026-09-12",
+      "updated_at": "2026-09-12",
+      "history": [
+        {
+          "at": "2026-09-12",
+          "event": "created",
+          "summary": "为 Project Overview 阶段状态修正与部署环境标注建立独立任务记录。"
+        },
+        {
+          "at": "2026-09-12",
+          "event": "completed",
+          "summary": "完成 phase-2 状态修正（planned→active）、current_phase_id 切换与部署架构标签页第一阶段/第二阶段文案标注。"
+        }
+      ],
+      "legacy_refs": [],
+      "legacy_ids": [],
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "project-governance"
     },
     {
       "schema_version": 2,

@@ -2,8 +2,8 @@
   "schema_version": 2,
   "phase_id": "phase-2",
   "title": "Phase 2：Client、Knowledge 与 Engineer AI 演进",
-  "status": "planned",
-  "summary": "在 Phase 1 完成后，推进 Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace；当前全部 Task 标记为未开始。",
+  "status": "active",
+  "summary": "Client Experience、RAG & Knowledge、Agent Collaboration 和 Engineer Workspace 的演进能力持续交付中，当前部署在 ECS Preproduction 验证（Hermes 调查链、Engineer Slack 协作、Admin 控制台增强等），验证通过后按不可变 release 晋级 ECS Production；Production 仍承载第一阶段能力。",
   "target_date": null,
   "exit_criteria": [
     "Client Experience 的对话能力和附件/流式交互可验证。",
