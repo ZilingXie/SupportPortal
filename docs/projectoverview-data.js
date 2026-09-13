@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-12T12:02:30Z",
-  "source_base_commit": "3fb48abe7bb5742ec88d305727a58d426d9e6df8",
-  "registry_digest": "0ba63c34eb7fa96f1f3c178da5de8c0cc1e1054366eb08400ea6ca7f056dcf21",
+  "generated_at": "2026-09-13T13:27:07Z",
+  "source_base_commit": "1500e5c52d73dd3fa6e01449577b50b450d36006",
+  "registry_digest": "1681ef6c15828d971a25cbb71c3f101ec713a0325570f723e79fdbfed79e94fb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12264,7 +12264,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/automation_ecs_api.py"
       ],
       "created_at": "2026-09-12",
-      "updated_at": "2026-09-12",
+      "updated_at": "2026-09-13",
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment",
@@ -12305,6 +12305,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-12",
           "event": "deployed",
           "summary": "v1.2 线程绑定+反馈循环发布并全链实证；Slack 真实按钮/反馈待用户导入更新版 n8n workflow 后复验。"
+        },
+        {
+          "at": "2026-09-13",
+          "event": "amended",
+          "summary": "修复本地栈门禁受阻根因之一：hash_workspace_password 的 10 字符下限改为非空校验（.env WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD=admin 保持不变，登录密码仍为 admin）。邀请流程的密码强度由 main.py Pydantic min_length=10 独立把关不受影响（新增源码契约用例锁定）；verify 无长度策略、存量账号零影响；ECS 任务定义未设该 env、控制台登录走独立系统，故无需 preprod 发布。"
         }
       ]
     },
