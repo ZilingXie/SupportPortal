@@ -29,6 +29,7 @@ from backend.services.automation_ecs_store import (
 from backend.services.automation_hermes_agent import (
     HermesAgentTurnProcessor,
     HermesTurnDeferred,
+    _route_reason_value,
 )
 from backend.services.automation_hermes_tools import (
     tool_save_investigation_progress,
@@ -597,9 +598,6 @@ class TestAgentTurnProcessor:
         assert result_kwargs["ticket_id"] == "123"
         assert result_kwargs["turn_id"] == handoff["turn_id"]
         assert result_kwargs["environment"] == "preproduction"
-        assert result_kwargs["title"] == "Enable Media Relay"
-        assert result_kwargs["question"] == "Please enable Media Relay for app 123."
-        assert result_kwargs["route_result"] == "technical"
         assert result_kwargs["investigation"]["summary"].startswith("Reproduced")
         # the draft message carries the approve button payload for the reply turn
         notify_draft.assert_called_once()
@@ -608,9 +606,6 @@ class TestAgentTurnProcessor:
         assert draft_kwargs["turn_id"] == created["turn_id"]
         assert draft_kwargs["draft_id"]
         assert draft_kwargs["environment"] == "preproduction"
-        assert draft_kwargs["title"] == "Enable Media Relay"
-        assert draft_kwargs["question"] == "Please enable Media Relay for app 123."
-        assert draft_kwargs["route_result"] == "technical"
         assert draft_kwargs["draft_content"].startswith("Hi Customer,")
         assert draft_kwargs["guardrail"]["decision"] == "approved_for_final_engineer_review"
 
@@ -967,10 +962,14 @@ class TestInvestigationReviewGate:
         ) as notify_result:
             outcome = self._processor(store, client).process(agent_job)
         assert outcome["status"] == "awaiting_investigation_review"
-        kwargs = notify_result.call_args.kwargs
-        assert kwargs["route_result"] == "technical — Technical product question needing analysis."
         binding = store.get_hermes_case_binding("123")
         assert binding["direction"] == "human"  # escalation intact; header unaffected
+        # the stable route line lives on the case-opened root, built from the
+        # turn row even after the escalation flipped the binding
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert _route_reason_value(turn) == (
+            "technical — Technical product question needing analysis."
+        )
 
     def test_guardrail_blocked_reply_turn_notifies_blocked_reason(self) -> None:
         store = _store()
@@ -1008,7 +1007,6 @@ class TestInvestigationReviewGate:
         kwargs = notify_blocked.call_args.kwargs
         assert kwargs["reason"] == "guardrail_blocked"
         assert "No draft customer reply provided." in kwargs["blockers"]
-        assert kwargs["route_result"] == "technical"
 
     def test_missing_draft_reply_turn_fails_visibly(self) -> None:
         store = _store()

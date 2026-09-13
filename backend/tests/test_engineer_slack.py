@@ -28,6 +28,7 @@ from backend.services.engineer_slack import (
     engineer_slack_outbound_disabled,
     notify_hermes_draft_blocked,
     notify_hermes_draft_pending,
+    notify_hermes_case_opened,
     notify_hermes_investigation_result,
     notify_hermes_review_pending,
     post_engineer_slack_event,
@@ -1162,6 +1163,28 @@ class EngineerSlackWorkerTests(unittest.TestCase):
         repository.list_engineer_slack_events.assert_not_called()
 
 
+    def test_hermes_case_opened_root_uses_route_result_label(self) -> None:
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.430"}),
+        ) as urlopen:
+            notify_hermes_case_opened(
+                ticket_id="13443",
+                turn_id="turn-0",
+                title="Zac Test",
+                question="I got black screen, what should I do?",
+                route_result="technical — Technical product issue",
+                environment="preproduction",
+            )
+        payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        self.assertNotIn("thread_ts", payload)
+        lines = payload["text"].split("\n")
+        self.assertEqual(lines[0], "Zac Test")
+        self.assertEqual(lines[1], "I got black screen, what should I do?")
+        self.assertEqual(lines[2], "zendesk: https://agoraio.zendesk.com/agent/tickets/13443")
+        self.assertEqual(lines[3], "route result: technical — Technical product issue")
+        self.assertNotIn("blocks", payload)
+
     def test_hermes_investigation_result_root_carries_prepare_draft_button(self) -> None:
         investigation = {
             "summary": "Uplink publish fails after successful join.",
@@ -1176,9 +1199,6 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             result = notify_hermes_investigation_result(
                 ticket_id="13424",
                 turn_id="turn-1",
-                title="Zac Test",
-                question="I got black screen, what should I do?",
-                route_result="technical — Customer reports SDK behavior",
                 investigation=investigation,
                 environment="preproduction",
                 thread_ts="100.000",
@@ -1186,10 +1206,12 @@ class EngineerSlackWorkerTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 1)
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
         self.assertEqual(payload["thread_ts"], "100.000")
+        # body-only thread reply: no repeated case header, no dashboard link
         lines = payload["text"].split("\n")
-        self.assertEqual(lines[0], "Zac Test")
-        self.assertEqual(lines[1], "I got black screen, what should I do?")
-        self.assertEqual(lines[3], "route reason: technical — Customer reports SDK behavior")
+        self.assertEqual(lines[0], "Hermes investigation — Zendesk #13424 (awaiting review)")
+        self.assertNotIn("Zac Test", payload["text"])
+        self.assertNotIn("route result:", payload["text"])
+        self.assertNotIn("dashboard", payload["text"])
         self.assertIn("Summary: Uplink publish fails", payload["text"])
         self.assertIn("- known regression", payload["text"])
         button = payload["blocks"][-1]["elements"][0]
@@ -1216,9 +1238,6 @@ class EngineerSlackWorkerTests(unittest.TestCase):
                 ticket_id="13424",
                 turn_id="turn-2",
                 draft_id="draft-2",
-                title="Zac Test",
-                question="I got black screen, what should I do?",
-                route_result="technical",
                 draft_content="Hi Ziling,\n\nWe reproduced the issue.",
                 guardrail={"decision": "approved_for_final_engineer_review", "blockers": []},
                 environment="preproduction",
@@ -1226,6 +1245,8 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             )
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
         self.assertEqual(payload["thread_ts"], "100.000")
+        self.assertNotIn("route result:", payload["text"])
+        self.assertNotIn("dashboard", payload["text"])
         self.assertIn("Hermes draft awaiting approval — Zendesk #13424", payload["text"])
         self.assertIn(
             "Guardrail: approved_for_final_engineer_review", payload["text"]
@@ -1248,9 +1269,6 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             notify_hermes_draft_blocked(
                 ticket_id="13424",
                 turn_id="turn-3",
-                title="Zac Test",
-                question="I got black screen, what should I do?",
-                route_result="technical",
                 reason="guardrail_blocked",
                 blockers=["No draft customer reply provided."],
                 environment="preproduction",
@@ -1258,6 +1276,7 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             )
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
         self.assertEqual(payload["thread_ts"], "100.000")
+        self.assertNotIn("dashboard", payload["text"])
         self.assertIn("Hermes draft blocked — Zendesk #13424", payload["text"])
         self.assertIn("Reason: guardrail_blocked", payload["text"])
         self.assertIn("- No draft customer reply provided.", payload["text"])
