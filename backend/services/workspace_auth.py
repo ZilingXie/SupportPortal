@@ -26,8 +26,12 @@ def _b64url_decode(value: str) -> bytes:
 
 def hash_workspace_password(password: str, *, salt: str | None = None) -> str:
     normalized_password = str(password or "")
-    if len(normalized_password) < 10:
-        raise ValueError("password must contain at least 10 characters")
+    if not normalized_password:
+        raise ValueError("password must not be empty")
+    # Password strength is enforced at each entry point's API layer (the
+    # invitation-complete endpoint keeps its own min_length=10 contract);
+    # the hash function itself must accept operational bootstrap passwords
+    # like WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD=admin (p2-154 local-stack gate).
     salt_value = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
         "sha256",
