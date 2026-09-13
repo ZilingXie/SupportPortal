@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-13T13:27:07Z",
-  "source_base_commit": "1500e5c52d73dd3fa6e01449577b50b450d36006",
-  "registry_digest": "1681ef6c15828d971a25cbb71c3f101ec713a0325570f723e79fdbfed79e94fb",
+  "generated_at": "2026-09-13T14:21:10Z",
+  "source_base_commit": "c3abb0b4dfbfcd576d326ced901a38f1ca2d5df2",
+  "registry_digest": "ba18939ff4eda4ec617555c8a119dff37566cdeef73494f0b7fdd3f1c24acb15",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12310,6 +12310,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-13",
           "event": "amended",
           "summary": "修复本地栈门禁受阻根因之一：hash_workspace_password 的 10 字符下限改为非空校验（.env WORKSPACE_BOOTSTRAP_ADMIN_PASSWORD=admin 保持不变，登录密码仍为 admin）。邀请流程的密码强度由 main.py Pydantic min_length=10 独立把关不受影响（新增源码契约用例锁定）；verify 无长度策略、存量账号零影响；ECS 任务定义未设该 env、控制台登录走独立系统，故无需 preprod 发布。"
+        },
+        {
+          "at": "2026-09-13",
+          "event": "amended",
+          "summary": "本地栈 DDL 死锁根治：PostgresTicketRepository.initialize 增加版本快速门（存量版本==_TICKET_SCHEMA_VERSION 时零 DDL 直接提交返回，TICKET_SCHEMA_FORCE_MIGRATE=1 逃生口），真迁移路径加 SET LOCAL lock_timeout=5s 快速失败交外层重试；版本常量旁固化 bump 惯例注释（改 DDL 必须 bump+入兼容集+ticket_storage.sql 同改）。真库实证：全量 52s vs 走门 3.4s。"
         }
       ]
     },

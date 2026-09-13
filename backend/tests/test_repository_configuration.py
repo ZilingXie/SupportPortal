@@ -23,6 +23,7 @@ from backend.repositories.knowledge_repository import (
     create_knowledge_repository,
 )
 from backend.repositories.ticket_repository import (
+    _TICKET_SCHEMA_VERSION,
     ACCOUNT_RERUN_RESET_AI_ONLY,
     ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
     InMemoryTicketRepository,
@@ -1947,6 +1948,70 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertFalse(connection.autocommit)
         first_sql = str(cursor.executed[0][0][0])
         self.assertIn("pg_advisory_xact_lock", first_sql)
+
+    def test_ticket_repository_initialize_skips_ddl_when_version_current(self) -> None:
+        cursor = _ReusableCursor(fetchone_results=[(_TICKET_SCHEMA_VERSION,)])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
+            repository.initialize()
+
+        # advisory lock + CREATE SCHEMA + meta table + version SELECT, then commit
+        self.assertEqual(len(cursor.executed), 4)
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed)
+        self.assertNotIn("ALTER TABLE", executed_sql)
+        self.assertNotIn("support_tickets", executed_sql)
+        self.assertNotIn("support_account_cases", executed_sql)
+        self.assertEqual(connection.commit_count, 1)
+
+    def test_ticket_repository_initialize_force_migrate_env_reruns_ddl(self) -> None:
+        cursor = _ReusableCursor(fetchone_results=[(_TICKET_SCHEMA_VERSION,)])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with (
+            patch.dict(os.environ, {"TICKET_SCHEMA_FORCE_MIGRATE": "1"}, clear=False),
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed)
+        self.assertIn("ALTER TABLE", executed_sql)
+        self.assertIn("support_tickets", executed_sql)
+        self.assertIn("lock_timeout", executed_sql)
+
+    def test_ticket_repository_initialize_sets_lock_timeout_on_real_migration(self) -> None:
+        cursor = _ReusableCursor(fetchone_results=[("2026-single-ai-managed-v8-message-meta",)])
+        connection = _ReusableConnection(cursor)
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+
+        with (
+            patch.object(repository, "_connect_for_initialize", return_value=connection),
+            patch.object(repository, "_ensure_account_persona_presets"),
+        ):
+            repository.initialize()
+
+        executed_sql = "\n".join(str(args[0]) for args, _kwargs in cursor.executed)
+        self.assertIn("SET LOCAL lock_timeout", executed_sql)
+        self.assertIn("ALTER TABLE", executed_sql)
+
+    def test_schema_already_current_gate_variants(self) -> None:
+        import os as _os
+        from backend.repositories.ticket_repository import _TICKET_SCHEMA_VERSION as current
+
+        repository = PostgresTicketRepository(dsn="postgresql://example", schema="supportportal")
+        with patch.dict(_os.environ, {}, clear=False):
+            _os.environ.pop("TICKET_SCHEMA_FORCE_MIGRATE", None)
+            self.assertTrue(repository._schema_already_current(current))
+            self.assertFalse(repository._schema_already_current("2026-single-ai-managed-v8-message-meta"))
+            self.assertFalse(repository._schema_already_current(""))
+        with patch.dict(_os.environ, {"TICKET_SCHEMA_FORCE_MIGRATE": "1"}, clear=False):
+            self.assertFalse(repository._schema_already_current(current))
 
     def test_persona_registry_advisory_lock_reserves_key_four(self) -> None:
         # Namespace ownership: 1 schema bootstrap, 2 asset bootstrap, 3 archive, 4 Persona registry.

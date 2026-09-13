@@ -1260,6 +1260,14 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
         "parameter_count": parameter_count,
         "consistent": column_count == placeholder_count == parameter_count,
     }
+# SCHEMA VERSION CONTRACT: initialize() skips the entire idempotent DDL when
+# the stored version equals this value (deadlock avoidance on the shared
+# database). ANY change to the bootstrap DDL MUST therefore: (1) bump this
+# version string, (2) add the previous value to
+# _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS, and (3) mirror the change in
+# backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
+# databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
+# reruns the full bootstrap as an escape hatch.
 _TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v9-product-selection-state"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
@@ -10843,6 +10851,21 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
             _ACCOUNT_PERSONA_REGISTRY_ADVISORY_LOCK,
         )
 
+    def _schema_already_current(self, existing_version: str) -> bool:
+        """Fast path for initialize(): skip the idempotent DDL entirely when
+        the stored schema version already matches this code.
+
+        The ALTER statements in the bootstrap take AccessExclusiveLock even
+        when every column exists; rerunning them on every startup deadlocks
+        against live cross-table traffic on the shared database. Real
+        migrations (new database or bumped version) still run the full
+        bootstrap. TICKET_SCHEMA_FORCE_MIGRATE=1 is the operational escape
+        hatch that reruns the full bootstrap for diagnosis.
+        """
+        if str(os.getenv("TICKET_SCHEMA_FORCE_MIGRATE") or "").strip() == "1":
+            return False
+        return bool(existing_version) and existing_version == _TICKET_SCHEMA_VERSION
+
     def initialize(self) -> None:
         runtime_role = self._runtime_database_role()
         with self._connect_for_initialize() as conn:
@@ -10878,6 +10901,21 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                 )
                 version_row = cur.fetchone()
                 existing_version = str(version_row[0]).strip() if version_row else ""
+                if self._schema_already_current(existing_version):
+                    # Already migrated: skip the idempotent DDL entirely. The
+                    # ALTER statements below take AccessExclusiveLock even
+                    # when every column exists, and running them inside one
+                    # transaction deadlocks against live cross-table traffic
+                    # on the shared database (observed: local-stack startup
+                    # vs EC2 queries on support_account_cases/
+                    # support_ticket_messages). Fresh databases and real
+                    # version upgrades still run the full bootstrap.
+                    conn.commit()
+                    return
+                # Fail fast on lock contention instead of queuing behind long
+                # transactions; the caller's retry loop handles transient
+                # conflicts during a real migration window.
+                cur.execute("SET LOCAL lock_timeout = '5s'")
                 if existing_version and existing_version not in _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS:
                     for table_name in (
                         "support_ticket_investigation_messages",
