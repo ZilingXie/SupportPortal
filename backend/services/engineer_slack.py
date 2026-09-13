@@ -556,7 +556,7 @@ def notify_hermes_case_opened(
         quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
         root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
     if _clean_text(route_result):
-        root_lines.append(f"route reason: {_clean_text(route_result)}")
+        root_lines.append(f"route result: {_clean_text(route_result)}")
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-case-opened:{ticket_id}",
@@ -571,38 +571,19 @@ def notify_hermes_investigation_result(
     thread_ts: str,
     ticket_id: str,
     turn_id: str,
-    title: str,
-    question: str,
-    route_result: str,
     investigation: dict[str, Any] | None,
     environment: str,
 ) -> dict[str, Any]:
     """Best-effort investigation-result delivery when a turn parks for review.
 
-    One channel root message: the legacy four-line header (case title /
-    customer question / zendesk link / route result) followed by the Hermes
-    investigation result, a Prepare draft action button, and the dashboard
-    review link as fallback. The button routes through the n8n interaction
-    workflow back to the hermes-cases actions endpoint; the caller must treat
-    any failure as non-blocking for the turn.
+    A reply in the case's bound thread: body only (the root message already
+    carries the case header), ending with a Prepare draft action button that
+    routes through the n8n interaction workflow back to the hermes-cases
+    actions endpoint. The caller must treat any failure as non-blocking.
     """
     if not engineer_slack_configured():
         LOGGER.info("hermes_investigation_result_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
-    normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
-    normalized_question = _clean_text(question) or normalized_title
-
-    root_lines = [
-        _escape_slack_untrusted_text(normalized_title),
-        _escape_slack_untrusted_text(normalized_question),
-    ]
-    if ticket_id:
-        quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
-        root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
-    if _clean_text(route_result):
-        root_lines.append(f"route reason: {_clean_text(route_result)}")
-
-    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
     record = investigation if isinstance(investigation, dict) else {}
     body_lines = [f"Hermes investigation — Zendesk #{ticket_id} (awaiting review)"]
     if _clean_text(record.get("summary")):
@@ -619,13 +600,11 @@ def notify_hermes_investigation_result(
         body_lines.append(
             "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
         )
-    body_lines.append(f"Review in dashboard (fallback): {review_url}")
-    message_text = "\n".join([*root_lines, "", *body_lines])
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-investigation-result:{turn_id}",
             "event_type": HERMES_INVESTIGATION_RESULT_EVENT_TYPE,
-            "message_text": message_text,
+            "message_text": "\n".join(body_lines),
             "action": "prepare_draft",
             "environment": environment,
             "zendesk_ticket_id": ticket_id,
@@ -641,36 +620,18 @@ def notify_hermes_draft_pending(
     ticket_id: str,
     turn_id: str,
     draft_id: str,
-    title: str,
-    question: str,
-    route_result: str,
     draft_content: str,
     guardrail: dict[str, Any] | None,
     environment: str,
 ) -> dict[str, Any]:
     """Best-effort draft delivery after a Prepare draft click passes guardrail.
 
-    One channel root message: the four-line header, the guardrail decision,
-    the draft preview, an Approve & send action button, and the dashboard
-    review link as fallback. Approving posts the comment to Zendesk.
+    A reply in the case's bound thread: body only (guardrail decision, draft
+    preview, Approve & send button). Approving posts the comment to Zendesk.
     """
     if not engineer_slack_configured():
         LOGGER.info("hermes_draft_pending_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
-    normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
-    normalized_question = _clean_text(question) or normalized_title
-
-    root_lines = [
-        _escape_slack_untrusted_text(normalized_title),
-        _escape_slack_untrusted_text(normalized_question),
-    ]
-    if ticket_id:
-        quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
-        root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
-    if _clean_text(route_result):
-        root_lines.append(f"route reason: {_clean_text(route_result)}")
-
-    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
     record = guardrail if isinstance(guardrail, dict) else {}
     body_lines = [f"Hermes draft awaiting approval — Zendesk #{ticket_id}"]
     body_lines.append(f"Guardrail: {_clean_text(record.get('decision')) or 'not run'}")
@@ -679,13 +640,11 @@ def notify_hermes_draft_pending(
             "Guardrail notes: " + "; ".join(_clean_text(item) for item in record["blockers"])
         )
     body_lines.append(f"Draft: {_clean_text(draft_content)[:700]}")
-    body_lines.append(f"Approve in dashboard (fallback): {review_url}")
-    message_text = "\n".join([*root_lines, "", *body_lines])
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-draft-pending:{draft_id}",
             "event_type": HERMES_DRAFT_PENDING_EVENT_TYPE,
-            "message_text": message_text,
+            "message_text": "\n".join(body_lines),
             "action": "approve_draft",
             "environment": environment,
             "zendesk_ticket_id": ticket_id,
@@ -701,9 +660,6 @@ def notify_hermes_draft_blocked(
     thread_ts: str,
     ticket_id: str,
     turn_id: str,
-    title: str,
-    question: str,
-    route_result: str,
     reason: str,
     blockers: list[str] | None,
     environment: str,
@@ -712,33 +668,17 @@ def notify_hermes_draft_blocked(
     if not engineer_slack_configured():
         LOGGER.info("hermes_draft_blocked_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
-    normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
-    normalized_question = _clean_text(question) or normalized_title
-
-    root_lines = [
-        _escape_slack_untrusted_text(normalized_title),
-        _escape_slack_untrusted_text(normalized_question),
-    ]
-    if ticket_id:
-        quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")
-        root_lines.append(f"zendesk: https://agoraio.zendesk.com/agent/tickets/{quoted_ticket_id}")
-    if _clean_text(route_result):
-        root_lines.append(f"route reason: {_clean_text(route_result)}")
-
-    review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
     body_lines = [f"Hermes draft blocked — Zendesk #{ticket_id}"]
     if _clean_text(reason):
         body_lines.append(f"Reason: {_clean_text(reason)}")
     for item in list(blockers or [])[:5]:
         if _clean_text(item):
             body_lines.append(f"- {_clean_text(item)[:200]}")
-    body_lines.append(f"Review in dashboard: {review_url}")
-    message_text = "\n".join([*root_lines, "", *body_lines])
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-draft-blocked:{turn_id}",
             "event_type": HERMES_DRAFT_BLOCKED_EVENT_TYPE,
-            "message_text": message_text,
+            "message_text": "\n".join(body_lines),
         },
         thread_ts=thread_ts,
     )
