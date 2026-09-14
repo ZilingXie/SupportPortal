@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-154",
   "title": "Preproduction Hermes 调查链 v1（调查→Slack 人审→续跑 persona 审批）",
-  "status": "active",
+  "status": "done",
   "owner": "codex",
   "summary": "按用户澄清流程为 Preproduction Hermes investigation 方向落地第一版调查链：修复 work run 工具加载（补 common+memory toolset，恢复 case context 与 TencentDB memory 检索/知识写可见性）；调查回合结束后 turn 结构性收口为 awaiting_investigation_review 并把调查结果（summary/evidence/blockers/next_steps）直达发送到工程师 Slack 频道；人在 dashboard 审阅页点「继续生成客户回复」按钮（前置确定性完备性检查：summary 非空、无未解决 blockers、case_revision 未过期）后创建 investigation_reply turn（仅 persona phase）在同一 session/revision 续跑，走既有草稿 guardrail→manual 审批→Slack review ping→approve→Zendesk 发送链。不做子 Agent（设计 tab #08 的多子任务调查为后续版本）；Slack 原生按钮因 preprod 无交互回调通道列为后续；调查证据源仍限 case context + memory（真实检索源另行规划）。",
-  "next_action": "v1.2 全链完成（PR#1167，r20260912-b5f238f，13424 线程拓扑+反馈循环实证）。待用户：①频道确认单线程消息流（case opened 根消息 + 结果/草稿/按钮全部线程内 + @bot 反馈触发再调查）；②n8n 导入两份更新版 workflow（interaction+mention，补 preprod base URL）后真点按钮/真回反馈复验。确认后置 done。",
+  "next_action": "",
   "acceptance_criteria": [
     "investigation work run 的 enabled_toolsets 为 [supportportal_work, common, memory]，且 preproduction gateway 实证接受该组合、memory 工具可见（探针或受控重放佐证）。",
     "direction=investigation 且 turn_kind=normal 的 turn 在 work phase 完成后不再自动进入 persona：binding.investigation.recorded_turn_id 未盖本 turn 章 → missing_investigation_result → human_review；盖章则 turn 以 awaiting_investigation_review 收口并 best-effort 发送 Slack 调查结果（四行头模板+调查正文+dashboard 链接，无 action 按钮）。",
@@ -58,6 +58,12 @@
       "label": "v1.2 preproduction release + thread-loop controlled replay",
       "command": "deployment/release_automation_ecs_pipeline.sh（r20260912-b5f238f，schema-006）+ 13424 注入（p2154-v7）+ 三段回调端点链",
       "details": "①线程绑定：route investigation 后 case-opened 根消息发布并绑定（slack_thread_ts=1789209192.717819，worker log hermes_case_thread_bound，set-once）；②调查结果作为线程回复 delivered（turn-fb33e959 park）；③反馈循环：POST hermes-cases/messages（真实 team/channel，team 不符 403 负路径先证）→ investigation_feedback turn（turn-209bff79 仅 work）再调查→再 park→新结果回同线程；④prepare_draft 自 feedback turn → 200（turn-c8a30080）→草稿 awaiting_approval；⑤approve_draft → Zendesk 评论 53501355724436 delivered。本地栈 health ref=b5f238f6c9fa matched；PG 全套 8/8（schema-006 真库迁移）。"
+    },
+    {
+      "type": "test",
+      "label": "DDL deadlock root fix + local stack gate passed under live EC2 traffic",
+      "command": "SUPPORTPORTAL_NO_BUILD_CACHE=1 bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db remote && bash scripts/workflow/inspect_single_host_stack_mode.sh",
+      "details": "版本快速门（PR#1177）：initialize 在存量版本==当前版本时零 DDL 直接返回（真库实证全量 52s vs 走门 3.4s），真迁移路径 SET LOCAL lock_timeout=5s，TICKET_SCHEMA_FORCE_MIGRATE=1 逃生口，版本 bump 惯例注释固化；test_repository_configuration 128 全绿（含快速门/FORCE/lock_timeout 三用例）。本地官方栈在 EC2 正常流量时段（此前三连死锁的同一时段）重启成功：/health ok、app_build.ref=de641c0e983d matched、storage=postgres（无 in-memory 降级）、容器内代码含两修复（grep 实证）。附带排除两个构建环境坑：buildah COPY 层缓存失效判定失败导致同 tag 旧内容（须 SUPPORTPORTAL_NO_BUILD_CACHE=1）、重启脚本锁文件残留需手清。密码修复（PR#1176）登录密码保持 admin。"
     }
   ],
   "source_refs": [
@@ -120,6 +126,11 @@
       "at": "2026-09-13",
       "event": "amended",
       "summary": "本地栈 DDL 死锁根治：PostgresTicketRepository.initialize 增加版本快速门（存量版本==_TICKET_SCHEMA_VERSION 时零 DDL 直接提交返回，TICKET_SCHEMA_FORCE_MIGRATE=1 逃生口），真迁移路径加 SET LOCAL lock_timeout=5s 快速失败交外层重试；版本常量旁固化 bump 惯例注释（改 DDL 必须 bump+入兼容集+ticket_storage.sql 同改）。真库实证：全量 52s vs 走门 3.4s。"
+    },
+    {
+      "at": "2026-09-13",
+      "event": "done",
+      "summary": "v1→v1.2 全链交付+两环境根因修复收口：Preproduction Hermes 调查链（工具加载/人审门禁/Slack 单线程按钮流/反馈循环/消息文案三次迭代）已上线并全链实证（PR#1160/#1162/#1163/#1165/#1167/#1175，13424+13443 受控重放，Zendesk 多条 delivered）；本地栈门禁最终通过（PR#1176+#1177，deadlock 根治+密码策略修复，EC2 正常流量时段 matched）。遗留（用户侧/后续）：n8n 两份更新版 workflow 导入后真点按钮/真回反馈最终复验；多子 Agent 调查（tab#08 全量）、真实检索源接入为后续版本。"
     }
   ]
 }
