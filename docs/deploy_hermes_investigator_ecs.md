@@ -122,6 +122,66 @@ print(invoke_responses_text(profile=p, system_prompt=\"probe\", user_prompt=\"Re
 - 独立只读任务再次验证 5/5 数据库 `quick_check=ok`、journal mode 均为 DELETE、WAL/SHM sidecar 为 0。随后恢复原 service revision 3：service 1/1/0、双容器 HEALTHY、唯一 target healthy、鉴权 `GET /v1/models` 200 且 model count 1；新 Hermes task 日志中的既有 delete/WAL 冲突为 0。
 - 临时 `supportportal-production-hermes-maintenance:1` 已注销为 INACTIVE。备份作为人工回滚证据保留，不纳入正常运行扫描；不得在服务在线时恢复或删除。
 
+## 2026-09-14 Preproduction 可视化界面公网部署(Hermes dashboard + MemoryPanel)
+
+Preproduction hermes 任务(`supportportal-preproduction-hermes:21`)新增两个可视化 UI,经既有 production ALB 公网暴露。**Production 侧零改动**(镜像/td/路由全未触碰)。
+
+- **Hermes Web Dashboard**: `https://supportcenter.stellarix.space/dashboard/hermes/`(用户名 `hermes-admin`,密码=SSM `/supportportal/preproduction/hermes-dashboard-password`)。镜像内 `web_dist` 由 s6 `dashboard` 服务槽提供(:9119),`HERMES_DASHBOARD=true` + Basic Auth env 启用;原生支持 `X-Forwarded-Prefix` 反代前缀。
+- **AgentMemory MemoryPanel(Team Memory Control)**: `https://supportcenter.stellarix.space/dashboard/memory/`。浏览器登录凭证=memory-core 用户 key(SSM `/supportportal/preproduction/hermes-tdai-admin-key`,sk-mem-* 71 字符)。knowledge 服务未部署,Wiki 页面不可用为已知边界。
+
+### 架构与资源
+
+```
+ALB 443 新规则(既有 /automation、/v1 规则与默认 404 零改动):
+  prio 102 /dashboard/hermes,/dashboard/hermes/*  → TG supportportal-preprod-ui-tg2(target-type ip,:8080)
+  prio 103 /dashboard/memory,/dashboard/memory/*  → 同上
+  prio 104 /auth/password-login(精确路径)         → 同上(见"坑"③)
+        ▼
+task 内 caddy ui-proxy 容器(:8080,deploy-ecs/Caddyfile):
+  /dashboard/hermes/* → 剥前缀 + X-Forwarded-Prefix → 127.0.0.1:9119(dashboard)
+  /dashboard/memory/* → 剥前缀                      → 127.0.0.1:8123(memory-panel)
+  /auth/password-login → 原样透传                    → 127.0.0.1:9119
+  /healthz = 静态 200(刻意不探测后端,panel 故障不拖垮任务 TG 健康)
+```
+
+| 资源 | 标识 |
+|---|---|
+| td | `supportportal-preproduction-hermes:21`(memory 2048→4096;hermes 容器+dashboard env;+memory-panel/+ui-proxy 容器,均 essential=false) |
+| 镜像 | panel `@sha256:d3e9f9a3a221…`(tag `hermes-panel-20260913`)、ui-proxy `@sha256:84a5a9dd6f0a…`(tag `hermes-ui-proxy-20260913d`),均推 `supportportal/hermes` ECR |
+| SG | preprod ECS SG `sg-0845c28285f5909f3` +tcp 8080←ALB SG `sg-0fba25adcbdf00ac9`;9119/8123/8420 保持任务内回环,不对外 |
+| service | `supportportal-preproduction-hermes` 追加 loadBalancer(ui-proxy:8080,healthCheckGracePeriod 120s)——update-service 给无 LB 既有服务追加首个 ALB TG 可行 |
+| panel 实例配置 | td 命令覆盖引导时写 `/app/config/metadata-instances.json`(gateway_endpoint=http://127.0.0.1:8420,api_key=local 占位,gate 关闭);dockerignore 禁止 config/*.json 入镜像 |
+
+### MemoryPanel 镜像构建(agent-infra 工作树补丁,4 处)
+
+1. `MemoryPanel/web/vite.config.ts`:+`base: process.env.PANEL_BASE_PATH ?? '/'`
+2. `MemoryPanel/web/src/main.tsx`:+`/// <reference types="vite/client" />` + fetch shim(BASE_URL≠'/' 时把同源 `/api/*`、`/health` 前缀化;hash 路由无需 basename)
+3. `MemoryPanel/docker/local/Dockerfile.local`:+ui-builder `ARG PANEL_BASE_PATH=/`;base stage +`ARG USE_TENCENT_MIRROR=0` 开关(默认官方源)
+4. `deploy-ecs/Dockerfile.ui-proxy` + `deploy-ecs/Caddyfile`(新增)
+
+```bash
+# 构建上下文 = MemoryPanel 仓根(不是 TencentDB-Agent-Memory 根!):
+ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
+  docker build --build-arg PANEL_BASE_PATH=/dashboard/memory/ \
+    -f docker/local/Dockerfile.local -t hermes-panel:preprod .'
+```
+
+### 坑(本次新踩)
+
+1. **MemoryPanel 构建上下文是 `MemoryPanel/` 自身**("仓库根"=MemoryPanel),从 TencentDB-Agent-Memory 根构建报误导性 `resolve : lstat docker: no such file or directory`。
+2. **zacBot 上 `mirrors.tencent.com` TLS 证书验证失败**(issuer unknown)→ apt exit 100;Dockerfile 已加 `USE_TENCENT_MIRROR` 开关,海外构建机默认走 deb.debian.org。
+3. **dashboard 登录页 JS 不感知代理前缀**:表单 POST 到根绝对路径 `/auth/password-login`、next 参数为剥前缀路径 → 需 ALB 精确路径规则(104)+ caddy 查询串重写(`@rootnext query next=/` 注意 caddy query matcher 按解码值匹配,写 `%2F` 不命中)把 next 前缀化;SPA 本体、cookie Path、资产 URL 均原生支持前缀无需处理。
+4. **caddy `header Location` 正则改写对 reverse_proxy 响应不生效**(执行时序),请求阶段 `rewrite` 查询串是可靠做法。
+5. **ALB TG 必须 `--target-type ip`**(awsvpc),建错成 instance 会被 update-service 拒绝且不可改,只能重建 TG。
+
+### 验证(2026-09-14 全绿)
+
+浏览器登录闭环(curl 模拟):入口 302→登录页(hidden next 已前缀化)→`POST /auth/password-login` 200+会话 cookie(Path=/dashboard/hermes)→SPA 200 且 `__HERMES_BASE_PATH__="/dashboard/hermes"`;`/dashboard/memory/` 200、资产在 `/dashboard/memory/assets/` 下、`/dashboard/memory/health` 200;回归 `/automation/production`、`/automation/preproduction` 200、`/v1/models` 无凭证 401。
+
+### 回滚
+
+删 ALB 规则 102/103/104(两 URL 立即 404,零影响其他路由)→ `update-service --task-definition :17`。TG/SG/SSM/镜像为无害残留。
+
 ## 已踩的坑(操作前必读)
 
 1. **EFS mount access denied 三要素缺一不可**:该文件系统挂有 IAM policy(仅 ClientRootAccess/ClientWrite),挂载需要 ①task role identity policy 的 `ClientMount`(且 `AccessPointArn` 在白名单——新 AP 必须加入 `SupportPortalProductionEfsAccess` inline policy);②task definition 卷 `authorizationConfig.iam=ENABLED`;③EFS SG 放行 ECS SG 2049(已配)。报错形态:`mount.nfs4: access denied by server while mounting 127.0.0.1:/`。
