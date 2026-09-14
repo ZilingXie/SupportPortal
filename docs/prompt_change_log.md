@@ -10,7 +10,7 @@
 - Verification: Direct wording and context-selection review, document-link and scope checks, preservation of existing authorization/workflow sections, and `git diff --check`. Documentation-only change; no application tests, build, restart, or deployment required.
 
 
-## 2026-09-14 — Hermes persona phase 分层拼装：人格库接入 + 渲染规则 v2 + 路由回复合同 (p2-156)
+## 2026-09-14 — Hermes persona phase 分层拼装：人格库接入 + 渲染规则 v2 + 路由回复合同 (p2-157)
 
 - `hermes-persona-manual` v1→**v2**：从"exactly 复述"薄手册改为渲染规则层——自然句式/连接词、第一人称 ownership、缺信息追问需一句 lead-in + 分条列点（一次问全）、只基于快照与工作结果、不猜根因（13473 草稿生硬的直接修复）。
 - 新 key **`hermes-reply-contract` v1**：按 direction/route 的客户措辞合同（investigation 不猜根因、suspension 感谢提交/内部审核/24h 三段式且禁 close 承诺、fraud 内部提交忠实复述、verification/enablement 缺项精确追问），persona phase 追加注入。
