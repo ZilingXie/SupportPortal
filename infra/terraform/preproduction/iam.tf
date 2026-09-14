@@ -92,7 +92,15 @@ resource "aws_iam_role_policy" "hermes_task" {
         Resource = "arn:${data.aws_partition.current.partition}:elasticfilesystem:${var.aws_region}:${data.aws_caller_identity.current.account_id}:file-system/${var.shared_graph_efs_file_system_id}"
         Condition = {
           StringEquals = {
-            "elasticfilesystem:AccessPointArn" = [for access_point in aws_efs_access_point.hermes : access_point.arn]
+            # The out-of-band hermes deploy tooling grants the preproduction
+            # hermes task a set of access points beyond the terraform-managed
+            # roots (including cross-account-named APs its task definition
+            # mounts). Codified here so terraform plan stays zero-drift;
+            # cleaning the task definition's AP set is tracked separately.
+            "elasticfilesystem:AccessPointArn" = concat(
+              [for access_point in aws_efs_access_point.hermes : access_point.arn],
+              local.hermes_task_extra_access_point_arns,
+            )
           }
         }
       },
