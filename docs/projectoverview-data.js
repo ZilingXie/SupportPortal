@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-15T02:29:34Z",
-  "source_base_commit": "cf7aa44136fed6d1d9bccbb2da5b53aaeb3d42f0",
-  "registry_digest": "b661e4eb78a3e92f93ab56ff10b733c855f37a358d8cd69509b0940957753a6f",
+  "generated_at": "2026-09-15T02:40:40Z",
+  "source_base_commit": "9177e9eef791a53a4a00a507ac455b0be5cd647d",
+  "registry_digest": "13ad0418fca0022d4233c7735fb9c98c1a91bf90c7964ac33085de830547588d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3333,6 +3333,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "dashboard 验证 + 服务零影响 + skills 工具集事实",
           "command": "公网 dashboard 登录（basic provider，密码 SSM 管道）→ GET /api/skills、/api/skills/content?name=agora-token-troubleshoot、/api/tools/toolsets；describe-services/describe-tasks",
           "details": "技能总数 53→108；agora-token-troubleshoot 等在列，argus-troubleshooting 不在列；SKILL.md 正文经 content 端点读回；服务仍 td:25、rollout COMPLETED、四容器 HEALTHY（服务任务 17:49 曾因无关原因同 td 换过一次，发生在 drop 任务两小时前，与本操作无关）；skills 工具集 enabled=True configured=True 实证——调查链接入 skill_view 全文阅读仅差 SupportPortal 侧把 skills 加入 INVESTIGATION_WORK_TOOLSETS（一行改动+preprod 发布，后续任务）。"
+        },
+        {
+          "type": "deployment",
+          "label": "轨道 A：hermes EFS config 编辑 + td:28 合并部署",
+          "command": "一次性 run-task（entryPoint python3 -c 绕过 s6）编辑 /opt/data/config.yaml（model.default→gpt-6-astra + agent.reasoning_effort: medium，备份 .bak-astra-20260914）；td:28 注册（knowledge 容器+新 caddy+6144）并 update-service",
+          "result": "五容器 HEALTHY；dashboard sessions API 最新会话（标题=验证调查模型切换）model=gpt-6-astra，历史会话均为 gpt-5.6-luna（2026-09-14）"
+        },
+        {
+          "type": "test",
+          "label": "上游组合硬门禁 + 渲染注入/剥离契约测试",
+          "command": "curl /v1/responses（astra/medium、luna/max）；pytest backend/tests/test_automation_ecs_deploy.py -q",
+          "result": "两个组合均 status=completed；60 passed（含新增 preproduction_pins_llm_policy ×3 角色 + production_strips_llm_policy）（2026-09-14）"
         },
         {
           "type": "test",
@@ -12619,43 +12631,51 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
-      "task_id": "p2-159",
-      "title": "Preprod Hermes 无 case 线程的 ad-hoc 会话（新端点 + 首答 + 后续 @ 走 feedback 流）",
-      "status": "active",
-      "owner": "codex",
-      "summary": "工程师在 Slack 未绑定线程 @bot 时，不再 ignored_unbound 丢弃：新端点 POST /api/integrations/slack/hermes-cases/adhoc-sessions（X-N8n-Request-Token 鉴权，non-production 块内，production 零暴露）创建 ad-hoc 会话——合成工单号（99+epoch-ms，15 位）+ automation_cases 镜像 + binding（schema-008 新列 session_kind='adhoc' + 线程唯一索引防双绑）+ 首个 investigation_feedback turn（work-only，复用全部围栏/幂等/停车机器）；账号库镜像 seed 使工具链可用；work-phase 提示词按 session_kind 分支用新 key hermes-adhoc-investigation-manual；结果消息无按钮无 Zendesk 死链；actions 端点对 adhoc 拒绝（投递链三重隔离）。附带修复既有缺口：reviewer_feedback 不进 run 输入（feedback 注入，惠及真实 case feedback 流）。后续同线程 @ 自动走既有 messages→investigation_feedback 流。n8n mention workflow 更新（false 分支 ACK→Claim Adhoc→POST adhoc）。需 prompt release + preprod 发布。",
-      "next_action": "发布 preprod + live 双回合验证后收口 done",
-      "acceptance_criteria": [
-        "未绑定线程经 adhoc 端点 → 会话创建 + Hermes work run 完成 + 线程内无按钮回复（Summary/Evidence/Blockers/Next steps）。",
-        "同线程再 @ → 既有 messages 端点 → investigation_feedback turn → 新回复回线程；幂等三态（bound/busy/duplicate）与围栏负路径全过。",
-        "production 端点块外不可达；ad-hoc 的 persona/draft/Zendesk 投递结构性不可达（无按钮+actions 拒绝+kind 过滤）。",
-        "回归全绿 + PG 集成（schema-008）+ prompt release 校验 + preprod 发布三检绿 + live 双回合实证。",
-        "n8n workflow 更新版交付；registry/runbook/prompt_change_log/feature_list/overview 收口。"
-      ],
-      "blockers": [],
-      "evidence": [],
-      "source_refs": [
-        "backend/services/automation_ecs_store.py",
-        "backend/automation_ecs_api.py",
-        "backend/services/automation_hermes_agent.py",
-        "backend/services/automation_hermes_slack_actions.py",
-        "backend/services/engineer_slack.py",
-        "docs/integrations/n8n/Slack_App_Mention_To_SupportPortal_Engineer.json"
-      ],
-      "created_at": "2026-09-15",
-      "updated_at": "2026-09-15",
+      "task_id": "p2-160",
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment",
-      "legacy_ids": [],
-      "legacy_refs": [],
+      "title": "Preproduction LLM 模型策略：调查 gpt-6-astra/medium、其余场景 gpt-5.6-luna/max",
+      "summary": "按用户产品决策调整 Preproduction 的 LLM 模型策略：工程师调查回合（Hermes 栈）用 gpt-6-astra + reasoning effort medium（hermes EFS config.yaml 的 model.default + agent.reasoning_effort，已随 knowledge 合并部署 td:28 生效）；SupportPortal 其余全部自动化场景（route/api/worker 三角色的 ~24 个 model env + ~20 个 effort env）钉到 gpt-5.6-luna + max，经 automation_ecs_deploy.py 的 preproduction 专属 env 注入块（PREPRODUCTION_LLM_ENV_OVERRIDES）随管线发布生效，production 渲染显式剥离同名 env 防泄漏。硬门禁已实证上游组合可用（gpt-6-astra/medium、gpt-5.6-luna/max 均返回 completed）。已知边界：MemoryCore 无 effort 旋钮（保持 gpt-5.6-luna）；TICKET_TITLE effort 硬编码 none；WEB_SEARCH/KNOWLEDGE_INGESTION/BENCHMARK_JUDGE 无 effort env；RAG_ANSWER 的 fallback_models 常量（gpt-5.4-mini）不随 env 覆盖；廉价小任务（意图路由/标题/分类器，timeout 6-8s）在 luna+max 下可能超时重试，观察用量表与路由延迟后可单独回调。",
+      "status": "active",
+      "next_action": "轨道 A（hermes astra/medium）已随 td:28 合并部署生效并经 dashboard sessions API 实证（model=gpt-6-astra）；轨道 B 代码+测试已就绪，待 PR 合并后跑 preprod 管线发布，按 support_account_case_llm_usage 表验证各 stage model 记录。",
+      "owner": "codex",
+      "acceptance_criteria": [
+        "上游组合硬门禁通过：gpt-6-astra+medium 与 gpt-5.6-luna+max 的 /v1/responses 最小请求均 completed（已实证 2026-09-14）。",
+        "preprod 渲染的 api/route/worker td env 含全部 PREPRODUCTION_LLM_ENV_OVERRIDES（investigation=astra/medium，其余=luna/max）；production 渲染不含任何同名 env（泄漏测试锁定）。",
+        "管线发布后受控工单回合的 support_account_case_llm_usage 各 stage model 记录 = gpt-5.6-luna（investigation 除外）。",
+        "hermes 侧调查回合实际执行模型 = gpt-6-astra（已实证：dashboard sessions API 最新会话 model=gpt-6-astra，td:28）。"
+      ],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "轨道 A：hermes EFS config 编辑 + td:28 合并部署",
+          "command": "一次性 run-task（entryPoint python3 -c 绕过 s6）编辑 /opt/data/config.yaml（model.default→gpt-6-astra + agent.reasoning_effort: medium，备份 .bak-astra-20260914）；td:28 注册（knowledge 容器+新 caddy+6144）并 update-service",
+          "result": "五容器 HEALTHY；dashboard sessions API 最新会话（标题=验证调查模型切换）model=gpt-6-astra，历史会话均为 gpt-5.6-luna（2026-09-14）"
+        },
+        {
+          "type": "test",
+          "label": "上游组合硬门禁 + 渲染注入/剥离契约测试",
+          "command": "curl /v1/responses（astra/medium、luna/max）；pytest backend/tests/test_automation_ecs_deploy.py -q",
+          "result": "两个组合均 status=completed；60 passed（含新增 preproduction_pins_llm_policy ×3 角色 + production_strips_llm_policy）（2026-09-14）"
+        }
+      ],
       "history": [
         {
-          "at": "2026-09-15",
+          "at": "2026-09-14",
           "event": "created",
-          "summary": "用户确认需求：无 case 线程 @bot → 绑定+Hermes 回复一次；后续同线程 @ 走正常 feedback 流。规划实证：create_investigation_feedback_turn 零 Zendesk 依赖、turn 处理快照驱动、_ensure_case_mirror 有本地镜像 seed 先例、reviewer_feedback 不进 run 输入的既有缺口。方案=合成工单号+session_kind 标记，复用 95% 现有机器。"
+          "summary": "用户定策：preprod 调查用 gpt-6-astra（medium effort），其余全部场景用 gpt-5.6-luna（max effort）。调查确认模型决定链路：hermes 调查模型实际由 EFS config.yaml model.default 决定（worker 发的 model/effort 被网关忽略）；SupportPortal 场景 = env+代码默认（无 DB）；MemoryCore 无 effort 支持。原编号 p2-159 与并行线程的 ad-hoc 会话任务撞号（PR#1188），改号 p2-160。"
         }
-      ]
+      ],
+      "source_refs": [
+        "docs/deploy_hermes_investigator_ecs.md",
+        "docs/prompt_change_log.md"
+      ],
+      "blockers": [],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "created_at": "2026-09-14",
+      "updated_at": "2026-09-14"
     },
     {
       "schema_version": 2,

@@ -12,6 +12,7 @@ import pytest
 
 from backend.scripts.automation_ecs_deploy import (
     HERMES_OUTBOUND_SECRET_NAMES,
+    PREPRODUCTION_LLM_ENV_OVERRIDES,
     render_initial_task_definition,
     render_production_hermes_disabled_task_definition,
     render_schema_bootstrap_task_definition,
@@ -243,6 +244,60 @@ def test_render_task_definition_sets_engineer_slack_outbound_switch(
 
     values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
     assert values["ENGINEER_SLACK_OUTBOUND_ENABLED"] == expected
+
+
+@pytest.mark.parametrize("role", ["api", "route", "worker"])
+def test_render_task_definition_preproduction_pins_llm_policy(tmp_path: Path, role: str) -> None:
+    current = _task_definition(tmp_path, role)
+    _as_preproduction(current)
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+    )
+
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    # Spot-check the policy across scenario families: cheap classifiers, reply
+    # rendering, RAG, and the investigation pin (astra/medium, not luna/max).
+    assert values["ROUTE_AGENT_ROUTER_MODEL"] == "gpt-5.6-luna"
+    assert values["ROUTE_AGENT_ROUTER_REASONING_EFFORT"] == "max"
+    assert values["AUTOMATION_PERSONA_MODEL"] == "gpt-5.6-luna"
+    assert values["AUTOMATION_PERSONA_REASONING_EFFORT"] == "max"
+    assert values["RAG_AGENT_ANSWER_MODEL"] == "gpt-5.6-luna"
+    assert values["ENGINEER_INVESTIGATION_REPLY_MODEL"] == "gpt-6-astra"
+    assert values["ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT"] == "medium"
+    # Every declared override name must be present on a preproduction render.
+    assert set(PREPRODUCTION_LLM_ENV_OVERRIDES) <= set(values)
+
+
+def test_render_task_definition_production_strips_llm_policy_env(tmp_path: Path) -> None:
+    # The formal upgrade path renders from the observed task definition, so a
+    # preproduction revision's policy env must not survive into a Production
+    # render.
+    current = _task_definition(tmp_path, "worker")
+    payload = json.loads(current.read_text())
+    environment = payload["taskDefinition"]["containerDefinitions"][0]["environment"]
+    environment.append({"name": "AUTOMATION_PERSONA_MODEL", "value": "gpt-5.6-luna"})
+    environment.append({"name": "AUTOMATION_PERSONA_REASONING_EFFORT", "value": "max"})
+    current.write_text(json.dumps(payload))
+
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="production",
+        repository="supportportal/production",
+    )
+
+    values = {item["name"] for item in rendered["containerDefinitions"][0]["environment"]}
+    assert not (set(PREPRODUCTION_LLM_ENV_OVERRIDES) & values)
 
 
 def _worker_current_with_archer_secret(tmp_path: Path) -> Path:
