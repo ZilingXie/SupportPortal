@@ -196,6 +196,21 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 - 已知残留:td:23 期间一条验证消息落在逻辑名命名空间(agora-support/investigator,panel 不可见,无害);curated 知识写入通道(`memory_tencentdb_write_knowledge`)未变。
 - 回滚:`update-service --task-definition :22`。
 
+## 2026-09-14 Preproduction Hermes 接入 Argus Call Search API(td:25)
+
+目的:补 p2-154 遗留的「调查证据源=LLM 训练知识」缺口——Hermes 调查回合可直接检索 Agora Argus 通话数据(通话会话/用户会话/counter/event/VoQA),作为第一块可验证检索源。API:`https://argus.agoralab.co/argus-service`,`apikey` header 鉴权(key 找 fuyang@agora.io 申请);CloudFront 公网可达(AWS us-east-1 直连实测,无 key 302→OAuth),Fargate 可直连无需代理。
+
+变更(全部 preprod,一次任务重启落地):
+
+- **SSM**:新建 SecureString `/supportportal/preproduction/hermes-argus-api-key`(先占位建参 `PENDING-USER-FILL`,用户自行 `put-parameter --overwrite` 填真实 key;部署 gate 在填充之后,占位值不进运行时)。
+- **插件 `argus_call_search`**(hermes-deploy `build/argus_call_search/`,commit a69fe10):6 工具 `argus_search_call_sessions`/`argus_get_call_session`/`argus_search_user_sessions`/`argus_query_call_counters`/`argus_query_call_events`/`argus_query_call_voqa`,**全部挂 `common` 工具集**——随 investigation work 回合的 `enabled_toolsets=[supportportal_work, common, memory]` 自动下发,**SupportPortal 侧零代码改动**(toolset 跨插件聚合是 hermes registry 原生语义)。`check_fn`=ARGUS_API_KEY 非空且非占位(key 未注入时工具对模型隐藏);302→OAuth 不跟随、直接把 http_status 暴露给模型;响应截断 32KB 带 truncated 标记;GET 走 query string,POST(counters/events)按 JSON body(未经真实调用验证,见下)。
+- **镜像 overlay**:`build/Dockerfile.hermes-argus-overlay`(FROM td:24 部署 digest `65cb1fab…`,仅 COPY 插件目录;产物 `@sha256:5c0bbc3f…`,tag `hermes-20260914-argus`)——同 td:24 的单插件轻量管道,构建上下文与 sync 脚本已在 hermes-deploy build/。
+- **td:25**:克隆 :24 仅两处改动——hermes 容器 image 换新 digest、secrets 追加 `ARGUS_API_KEY`←hermes-argus-api-key(共 6 secret);diff 逐字段复核无其他漂移。
+- 验证(全过):①key 直连探针(zacBot,key 经 SSM 管道不落终端):GET call-sessions→200+真实 callSessions;②update-service td:25→rollout COMPLETED、四容器 HEALTHY;③回归:/dashboard/hermes 302→login、/dashboard/memory 200、/v1/models 无凭证 401、/automation/production 307 不变;④**功能探针铁证**(临时 SG 规则 zacBot SG→preprod ECS SG :8642,探针后已撤;注意 CloudMap 私有 DNS 在 zacBot 不可解析,须用任务 ENI 私网 IP 直连):`POST /v1/runs` enabled_toolsets=[common] 指示模型调 `argus_search_call_sessions`(纯过去窗口 Sep13 全天)→run completed,模型回报 firstCallId=`6aa7390025a55b0f11b0e7df`,该 callId 经 Argus by-id 端点复核 **200 真实存在**——模型不可能伪造一个真实存在的窗口内 ObjectId,端到端(工具注册→check_fn→Fargate 出网→apikey→Argus→真实数据回模型)由此闭环。
+- 已知边界/教训:①插件发现不打日志(hermes-agent 流 grep "argus" 零输出、亦无 REJECTED),以功能探针为准;②**交叉核对必须用纯过去窗口**——窗口上界晚于"现在"时活跃通话持续涌入,first callId 是移动目标(本任务两次直连同窗口首条即不同,系边界会话含入漂移非幻觉);③POST 端点 body 形态待首个真实调查调用确认,不符则同 overlay 管道重建(廉价);④API usage 表明确本用量(owner=海外cse,场景=AI Agent 自动化调查 RTC 问题,QPS<10,需分页)。
+- 回滚:`update-service --task-definition supportportal-preproduction-hermes:24`(SSM 参数/镜像/插件为无害残留)。
+- Production 推广路径(未在本任务范围):另建 `/supportportal/production/hermes-argus-api-key`+同 overlay 管道(FROM production 当前部署 digest)+production td 注册部署。
+
 ## 已踩的坑(操作前必读)
 
 1. **EFS mount access denied 三要素缺一不可**:该文件系统挂有 IAM policy(仅 ClientRootAccess/ClientWrite),挂载需要 ①task role identity policy 的 `ClientMount`(且 `AccessPointArn` 在白名单——新 AP 必须加入 `SupportPortalProductionEfsAccess` inline policy);②task definition 卷 `authorizationConfig.iam=ENABLED`;③EFS SG 放行 ECS SG 2049(已配)。报错形态:`mount.nfs4: access denied by server while mounting 127.0.0.1:/`。

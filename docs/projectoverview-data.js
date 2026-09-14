@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-14T03:13:47Z",
-  "source_base_commit": "de641c0e983d0ff32e2978105d38f6ca2cfbdd87",
-  "registry_digest": "5cfe60009cb923938618497f8ab8208019678df9b5c7e541e871e7bc3421c5b5",
+  "generated_at": "2026-09-14T09:18:13Z",
+  "source_base_commit": "061f298956695183d3a0fdcc435f5e690a854ad4",
+  "registry_digest": "ad70a33cbef52cce8c4c61990b4362f54628792b76e0d21d36fc397569bdcb66",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3293,6 +3293,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "版本快速门（PR#1177）：initialize 在存量版本==当前版本时零 DDL 直接返回（真库实证全量 52s vs 走门 3.4s），真迁移路径 SET LOCAL lock_timeout=5s，TICKET_SCHEMA_FORCE_MIGRATE=1 逃生口，版本 bump 惯例注释固化；test_repository_configuration 128 全绿（含快速门/FORCE/lock_timeout 三用例）。本地官方栈在 EC2 正常流量时段（此前三连死锁的同一时段）重启成功：/health ok、app_build.ref=de641c0e983d matched、storage=postgres（无 in-memory 降级）、容器内代码含两修复（grep 实证）。附带排除两个构建环境坑：buildah COPY 层缓存失效判定失败导致同 tag 旧内容（须 SUPPORTPORTAL_NO_BUILD_CACHE=1）、重启脚本锁文件残留需手清。密码修复（PR#1176）登录密码保持 admin。"
         },
         {
+          "type": "deployment",
+          "label": "SSM 参数 + 镜像 overlay + td:25 注册部署",
+          "command": "aws ssm put-parameter（占位建参，用户 --overwrite 填真实 key 33 字符）；zacBot docker build Dockerfile.hermes-argus-overlay → push tag hermes-20260914-argus（digest sha256:5c0bbc3f…，OCI index 含 linux/amd64）；aws ecs register-task-definition（克隆 :24 仅 image+ARGUS_API_KEY secret 两处改动，diff 复核）；update-service → rollout COMPLETED",
+          "details": "镜像内实证：/opt/hermes/plugins/argus_call_search 就位（ls + plugin.yaml 头 + python3 import OK，与 supportportal_agent_tools/memory 并存）；td:25 hermes 容器 6 secret 读回含 ARGUS_API_KEY←arn:ssm:...:parameter/supportportal/preproduction/hermes-argus-api-key；服务 1/1 RUNNING，四容器（memory-core/hermes/memory-panel/ui-proxy）全 HEALTHY；production td/service/SSM 零触碰。"
+        },
+        {
+          "type": "deployment",
+          "label": "Argus key 直连探针 + dashboard/鉴权回归",
+          "command": "zacBot curl -H \"apikey: $KEY\" https://argus.agoralab.co/argus-service/api/v1/call-sessions（key 经 SSM 管道喂入不落终端）；公网 curl /dashboard/hermes/、/dashboard/memory/、/v1/models、/automation/production",
+          "details": "直连 200 + 真实 callSessions JSON（含 total/分页）；回归全部符合 td:24 口径：hermes dash 302→login、memory dash 200、/v1/models 无凭证 401、/automation/production 307。可达性结论：argus.agoralab.co=CloudFront 公网，AWS us-east-1 直连可用，无 key 302→OAuth（插件对 302 不跟随直接暴露 http_status）。"
+        },
+        {
+          "type": "deployment",
+          "label": "功能探针铁证（模型真实调用 Argus 工具）",
+          "command": "临时 SG 规则（zacBot SG→preprod ECS SG :8642，探针后已撤，复核无残留）+ POST http://\u003c任务ENI IP>:8642/v1/runs（Bearer hermes-api-server-key，Idempotency-Key，enabled_toolsets=[common]，session=probe-argus-20260914-b，指示模型调 argus_search_call_sessions，纯过去窗口 Sep13 [1789257600,1789344000]）",
+          "details": "run completed，模型回报 firstCallId=6aa7390025a55b0f11b0e7df；该 callId 经 Argus GET /call-sessions/{id} 复核 200 真实存在（channelName/channelId/vendorCompany 全量真数据）——模型无法伪造真实存在的窗口内 ObjectId，端到端（插件自动加载→check_fn→Fargate 出网→apikey→Argus→真实数据回模型）闭环。坑：CloudMap 私有 DNS 在 zacBot 不可解析（须用任务 ENI 私网 IP 直连）；窗口上界晚于当前时间的交叉核对是移动目标（活跃通话持续涌入，首条 callId 漂移），必须用纯过去窗口比对。"
+        },
+        {
+          "type": "test",
+          "label": "插件本地自检（URL/body/门控/截断）",
+          "command": "python3 冒烟：register 假 ctx 六工具全挂 common；check_fn 对空值/PENDING-USER-FILL/真值三态；GET query 拼接（含逗号列表 urlencode）与 POST JSON body（保留原生 int 类型）；callId 路径段 quote；缺必填参数错误；32KB 截断标记；未配置错误路径",
+          "details": "全部通过；过程中修出真 bug：_string(None) 原返回 \"None\" 字符串会让缺参检查失效并把 None 漏进查询参数，已改为返回空串。已知边界：POST 端点（counters/events）body 形态按 JSON body 实现，待首个真实调查调用确认，不符则同 overlay 管道重建；插件发现不打日志（grep argus 零输出），以功能探针为准。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -3636,8 +3660,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 26,
-      "done_count": 11,
+      "task_count": 27,
+      "done_count": 12,
       "blocked_count": 0
     },
     {
@@ -12397,6 +12421,76 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-156",
+      "title": "Preproduction Hermes 接入 Argus Call Search API（调查工具 + SSM key）",
+      "status": "done",
+      "owner": "codex",
+      "summary": "为 Preproduction Hermes 调查链接入 Argus 通话调查 API（https://argus.agoralab.co/argus-service，apikey header 鉴权，6 端点）：新建 hermes-deploy 插件 argus_call_search（6 个 argus_* 工具全部挂现有 common 工具集，随 investigation work 回合的 enabled_toolsets=[supportportal_work,common,memory] 自动下发，SupportPortal 侧零代码改动）；API key 走新 SSM SecureString /supportportal/preproduction/hermes-argus-api-key（占位建参后用户填入真实 key），经 td secret ARGUS_API_KEY 注入 hermes 容器；镜像经 Dockerfile.hermes-argus-overlay（FROM td:24 部署 digest 65cb1fab 仅 COPY 插件目录）重建为 hermes-20260914-argus（digest 5c0bbc3f），注册 td:25 部署。check_fn 保证 key 未注入（含占位值）时工具对模型隐藏。Production 零改动；回滚=update-service :24。这是 p2-154 遗留『真实检索源缺口』（调查证据源=LLM 训练知识）的第一块可验证检索源。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "SSM /supportportal/preproduction/hermes-argus-api-key 为 SecureString 且用户已填入真实 key（非占位值）。",
+        "新镜像（hermes-20260914-argus overlay）含 /opt/hermes/plugins/argus_call_search（容器内实证），td:25 hermes 容器 secret 含 ARGUS_API_KEY←该参数，service 1/1 稳定、四容器 HEALTHY。",
+        "zacBot 直连 Argus searchCallSessions 带 key 返回 200 JSON；功能探针回合（enabled_toolsets=[common]）模型成功调用 argus_search_call_sessions 并拿到结构化结果；临时 SG 规则验证后撤销。",
+        "/dashboard/hermes/、/dashboard/memory/ 与 /v1/models 401 回归不变（td:24 验收口径）；production td/service/SSM 零改动。",
+        "runbook 新增 td:25 章节、task 登记、generate_project_overview --write/--check 通过、PR 合入、worktree 清理；hermes-deploy 仓提交插件与 overlay。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "SSM 参数 + 镜像 overlay + td:25 注册部署",
+          "command": "aws ssm put-parameter（占位建参，用户 --overwrite 填真实 key 33 字符）；zacBot docker build Dockerfile.hermes-argus-overlay → push tag hermes-20260914-argus（digest sha256:5c0bbc3f…，OCI index 含 linux/amd64）；aws ecs register-task-definition（克隆 :24 仅 image+ARGUS_API_KEY secret 两处改动，diff 复核）；update-service → rollout COMPLETED",
+          "details": "镜像内实证：/opt/hermes/plugins/argus_call_search 就位（ls + plugin.yaml 头 + python3 import OK，与 supportportal_agent_tools/memory 并存）；td:25 hermes 容器 6 secret 读回含 ARGUS_API_KEY←arn:ssm:...:parameter/supportportal/preproduction/hermes-argus-api-key；服务 1/1 RUNNING，四容器（memory-core/hermes/memory-panel/ui-proxy）全 HEALTHY；production td/service/SSM 零触碰。"
+        },
+        {
+          "type": "deployment",
+          "label": "Argus key 直连探针 + dashboard/鉴权回归",
+          "command": "zacBot curl -H \"apikey: $KEY\" https://argus.agoralab.co/argus-service/api/v1/call-sessions（key 经 SSM 管道喂入不落终端）；公网 curl /dashboard/hermes/、/dashboard/memory/、/v1/models、/automation/production",
+          "details": "直连 200 + 真实 callSessions JSON（含 total/分页）；回归全部符合 td:24 口径：hermes dash 302→login、memory dash 200、/v1/models 无凭证 401、/automation/production 307。可达性结论：argus.agoralab.co=CloudFront 公网，AWS us-east-1 直连可用，无 key 302→OAuth（插件对 302 不跟随直接暴露 http_status）。"
+        },
+        {
+          "type": "deployment",
+          "label": "功能探针铁证（模型真实调用 Argus 工具）",
+          "command": "临时 SG 规则（zacBot SG→preprod ECS SG :8642，探针后已撤，复核无残留）+ POST http://\u003c任务ENI IP>:8642/v1/runs（Bearer hermes-api-server-key，Idempotency-Key，enabled_toolsets=[common]，session=probe-argus-20260914-b，指示模型调 argus_search_call_sessions，纯过去窗口 Sep13 [1789257600,1789344000]）",
+          "details": "run completed，模型回报 firstCallId=6aa7390025a55b0f11b0e7df；该 callId 经 Argus GET /call-sessions/{id} 复核 200 真实存在（channelName/channelId/vendorCompany 全量真数据）——模型无法伪造真实存在的窗口内 ObjectId，端到端（插件自动加载→check_fn→Fargate 出网→apikey→Argus→真实数据回模型）闭环。坑：CloudMap 私有 DNS 在 zacBot 不可解析（须用任务 ENI 私网 IP 直连）；窗口上界晚于当前时间的交叉核对是移动目标（活跃通话持续涌入，首条 callId 漂移），必须用纯过去窗口比对。"
+        },
+        {
+          "type": "test",
+          "label": "插件本地自检（URL/body/门控/截断）",
+          "command": "python3 冒烟：register 假 ctx 六工具全挂 common；check_fn 对空值/PENDING-USER-FILL/真值三态；GET query 拼接（含逗号列表 urlencode）与 POST JSON body（保留原生 int 类型）；callId 路径段 quote；缺必填参数错误；32KB 截断标记；未配置错误路径",
+          "details": "全部通过；过程中修出真 bug：_string(None) 原返回 \"None\" 字符串会让缺参检查失效并把 None 漏进查询参数，已改为返回空串。已知边界：POST 端点（counters/events）body 形态按 JSON body 实现，待首个真实调查调用确认，不符则同 overlay 管道重建；插件发现不打日志（grep argus 零输出），以功能探针为准。"
+        }
+      ],
+      "source_refs": [
+        "docs/deploy_hermes_investigator_ecs.md"
+      ],
+      "created_at": "2026-09-14",
+      "updated_at": "2026-09-14",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-14",
+          "event": "created",
+          "summary": "用户提供 Argus Call Search API 文档（Data-App Confluence 导出）与 API key，要求给 preproduction hermes 安装 Argus 调查权限。规划阶段实证：hermes-agent 插件 kind:backend 自动加载、toolset 跨插件聚合（挂 common 即搭 investigation work 便车、无需 gateway 配置）、argus.agoralab.co CloudFront 公网可达（AWS us-east-1 实测）、preprod 无 argus SSM 命名冲突。用户选择完整接入（SSM+插件+镜像+td:25）。"
+        },
+        {
+          "at": "2026-09-14",
+          "event": "deployed",
+          "summary": "完整接入上线：SSM 参数（用户填入真实 key 33 字符）→ 插件（hermes-deploy a69fe10，含 None 参数 bug 修复）→ 镜像 hermes-20260914-argus（digest 5c0bbc3f，镜像内实证）→ td:25（image+ARGUS_API_KEY secret 两处改动）→ update-service rollout COMPLETED 四容器 HEALTHY。验证四线全过：key 直连 200 真实数据、dashboard/鉴权回归不变、功能探针模型回报的 callId 经 Argus by-id 复核真实存在（端到端铁证）、临时 SG 已撤。"
+        },
+        {
+          "at": "2026-09-14",
+          "event": "done",
+          "summary": "p2-154『真实检索源缺口』第一块落地收口：preprod 调查回合可查 Argus 真实通话数据。遗留（均为后续可选）：①POST 端点（counters/events）body 形态待首个真实调查确认；②真实调查质量验收（用户侧 Slack 召唤真实工单）；③Production 推广路径已写入 runbook（另建 production SSM 参数+同 overlay 管道），未在本任务范围。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17714,7 +17808,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。多子 Agent 调查（设计 tab #08 全量）为后续版本。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
