@@ -149,8 +149,21 @@ def workspace_key_for(namespace: str, ticket_id: str) -> str:
     return _WORKSPACE_KEY_RE.sub("-", raw)[:128]
 
 
-def phase_instructions(phase: str, *, direction: str | None, route: str | None) -> tuple[str, str]:
-    """Return (instructions, prompt_key) for one phase run."""
+def phase_instructions(
+    phase: str,
+    *,
+    direction: str | None,
+    route: str | None,
+    persona_style: str | None = None,
+    persona_key: str | None = None,
+) -> tuple[str, str]:
+    """Return (instructions, prompt_key) for one phase run.
+
+    The persona phase assembles four layers: core invariants, the assigned
+    persona style block (from the ticket-DB persona library), the rendering
+    manual, and the route reply contract. The persisted prompt_version marker
+    stays the manual key; the extra layers are assembly details.
+    """
     core = resolve_system_prompt(CORE_PROMPT_KEY, CORE_PROMPT_FALLBACK_TEXT)
     if phase == HermesTurnPhase.WORK.value:
         key = WORK_PROMPT_KEYS.get(
@@ -159,9 +172,65 @@ def phase_instructions(phase: str, *, direction: str | None, route: str | None) 
         )
     else:
         key = PHASE_PROMPT_KEYS[phase]
+    instructions = core
+    if phase == HermesTurnPhase.PERSONA.value:
+        normalized_style = str(persona_style or "").strip()
+        if normalized_style:
+            label = str(persona_key or "default").strip() or "default"
+            instructions += f"\n\n--- PERSONA STYLE ({label}) ---\n{normalized_style}"
     manual = resolve_system_prompt(key, "")
-    instructions = f"{core}\n\n--- PHASE MANUAL ({key}) ---\n{manual}" if manual else core
+    if manual:
+        instructions += f"\n\n--- PHASE MANUAL ({key}) ---\n{manual}"
+    if phase == HermesTurnPhase.PERSONA.value:
+        contract = resolve_system_prompt("hermes-reply-contract", "")
+        if contract:
+            instructions += f"\n\n--- REPLY CONTRACT (hermes-reply-contract) ---\n{contract}"
     return instructions, key
+
+
+def resolve_persona_style(repository: Any, ticket_id: str) -> dict[str, Any]:
+    """Resolve the case's reply persona from the ticket-DB persona library.
+
+    Reuses the per-ticket sticky assignment (random among enabled published
+    personas, shared with the legacy automation chain) and fails open to the
+    default preset so a persona-library outage never blocks the reply.
+    """
+    from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS, DEFAULT_PERSONA_KEY
+
+    default_preset = next(
+        preset for preset in ACCOUNT_PERSONA_PRESETS if preset.persona_key == DEFAULT_PERSONA_KEY
+    )
+    fallback = {
+        "persona_key": DEFAULT_PERSONA_KEY,
+        "version": 1,
+        "instruction": default_preset.content["instruction"],
+        "fell_back": True,
+    }
+    if repository is None:
+        return fallback
+    try:
+        assignment = repository.get_account_persona_assignment(ticket_id)
+        if assignment is None:
+            assignment = repository.resolve_account_persona(ticket_id)
+        content = assignment.get("content") if isinstance(assignment, dict) else None
+        instruction = str((content or {}).get("instruction") or "").strip()
+        persona_key = str(assignment.get("persona_key") or "").strip()
+        version = int(assignment.get("version") or 0)
+        if not instruction or not persona_key or version < 1:
+            return fallback
+        return {
+            "persona_key": persona_key,
+            "version": version,
+            "instruction": instruction,
+            "fell_back": False,
+        }
+    except Exception:  # noqa: BLE001 - fail-open to the default persona
+        LOGGER.warning(
+            "hermes_persona_resolve_failed ticket_id=%s using default persona",
+            ticket_id,
+            exc_info=True,
+        )
+        return fallback
 
 
 class HermesTurnDeferred(RuntimeError):
@@ -631,8 +700,47 @@ class HermesAgentTurnProcessor:
         before_external: Any = None,
     ) -> str:
         turn_id = payload.turn_id
+        persona_style: str | None = None
+        persona_key: str | None = None
+        if phase == HermesTurnPhase.PERSONA.value:
+            # every customer-facing reply goes through the persona assembly:
+            # resolve (or reuse) the ticket's sticky library persona and pin
+            # it on the binding so later turns keep the same voice
+            persona = resolve_persona_style(self.repository, payload.event.ticket.id)
+            persona_style = persona["instruction"]
+            persona_key = persona["persona_key"]
+            try:
+                self.store.bind_hermes_case_persona(
+                    payload.event.ticket.id,
+                    persona_key=persona_key,
+                    persona_version=persona["version"],
+                )
+            except Exception:  # noqa: BLE001 - pinning is best-effort
+                LOGGER.warning(
+                    "hermes_persona_pin_failed turn_id=%s persona_key=%s",
+                    turn_id,
+                    persona_key,
+                    exc_info=True,
+                )
+            if persona.get("fell_back"):
+                LOGGER.warning(
+                    "hermes_persona_fallback_default turn_id=%s persona_key=%s",
+                    turn_id,
+                    persona_key,
+                )
+            else:
+                LOGGER.info(
+                    "hermes_persona_assembled turn_id=%s persona_key=%s persona_version=%s",
+                    turn_id,
+                    persona_key,
+                    persona["version"],
+                )
         instructions, prompt_key = phase_instructions(
-            phase, direction=turn.get("direction"), route=turn.get("route")
+            phase,
+            direction=turn.get("direction"),
+            route=turn.get("route"),
+            persona_style=persona_style,
+            persona_key=persona_key,
         )
         turn_run = self.store.get_or_create_hermes_turn_run(
             turn_id, phase, prompt_version=prompt_key

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-14T03:13:47Z",
-  "source_base_commit": "de641c0e983d0ff32e2978105d38f6ca2cfbdd87",
-  "registry_digest": "5cfe60009cb923938618497f8ab8208019678df9b5c7e541e871e7bc3421c5b5",
+  "generated_at": "2026-09-14T09:49:52Z",
+  "source_base_commit": "061f298956695183d3a0fdcc435f5e690a854ad4",
+  "registry_digest": "859e11ceafeae30184b61ec87c47346ec8c8a9d3ba9994f597e5082bc642045f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3636,7 +3636,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 26,
+      "task_count": 27,
       "done_count": 11,
       "blocked_count": 0
     },
@@ -12397,6 +12397,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-156",
+      "title": "Hermes persona phase 分层拼装（人格库+业务合同+渲染规则，Preproduction）",
+      "status": "active",
+      "owner": "codex",
+      "summary": "把 Hermes 引擎 persona phase 的 instructions 从单份薄手册重构为四层拼装：核心不变量 + 人格层（复用 support_account_personas 三人格库，per-ticket 粘性分配，fail-open 到 Sid Warm）+ 渲染规则 v2（迁移 legacy automation-persona-v31 的自然语气规则：自然句式/连接词/第一人称 ownership/追问带 lead-in/先安抚再提问/一次问全）+ 业务合同层（新 key hermes-reply-contract，按 route 的客户措辞合同：suspension 24h 措辞与禁 close 承诺、fraud 内部邮件忠实复述、verification/enablement 缺项精确追问、investigation 基于结论不猜根因）。草稿→guardrail→publish_policy 按 direction 分流零改动；prompt 经新 release 只发布 Preproduction，production schema 与旧账号链零影响。动因：13473 草稿语气生硬（persona manual v1 要求 exactly 复述），用户定调所有面向客户的回复应统一走分层拼装 Persona 出口。",
+      "next_action": "实施中：Phase 1 builders → Phase 2 接线/schema-007 → 测试 → 收口 → prompt release 序列（含既有 key 内容改版的 create_draft+schedule 空档补齐）→ preprod 发布与受控重放。",
+      "acceptance_criteria": [
+        "persona phase instructions 为四层拼装（core / PERSONA STYLE / PHASE MANUAL v2 / REPLY CONTRACT），人格层来自 ticket DB 三人格库分配（同 ticket 粘性、盖章 binding persona_key/version），解析失败 fail-open 到默认人格并记日志。",
+        "hermes-persona-manual 升 v2（自然语气规则），新 key hermes-reply-contract v1 入 catalog 并随新 prompt release 发布；turn_run prompt_version 标记语义不变。",
+        "schema-007：bindings 加 persona_key/persona_version（write-once），InMemory+PG+迁移测试通过。",
+        "guardrail/readiness/publish_policy/delivery/Slack 链路零改动；automation 方向同样走人格层。",
+        "Preproduction：新 release 激活读回 + 管线全阶段 passed；受控重放草稿为自然语气（无裸 bullet dump、有 lead-in/安抚句）、suspension/investigation 合同措辞正确、同 ticket 二次回复人格不变；production 不受影响。",
+        "登记收口：prompt_change_log + feature_list + overview 生成校验通过。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/prompts/hermes_support_agent.py",
+        "backend/services/agent_config.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/automation_ecs_store.py",
+        "backend/services/account_admin.py",
+        "backend/services/automation_persona.py"
+      ],
+      "created_at": "2026-09-14",
+      "updated_at": "2026-09-14",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-14",
+          "event": "created",
+          "summary": "用户定调：面向客户的回复应拼装 persona+业务合同，所有 case 统一走 Persona 出口→guardrail→按操作手册分流投递；先在 Preproduction 落地。13473 草稿生硬（manual v1 exactly 复述导向）为直接动因。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17714,7 +17755,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。多子 Agent 调查（设计 tab #08 全量）为后续版本。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-156，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

@@ -10,6 +10,12 @@
 - Verification: Direct wording and context-selection review, document-link and scope checks, preservation of existing authorization/workflow sections, and `git diff --check`. Documentation-only change; no application tests, build, restart, or deployment required.
 
 
+## 2026-09-14 — Hermes persona phase 分层拼装：人格库接入 + 渲染规则 v2 + 路由回复合同 (p2-156)
+
+- `hermes-persona-manual` v1→**v2**：从"exactly 复述"薄手册改为渲染规则层——自然句式/连接词、第一人称 ownership、缺信息追问需一句 lead-in + 分条列点（一次问全）、只基于快照与工作结果、不猜根因（13473 草稿生硬的直接修复）。
+- 新 key **`hermes-reply-contract` v1**：按 direction/route 的客户措辞合同（investigation 不猜根因、suspension 感谢提交/内部审核/24h 三段式且禁 close 承诺、fraud 内部提交忠实复述、verification/enablement 缺项精确追问），persona phase 追加注入。
+- **运行时人格层**：persona phase instructions 拼装为 core → PERSONA STYLE（ticket DB `support_account_personas` 库 per-ticket 粘性分配，write-once 盖章 binding persona_key/version，解析失败 fail-open 到 default-support/Sid Warm）→ PHASE MANUAL v2 → REPLY CONTRACT；turn_run prompt_version 标记不变（仍记 manual key）。store schema-007 加列。仅 Preproduction 发布；旧账号链 v31 与 production 零改动。
+
 ## 2026-09-11 - Enablement dual-flow mode switch (p2-152)
 
 - Behavior: All four enablement dispatch entries (split intake, customer-comment resume, Hermes tool, legacy main intake/rerun) route through one `ENABLEMENT_WORKFLOW_MODE` switch. Default (unset/blank) keeps the p2-149 manual review flow unchanged; `archer` restores the pre-p2-149 Archer auto-enablement behavior (enabled closes the ticket via the archer reply job, appid_invalid/project_not_found re-ask for the App ID, enable_failed records the owner failure alert, delivers the fallback internal email once through the claim protocol and escalates to human review). Unknown values fail closed at read time.
