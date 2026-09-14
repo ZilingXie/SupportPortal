@@ -2,6 +2,32 @@
   "schema_version": 1,
   "versions": [
     {
+      "version": "2.0.0",
+      "released_at": "2026-09-14",
+      "release_id": "r20260914-cd80096",
+      "summary": "Production catch-up promotion from r20260911-42f2f11 to main cd80096b: Hermes review-chain fixes, engineer Slack outbound kill switch, Slack summons reformat, admin/release-notes consoles, and enablement manual-flow fixes.",
+      "sections": [
+        {
+          "title": "Notes",
+          "items": [
+            "Major version bump: this is a whole-train promotion of merged main (PRs #1126 through #1180 lineage), not a single-feature release.",
+            "Machine-readable deployment records (release id, commit, image digests, included PRs, deploy time) are read live from the Production database in the Deployment records view."
+          ]
+        },
+        {
+          "title": "Included capabilities",
+          "items": [
+            "Engineer Slack outbound kill switch (ENGINEER_SLACK_OUTBOUND_ENABLED): Production stops posting to the engineer channel; Preproduction keeps the review summons (p2-150).",
+            "Hermes review chain hardened end to end on Preproduction: save_reply_draft endpoint fix, publication gate wiring, guardrail readiness derivation, Slack root+thread review summons with investigation summary, human approve to Zendesk delivery (p2-148).",
+            "Enablement reverted to the manual review flow with reply-first gated email and five review-round fixes (p2-149, includes hotfix r20260911-42f2f11 lineage superseded by main).",
+            "ECS Admin read-only console and versioned release notes (p2-151/p2-153/p2-155); workspace admin console switch with deployments live view.",
+            "Hermes/Memory public UI dashboards behind auth (p2-154 follow-up infra); Slack summons formatting tweaks (route result label, body-only thread replies).",
+            "Workflow hardening: task worktree cleanup split out of finalize to prevent the ZCode shell cwd failure."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "released_at": "2026-09-11",
       "release_id": "r20260911-42f2f11",
@@ -27,3 +53,4 @@
     }
   ]
 }
+
