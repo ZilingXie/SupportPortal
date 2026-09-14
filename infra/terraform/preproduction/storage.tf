@@ -19,6 +19,15 @@ resource "aws_efs_access_point" "graph" {
 }
 
 locals {
+  # Access points the running preproduction hermes task mounts but that were
+  # created out-of-band by the hermes deploy tooling (not terraform-managed).
+  hermes_task_extra_access_point_arns = [
+    "arn:aws:elasticfilesystem:us-east-1:891612554546:access-point/fsap-0544cfad40e8bb591",
+    "arn:aws:elasticfilesystem:us-east-1:891612554546:access-point/fsap-0547c9d8a2242ff78",
+    "arn:aws:elasticfilesystem:us-east-1:891612554546:access-point/fsap-0113bfd836b288932",
+    "arn:aws:elasticfilesystem:us-east-1:891612554546:access-point/fsap-0dacd4cd505ea9c32",
+  ]
+
   hermes_efs_roots = {
     hermes-home = {
       path        = "/supportportal-preproduction-hermes-home"
