@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-14T09:52:49Z",
-  "source_base_commit": "3684956b0d4867ecda5f3b3f3911d9f00b1edb63",
-  "registry_digest": "bf7d8bdf62b5e20b715069caf04d0536bec577b8d8183c8fe8cdfea8e61a5040",
+  "generated_at": "2026-09-14T11:20:01Z",
+  "source_base_commit": "9f5cbf66b7667154c2db7e77ed515a2e24ae2f88",
+  "registry_digest": "15df66b669c92ddef922ff39dd54933c9b371a8cd46f70cb62caa4577b77450b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3315,6 +3315,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "插件本地自检（URL/body/门控/截断）",
           "command": "python3 冒烟：register 假 ctx 六工具全挂 common；check_fn 对空值/PENDING-USER-FILL/真值三态；GET query 拼接（含逗号列表 urlencode）与 POST JSON body（保留原生 int 类型）；callId 路径段 quote；缺必填参数错误；32KB 截断标记；未配置错误路径",
           "details": "全部通过；过程中修出真 bug：_string(None) 原返回 \"None\" 字符串会让缺参检查失效并把 None 漏进查询参数，已改为返回空串。已知边界：POST 端点（counters/events）body 形态按 JSON body 实现，待首个真实调查调用确认，不符则同 overlay 管道重建；插件发现不打日志（grep argus 零输出），以功能探针为准。"
+        },
+        {
+          "type": "deployment",
+          "label": "p2-157 preproduction release + persona assembly replay",
+          "command": "deployment/release_automation_ecs_pipeline.sh（r20260914-9f5cbf6，prompt pr-6d90d45bf1ce：persona-manual v2 经 create_draft+schedule 排期、hermes-reply-contract v1 自动 seed，validate ok 37 prompts）+ 13424 注入 p2157-v1 全链",
+          "details": "①发布前根治 Terraform 零漂移门禁既有漂移（hermes task policy 4 个带外 EFS AP 固化进配置，PR#1185，零基础设施变更）；②受控重放：调查 park→prepare_draft→persona 回合 hermes_persona_assembled persona_key=sid-bright v1（binding 盖章 persona_key/persona_version，schema-007 列生效）→草稿生成；③语气对比实证：13473 旧草稿=裸 bullet dump（'Please provide: - The device... - When...'），本轮草稿=自然流式句（'Please provide the Windows SDK version and build, ..., and the firewall/proxy policy for outbound TCP/HTTPS. Also confirm whether...'，一次问全+连贯叙述）；④draft_pending Slack 线程送达；⑤approve 后投递 failed/zendesk_http_error 根因=13424 在 Zendesk 已被关闭（closed 票不可评论，环境状态非回归；此前 5 条 delivered 记录佐证链路本身健康）。"
         },
         {
           "type": "test",
@@ -12496,7 +12502,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "把 Hermes 引擎 persona phase 的 instructions 从单份薄手册重构为四层拼装：核心不变量 + 人格层（复用 support_account_personas 三人格库，per-ticket 粘性分配，fail-open 到 Sid Warm）+ 渲染规则 v2（迁移 legacy automation-persona-v31 的自然语气规则：自然句式/连接词/第一人称 ownership/追问带 lead-in/先安抚再提问/一次问全）+ 业务合同层（新 key hermes-reply-contract，按 route 的客户措辞合同：suspension 24h 措辞与禁 close 承诺、fraud 内部邮件忠实复述、verification/enablement 缺项精确追问、investigation 基于结论不猜根因）。草稿→guardrail→publish_policy 按 direction 分流零改动；prompt 经新 release 只发布 Preproduction，production schema 与旧账号链零影响。动因：13473 草稿语气生硬（persona manual v1 要求 exactly 复述），用户定调所有面向客户的回复应统一走分层拼装 Persona 出口。",
-      "next_action": "实施中：Phase 1 builders → Phase 2 接线/schema-007 → 测试 → 收口 → prompt release 序列（含既有 key 内容改版的 create_draft+schedule 空档补齐）→ preprod 发布与受控重放。",
+      "next_action": "实现+发布+受控重放全链完成（r20260914-9f5cbf6 + pr-6d90d45bf1ce）。待用户频道对比新旧草稿语气后收 done；本地栈门禁因用户移除 Neo4j 容器暂停，待栈恢复后补跑。",
       "acceptance_criteria": [
         "persona phase instructions 为四层拼装（core / PERSONA STYLE / PHASE MANUAL v2 / REPLY CONTRACT），人格层来自 ticket DB 三人格库分配（同 ticket 粘性、盖章 binding persona_key/version），解析失败 fail-open 到默认人格并记日志。",
         "hermes-persona-manual 升 v2（自然语气规则），新 key hermes-reply-contract v1 入 catalog 并随新 prompt release 发布；turn_run prompt_version 标记语义不变。",
@@ -12506,7 +12512,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "登记收口：prompt_change_log + feature_list + overview 生成校验通过。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "p2-157 preproduction release + persona assembly replay",
+          "command": "deployment/release_automation_ecs_pipeline.sh（r20260914-9f5cbf6，prompt pr-6d90d45bf1ce：persona-manual v2 经 create_draft+schedule 排期、hermes-reply-contract v1 自动 seed，validate ok 37 prompts）+ 13424 注入 p2157-v1 全链",
+          "details": "①发布前根治 Terraform 零漂移门禁既有漂移（hermes task policy 4 个带外 EFS AP 固化进配置，PR#1185，零基础设施变更）；②受控重放：调查 park→prepare_draft→persona 回合 hermes_persona_assembled persona_key=sid-bright v1（binding 盖章 persona_key/persona_version，schema-007 列生效）→草稿生成；③语气对比实证：13473 旧草稿=裸 bullet dump（'Please provide: - The device... - When...'），本轮草稿=自然流式句（'Please provide the Windows SDK version and build, ..., and the firewall/proxy policy for outbound TCP/HTTPS. Also confirm whether...'，一次问全+连贯叙述）；④draft_pending Slack 线程送达；⑤approve 后投递 failed/zendesk_http_error 根因=13424 在 Zendesk 已被关闭（closed 票不可评论，环境状态非回归；此前 5 条 delivered 记录佐证链路本身健康）。"
+        }
+      ],
       "source_refs": [
         "backend/services/prompts/hermes_support_agent.py",
         "backend/services/agent_config.py",
@@ -12532,6 +12545,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-14",
           "event": "renamed",
           "summary": "原拟 p2-156 编号被并行线程（Argus Call Search API）占用，改号 p2-157（registry 铁律：建 task 前查最新号，本 thread 在并行 PR 合并前建号）。"
+        },
+        {
+          "at": "2026-09-14",
+          "event": "deployed",
+          "summary": "v1 发布并实证四层拼装与语气改善；投递末环因工单已关闭失败（环境态）。"
         }
       ]
     },
