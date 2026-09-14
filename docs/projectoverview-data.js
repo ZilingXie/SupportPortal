@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-14T11:20:01Z",
-  "source_base_commit": "9f5cbf66b7667154c2db7e77ed515a2e24ae2f88",
-  "registry_digest": "15df66b669c92ddef922ff39dd54933c9b371a8cd46f70cb62caa4577b77450b",
+  "generated_at": "2026-09-14T11:54:48Z",
+  "source_base_commit": "849fb069c75eea20706a6549712bd88d1d53349d",
+  "registry_digest": "0bc6c0901214ff60dbb326fe926a8b65c83c7499cf9085aea118f243b923b10d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3323,6 +3323,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "①发布前根治 Terraform 零漂移门禁既有漂移（hermes task policy 4 个带外 EFS AP 固化进配置，PR#1185，零基础设施变更）；②受控重放：调查 park→prepare_draft→persona 回合 hermes_persona_assembled persona_key=sid-bright v1（binding 盖章 persona_key/persona_version，schema-007 列生效）→草稿生成；③语气对比实证：13473 旧草稿=裸 bullet dump（'Please provide: - The device... - When...'），本轮草稿=自然流式句（'Please provide the Windows SDK version and build, ..., and the firewall/proxy policy for outbound TCP/HTTPS. Also confirm whether...'，一次问全+连贯叙述）；④draft_pending Slack 线程送达；⑤approve 后投递 failed/zendesk_http_error 根因=13424 在 Zendesk 已被关闭（closed 票不可评论，环境状态非回归；此前 5 条 delivered 记录佐证链路本身健康）。"
         },
         {
+          "type": "deployment",
+          "label": "staging 组装 + drop 镜像 + one-off run-task",
+          "command": "git -C \u003cagora_workspace>/.codex/agora-skills pull --ff-only（→0deb0e2）；rsync staging（剔 argus/.env/mcps/.DS_Store/__pycache__，实体化 skill-creator）；zacBot docker build Dockerfile.hermes-skills-drop → push tag hermes-agora-skills-20260914（digest sha256:05c92c1a…）；run-task skillsdrop:1",
+          "details": "staging 55 技能/382 文件，.env/.key/.pem/credential/敏感字面量扫描零命中；镜像内实证 dirs=55/files=382/argus=0/NO_ENV/SKILL.md 内容可读；one-off 任务 exit 0，日志 COPIED dirs=67 NO_ARGUS NO_ENV_FILE DOT_ENV_PRESENT DROP_DONE（67=55 新+12 既有 bundled 分类目录，证明 /opt/data/skills 原有 bundled 技能与新增共存）。rsync 坑：源路径缺尾斜杠会嵌套一层目录，镜像内 ls 计数=1 即此症状，源端补尾斜杠重建即愈。"
+        },
+        {
+          "type": "deployment",
+          "label": "dashboard 验证 + 服务零影响 + skills 工具集事实",
+          "command": "公网 dashboard 登录（basic provider，密码 SSM 管道）→ GET /api/skills、/api/skills/content?name=agora-token-troubleshoot、/api/tools/toolsets；describe-services/describe-tasks",
+          "details": "技能总数 53→108；agora-token-troubleshoot 等在列，argus-troubleshooting 不在列；SKILL.md 正文经 content 端点读回；服务仍 td:25、rollout COMPLETED、四容器 HEALTHY（服务任务 17:49 曾因无关原因同 td 换过一次，发生在 drop 任务两小时前，与本操作无关）；skills 工具集 enabled=True configured=True 实证——调查链接入 skill_view 全文阅读仅差 SupportPortal 侧把 skills 加入 INVESTIGATION_WORK_TOOLSETS（一行改动+preprod 发布，后续任务）。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -3666,8 +3678,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 28,
-      "done_count": 12,
+      "task_count": 29,
+      "done_count": 13,
       "blocked_count": 0
     },
     {
@@ -12555,6 +12567,58 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-158",
+      "title": "Preproduction Hermes 装载 Agora Skills（55 项内部调查/排障技能）",
+      "status": "done",
+      "owner": "codex",
+      "summary": "把用户本地 agora-skills 私仓（ssh://[email redacted]/ai/agora-skills.git，更新至 0deb0e2）的技能装载进 Preproduction Hermes：hermes 用户技能目录=/opt/data/skills（EFS hermes-home，按需重扫 30s TTL，无需重启、不改服务 td），格式与 SKILL.md frontmatter 同构零转换。容器内无法 SSH clone 私仓、本机无 session-manager-plugin → 适配为「本地 pull → staging 剔除 → drop 镜像 → one-off run-task 拷入」管道：剔除 skills/argus（argus_call_search 插件已覆盖）+全部 .env（jira-csd/zendesk-ticket 真实凭证红线，.env.example 保留）+mcps/（非技能），skill-creator 桥接 symlink 实体化；staging=55 技能/382 文件、凭证扫描零命中。drop 镜像 hermes-agora-skills-20260914（digest 05c92c1a，FROM td:25 部署 digest 仅 COPY staging），one-off td skillsdrop:1（entryPoint sh -c 显式绕过 s6/stage2，user 10000:10000，仅挂 hermes-home AP）。服务零影响（td:25 不变、四容器 HEALTHY）；更新方式=重跑同管道。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "/opt/data/skills 含 55 个 agora 技能目录（任务日志 dirs=67=55 新+12 既有 bundled 分类目录），无 argus、无 .env、无 mcps。",
+        "dashboard /api/skills 总数 53→108，agora 技能在列且 /api/skills/content 可读回正文；argus-troubleshooting 不在列。",
+        "服务零影响：td:25 不变、四容器 HEALTHY、/opt/data/.env 未被触碰（entryPoint 覆盖绕过 s6/stage2）。",
+        "runbook 新增装载章节、task 登记、generate_project_overview --write/--check 通过、PR 合入、worktree 清理；hermes-deploy 提交 drop Dockerfile（技能内容不入库）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "staging 组装 + drop 镜像 + one-off run-task",
+          "command": "git -C \u003cagora_workspace>/.codex/agora-skills pull --ff-only（→0deb0e2）；rsync staging（剔 argus/.env/mcps/.DS_Store/__pycache__，实体化 skill-creator）；zacBot docker build Dockerfile.hermes-skills-drop → push tag hermes-agora-skills-20260914（digest sha256:05c92c1a…）；run-task skillsdrop:1",
+          "details": "staging 55 技能/382 文件，.env/.key/.pem/credential/敏感字面量扫描零命中；镜像内实证 dirs=55/files=382/argus=0/NO_ENV/SKILL.md 内容可读；one-off 任务 exit 0，日志 COPIED dirs=67 NO_ARGUS NO_ENV_FILE DOT_ENV_PRESENT DROP_DONE（67=55 新+12 既有 bundled 分类目录，证明 /opt/data/skills 原有 bundled 技能与新增共存）。rsync 坑：源路径缺尾斜杠会嵌套一层目录，镜像内 ls 计数=1 即此症状，源端补尾斜杠重建即愈。"
+        },
+        {
+          "type": "deployment",
+          "label": "dashboard 验证 + 服务零影响 + skills 工具集事实",
+          "command": "公网 dashboard 登录（basic provider，密码 SSM 管道）→ GET /api/skills、/api/skills/content?name=agora-token-troubleshoot、/api/tools/toolsets；describe-services/describe-tasks",
+          "details": "技能总数 53→108；agora-token-troubleshoot 等在列，argus-troubleshooting 不在列；SKILL.md 正文经 content 端点读回；服务仍 td:25、rollout COMPLETED、四容器 HEALTHY（服务任务 17:49 曾因无关原因同 td 换过一次，发生在 drop 任务两小时前，与本操作无关）；skills 工具集 enabled=True configured=True 实证——调查链接入 skill_view 全文阅读仅差 SupportPortal 侧把 skills 加入 INVESTIGATION_WORK_TOOLSETS（一行改动+preprod 发布，后续任务）。"
+        }
+      ],
+      "source_refs": [
+        "docs/deploy_hermes_investigator_ecs.md"
+      ],
+      "created_at": "2026-09-14",
+      "updated_at": "2026-09-14",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-14",
+          "event": "created",
+          "summary": "用户提供 agora-skills 私仓安装指引（.codex/INSTALL.md，Codex symlink 流程）与本地已装副本，要求装载进 preprod hermes；容器内 SSH clone 不可行，用户建议本地更新后上传。规划实证：hermes 用户技能目录=/opt/data/skills（EFS，按需重扫）、格式同构零转换、one-off run-task 为既有验证通道。建 task 时 p2-157 已被并发 persona 线程占用（同号竞态铁律），顺延取 p2-158。"
+        },
+        {
+          "at": "2026-09-14",
+          "event": "done",
+          "summary": "全链装载完成并验证：55 技能（剔 argus/.env/mcps）经 drop 镜像+一次性任务拷入 /opt/data/skills，dashboard 53→108 可见可读，服务零影响。遗留（后续可选）：①调查链 enabled_toolsets 加 skills（SupportPortal 一行改动+发布，平台侧已 enabled 实证）；②jira-csd/zendesk-ticket 无凭证仅知识可用；③本地未跟踪技能（jira-csd/zendesk-ticket/find-running-webrecorder-sid）未回流上游。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -17872,7 +17936,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。- Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 全文阅读待调查链启用 skills 工具集）。",
+        "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]
