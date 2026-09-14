@@ -146,8 +146,8 @@ task 内 caddy ui-proxy 容器(:8080,deploy-ecs/Caddyfile):
 
 | 资源 | 标识 |
 |---|---|
-| td | `supportportal-preproduction-hermes:21`(memory 2048→4096;hermes 容器+dashboard env;+memory-panel/+ui-proxy 容器,均 essential=false) |
-| 镜像 | panel `@sha256:d3e9f9a3a221…`(tag `hermes-panel-20260913`)、ui-proxy `@sha256:84a5a9dd6f0a…`(tag `hermes-ui-proxy-20260913d`),均推 `supportportal/hermes` ECR |
+| td | `supportportal-preproduction-hermes:22`(:18 首发、:21 收敛登录前缀问题、:22 修 redir 歧义;memory 2048→4096;hermes 容器+dashboard env;+memory-panel/+ui-proxy 容器,均 essential=false) |
+| 镜像 | panel `@sha256:d3e9f9a3a221…`(tag `hermes-panel-20260913`)、ui-proxy `@sha256:2a3b4c90155b…`(tag `hermes-ui-proxy-20260914`),均推 `supportportal/hermes` ECR |
 | SG | preprod ECS SG `sg-0845c28285f5909f3` +tcp 8080←ALB SG `sg-0fba25adcbdf00ac9`;9119/8123/8420 保持任务内回环,不对外 |
 | service | `supportportal-preproduction-hermes` 追加 loadBalancer(ui-proxy:8080,healthCheckGracePeriod 120s)——update-service 给无 LB 既有服务追加首个 ALB TG 可行 |
 | panel 实例配置 | td 命令覆盖引导时写 `/app/config/metadata-instances.json`(gateway_endpoint=http://127.0.0.1:8420,api_key=local 占位,gate 关闭);dockerignore 禁止 config/*.json 入镜像 |
@@ -173,10 +173,11 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 3. **dashboard 登录页 JS 不感知代理前缀**:表单 POST 到根绝对路径 `/auth/password-login`、next 参数为剥前缀路径 → 需 ALB 精确路径规则(104)+ caddy 查询串重写(`@rootnext query next=/` 注意 caddy query matcher 按解码值匹配,写 `%2F` 不命中)把 next 前缀化;SPA 本体、cookie Path、资产 URL 均原生支持前缀无需处理。
 4. **caddy `header Location` 正则改写对 reverse_proxy 响应不生效**(执行时序),请求阶段 `rewrite` 查询串是可靠做法。
 5. **ALB TG 必须 `--target-type ip`**(awsvpc),建错成 instance 会被 update-service 拒绝且不可改,只能重建 TG。
+6. **caddy `redir` 首参数以 `/` 开头会被解析成内联路径 matcher 而非目标地址**:`handle /dashboard/hermes { redir /dashboard/hermes/ 308 }` adapt 成"内层再匹配 /dashboard/hermes/"的死路由,裸路径永远落到 404 兜底(用户实测登录后 "Not found" 即此)。正确写法=命名 matcher:`@hermesroot path /dashboard/hermes` + `redir @hermesroot /dashboard/hermes/ 308`(top-level redir 在 handle 之前排序,互不冲突)。排查手段=`caddy adapt` 看 JSON 路由表。
 
-### 验证(2026-09-14 全绿)
+### 验证(2026-09-14 全绿,:22 修复后复验)
 
-浏览器登录闭环(curl 模拟):入口 302→登录页(hidden next 已前缀化)→`POST /auth/password-login` 200+会话 cookie(Path=/dashboard/hermes)→SPA 200 且 `__HERMES_BASE_PATH__="/dashboard/hermes"`;`/dashboard/memory/` 200、资产在 `/dashboard/memory/assets/` 下、`/dashboard/memory/health` 200;回归 `/automation/production`、`/automation/preproduction` 200、`/v1/models` 无凭证 401。
+浏览器登录闭环(curl 模拟):入口 302→登录页(hidden next 已前缀化)→`POST /auth/password-login` 200+会话 cookie(Path=/dashboard/hermes)→登录后 JS 跳 `/dashboard/hermes`(无尾斜杠)→**308→`/dashboard/hermes/`→200** SPA 且 `__HERMES_BASE_PATH__="/dashboard/hermes"`;`/dashboard/memory` 同样 308→200;`/dashboard/memory/` 200、资产在 `/dashboard/memory/assets/` 下、`/dashboard/memory/health` 200;回归 `/automation/production`、`/automation/preproduction` 200、`/v1/models` 无凭证 401。
 
 ### 回滚
 
