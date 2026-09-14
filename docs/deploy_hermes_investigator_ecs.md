@@ -211,6 +211,22 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 - 回滚:`update-service --task-definition supportportal-preproduction-hermes:24`(SSM 参数/镜像/插件为无害残留)。
 - Production 推广路径(未在本任务范围):另建 `/supportportal/production/hermes-argus-api-key`+同 overlay 管道(FROM production 当前部署 digest)+production td 注册部署。
 
+## 2026-09-14 Preproduction Hermes 装载 Agora Skills(p2-158,一次性 drop task)
+
+目的:给调查回合补充 Agora 内部排障/调查知识面(55 项技能:token/AVSync/静音/卡顿/首帧/codec/设备网络画像/QoE/回归调查等)。来源=agora-skills 私仓(`ssh://git@git.agoralab.co/ai/agora-skills.git`)的用户本地克隆(pull 至 `0deb0e2`);其 `.codex/INSTALL.md` 是 Codex symlink 流程,容器内 SSH clone 不可行 → 适配为「本地 pull → staging 剔除 → drop 镜像 → one-off run-task 拷入」。
+
+机制事实(上游源码实证):hermes 用户技能目录=**`/opt/data/skills`**(HERMES_HOME=/opt/data,EFS hermes-home,uid 10000;bundled 技能首次启动 seed 为分类子目录——dashboard 那 53 个即来源于此);`GET /api/skills` 按需重扫(30s mtime TTL 缓存)→ **新目录落地即出现,无需重启、不改服务 td**;技能格式=目录+`SKILL.md`(frontmatter name/description),与 agora-skills 同构零转换;技能索引(name+description)注入每次 run 的 system prompt,全文阅读需 "skills" 工具集。
+
+变更与管道:
+
+- **staging 剔除规则**(红线):`skills/argus` 剔除(argus_call_search 插件已覆盖);**全部 `.env` 剔除**(jira-csd/zendesk-ticket 含真实凭证,绝不上传容器,`.env.example` 保留)+ 凭证类扫描(.env/.key/.pem/credential/敏感字面量)零命中;`mcps/` 不传(MCP server 非技能);`.DS_Store`/`__pycache__` 剔除;`skill-creator` 桥接 symlink 实体化(内容=repo 根目录)。3 个本地未跟踪技能(jira-csd/zendesk-ticket/find-running-webrecorder-sid)包含。staging=55 技能/382 文件。
+- **drop 镜像** `hermes-agora-skills-20260914`(digest `sha256:05c92c1a…`,FROM td:25 部署 digest `5c0bbc3f` 仅 COPY staging;构建上下文=deploy-ecs/;镜像内 55 目录/382 文件/零 argus/零 .env/SKILL.md 内容实证)。Dockerfile 归档 hermes-deploy `build/Dockerfile.hermes-skills-drop`(**技能内容不入库**,源真理在私仓)。
+- **one-off td** `supportportal-preproduction-hermes-skillsdrop:1`:单容器=drop 镜像,`user 10000:10000`,**entryPoint `sh -c` 显式覆盖**(绕过 s6/stage2 → 坑③的 API_SERVER_KEY 写 .env 机制不触发),cpu 256/mem 512,仅挂 hermes-home AP(`fsap-068e530f8cd61c854`),command=`mkdir -p /opt/data/skills && cp -r /staging/agora-skills/. /opt/data/skills/` + 自检输出。
+- 验证(全过):任务 exit 0,日志 `COPIED dirs=67 NO_ARGUS NO_ENV_FILE DOT_ENV_PRESENT DROP_DONE`(67=55 新+12 既有 bundled 分类目录,新旧共存);dashboard `/api/skills` 总数 **53→108**,agora-token-troubleshoot 等在列、`argus-troubleshooting` 不在列,`/api/skills/content` 读回 SKILL.md 正文;服务零影响(td:25 不变、rollout COMPLETED、四容器 HEALTHY)。**skills 工具集 enabled+configured 实证**——调查回合要能 `skill_view` 全文,仅差 SupportPortal 侧把 `skills` 加入 `INVESTIGATION_WORK_TOOLSETS`(一行+preprod 发布,后续任务)。
+- 坑:rsync 源路径**缺尾斜杠**会把源目录嵌套进目标一层(镜像内 `ls | wc -l`=1 即此症状),源端补尾斜杠重建即愈。
+- 回滚=删 `/opt/data/skills/` 下对应技能目录(或 dashboard 逐个 disable);drop 镜像/td 为无害残留。更新方式=重跑同管道(pull→staging→镜像→drop task,幂等,cp -r 合并式覆盖)。
+- 已知边界:①jira-csd/zendesk-ticket 上传后脚本不可执行(无凭证),仅知识可用;②55 技能索引进 system prompt(name+description,有长度上限约束);③ECS Exec 通道(service/task 均已启用、容器内 SSM agent RUNNING)因本机缺 session-manager-plugin 不可用,否则可作为更轻的文件投放通道。
+
 ## 已踩的坑(操作前必读)
 
 1. **EFS mount access denied 三要素缺一不可**:该文件系统挂有 IAM policy(仅 ClientRootAccess/ClientWrite),挂载需要 ①task role identity policy 的 `ClientMount`(且 `AccessPointArn` 在白名单——新 AP 必须加入 `SupportPortalProductionEfsAccess` inline policy);②task definition 卷 `authorizationConfig.iam=ENABLED`;③EFS SG 放行 ECS SG 2049(已配)。报错形态:`mount.nfs4: access denied by server while mounting 127.0.0.1:/`。

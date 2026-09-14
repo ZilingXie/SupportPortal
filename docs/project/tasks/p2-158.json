@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-158",
+  "title": "Preproduction Hermes 装载 Agora Skills（55 项内部调查/排障技能）",
+  "status": "done",
+  "owner": "codex",
+  "summary": "把用户本地 agora-skills 私仓（ssh://git@git.agoralab.co/ai/agora-skills.git，更新至 0deb0e2）的技能装载进 Preproduction Hermes：hermes 用户技能目录=/opt/data/skills（EFS hermes-home，按需重扫 30s TTL，无需重启、不改服务 td），格式与 SKILL.md frontmatter 同构零转换。容器内无法 SSH clone 私仓、本机无 session-manager-plugin → 适配为「本地 pull → staging 剔除 → drop 镜像 → one-off run-task 拷入」管道：剔除 skills/argus（argus_call_search 插件已覆盖）+全部 .env（jira-csd/zendesk-ticket 真实凭证红线，.env.example 保留）+mcps/（非技能），skill-creator 桥接 symlink 实体化；staging=55 技能/382 文件、凭证扫描零命中。drop 镜像 hermes-agora-skills-20260914（digest 05c92c1a，FROM td:25 部署 digest 仅 COPY staging），one-off td skillsdrop:1（entryPoint sh -c 显式绕过 s6/stage2，user 10000:10000，仅挂 hermes-home AP）。服务零影响（td:25 不变、四容器 HEALTHY）；更新方式=重跑同管道。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "/opt/data/skills 含 55 个 agora 技能目录（任务日志 dirs=67=55 新+12 既有 bundled 分类目录），无 argus、无 .env、无 mcps。",
+    "dashboard /api/skills 总数 53→108，agora 技能在列且 /api/skills/content 可读回正文；argus-troubleshooting 不在列。",
+    "服务零影响：td:25 不变、四容器 HEALTHY、/opt/data/.env 未被触碰（entryPoint 覆盖绕过 s6/stage2）。",
+    "runbook 新增装载章节、task 登记、generate_project_overview --write/--check 通过、PR 合入、worktree 清理；hermes-deploy 提交 drop Dockerfile（技能内容不入库）。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "deployment",
+      "label": "staging 组装 + drop 镜像 + one-off run-task",
+      "command": "git -C <agora_workspace>/.codex/agora-skills pull --ff-only（→0deb0e2）；rsync staging（剔 argus/.env/mcps/.DS_Store/__pycache__，实体化 skill-creator）；zacBot docker build Dockerfile.hermes-skills-drop → push tag hermes-agora-skills-20260914（digest sha256:05c92c1a…）；run-task skillsdrop:1",
+      "details": "staging 55 技能/382 文件，.env/.key/.pem/credential/敏感字面量扫描零命中；镜像内实证 dirs=55/files=382/argus=0/NO_ENV/SKILL.md 内容可读；one-off 任务 exit 0，日志 COPIED dirs=67 NO_ARGUS NO_ENV_FILE DOT_ENV_PRESENT DROP_DONE（67=55 新+12 既有 bundled 分类目录，证明 /opt/data/skills 原有 bundled 技能与新增共存）。rsync 坑：源路径缺尾斜杠会嵌套一层目录，镜像内 ls 计数=1 即此症状，源端补尾斜杠重建即愈。"
+    },
+    {
+      "type": "deployment",
+      "label": "dashboard 验证 + 服务零影响 + skills 工具集事实",
+      "command": "公网 dashboard 登录（basic provider，密码 SSM 管道）→ GET /api/skills、/api/skills/content?name=agora-token-troubleshoot、/api/tools/toolsets；describe-services/describe-tasks",
+      "details": "技能总数 53→108；agora-token-troubleshoot 等在列，argus-troubleshooting 不在列；SKILL.md 正文经 content 端点读回；服务仍 td:25、rollout COMPLETED、四容器 HEALTHY（服务任务 17:49 曾因无关原因同 td 换过一次，发生在 drop 任务两小时前，与本操作无关）；skills 工具集 enabled=True configured=True 实证——调查链接入 skill_view 全文阅读仅差 SupportPortal 侧把 skills 加入 INVESTIGATION_WORK_TOOLSETS（一行改动+preprod 发布，后续任务）。"
+    }
+  ],
+  "source_refs": [
+    "docs/deploy_hermes_investigator_ecs.md"
+  ],
+  "created_at": "2026-09-14",
+  "updated_at": "2026-09-14",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {
+      "at": "2026-09-14",
+      "event": "created",
+      "summary": "用户提供 agora-skills 私仓安装指引（.codex/INSTALL.md，Codex symlink 流程）与本地已装副本，要求装载进 preprod hermes；容器内 SSH clone 不可行，用户建议本地更新后上传。规划实证：hermes 用户技能目录=/opt/data/skills（EFS，按需重扫）、格式同构零转换、one-off run-task 为既有验证通道。建 task 时 p2-157 已被并发 persona 线程占用（同号竞态铁律），顺延取 p2-158。"
+    },
+    {
+      "at": "2026-09-14",
+      "event": "done",
+      "summary": "全链装载完成并验证：55 技能（剔 argus/.env/mcps）经 drop 镜像+一次性任务拷入 /opt/data/skills，dashboard 53→108 可见可读，服务零影响。遗留（后续可选）：①调查链 enabled_toolsets 加 skills（SupportPortal 一行改动+发布，平台侧已 enabled 实证）；②jira-csd/zendesk-ticket 无凭证仅知识可用；③本地未跟踪技能（jira-csd/zendesk-ticket/find-running-webrecorder-sid）未回流上游。"
+    }
+  ]
+}
