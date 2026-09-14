@@ -200,6 +200,20 @@ class AutomationEcsStore(Protocol):
             )
         )
 
+    def _apply_schema_007_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 006→007 evolution: pinned per-case persona assignment."""
+        for column, definition in (
+            ("persona_key", "TEXT"),
+            ("persona_version", "INTEGER"),
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                    self._table("automation_hermes_case_bindings"),
+                    sql.Identifier(column),
+                    sql.SQL(definition),
+                )
+            )
+
     def check_schema(self) -> None: ...
     def accept_intake(self, event: AutomationIntakeEvent, provenance: RuntimeProvenance) -> IntakeReceipt: ...
     def get_execution(self, execution_id: str) -> dict[str, Any] | None: ...
@@ -222,6 +236,7 @@ class AutomationEcsStore(Protocol):
     def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
     def bind_hermes_case_thread(self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str) -> dict[str, Any]: ...
     def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None: ...
+    def bind_hermes_case_persona(self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int) -> dict[str, Any]: ...
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
@@ -296,6 +311,20 @@ class InMemoryAutomationEcsStore:
                 self._table("automation_hermes_case_bindings"),
             )
         )
+
+    def _apply_schema_007_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 006→007 evolution: pinned per-case persona assignment."""
+        for column, definition in (
+            ("persona_key", "TEXT"),
+            ("persona_version", "INTEGER"),
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                    self._table("automation_hermes_case_bindings"),
+                    sql.Identifier(column),
+                    sql.SQL(definition),
+                )
+            )
 
     def check_schema(self) -> None:
         if not self._migrated:
@@ -1013,6 +1042,8 @@ class InMemoryAutomationEcsStore:
                     "investigation": None,
                     "slack_channel_id": None,
                     "slack_thread_ts": None,
+                    "persona_key": None,
+                    "persona_version": None,
                     "created_at": _iso(),
                     "updated_at": _iso(),
                 }
@@ -1162,6 +1193,23 @@ class InMemoryAutomationEcsStore:
                 ):
                     return ticket_id
         return None
+
+    def bind_hermes_case_persona(
+        self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int
+    ) -> dict[str, Any]:
+        """Pin the case's reply persona once; later calls keep the first."""
+        with self._lock:
+            key = (self.settings.job_namespace, zendesk_ticket_id)
+            binding = self._hermes_bindings.get(key)
+            if binding is None:
+                raise HermesTurnStateError(zendesk_ticket_id, "case binding not found")
+            if not binding.get("persona_key"):
+                binding.update(
+                    persona_key=str(persona_key or "").strip(),
+                    persona_version=int(persona_version or 0),
+                    updated_at=_iso(),
+                )
+            return copy.deepcopy(binding)
 
     def get_case_mirror(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -1857,6 +1905,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-003",
             "automation-ecs-004",
             "automation-ecs-005",
+            "automation-ecs-006",
         }
     )
 
@@ -2052,6 +2101,8 @@ class PostgresAutomationEcsStore:
                 investigation JSONB,
                 slack_channel_id TEXT,
                 slack_thread_ts TEXT,
+                persona_key TEXT,
+                persona_version INTEGER,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 PRIMARY KEY (namespace, zendesk_ticket_id),
@@ -2130,6 +2181,7 @@ class PostgresAutomationEcsStore:
         self._apply_schema_004_migrations(cursor)
         self._apply_schema_005_migrations(cursor)
         self._apply_schema_006_migrations(cursor)
+        self._apply_schema_007_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -2290,6 +2342,20 @@ class PostgresAutomationEcsStore:
                 self._table("automation_hermes_case_bindings"),
             )
         )
+
+    def _apply_schema_007_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 006→007 evolution: pinned per-case persona assignment."""
+        for column, definition in (
+            ("persona_key", "TEXT"),
+            ("persona_version", "INTEGER"),
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                    self._table("automation_hermes_case_bindings"),
+                    sql.Identifier(column),
+                    sql.SQL(definition),
+                )
+            )
 
     def check_schema(self) -> None:
         with self._connect() as connection:
@@ -3726,6 +3792,30 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
         return str(row["zendesk_ticket_id"]) if row is not None else None
+
+    def bind_hermes_case_persona(
+        self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int
+    ) -> dict[str, Any]:
+        """Pin the case's reply persona once; later calls keep the first."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET persona_key=COALESCE(persona_key,%s),"
+                        "persona_version=COALESCE(persona_version,%s),updated_at=NOW() "
+                        "WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (
+                        str(persona_key or "").strip() or None,
+                        int(persona_version or 0),
+                        self.settings.job_namespace,
+                        zendesk_ticket_id,
+                    ),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise HermesTurnStateError(zendesk_ticket_id, "case binding not found")
+        return dict(row)
 
     def get_case_mirror(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:

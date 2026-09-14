@@ -63,7 +63,7 @@ def store() -> Any:
     postgres_store = PostgresAutomationEcsStore(settings)
     try:
         postgres_store.migrate()
-        assert SCHEMA_REVISION == "automation-ecs-006"
+        assert SCHEMA_REVISION == "automation-ecs-007"
         yield postgres_store
     finally:
         with psycopg.connect(_DSN, autocommit=True) as connection:
@@ -269,3 +269,19 @@ class TestPostgresInvestigationContinue:
         # second continue conflicts via the stamped result
         with pytest.raises(HermesTurnConflictError):
             store.create_investigation_reply_turn("123", source_turn_id=turn_id, base_event={})
+
+
+class TestPostgresPersonaBinding:
+    def test_persona_pin_is_write_once(self, store) -> None:
+        handoff = _hand_off(store, _event("zendesk:ticket:123:created"))
+        binding = store.bind_hermes_case_persona(
+            "123", persona_key="sid-precise", persona_version=1
+        )
+        assert binding["persona_key"] == "sid-precise"
+        assert int(binding["persona_version"]) == 1
+        rebound = store.bind_hermes_case_persona(
+            "123", persona_key="sid-bright", persona_version=2
+        )
+        assert rebound["persona_key"] == "sid-precise"
+        assert int(rebound["persona_version"]) == 1
+        assert store.get_hermes_case_binding("123")["persona_key"] == "sid-precise"

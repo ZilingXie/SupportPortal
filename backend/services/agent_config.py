@@ -35,6 +35,7 @@ from backend.services.prompts.hermes_support_agent import (
     HERMES_AUTOMATION_VERIFICATION_MANUAL_VERSION,
     HERMES_INVESTIGATION_MANUAL_VERSION,
     HERMES_PERSONA_MANUAL_VERSION,
+    HERMES_REPLY_CONTRACT_VERSION,
     HERMES_ROUTE_MANUAL_VERSION,
     HERMES_SUPPORT_AGENT_PROMPT_VERSION,
     build_hermes_automation_enablement_manual,
@@ -43,6 +44,7 @@ from backend.services.prompts.hermes_support_agent import (
     build_hermes_automation_verification_manual,
     build_hermes_investigation_manual,
     build_hermes_persona_manual,
+    build_hermes_reply_contract,
     build_hermes_route_manual,
     build_hermes_support_agent_system_prompt,
 )
@@ -617,6 +619,13 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "hermes-support-session",
                     build_hermes_persona_manual(),
                     version=HERMES_PERSONA_MANUAL_VERSION,
+                ),
+                _prompt(
+                    "hermes-reply-contract",
+                    "Hermes reply contract",
+                    "hermes-support-session",
+                    build_hermes_reply_contract(),
+                    version=HERMES_REPLY_CONTRACT_VERSION,
                 ),
                 _prompt(
                     "hermes-automation-enablement-manual",

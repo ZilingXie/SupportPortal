@@ -30,6 +30,8 @@ from backend.services.automation_hermes_agent import (
     HermesAgentTurnProcessor,
     HermesTurnDeferred,
     _route_reason_value,
+    phase_instructions,
+    resolve_persona_style,
 )
 from backend.services.automation_hermes_tools import (
     tool_save_investigation_progress,
@@ -1254,6 +1256,195 @@ def _agent_comment_event() -> Any:
 
     return AutomationIntakeEvent.model_validate(payload)
 
+
+
+class TestPersonaAssembly:
+    """p2-156: layered persona-phase assembly from the persona library."""
+
+    def setup_method(self) -> None:
+        from backend.services.prompt_runtime import (
+            _code_snapshot,
+            reset_prompt_runtime_for_tests,
+        )
+
+        reset_prompt_runtime_for_tests()
+        self._snapshot = _code_snapshot()
+
+    def teardown_method(self) -> None:
+        from backend.services.prompt_runtime import reset_prompt_runtime_for_tests
+
+        reset_prompt_runtime_for_tests()
+
+    class _PersonaRepository:
+        def __init__(self, assignment=None, error=None):
+            self.assignment = assignment
+            self.error = error
+            self.resolve_calls = 0
+
+        def get_account_case_by_ticket_id(self, ticket_id):
+            return None
+
+        def save_ticket(self, ticket, *, new_messages=None):
+            return None
+
+        def save_account_case(self, account_case):
+            return None
+
+        def get_account_persona_assignment(self, ticket_id):
+            if self.error:
+                raise self.error
+            return self.assignment
+
+        def resolve_account_persona(self, ticket_id):
+            self.resolve_calls += 1
+            if self.error:
+                raise self.error
+            return self.assignment
+
+    def test_persona_instructions_assemble_four_layers(self) -> None:
+        from backend.services.prompt_runtime import use_prompt_runtime_snapshot
+
+        with use_prompt_runtime_snapshot(self._snapshot):
+            instructions, key = phase_instructions(
+                "persona",
+                direction="investigation",
+                route=None,
+                persona_style="Use a warm, considerate, and reassuring support voice.",
+                persona_key="default-support",
+            )
+            assert key == "hermes-persona-manual"
+            assert "--- PERSONA STYLE (default-support) ---" in instructions
+            assert "warm, considerate" in instructions
+            assert "--- PHASE MANUAL (hermes-persona-manual) ---" in instructions
+            assert "--- REPLY CONTRACT (hermes-reply-contract) ---" in instructions
+            assert "within 24 hours" in instructions  # suspension contract present
+            assert instructions.index("PERSONA STYLE") < instructions.index("PHASE MANUAL")
+            assert instructions.index("PHASE MANUAL") < instructions.index("REPLY CONTRACT")
+
+    def test_non_persona_phases_have_no_persona_or_contract_layers(self) -> None:
+        from backend.services.prompt_runtime import use_prompt_runtime_snapshot
+
+        for phase in ("route", "work"):
+            instructions, _ = phase_instructions(
+                phase,
+                direction="investigation",
+                route=None,
+                persona_style="should not appear",
+                persona_key="default-support",
+            )
+            assert "PERSONA STYLE" not in instructions
+            assert "REPLY CONTRACT" not in instructions
+            assert "should not appear" not in instructions
+
+    def test_resolve_persona_reuses_assignment_and_falls_back(self) -> None:
+        assignment = {
+            "persona_key": "sid-bright",
+            "version": 1,
+            "content": {"instruction": "Use an upbeat support voice.", "opener": ""},
+        }
+        repo = self._PersonaRepository(assignment=assignment)
+        resolved = resolve_persona_style(repo, "123")
+        assert resolved["persona_key"] == "sid-bright" and resolved["fell_back"] is False
+        assert resolved["instruction"] == "Use an upbeat support voice."
+
+        # resolve path when no assignment exists yet
+        repo = self._PersonaRepository(assignment=None)
+        assert resolve_persona_style(None, "123")["persona_key"] == "default-support"
+
+        # repository failure fails open to the default persona
+        repo = self._PersonaRepository(error=RuntimeError("db down"))
+        resolved = resolve_persona_style(repo, "123")
+        assert resolved["fell_back"] is True
+        assert resolved["persona_key"] == "default-support"
+        assert resolved["instruction"]
+
+    def test_persona_phase_pins_sticky_persona_on_binding(self) -> None:
+        store = _store()
+        handoff, agent_job = None, None
+        receipt = store.accept_intake(_event(), _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert agent_job is not None
+
+        assignment = {
+            "persona_key": "sid-precise",
+            "version": 1,
+            "content": {"instruction": "Use a precise support voice.", "opener": ""},
+        }
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            turn_id = idempotency_key.split(":")[1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="investigation", route=None
+                )
+            elif phase == "work":
+                tool_save_investigation_progress(
+                    store, None, turn_id=handoff["turn_id"],
+                    summary="Investigated.", evidence=[], blockers=[], next_steps=[],
+                )
+            elif phase == "persona":
+                store._hermes_turns[turn_id]["phase"] = "persona"
+                with patch(
+                    "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+                    side_effect=lambda *a, **k: {
+                        "decision": "approved_for_final_engineer_review",
+                        "blockers": [],
+                    },
+                ):
+                    tool_save_reply_draft(
+                        store, None, turn_id=turn_id, content="Draft", basis={}
+                    )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store, client=client, environment="preproduction",
+            repository=self._PersonaRepository(assignment=assignment),
+            poll_interval_seconds=0.01,
+        )
+        from backend.services import prompt_runtime as _prompt_runtime
+
+        _prompt_runtime._SNAPSHOT = self._snapshot
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_case_opened",
+            return_value={"status": "skipped_not_configured"},
+        ), patch(
+            "backend.services.engineer_slack.notify_hermes_investigation_result",
+            return_value={"status": "skipped_not_configured"},
+        ), patch(
+            "backend.services.engineer_slack.notify_hermes_draft_pending",
+            return_value={"status": "skipped_not_configured"},
+        ):
+            outcome = processor.process(agent_job)
+        assert outcome["status"] == "awaiting_investigation_review"
+        created = store.create_investigation_reply_turn(
+            "123", source_turn_id=handoff["turn_id"], base_event={}
+        )
+        reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+        assert reply_job is not None and reply_job.payload["turn_id"] == created["turn_id"]
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_case_opened",
+            return_value={"status": "skipped_not_configured"},
+        ), patch(
+            "backend.services.engineer_slack.notify_hermes_draft_pending",
+            return_value={"status": "skipped_not_configured"},
+        ):
+            reply_outcome = processor.process(reply_job)
+        assert reply_outcome["status"] == "completed"
+        binding = store.get_hermes_case_binding("123")
+        assert binding["persona_key"] == "sid-precise"
+        assert binding["persona_version"] == 1
+        # the submitted persona instructions carry the style layer
+        persona_submission = next(
+            s for s in client.submissions if s["idempotency_key"].endswith(":persona")
+        )
+        assert "--- PERSONA STYLE (sid-precise) ---" in persona_submission["instructions"]
+        assert "--- REPLY CONTRACT (hermes-reply-contract) ---" in persona_submission["instructions"]
+        # write-once: a later pin with a different persona keeps the first
+        rebound = store.bind_hermes_case_persona("123", persona_key="sid-bright", persona_version=1)
+        assert rebound["persona_key"] == "sid-precise"
 
 class TestInvestigationThreadBinding:
     """v1.2: one Slack root per case; results/drafts reply in the bound thread."""
