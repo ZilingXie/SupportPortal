@@ -183,6 +183,19 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 
 删 ALB 规则 102/103/104(两 URL 立即 404,零影响其他路由)→ `update-service --task-definition :17`。TG/SG/SSM/镜像为无害残留。
 
+## 2026-09-14 Preproduction 原始对话入库开启(td:24)
+
+产品决策(用户拍板):Hermes 的对话主体是**工程师↔Hermes 的调查协作记录**(非客户直聊),原始对话入库可接受(含快照内嵌客户原文)。production 侧维持 opt-in 关闭。
+
+变更(全部 preprod,一次任务重启落地):
+
+- **镜像 overlay**:`deploy-ecs/Dockerfile.hermes-plugin-overlay`(FROM 当时部署 digest `0a54b6a6`,仅 COPY 替换插件目录;产物 `@sha256:65cb1fab…`,tag `hermes-20260914-rawcap`)——保留 Gateway/工具/pilot 全部内容,是替换已部署镜像内单个插件的轻量管道。
+- **插件补丁两处**(agent-infra 工作树 `MemoryCore/hermes-plugin/memory/memory_tencentdb/`,未提交):①`client.py` `atomic_search`/`conversation_search` query 钳制 ≤2048(zod 上限,修 "query: Too big" 400);②`__init__.py` `sync_turn` 消息 content 钳制 ≤8192(conversationItemSchema 上限,不截断则大快照入库必 400)。
+- **td env**:hermes 容器 +`MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=true`;**租户三值从逻辑名改为真实 ID**——`MEMORY_TENCENTDB_TEAM_ID=team-7oif6fsv17`、`_AGENT_ID=agt-7oifq1fctv`、`_USER_ID=usr-7oie0fnvkz`(原 agora-support/investigator 逻辑名与 panel 的 block/资产命名空间错位,数据写进去 panel 也看不见;ID 空间才是 setup_team_agent 建的可见空间)。
+- 验证(全过):直连 hermes API(经 zacBot+CloudMap,临时 SG 规则已撤)触发真实回合 ×2 → panel block 查询 L0 total=2(user+assistant 各一);30min 日志零 "Too big"/零 "sync failed";四容器 HEALTHY;两 dashboard URL 与 /v1 鉴权回归不变。L1 由异步提炼管线产生(everyNConversations=5/idle 600s),不阻塞验收。
+- 已知残留:td:23 期间一条验证消息落在逻辑名命名空间(agora-support/investigator,panel 不可见,无害);curated 知识写入通道(`memory_tencentdb_write_knowledge`)未变。
+- 回滚:`update-service --task-definition :22`。
+
 ## 已踩的坑(操作前必读)
 
 1. **EFS mount access denied 三要素缺一不可**:该文件系统挂有 IAM policy(仅 ClientRootAccess/ClientWrite),挂载需要 ①task role identity policy 的 `ClientMount`(且 `AccessPointArn` 在白名单——新 AP 必须加入 `SupportPortalProductionEfsAccess` inline policy);②task definition 卷 `authorizationConfig.iam=ENABLED`;③EFS SG 放行 ECS SG 2049(已配)。报错形态:`mount.nfs4: access denied by server while mounting 127.0.0.1:/`。
