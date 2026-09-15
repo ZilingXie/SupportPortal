@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-15T02:46:02Z",
-  "source_base_commit": "a2a663d4211153274f96e2796d587c7bbb3c389e",
-  "registry_digest": "34dfdb6a614963d3b9f2d8308ab7290facc106e2084a5bde999d0637014e3ff4",
+  "generated_at": "2026-09-15T03:54:23Z",
+  "source_base_commit": "4fff5ef9c281f917e8fa58e4da1de9687da83c85",
+  "registry_digest": "f115f110413189bac27559f75416be15fa39d87a86aa7e12858efeee55b294e5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3365,6 +3365,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "38 prompts（新增 hermes-adhoc-investigation-manual v1），validate ok（content_fingerprint sha256:e3257fd2…）。"
         },
         {
+          "type": "deployment",
+          "label": "Preproduction release r20260915-2bba1e4（两次发布续行重建后成功）",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 2bba1e4e… --prompt-release-id pr-c4177da97c6e --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled",
+          "details": "全阶段 passed（codebuild/preflight/deploy：schema bootstrap ✓=automation-ecs-008、prompt pr-c4177da97c6e 激活 ✓、route/worker/api rollout ✓、activation ✓）。发布续行两次：①并发 PR#1189（模型策略 deploy 注入）触发 origin/main 门→从 36be1af7 重建；②schema 任务撞 ECR 推送最终一致性（CannotPullContainerError not found，digest 随后在 ECR 出现）→重建；③并发 PR#1191（纯文档）再触发门→从 2bba1e4e 重建成功（期间顺带捎带部署了 p2-160 模型策略与 #1191 文档）。健康三检 live/release/ready 全 ok、release_id/git_commit 匹配。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live 双回合实证（直连 API 模拟 n8n）",
+          "command": "POST /automation/preproduction/api/integrations/slack/hermes-cases/adhoc-sessions（n8n token，真实 team/channel）→ 等待 worker → POST .../messages（同 thread 二回合）→ actions 负路径",
+          "details": "负路径 401/403/422 全对；创建返回 adhoc_session_created（合成号 990893157405904，turn-18e5a517）；work run 经 hermes 真实执行——memory-core FTS 索引到完整 run 输入含 'MESSAGE FOR THIS TURN' 与问题原文（消息注入端到端实证）；回合停车 awaiting_investigation_review 后 Slack 投递 status=delivered（ts=1789442823.502649，无按钮 adhoc 变体）；二回合：resolve=bound → messages → feedback_turn_created（turn-4c64385c）→ 再调查 → delivered（ts=1789443546.743149）；重复 adhoc 调用 already=bound；actions 对 adhoc ticket 422。模型在回合内报告看到 common/Argus 六工具与 agora 技能索引（conversational-ai/flutter-sdk/native-sdk-log-decryption/token-troubleshoot 等）。已知边界：①memory_tencentdb_write_knowledge 工具在 adhoc 会话不存在（manual 提及 shared knowledge 持久化时模型尝试会得到 Unknown tool，非致命，已记 blocker）——manual 措辞待下版收敛；②假 thread_ts 回复以非线程消息落在工程师频道（验证残留 2 条）；③feedback job 曾等 worker 认领 ~9 分钟（认领节奏非本任务引入）。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -3709,7 +3721,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 31,
-      "done_count": 13,
+      "done_count": 14,
       "blocked_count": 0
     },
     {
@@ -12699,10 +12711,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-161",
       "title": "Preprod Hermes 无 case 线程的 ad-hoc 会话（新端点 + 首答 + 后续 @ 走 feedback 流）",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "summary": "工程师在 Slack 未绑定线程 @bot 时，不再 ignored_unbound 丢弃：新端点 POST /api/integrations/slack/hermes-cases/adhoc-sessions（X-N8n-Request-Token 鉴权，non-production 块内，production 零暴露）创建 ad-hoc 会话——合成工单号（99+13 位随机数字，15 位）+ automation_cases 镜像 + binding（schema-008 新列 session_kind='adhoc' + 线程唯一索引防双绑）+ 首个 investigation_feedback turn（work-only，复用全部围栏/幂等/停车机器）；账号库镜像 seed 使工具链可用；work-phase 提示词按 session_kind 分支用新 key hermes-adhoc-investigation-manual，toolsets 加 skills（skill_view 开放 agora 技能）；结果消息无按钮无 Zendesk 面；actions 端点与 continue_hermes_investigation 对 adhoc 拒绝（投递链隔离）。附带修复既有缺口：reviewer_feedback 经 MESSAGE FOR THIS TURN 段注入 work run 输入（惠及真实 case feedback 流）。后续同线程 @ 自动走既有 messages→investigation_feedback 流。n8n mention workflow 更新（false 分支 ACK→Claim Adhoc→POST adhoc）。实现 PR#1188（main=dbe379fa 起）。\n\n**登记勘误**：本任务原登记 p2-159（PR#1188）；并发 LLM 模型策略线程（PR#1189，其自有规划中占用 p2-159 但当时未入 registry）合入时删除了本任务的 p2-159.json 并登记自身为 p2-160，触发同号竞态。本文件将任务重新登记为 p2-161，内容与证据不变。",
-      "next_action": "preprod 发布（从合并后 main 重建）+ live 双回合验证后收口 done",
+      "next_action": "",
       "acceptance_criteria": [
         "未绑定线程经 adhoc 端点 → 会话创建 + Hermes work run 完成 + 线程内无按钮回复（Summary/Evidence/Blockers/Next steps）。",
         "同线程再 @ → 既有 messages 端点 → investigation_feedback turn → 新回复回线程；幂等（bound/duplicate）与围栏负路径全过。",
@@ -12729,6 +12741,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Prompt release pr-c4177da97c6e",
           "command": "python -m backend.scripts.prompt_release prepare --build-ref dbe379fa && validate --release-id pr-c4177da97c6e",
           "details": "38 prompts（新增 hermes-adhoc-investigation-manual v1），validate ok（content_fingerprint sha256:e3257fd2…）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release r20260915-2bba1e4（两次发布续行重建后成功）",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 2bba1e4e… --prompt-release-id pr-c4177da97c6e --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled",
+          "details": "全阶段 passed（codebuild/preflight/deploy：schema bootstrap ✓=automation-ecs-008、prompt pr-c4177da97c6e 激活 ✓、route/worker/api rollout ✓、activation ✓）。发布续行两次：①并发 PR#1189（模型策略 deploy 注入）触发 origin/main 门→从 36be1af7 重建；②schema 任务撞 ECR 推送最终一致性（CannotPullContainerError not found，digest 随后在 ECR 出现）→重建；③并发 PR#1191（纯文档）再触发门→从 2bba1e4e 重建成功（期间顺带捎带部署了 p2-160 模型策略与 #1191 文档）。健康三检 live/release/ready 全 ok、release_id/git_commit 匹配。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live 双回合实证（直连 API 模拟 n8n）",
+          "command": "POST /automation/preproduction/api/integrations/slack/hermes-cases/adhoc-sessions（n8n token，真实 team/channel）→ 等待 worker → POST .../messages（同 thread 二回合）→ actions 负路径",
+          "details": "负路径 401/403/422 全对；创建返回 adhoc_session_created（合成号 990893157405904，turn-18e5a517）；work run 经 hermes 真实执行——memory-core FTS 索引到完整 run 输入含 'MESSAGE FOR THIS TURN' 与问题原文（消息注入端到端实证）；回合停车 awaiting_investigation_review 后 Slack 投递 status=delivered（ts=1789442823.502649，无按钮 adhoc 变体）；二回合：resolve=bound → messages → feedback_turn_created（turn-4c64385c）→ 再调查 → delivered（ts=1789443546.743149）；重复 adhoc 调用 already=bound；actions 对 adhoc ticket 422。模型在回合内报告看到 common/Argus 六工具与 agora 技能索引（conversational-ai/flutter-sdk/native-sdk-log-decryption/token-troubleshoot 等）。已知边界：①memory_tencentdb_write_knowledge 工具在 adhoc 会话不存在（manual 提及 shared knowledge 持久化时模型尝试会得到 Unknown tool，非致命，已记 blocker）——manual 措辞待下版收敛；②假 thread_ts 回复以非线程消息落在工程师频道（验证残留 2 条）；③feedback job 曾等 worker 认领 ~9 分钟（认领节奏非本任务引入）。"
         }
       ],
       "source_refs": [
@@ -12751,6 +12775,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-15",
           "event": "created",
           "summary": "原登记 p2-159（PR#1188 实现，277 单测+PG 10 全绿）；并发 PR#1189 删除该登记并登记自身为 p2-160（同号竞态：对方在自有规划占用 p2-159 但未及时入 registry）。本文件以 p2-161 重新登记，legacy_ids 保留 p2-159 溯源。"
+        },
+        {
+          "at": "2026-09-15",
+          "event": "deployed",
+          "summary": "r20260915-2bba1e4 发布成功（两次发布续行：并发 PR#1189/#1191 推进 main + 一次 ECR 最终一致性拉取失败重建）；schema-008 迁移与 prompt pr-c4177da97c6e（38 prompts，含 hermes-adhoc-investigation-manual v1）随发布激活。"
+        },
+        {
+          "at": "2026-09-15",
+          "event": "done",
+          "summary": "live 双回合实证闭环：adhoc 创建→真实 hermes work run（消息注入经 memory FTS 铁证）→停车→Slack 无按钮投递 delivered；同线程二回合走既有 feedback 流再投递；幂等/围栏/频道校验负路径全过。遗留（后续可选）：n8n 更新版 mention workflow 待用户导入后真实 @ 终验；adhoc manual 的 shared-knowledge 措辞与 write_knowledge 工具可用性对齐；工程师频道残留 2 条验证消息可删。"
         }
       ]
     },
@@ -18073,7 +18107,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 全文阅读待调查链启用 skills 工具集）。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 全文阅读待调查链启用 skills 工具集）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
