@@ -183,6 +183,28 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 
 删 ALB 规则 102/103/104(两 URL 立即 404,零影响其他路由)→ `update-service --task-definition :17`。TG/SG/SSM/镜像为无害残留。
 
+## 2026-09-15 Preproduction knowledge 服务（LLM-Wiki）+ 调查模型 astra/medium（td:28）
+
+**knowledge 服务（Wiki 端点）**：td:28 起新增第五个容器 `knowledge`（官方 `agentmemory/memory-hub` 镜像 amd64 单平台，ECR tag `memory-hub-amd64-20260914` = `@sha256:ee2334a9…`，仅用其 8424 端口），panel 容器 env +`KNOWLEDGE_SERVICE_URL=http://127.0.0.1:8424`，数据落独立 EFS AP `fsap-0dacd4cd505ea9c32`（/knowledge，已入 task role 白名单与 terraform `hermes_task_extra_access_point_arns`）。任务规格 4096→6144。
+
+- **n8n 导入文章四步 API**（公网可用，等价 panel 前端调用链）：
+  1. `POST https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/create` body `{"team_id":"team-7oif6fsv17","name":"<文章标题>"}` → `data.wiki_id`
+  2. `POST …/wiki/raw/write` body `{"team_id","wiki_id","files":[{"filename":"<slug>.md","content":"<markdown 正文>"}]}`（字段是 **filename** 非 path；限制 512KB/文件、10 文件、5MB/次）
+  3. `POST …/wiki/ingest` body `{"wiki_id"}` → 异步 LLM 构建（gpt-5.6-luna）
+  4. 轮询 `POST …/wiki/get` body `{"wiki_id"}` 至 `status=ready`；检索 `POST …/wiki/search` body `{"wiki_id","query"}`；删除 `POST …/wiki/delete` body `{"wiki_ids":["…"]}`（复数数组）
+  - 头：`X-Tdai-Service-Id: default` + `X-Tdai-User-Key: <SSM hermes-tdai-admin-key>` + `Content-Type: application/json`。
+- 验证（全过）：348 字节冒烟文章 → ready（生成 20 个结构化页面+图谱，如"摄像头权限模型"概念页）→ 关键词检索命中 → delete 清理。
+- **坑**：①多架构 `memory-hub:latest` 直接 docker re-tag push 会报 "does not provide any platform"（manifest-list/containerd 存储），必须按 amd64 manifest digest 用 crane 拷（zacBot 装 crane 或本机 DOCKER_CONFIG=/tmp/crane-config）；②Fargate 一次性 run-task 拉 ECR 必须 `assignPublicIp=ENABLED`（无 NAT）；③EFS config 编辑用 entryPoint `["python3","-c"]` 绕过 s6（无 .env 污染），编辑后 readback。
+
+**调查模型 → gpt-6-astra/medium（p2-160 轨道 A）**：一次性维护任务编辑 EFS `/opt/data/config.yaml`（单 profile 结构，无 profiles/support 子目录）：`model.default: gpt-5.6-luna→gpt-6-astra` + `agent: {reasoning_effort: medium}`（备份 `.bak-astra-20260914`）。上游组合硬门禁实证：astra/medium、luna/max 均 completed。生效实证：dashboard sessions API 最新会话 `model=gpt-6-astra`（历史会话 luna，对比清晰）。**注意**：worker 请求体的 model/effort 一律被网关忽略（无 direct_model_requests/model_routes），响应体的 model 字段是回显。
+
+**SupportPortal 全场景 luna/max（p2-160 轨道 B，PR#1189）**：`automation_ecs_deploy.py` 新增 `PREPRODUCTION_LLM_ENV_OVERRIDES`，preproduction 渲染注入 api/route/worker（investigation=astra/medium，其余=luna/max），production 渲染显式剥离防泄漏。随管线发布生效（env 读回+用量表验证见 task p2-160）。
+
+**caddy 泛化（tag `hermes-ui-proxy-20260915` = `@sha256:284be593…`）**：登录页 next 重写从精确匹配 `next=/` 泛化为 CEL `startsWith('/')`——深层路由（如 /status）刷新+会话过期后登录不再落到根 404。
+
+- 回滚：knowledge+模型 = `update-service --task-definition :25` + EFS config sed 回 luna；luna/max env = revert PR#1189 重发管线。
+- 撞号事故与善后：p2-160 原计划用 p2-159，与 ad-hoc 线程撞号（PR#1188/#1190 善后为 p2-161）；EFS 策略中断事故（09-14）根因=terraform(#1185) AP 白名单与 td 旧 AP 不匹配，已由 extras 列表对齐根治。
+
 ## 2026-09-14 Preproduction 原始对话入库开启(td:24)
 
 产品决策(用户拍板):Hermes 的对话主体是**工程师↔Hermes 的调查协作记录**(非客户直聊),原始对话入库可接受(含快照内嵌客户原文)。production 侧维持 opt-in 关闭。
