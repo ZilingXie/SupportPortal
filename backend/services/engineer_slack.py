@@ -20,6 +20,7 @@ SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 HERMES_REVIEW_PENDING_EVENT_TYPE = "hermes_review_pending"
 HERMES_CASE_OPENED_EVENT_TYPE = "hermes_case_opened"
 HERMES_INVESTIGATION_RESULT_EVENT_TYPE = "hermes_investigation_result"
+HERMES_ADHOC_RESULT_EVENT_TYPE = "hermes_adhoc_result"
 HERMES_DRAFT_PENDING_EVENT_TYPE = "hermes_draft_pending"
 HERMES_DRAFT_BLOCKED_EVENT_TYPE = "hermes_draft_blocked"
 PUBLIC_DASHBOARD_BASE_URL = "https://supportcenter.stellarix.space"
@@ -35,6 +36,7 @@ _ROOT_EVENT_TYPES = frozenset(
 _HERMES_THREAD_EVENT_TYPES = frozenset(
     {
         HERMES_INVESTIGATION_RESULT_EVENT_TYPE,
+        HERMES_ADHOC_RESULT_EVENT_TYPE,
         HERMES_DRAFT_PENDING_EVENT_TYPE,
         HERMES_DRAFT_BLOCKED_EVENT_TYPE,
     }
@@ -609,6 +611,50 @@ def notify_hermes_investigation_result(
             "environment": environment,
             "zendesk_ticket_id": ticket_id,
             "turn_id": turn_id,
+        },
+        thread_ts=thread_ts,
+    )
+
+
+def notify_hermes_adhoc_investigation_result(
+    *,
+    thread_ts: str,
+    ticket_id: str,
+    turn_id: str,
+    investigation: dict[str, Any] | None,
+    environment: str,
+) -> dict[str, Any]:
+    """Best-effort ad-hoc session reply when a turn parks for review.
+
+    A plain reply in the engineer's own thread: no root message, no action
+    buttons, no Zendesk surface — ad-hoc sessions answer in-thread only and
+    never continue into the customer-reply chain. The caller must treat any
+    failure as non-blocking.
+    """
+    if not engineer_slack_configured():
+        LOGGER.info("hermes_adhoc_result_skipped reason=engineer_slack_not_configured")
+        return {"status": "skipped_not_configured"}
+    record = investigation if isinstance(investigation, dict) else {}
+    body_lines = ["Hermes — Slack ad-hoc session"]
+    if _clean_text(record.get("summary")):
+        body_lines.append(f"Summary: {_clean_text(record.get('summary'))}")
+    evidence_lines = _investigation_evidence_lines(record)
+    if evidence_lines:
+        body_lines.append("Evidence:")
+        body_lines.extend(evidence_lines)
+    if record.get("blockers"):
+        body_lines.append(
+            "Blockers: " + "; ".join(_clean_text(item) for item in record["blockers"])
+        )
+    if record.get("next_steps"):
+        body_lines.append(
+            "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
+        )
+    return post_engineer_slack_event(
+        {
+            "event_id": f"hermes-adhoc-result:{turn_id}",
+            "event_type": HERMES_ADHOC_RESULT_EVENT_TYPE,
+            "message_text": "\n".join(body_lines),
         },
         thread_ts=thread_ts,
     )

@@ -1146,6 +1146,28 @@ def create_app(    *,
                 raise HTTPException(status_code=int(result.get("status_code") or 422), detail=result.get("detail"))
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
+        @app.post(
+            f"{base}/api/integrations/slack/hermes-cases/adhoc-sessions",
+            dependencies=[Depends(_require_n8n_request_token)],
+        )
+        async def ecs_create_hermes_adhoc_session(http_request: Request) -> JSONResponse:
+            """An @mention in an unbound thread becomes an ad-hoc Hermes session."""
+            from backend.services.automation_hermes_slack_actions import (
+                handle_slack_adhoc_session,
+            )
+
+            payload = await http_request.json()
+            result = await asyncio.to_thread(
+                handle_slack_adhoc_session,
+                coordination_store,
+                payload,
+                expected_team_id=str(os.getenv("ENGINEER_SLACK_TEAM_ID") or "").strip(),
+                expected_channel_id=str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip(),
+            )
+            if not result.get("ok"):
+                raise HTTPException(status_code=int(result.get("status_code") or 422), detail=result.get("detail"))
+            return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     ui_root = FilePath(__file__).resolve().parents[1] / "ui"
     if admin_data_reader is not None:
         admin_dir = ui_root / "workspace-ui" / "admin"

@@ -63,7 +63,7 @@ def store() -> Any:
     postgres_store = PostgresAutomationEcsStore(settings)
     try:
         postgres_store.migrate()
-        assert SCHEMA_REVISION == "automation-ecs-007"
+        assert SCHEMA_REVISION == "automation-ecs-008"
         yield postgres_store
     finally:
         with psycopg.connect(_DSN, autocommit=True) as connection:
@@ -285,3 +285,69 @@ class TestPostgresPersonaBinding:
         assert rebound["persona_key"] == "sid-precise"
         assert int(rebound["persona_version"]) == 1
         assert store.get_hermes_case_binding("123")["persona_key"] == "sid-precise"
+
+
+class TestPostgresAdhocSession:
+    def test_adhoc_session_seed_turn_and_followup(self, store) -> None:
+        created = store.create_adhoc_hermes_session(
+            channel_id="C-PG",
+            thread_ts="500.000",
+            text="Why did the call drop?",
+            slack_user_id="U-1",
+            base_event={"provenance": {"service_role": "slack"}},
+        )
+        assert created["status"] == "adhoc_session_created"
+        ticket_id = str(created["zendesk_ticket_id"])
+        assert len(ticket_id) == 15 and ticket_id.startswith("99")
+        binding = store.get_hermes_case_binding(ticket_id)
+        assert binding is not None
+        assert binding["session_kind"] == "adhoc"
+        assert binding["slack_channel_id"] == "C-PG"
+        assert binding["slack_thread_ts"] == "500.000"
+        assert binding["direction"] == "investigation"
+        turn = store.get_hermes_turn(str(created["turn_id"]))
+        assert turn is not None
+        assert turn["turn_kind"] == "investigation_feedback"
+        assert turn["status"] == "pending"
+        assert turn["work_result"]["reviewer_feedback"] == "Why did the call drop?"
+
+        # a retry claims the same session; the reverse lookup serves the messages path
+        repeat = store.create_adhoc_hermes_session(
+            channel_id="C-PG", thread_ts="500.000", text="again", base_event={}
+        )
+        assert repeat == {"already": "bound", "zendesk_ticket_id": ticket_id}
+        assert store.find_hermes_ticket_by_thread("C-PG", "500.000") == ticket_id
+
+        # a real case's thread is never hijacked
+        _hand_off(store, _event("zendesk:ticket:123:created"))
+        store.bind_hermes_case_thread("123", channel_id="C-PG", thread_ts="777.000")
+        hijack = store.create_adhoc_hermes_session(
+            channel_id="C-PG", thread_ts="777.000", text="hi", base_event={}
+        )
+        assert hijack == {"already": "bound", "zendesk_ticket_id": "123"}
+
+        # the schema-008 unique thread index rejects a second binding row for
+        # an already-claimed thread (direct insert, bypassing the guard)
+        import psycopg.errors
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            with store._connect() as connection:
+                with connection.cursor() as cursor:
+                    from psycopg import sql as _sql
+
+                    cursor.execute(
+                        _sql.SQL(
+                            "INSERT INTO {} (namespace,zendesk_instance,zendesk_ticket_id,"
+                            "logical_conversation_key,hermes_session_id,session_kind,"
+                            "slack_channel_id,slack_thread_ts) VALUES (%s,%s,%s,%s,%s,'adhoc',%s,%s)"
+                        ).format(store._table("automation_hermes_case_bindings")),
+                        (
+                            store.settings.job_namespace,
+                            "agoraio.zendesk.com",
+                            "991234567890123",
+                            "supportportal:zendesk:x:991234567890123",
+                            "hermes-session:x",
+                            "C-PG",
+                            "500.000",
+                        ),
+                    )

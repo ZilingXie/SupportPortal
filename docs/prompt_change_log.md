@@ -4612,3 +4612,17 @@ For each new entry, record:
 - Reason: Make SupportPortal the business-contract owner, remove model-controlled routing/completion fields, preserve Case/session lineage through native wake, and allow historical Case Knowledge reads while keeping all investigation-time L0 capture and memory writes disabled.
 - Tooling and behavior change: `real` mode freezes a canonical turn only after Slack root binding, retries only the same request payload on unknown transport outcomes, validates callback lineage and receipts, and queues closed promotions only after review, guardrail, sanitization, and revision proof. Exact `Investigation result: test` still yields `reason=test` only at Summary Guardrail and does not bypass Persona, customer safety checks, human approval, or Zendesk idempotency.
 - Verification boundary: Runtime/Relay component harness uses canonical HTTP turns and synthetic identities; native Hermes wake, no-L0, contract hash, and local PostgreSQL behavior are tested separately. No production deployment or real Slack, Zendesk, TencentDB, or zac-agent queue was used.
+## 2026-09-15 - Ad-hoc Slack session manual and reviewer-feedback run input (p2-159)
+
+- Area or subsystem:
+  - Preproduction Hermes investigation chain (Slack ad-hoc sessions, work-phase prompt selection, run input assembly).
+- Prompt or model versions:
+  - New prompt key `hermes-adhoc-investigation-manual` (v1, `hermes-adhoc-investigation-manual-v1`) registered under `hermes-support-session`; all existing prompts and models unchanged.
+- Reason:
+  - An @mention in a Slack thread not bound to a Zendesk case now opens an ad-hoc Hermes session (new endpoint + synthetic ticket binding, session_kind='adhoc'). The case-centric investigation manual mis-describes that run (no customer, no reply drafting), and the triggering message was never part of the run input.
+- Tooling and behavior changes:
+  - `phase_instructions` selects `hermes-adhoc-investigation-manual` for work runs of ad-hoc bindings; ad-hoc work toolsets widen to `supportportal_work + common + memory + skills` (skill_view opens the loaded agora skills).
+  - Work-run input now appends `--- MESSAGE FOR THIS TURN ---` with the turn's `work_result.reviewer_feedback`: for case feedback turns this fixes the pre-existing gap where the reviewer's message never reached the model as input, and for ad-hoc sessions it carries the engineer's question.
+  - Ad-hoc results post to the engineer's own thread without action buttons or Zendesk surfaces; the actions endpoint and `continue_hermes_investigation` reject ad-hoc sessions.
+- Verification:
+  - New unit tests: ad-hoc work run (manual key, toolsets, message injection, ad-hoc notify variant, actions closed), local mirror seeding, case-feedback message injection, prompt registry resolution; PG integration covers the ad-hoc session store method and the schema-008 unique thread index. Regression: hermes/api/store/worker/slack/workflow suites 205 passed.

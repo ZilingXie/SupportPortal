@@ -85,13 +85,25 @@ class EngineerSlackWorkflowContractTests(unittest.TestCase):
             connections["Hermes Bound Thread"]["main"][0][0]["node"],
             "Claim Hermes Mention",
         )
+        # an unbound preproduction mention is no longer dropped: it claims the
+        # thread as an ad-hoc hermes session (p2-159)
         self.assertEqual(
             connections["Hermes Bound Thread"]["main"][1][0]["node"],
-            "ACK Rejected Mention",
+            "Claim Adhoc Mention",
         )
+        self.assertIn("hermes-cases/adhoc-sessions", raw)
+        self.assertIn("'HERMES-ADHOC-' ||", raw)
         self.assertEqual(
             connections["Forward Hermes Once"]["main"][0][0]["node"],
             "Send Hermes Message To SupportPortal",
+        )
+        self.assertEqual(
+            connections["Claim Adhoc Mention"]["main"][0][0]["node"],
+            "Forward Adhoc Once",
+        )
+        self.assertEqual(
+            connections["Forward Adhoc Once"]["main"][0][0]["node"],
+            "Send Adhoc Session To SupportPortal",
         )
         self.assertEqual(
             connections["Claim Bound Mention"]["main"][0][0]["node"],

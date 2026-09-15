@@ -24,7 +24,13 @@ Configure these only in n8n or its deployment environment:
   mentions that do not resolve a production engineer-case thread are retried
   against `/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve`
   and, when bound, forwarded to `.../hermes-cases/messages` as investigation
-  feedback (claimed in the same inbound ledger under `HERMES-{ticket}`).
+  feedback (claimed in the same inbound ledger under `HERMES-{ticket}`). Since
+  p2-159 a mention that resolves to no thread at all is claimed under
+  `HERMES-ADHOC-{channel_id}-{thread_ts}` and posted to
+  `.../hermes-cases/adhoc-sessions`: SupportPortal binds that thread to a new
+  ad-hoc Hermes session (synthetic `99…` ticket, session_kind='adhoc') and
+  answers in-thread; every later mention of the thread resolves `bound` and
+  takes the regular feedback path.
 
 Configure these in the SupportPortal production environment:
 
