@@ -3,7 +3,7 @@
   "task_id": "p2-162",
   "phase_id": "phase-2",
   "module_id": "account-automation",
-  "function_id": "automation-execution-loop",
+  "function_id": "account-production-environment",
   "title": "邮件发送安全加固：修复外部 review 确认的 8 项发信/回信缺口",
   "summary": "外部安全 review（基于 main 4fff5ef9）确认 8 项问题全部属实并修复，分三批 PR：(1) 发信权限边界——Billing/Quota 回信消费补发件人身份门（泛化既有 enablement gate，非授权发件人终态拒绝，fail-closed）；support_router 内联发信增加 send_internal_email 显式开关（生产默认不变），离线评测与测试全链禁发；自动化测试场景的通知识别修正恒真 AND 逻辑并加 From/Reply-To Zendesk 域白名单。(2) 重复发送与状态机——SMTP/Graph 发送结果三分类（rejected/unknown/成功），QUIT 异常不再误报失败；测试工单接口先落台账后发送并支持 request_id 幂等；Account 失败告警在结果未知（超时/连接中断）时进 outcome_unknown 终态不重发。(3) 可靠性——回信轮询消费 @odata.nextLink 分页（默认 4 页，不加 isRead 过滤保持共享邮箱契约）；测试场景 one_active 部分唯一索引原子约束；Graph token 缓存 tempfile+os.replace 原子写并统一 billing 侧重复实现。不部署，ECS 发布另行授权。",
   "status": "active",
@@ -33,7 +33,7 @@
       "result": "test_run_benchmark_route_aware_case_records_expected_and_actual_answers + test_run_benchmark_marks_grounded_abstain_rag_case_as_policy_success_only_for_closeout 在干净 main 与 worktree 同样失败（问候语前缀差异，他线程遗留回归）"
     },
     {
-      "type": "migration",
+      "type": "deployment",
       "label": "manual dual-DB migration：automation_test_tickets.request_id 唯一索引 + scenario_runs one_active 索引",
       "command": "backend/sql/migrations/2026_09_15_automation_test_ticket_request_id.sql，按 p2-102 惯例经 TICKET_DB_MIGRATION_DSN（staging）与 production 库 master 凭证手工双库执行",
       "result": "文件已入库；部署前须执行，否则 Postgres 模式 request_id 幂等与 one_active 原子约束不生效（内存模式不受影响）"

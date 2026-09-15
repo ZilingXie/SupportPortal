@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-15T03:54:23Z",
-  "source_base_commit": "4fff5ef9c281f917e8fa58e4da1de9687da83c85",
-  "registry_digest": "f115f110413189bac27559f75416be15fa39d87a86aa7e12858efeee55b294e5",
+  "generated_at": "2026-09-15T05:18:42Z",
+  "source_base_commit": "63e7e4af7bf741bf2c658fff0a0e70e909bb2359",
+  "registry_digest": "1e4800bada5ced16a5f97ee12033f8b7aba74e45a133e332a138e9a45d6e8c68",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3378,6 +3378,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "定向测试套件（全部 8 项修复的单测）",
+          "command": "pytest backend/tests/test_worker.py -k 'reply or persona or poll' + test_enablement_manual_review_flow.py + test_billing_automation_email.py + test_support_router.py + test_automation_test_scenarios.py + test_automation_test_console.py + test_account_failure_alerts.py + test_run_rag_benchmark_cli.py + test_graph_mail_token_cache.py",
+          "result": "87+ 全绿（含新增：Billing/Quota 身份门拒绝×2、router send_disabled、Reply-To 白名单×4、SMTP QUIT/超时分类×2、outcome_unknown 状态、request_id 幂等、告警超时终态×2、nextLink 分页、one_active slot×2、token 原子写×3）（2026-09-15）"
+        },
+        {
+          "type": "test",
+          "label": "既有失败对照（main 基线同样失败，非本任务引入）",
+          "command": "pytest backend/tests/test_rag_benchmark_runner.py（整文件）",
+          "result": "test_run_benchmark_route_aware_case_records_expected_and_actual_answers + test_run_benchmark_marks_grounded_abstain_rag_case_as_policy_success_only_for_closeout 在干净 main 与 worktree 同样失败（问候语前缀差异，他线程遗留回归）"
+        },
+        {
+          "type": "deployment",
+          "label": "manual dual-DB migration：automation_test_tickets.request_id 唯一索引 + scenario_runs one_active 索引",
+          "command": "backend/sql/migrations/2026_09_15_automation_test_ticket_request_id.sql，按 p2-102 惯例经 TICKET_DB_MIGRATION_DSN（staging）与 production 库 master 凭证手工双库执行",
+          "result": "文件已入库；部署前须执行，否则 Postgres 模式 request_id 幂等与 one_active 原子约束不生效（内存模式不受影响）"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3720,7 +3738,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 31,
+      "task_count": 32,
       "done_count": 14,
       "blocked_count": 0
     },
@@ -12785,6 +12803,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-15",
           "event": "done",
           "summary": "live 双回合实证闭环：adhoc 创建→真实 hermes work run（消息注入经 memory FTS 铁证）→停车→Slack 无按钮投递 delivered；同线程二回合走既有 feedback 流再投递；幂等/围栏/频道校验负路径全过。遗留（后续可选）：n8n 更新版 mention workflow 待用户导入后真实 @ 终验；adhoc manual 的 shared-knowledge 措辞与 write_knowledge 工具可用性对齐；工程师频道残留 2 条验证消息可删。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-162",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "title": "邮件发送安全加固：修复外部 review 确认的 8 项发信/回信缺口",
+      "summary": "外部安全 review（基于 main 4fff5ef9）确认 8 项问题全部属实并修复，分三批 PR：(1) 发信权限边界——Billing/Quota 回信消费补发件人身份门（泛化既有 enablement gate，非授权发件人终态拒绝，fail-closed）；support_router 内联发信增加 send_internal_email 显式开关（生产默认不变），离线评测与测试全链禁发；自动化测试场景的通知识别修正恒真 AND 逻辑并加 From/Reply-To Zendesk 域白名单。(2) 重复发送与状态机——SMTP/Graph 发送结果三分类（rejected/unknown/成功），QUIT 异常不再误报失败；测试工单接口先落台账后发送并支持 request_id 幂等；Account 失败告警在结果未知（超时/连接中断）时进 outcome_unknown 终态不重发。(3) 可靠性——回信轮询消费 @odata.nextLink 分页（默认 4 页，不加 isRead 过滤保持共享邮箱契约）；测试场景 one_active 部分唯一索引原子约束；Graph token 缓存 tempfile+os.replace 原子写并统一 billing 侧重复实现。不部署，ECS 发布另行授权。",
+      "status": "active",
+      "next_action": "代码+测试已完成，待 finalize 合入后本地栈重启验证",
+      "owner": "codex",
+      "acceptance_criteria": [
+        "非授权发件人的 Billing/Quota/Enablement 回信均被身份门终态拒绝（事件留痕、不重放），授权发件人流程不变。",
+        "resolve_support_message(send_internal_email=False) 不触发任何真实发送；rag_benchmark 全链路与 pytest 全局 fixture 下零真实发信可能。",
+        "测试场景仅接受 @agoraio.zendesk.com 域通知，Reply-To 必须匹配 support+{ticket_id} 精确形式，陌生地址零外发。",
+        "SMTP DATA 已提交后 QUIT 异常报成功；发送超时报 outcome_unknown 且不自动重发；测试工单先有台账后有发送，request_id 重复幂等返回。",
+        "Account 失败告警结果未知进终态，同 incident 重报不重发；明确未发送（ValueError/HTTPError）仍可重试。",
+        "收件箱积压超过单页 $top 时轮询可翻页处理（≤4 页）；并发启动测试场景仅一个 active run（输家 409）；token 缓存写入原子（os.replace）。",
+        "相关定向测试套件全绿；router 默认参数生产行为不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "定向测试套件（全部 8 项修复的单测）",
+          "command": "pytest backend/tests/test_worker.py -k 'reply or persona or poll' + test_enablement_manual_review_flow.py + test_billing_automation_email.py + test_support_router.py + test_automation_test_scenarios.py + test_automation_test_console.py + test_account_failure_alerts.py + test_run_rag_benchmark_cli.py + test_graph_mail_token_cache.py",
+          "result": "87+ 全绿（含新增：Billing/Quota 身份门拒绝×2、router send_disabled、Reply-To 白名单×4、SMTP QUIT/超时分类×2、outcome_unknown 状态、request_id 幂等、告警超时终态×2、nextLink 分页、one_active slot×2、token 原子写×3）（2026-09-15）"
+        },
+        {
+          "type": "test",
+          "label": "既有失败对照（main 基线同样失败，非本任务引入）",
+          "command": "pytest backend/tests/test_rag_benchmark_runner.py（整文件）",
+          "result": "test_run_benchmark_route_aware_case_records_expected_and_actual_answers + test_run_benchmark_marks_grounded_abstain_rag_case_as_policy_success_only_for_closeout 在干净 main 与 worktree 同样失败（问候语前缀差异，他线程遗留回归）"
+        },
+        {
+          "type": "deployment",
+          "label": "manual dual-DB migration：automation_test_tickets.request_id 唯一索引 + scenario_runs one_active 索引",
+          "command": "backend/sql/migrations/2026_09_15_automation_test_ticket_request_id.sql，按 p2-102 惯例经 TICKET_DB_MIGRATION_DSN（staging）与 production 库 master 凭证手工双库执行",
+          "result": "文件已入库；部署前须执行，否则 Postgres 模式 request_id 幂等与 one_active 原子约束不生效（内存模式不受影响）"
+        }
+      ],
+      "source_refs": [
+        "backend/worker.py",
+        "backend/services/support_router.py",
+        "backend/services/rag_benchmark_runner.py",
+        "backend/services/automation_test_scenarios.py",
+        "backend/services/automation_test_mail.py",
+        "backend/services/automation_test_store.py",
+        "backend/services/account_failure_alerts.py",
+        "backend/services/billing_automation.py",
+        "backend/services/graph_mail.py",
+        "backend/main.py"
+      ],
+      "created_at": "2026-09-15",
+      "updated_at": "2026-09-15",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-15",
+          "event": "created",
+          "summary": "外部 review 8 项断言经三个只读探索 agent 逐条对照 main 4fff5ef9 验证全部属实；用户批准全部修复分三批 PR 的方案（路由发信采用开关参数，生产链路零变化；部署不在任务范围）。"
         }
       ]
     },
