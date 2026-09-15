@@ -503,38 +503,32 @@
     O --> P["Hermes 根据完整上下文<br/>确认一个 Route"]
     P --> Q{"Route 结果"}
     Q -- "Human Review" --> R["记录转人工原因<br/>停止自动处理"]
-    R --> Z["结束当前 Turn<br/>释放 Case 运行锁"]
+    R --> Z["Agent 处理段结束<br/>Turn 落账并释放运行锁"]
     Q -- "Automation" --> S["Work Phase<br/>加载 Automation 操作手册"]
     S --> T["Hermes 调用受控业务工具<br/>执行并保存结果"]
     Q -- "Investigation" --> U["Work Phase<br/>进入调查流程黑盒"]
-    U --> V["保存调查进展和结论"]
-    T --> W["Persona Phase<br/>同一 Session 加载 Persona Prompt"]
-    V --> W
+    U --> V["保存调查进展和结论<br/>调查 Turn 结束并释放运行锁"]
+    V --> VR["调查结果直达工程师 Slack<br/>等待人工审阅（Dashboard 同步）"]
+    VR -- "人工点击 生成回复草稿" --> RP["同一 Session 新建<br/>investigation_reply Turn<br/>仅执行 Persona"]
+    T --> W["Persona Phase：分层拼装<br/>固定人格、回复规则与业务合同"]
+    RP --> W
     W --> X["根据 Snapshot、工作结果<br/>和当前客户身份生成回复草稿"]
     X --> Y["执行现有 Response Guardrail"]
     Y --> AA{"满足现有发布条件"}
     AA -- "否" --> AB["记录阻塞原因<br/>进入人工处理"]
     AB --> Z
     AA -- "是" --> AC{"当前 Route"}
-    AC -- "Automation" --> AD["进入统一发送流程"]
-    AC -- "Investigation" --> AE["提交人工审批"]
-    AE -- "批准" --> AD
-    AE -- "修改回复" --> AF["审批意见交回同一 Session"]
-    AF --> W
-    AE -- "继续调查" --> U
-    AE -- "停止" --> R
-    AD --> AG["准备 Zendesk 回复<br/>携带 Turn ID 和 expected revision"]
-    AG --> AH{"发送前最终检查<br/>Turn 未取消且 revision 未变化"}
-    AH -- "失败" --> AI["废弃旧草稿和审批结果<br/>停止旧 Turn"]
-    AI --> Z
-    AH -- "通过" --> AJ["写入待发送记录"]
-    AJ --> AK["Sender 调用 Zendesk 前<br/>再次检查 revision"]
-    AK --> AL{"revision 仍有效"}
-    AL -- "否" --> AI
-    AL -- "是" --> AM["发送 Zendesk 公开回复"]
-    AM --> AN["读取 Zendesk 回执<br/>记录发送结果"]
-    AN --> Z`;
-        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Hermes Workflow</div><h2>Hermes 当前主流程</h2><p>只描述 Case 从 Zendesk 进入 Hermes 到回复发布的主链。调查内部暂时作为黑盒，单独记录在“调查 Agent”tab。</p></div><button class="ghost-button" type="button" data-task-id="p2-148">查看 #p2-148</button></div><div class="notice"><strong>设计状态：</strong>这是当前确认、在 Preproduction 验证的 Hermes Case 主流程，不代表 Production 已启用。每个 Case 固定绑定一个主 Session 和独立 Workspace，同一 Case 同时只允许一个运行中的 Turn。</div><div class="workflow-shell"><div class="mermaid-frame"><pre class="mermaid" aria-label="Hermes Case 主流程">${escapeHtml(source)}</pre></div><div class="workflow-legend"><span class="chip">Route Phase：选择唯一处理方向</span><span class="chip">Work Phase：按 Route 执行工作</span><span class="chip">Persona Phase：生成客户回复</span><span class="chip">SupportPortal：控制执行与发布</span></div><div class="workflow-contracts"><div class="workflow-contract"><strong>Session 与 Workspace</strong><span>一个 Case 固定绑定一个 Hermes Session 和独立 Workspace；同一 Case 的 Turn 严格串行。</span></div><div class="workflow-contract"><strong>上下文与客户身份</strong><span>PostgreSQL 是事实来源；每轮使用最新完整 Snapshot。回复名字跟随最近一位有效客户 Comment Author。</span></div><div class="workflow-contract"><strong>新 Comment 优先</strong><span>新 Comment 先持久化并推进 revision，再取消旧 Turn。连续输入只处理最新完整 Snapshot，并重新 Route。</span></div></div></div>`;
+    AC -- "Automation（自动入队）" --> DQ["写入待发送记录（Delivery Ledger）<br/>Turn 结束并释放运行锁"]
+    AC -- "Investigation（等待人工批准）" --> AW["草稿等待人工批准<br/>生成草稿 Turn 结束并释放运行锁"]
+    AW --> AP{"人工审阅草稿"}
+    AP -- "批准" --> DQ
+    AP -- "提交修改意见" --> FB["作废旧草稿，创建<br/>investigation_feedback Turn<br/>仅执行 Work（再调查）"]
+    FB --> U
+    DQ --> SK["Sender 独立消费投递记录<br/>审批与投递由持久化记录推进"]
+    SK --> RC{"发送前复核<br/>Case revision 仍有效"}
+    RC -- "否" --> DF["废弃该次投递<br/>落账失败原因"]
+    RC -- "是" --> AM["发送 Zendesk 公开回复<br/>读取回执并记录结果"]`;
+        panel.innerHTML = `<div class="panel-intro"><div><div class="section-kicker">07 / Hermes Workflow</div><h2>Hermes 当前主流程</h2><p>只描述 Case 从 Zendesk 进入 Hermes 到回复发布的主链。调查内部暂时作为黑盒，单独记录在“调查 Agent”tab。</p></div><button class="ghost-button" type="button" data-task-id="p2-148">查看 #p2-148</button></div><div class="notice"><strong>设计状态：</strong>这是当前确认、在 Preproduction 验证的 Hermes Case 主流程，不代表 Production 已启用。每个 Case 固定绑定一个主 Session 和独立 Workspace，同一 Case 同时只允许一个运行中的 Turn。Turn 只覆盖 Agent 处理段：调查结果人审、草稿批准与 Sender 投递均由持久化记录推进，Turn completed 不等于已送达。</div><div class="workflow-shell"><div class="mermaid-frame"><pre class="mermaid" aria-label="Hermes Case 主流程">${escapeHtml(source)}</pre></div><div class="workflow-legend"><span class="chip">Route Phase：选择唯一处理方向</span><span class="chip">Work Phase：按 Route 执行工作</span><span class="chip">Persona Phase：生成客户回复</span><span class="chip">SupportPortal：控制执行与发布</span></div><div class="workflow-contracts"><div class="workflow-contract"><strong>Session 与 Workspace</strong><span>一个 Case 固定绑定一个 Hermes Session 和独立 Workspace；同一 Case 的 Turn 严格串行。</span></div><div class="workflow-contract"><strong>上下文与客户身份</strong><span>PostgreSQL 是事实来源；每轮使用最新完整 Snapshot。回复名字跟随最近一位有效客户 Comment Author。</span></div><div class="workflow-contract"><strong>新 Comment 优先</strong><span>新 Comment 先持久化并推进 revision，再取消旧 Turn。连续输入只处理最新完整 Snapshot，并重新 Route。</span></div><div class="workflow-contract"><strong>Persona 分层拼装</strong><span>Persona Phase 由核心不变量、固定人格（工单库 persona）、渲染手册与路由回复合同四层拼装；同一 Case 的人格保持一致。</span></div><div class="workflow-contract"><strong>审批与投递独立于 Turn</strong><span>调查结果人审、草稿批准与 Sender 发送都由持久化记录推进；发送前仍复核 Case revision，过期投递被废弃并落账原因。</span></div><div class="workflow-contract"><strong>人工接管入口待实现</strong><span>当前已实现的人工动作：生成回复草稿、批准、提交修改意见；Slack 按钮仅前两项，修改意见经线程反馈触发再调查。</span></div></div></div>`;
         bindTriggers(panel);
       }
 
