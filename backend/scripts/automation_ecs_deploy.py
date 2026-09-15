@@ -59,6 +59,65 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
 ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
 ARCHER_SECRET_NAME = "ARCHER_OAUTH_COOKIE"
 ARCHER_SECRET_SUFFIX = "archer-oauth-cookie"
+# Preproduction-only LLM policy (p2-160): engineer investigation runs
+# gpt-6-astra at medium effort inside the Hermes stack (configured on the
+# Hermes task itself); every other SupportPortal scenario is pinned to
+# gpt-5.6-luna at max effort. Env names follow the canonical (non-deprecated)
+# spellings from services/llm_profiles.py. Scenarios without an effort knob
+# (ticket_title hardcodes "none", web_search / knowledge_ingestion /
+# benchmark_judge carry none) get the model pin only. Production renders strip
+# every name below so the observed-td inheritance cannot leak the
+# preproduction policy into Production task definitions.
+PREPRODUCTION_LLM_ENV_OVERRIDES = {
+    "ROUTE_AGENT_ROUTER_MODEL": "gpt-5.6-luna",
+    "ROUTE_AGENT_ROUTER_REASONING_EFFORT": "max",
+    "ACCOUNT_ROUTE_MODEL": "gpt-5.6-luna",
+    "ACCOUNT_ROUTE_REASONING_EFFORT": "max",
+    "PRODUCT_AGENT_MODEL": "gpt-5.6-luna",
+    "PRODUCT_AGENT_REASONING_EFFORT": "max",
+    "ROUTE_AGENT_WEB_SEARCH_MODEL": "gpt-5.6-luna",
+    "CLIENT_ACK_MODEL": "gpt-5.6-luna",
+    "CLIENT_ACK_REASONING_EFFORT": "max",
+    "INPUT_GUARDRAIL_MODEL": "gpt-5.6-luna",
+    "INPUT_GUARDRAIL_REASONING_EFFORT": "max",
+    "TICKET_TITLE_MODEL": "gpt-5.6-luna",
+    "BILLING_REPLY_MODEL": "gpt-5.6-luna",
+    "BILLING_REPLY_REASONING_EFFORT": "max",
+    "ENABLEMENT_REPLY_MODEL": "gpt-5.6-luna",
+    "ENABLEMENT_REPLY_REASONING_EFFORT": "max",
+    "ENABLEMENT_COMPLETION_CLASSIFIER_MODEL": "gpt-5.6-luna",
+    "ENABLEMENT_COMPLETION_CLASSIFIER_REASONING_EFFORT": "max",
+    "AUTOMATION_PERSONA_MODEL": "gpt-5.6-luna",
+    "AUTOMATION_PERSONA_REASONING_EFFORT": "max",
+    "RAG_AGENT_ANSWER_MODEL": "gpt-5.6-luna",
+    "RAG_AGENT_ANSWER_REASONING_EFFORT": "max",
+    "RAGFLOW_ANSWER_MODEL": "gpt-5.6-luna",
+    "RAGFLOW_ANSWER_REASONING_EFFORT": "max",
+    "ACCOUNT_EXTRACTOR_MODEL": "gpt-5.6-luna",
+    "ACCOUNT_EXTRACTOR_REASONING_EFFORT": "max",
+    "REVIEW_AGENT_POSTCHECK_MODEL": "gpt-5.6-luna",
+    "REVIEW_AGENT_POSTCHECK_REASONING_EFFORT": "max",
+    "RAG_AGENT_QUERY_EXPANSION_MODEL": "gpt-5.6-luna",
+    "RAG_AGENT_QUERY_EXPANSION_REASONING_EFFORT": "max",
+    "RAG_AGENT_PLANNER_MODEL": "gpt-5.6-luna",
+    "RAG_AGENT_PLANNER_REASONING_EFFORT": "max",
+    "RAG_AGENT_CONTEXT_COMPRESSION_MODEL": "gpt-5.6-luna",
+    "RAG_AGENT_CONTEXT_COMPRESSION_REASONING_EFFORT": "max",
+    "REQUEST_BODY_ANALYZER_MODEL": "gpt-5.6-luna",
+    "REQUEST_BODY_ANALYZER_REASONING_EFFORT": "max",
+    "REVIEW_AGENT_INTAKE_MODEL": "gpt-5.6-luna",
+    "REVIEW_AGENT_INTAKE_REASONING_EFFORT": "max",
+    "ENGINEER_HELPER_MODEL": "gpt-5.6-luna",
+    "ENGINEER_HELPER_REASONING_EFFORT": "max",
+    "KNOWLEDGE_INGESTION_MODEL": "gpt-5.6-luna",
+    "DEPLOY_REPORT_MODEL": "gpt-5.6-luna",
+    "DEPLOY_REPORT_REASONING_EFFORT": "max",
+    # Investigation keeps its astra/medium pin for request-body echo
+    # consistency; the Hermes gateway ignores the client model name and
+    # resolves the real execution model from its own config.yaml.
+    "ENGINEER_INVESTIGATION_REPLY_MODEL": "gpt-6-astra",
+    "ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT": "medium",
+}
 # Retired Enablement runtime dependency gate (p2-149, conditioned by p2-152):
 # Worker task definitions must not carry the Archer credential unless the
 # rendered enablement workflow mode is "archer".  Formal upgrades strip it from
@@ -842,6 +901,17 @@ def render_task_definition(
         # rendered api/worker revision; the worker contract above already
         # normalized the mode and credential injection before validation.
         _set_environment_value(container, "ENABLEMENT_WORKFLOW_MODE", enablement_workflow_mode)
+    if role in {"api", "route", "worker"}:
+        # Preproduction-only LLM policy (p2-160), see PREPRODUCTION_LLM_ENV_OVERRIDES.
+        # Production renders strip the names explicitly: render is incremental
+        # off the observed task definition, so without this removal a
+        # preproduction render's policy env would survive into the next
+        # Production revision.
+        if environment == "preproduction":
+            for name, value in sorted(PREPRODUCTION_LLM_ENV_OVERRIDES.items()):
+                _set_environment_value(container, name, value)
+        else:
+            _remove_environment_values(container, set(PREPRODUCTION_LLM_ENV_OVERRIDES))
     return rendered
 
 

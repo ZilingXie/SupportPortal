@@ -1,5 +1,12 @@
 # Prompt Change Log
 
+## 2026-09-14 — Preproduction LLM 模型策略：调查 astra/medium、其余 luna/max (p2-160)
+
+- 范围：仅 Preproduction。工程师调查回合的实际执行模型由 Hermes 栈 EFS config.yaml 决定（`model.default` → `gpt-6-astra`、`agent.reasoning_effort: medium`；worker 请求体的 model/effort 一直被网关忽略），随 hermes 任务合并部署生效。
+- SupportPortal 侧：`automation_ecs_deploy.py` 新增 `PREPRODUCTION_LLM_ENV_OVERRIDES`（~24 个 `<SCENARIO>_MODEL` + ~20 个 `<SCENARIO>_REASONING_EFFORT`），preproduction 渲染时注入 api/route/worker 三角色——除 investigation 钉 `gpt-6-astra`/medium 外全部场景钉 `gpt-5.6-luna`/max；production 渲染显式剥离同名 env（防 observed-td 继承泄漏）。
+- 已知边界：MemoryCore 记忆提炼无 effort 旋钮（保持 gpt-5.6-luna）；TICKET_TITLE effort 硬编码 none、WEB_SEARCH/KNOWLEDGE_INGESTION/BENCHMARK_JUDGE 无 effort env；RAG_ANSWER 的 fallback_models 常量（gpt-5.4-mini）不受 env 覆盖；廉价小任务（意图路由/查询扩展等 timeout 6-8s）在 luna+max 下存在超时重试风险，按用量与延迟观测后可单独回调。
+- 验证：上游组合硬门禁（astra/medium、luna/max 最小请求 completed）+ 渲染注入/剥离契约测试 60 passed；发布后按 `support_account_case_llm_usage` 各 stage model 记录复核。
+
 ## 2026-09-12 - Route repository context through maintained operations knowledge
 
 - Area/version: Repository agent instructions in `AGENTS.md` and `docs/agent_workflow_details.md`; no application prompt or model version change.
