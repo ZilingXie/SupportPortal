@@ -41,7 +41,7 @@ def test_account_failure_alert_is_idempotent_and_redacted():
 
 def test_failed_alert_claim_can_be_retried():
     repository = InMemoryTicketRepository()
-    calls = iter([RuntimeError("graph unavailable"), None])
+    calls = iter([ValueError("missing Graph mail config"), None])
 
     def mail(**_kwargs):
         value = next(calls)
@@ -173,3 +173,34 @@ def test_http_5xx_alert_is_outcome_unknown():
         now="2026-09-15T00:00:00Z",
     )
     assert result["status"] == "delivery_outcome_unknown"
+
+
+def test_bad_status_line_alert_is_terminal_outcome_unknown():
+    import http.client
+
+    repository = InMemoryTicketRepository()
+    mail_calls = []
+
+    def mail(**_kwargs):
+        mail_calls.append("called")
+        raise http.client.BadStatusLine("")
+
+    first = notify_account_failure(
+        repository=repository,
+        incident_id="incident-badstatus",
+        stage="persona",
+        code="account_ai_invocation_exhausted",
+        mail_sender=mail,
+        now="2026-09-15T00:00:00Z",
+    )
+    second = notify_account_failure(
+        repository=repository,
+        incident_id="incident-badstatus",
+        stage="persona",
+        code="account_ai_invocation_exhausted",
+        mail_sender=mail,
+        now="2026-09-15T00:01:00Z",
+    )
+    assert first["status"] == "delivery_outcome_unknown"
+    assert second["status"] == "already_claimed"
+    assert len(mail_calls) == 1

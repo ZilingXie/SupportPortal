@@ -422,12 +422,44 @@ def poll_automation_request_replies(
     access_token = _acquire_graph_access_token(graph_config)
     replies: list[BillingRequestReply] = []
     normalized_prefixes = tuple(_clean_text(prefix).lower() for prefix in prefixes if _clean_text(prefix))
-    for summary in _list_recent_inbox_messages(
+    fresh_messages, fresh_truncated = _collect_inbox_messages(
         access_token=access_token,
         max_messages=max_messages,
         lookback_days=lookback_days,
         max_pages=max_pages,
-    ):
+    )
+    scan_messages = list(fresh_messages)
+    if fresh_truncated:
+        oldest_fresh = str(fresh_messages[-1].get("receivedDateTime") or "") if fresh_messages else ""
+        if _INBOX_SCAN_CURSOR.get("exhausted", True):
+            # Restart of the backlog scan from the fresh-window boundary.
+            if oldest_fresh:
+                _INBOX_SCAN_CURSOR["oldest_scanned"] = oldest_fresh
+            _INBOX_SCAN_CURSOR["exhausted"] = False
+        # While not exhausted, keep the deeper (older) cursor position so the
+        # resume segment never regresses to the fresh window boundary.
+    if not _INBOX_SCAN_CURSOR.get("exhausted", True) and _INBOX_SCAN_CURSOR.get("oldest_scanned"):
+        cursor_messages, cursor_truncated = _collect_inbox_messages(
+            access_token=access_token,
+            max_messages=max_messages,
+            lookback_days=lookback_days,
+            max_pages=max_pages,
+            before=str(_INBOX_SCAN_CURSOR["oldest_scanned"]),
+        )
+        if cursor_messages:
+            seen_ids = {str(item.get("id")) for item in scan_messages}
+            scan_messages.extend(
+                item for item in cursor_messages if str(item.get("id")) not in seen_ids
+            )
+        if cursor_truncated:
+            oldest_cursor = str(cursor_messages[-1].get("receivedDateTime") or "") if cursor_messages else ""
+            if oldest_cursor:
+                _INBOX_SCAN_CURSOR["oldest_scanned"] = oldest_cursor
+        else:
+            # The resume window ran dry: the cursor has caught up with the
+            # lookback boundary and future polls only scan fresh pages.
+            _INBOX_SCAN_CURSOR["exhausted"] = True
+    for summary in scan_messages:
         subject = _clean_text(summary.get("subject"))
         message_id = _clean_text(summary.get("id"))
         matched_prefix = next(
@@ -617,39 +649,58 @@ def _send_graph_mail(
     )
 
 
-def _list_recent_inbox_messages(
+# Cross-poll inbox scan cursor (module state). Lost on restart, which only
+# costs one redundant scan window; claim-ledger dedup keeps correctness.
+_INBOX_SCAN_CURSOR: dict[str, Any] = {"oldest_scanned": "", "exhausted": True}
+
+
+def _collect_inbox_messages(
     *,
     access_token: str,
     max_messages: int,
     lookback_days: int,
     max_pages: int = 4,
-) -> list[dict[str, Any]]:
-    """List newest inbox messages, following @odata.nextLink across pages.
+    before: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Collect one bounded inbox scan window, newest first.
 
-    Processed messages stay in the newest-first pages and deduplication is
-    the caller's claim ledger, so a single $top page can starve older
-    pending replies behind a full page of unrelated mail. Paging bounded by
-    ``max_pages`` widens the per-poll inspection window without filtering
-    isRead (shared-mailbox contract: humans reading a reply must not hide it
-    from automation).
+    ``before=None`` scans from the newest message, following @odata.nextLink
+    up to ``max_messages * max_pages`` items. ``before=<iso>`` is the resume
+    segment for the cross-poll cursor: it scans messages older than or equal
+    to ``before`` in one bounded window so each poll advances deeper into the
+    backlog instead of rescanning the same newest page. Returns the messages
+    and whether the window was truncated (more backlog remains).
     """
     top = max(1, min(_safe_int(max_messages, 25), 100))
     days = max(1, min(_safe_int(lookback_days, 7), 30))
     pages = max(1, min(_safe_int(max_pages, 4), 10))
+    limit = top * pages
     received_after = (
         datetime.now(timezone.utc) - timedelta(days=days)
     ).isoformat(timespec="seconds").replace("+00:00", "Z")
-    params = urllib.parse.urlencode(
-        {
-            "$filter": f"receivedDateTime ge {received_after}",
-            "$orderby": "receivedDateTime desc",
-            "$select": "id,subject,from,receivedDateTime,hasAttachments,isRead",
-            "$top": str(top),
-        }
-    )
+    if before:
+        graph_filter = f"receivedDateTime le {before} and receivedDateTime ge {received_after}"
+        params = urllib.parse.urlencode(
+            {
+                "$filter": graph_filter,
+                "$orderby": "receivedDateTime desc",
+                "$select": "id,subject,from,receivedDateTime,hasAttachments,isRead",
+                "$top": str(limit),
+            }
+        )
+        url: str | None = f"{GRAPH_INBOX_MESSAGES_URL}?{params}"
+    else:
+        params = urllib.parse.urlencode(
+            {
+                "$filter": f"receivedDateTime ge {received_after}",
+                "$orderby": "receivedDateTime desc",
+                "$select": "id,subject,from,receivedDateTime,hasAttachments,isRead",
+                "$top": str(top),
+            }
+        )
+        url = f"{GRAPH_INBOX_MESSAGES_URL}?{params}"
     messages: list[dict[str, Any]] = []
-    url: str | None = f"{GRAPH_INBOX_MESSAGES_URL}?{params}"
-    while url and len(messages) < top * pages:
+    while url and len(messages) < limit:
         request = urllib.request.Request(
             url,
             method="GET",
@@ -665,7 +716,25 @@ def _list_recent_inbox_messages(
             messages.extend(item for item in value if isinstance(item, dict))
         next_link = payload.get("@odata.nextLink")
         url = next_link if isinstance(next_link, str) and next_link.strip() else None
-    return messages[: top * pages]
+    truncated = url is not None and len(messages) >= limit
+    return messages[:limit], truncated
+
+
+def _list_recent_inbox_messages(
+    *,
+    access_token: str,
+    max_messages: int,
+    lookback_days: int,
+    max_pages: int = 4,
+) -> list[dict[str, Any]]:
+    """List the newest inbox messages (backward-compatible list wrapper)."""
+    messages, _truncated = _collect_inbox_messages(
+        access_token=access_token,
+        max_messages=max_messages,
+        lookback_days=lookback_days,
+        max_pages=max_pages,
+    )
+    return messages
 
 
 def _get_graph_message(*, access_token: str, message_id: str) -> dict[str, Any]:

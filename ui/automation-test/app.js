@@ -41,6 +41,7 @@ const state = {
   selectedCategory: "",
   form: { subject: "", body: "" },
   sending: false,
+  pendingRequestId: null,
   scenarios: [],
   runs: [],
   runsLoading: false,
@@ -353,6 +354,13 @@ async function createTicket() {
     `This sends a real email to ${recipient || "the Zendesk support address"} and creates a real Zendesk ticket with real automation side effects (public reply, internal handoff email, Slack). Continue?`
   );
   if (!confirmed) return;
+  // One stable request id per send attempt: retries after an unknown outcome
+  // reuse it so the backend returns the recorded ticket instead of sending a
+  // second email. A confirmed rejection clears it so the next attempt is a
+  // genuinely new send.
+  if (!state.pendingRequestId) {
+    state.pendingRequestId = `atx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
   state.sending = true;
   render();
   try {
@@ -363,20 +371,36 @@ async function createTicket() {
         category: state.selectedCategory,
         subject: state.form.subject,
         body: state.form.body,
+        request_id: state.pendingRequestId,
       }),
     });
     if (!response.ok) {
-      throw new Error(responseErrorMessage(payload, "Failed to create the test ticket."));
+      if (payload?.send_outcome === "unknown") {
+        toast(
+          "Send result unknown: the email may already be out. Retrying is safe — the same request id is reused and no duplicate email is sent. Check Zendesk before a fresh send.",
+          "error"
+        );
+      } else {
+        state.pendingRequestId = null;
+        throw new Error(responseErrorMessage(payload, "Failed to create the test ticket."));
+      }
+    } else if (payload?.duplicate) {
+      state.pendingRequestId = null;
+      toast("This request was already recorded (idempotent retry); no second email was sent.", "success");
+    } else {
+      state.pendingRequestId = null;
+      toast(
+        payload?.ticket?.send_status === "sent"
+          ? `Test email sent for ${CATEGORY_LABELS[state.selectedCategory] || state.selectedCategory}. Use Refresh to link the Zendesk ticket.`
+          : `Test email failed: ${payload?.ticket?.send_error || "unknown error"}`,
+        payload?.ticket?.send_status === "sent" ? "success" : "error"
+      );
     }
-    toast(
-      payload?.ticket?.send_status === "sent"
-        ? `Test email sent for ${CATEGORY_LABELS[state.selectedCategory] || state.selectedCategory}. Use Refresh to link the Zendesk ticket.`
-        : `Test email failed: ${payload?.ticket?.send_error || "unknown error"}`,
-      payload?.ticket?.send_status === "sent" ? "success" : "error"
-    );
     await loadTickets();
   } catch (error) {
     if (!state.authError) {
+      // Network-level failure leaves the outcome unknown: keep the request id
+      // so the retry is idempotent instead of sending a duplicate email.
       toast(error instanceof Error ? error.message : "Failed to create the test ticket.", "error");
     }
   } finally {
@@ -677,6 +701,10 @@ function renderRunRow(run) {
 
 function sendChip(ticket) {
   if (ticket.send_status === "sent") return `<span class="chip is-good">email sent</span>`;
+  if (ticket.send_status === "pending") return `<span class="chip" title="ledger row created; send in flight">pending</span>`;
+  if (ticket.send_status === "outcome_unknown") {
+    return `<span class="chip is-warn" title="${escapeHtml(ticket.send_error || "")}">outcome unknown — may be sent</span>`;
+  }
   return `<span class="chip is-bad" title="${escapeHtml(ticket.send_error || "")}">email failed</span>`;
 }
 

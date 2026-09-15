@@ -36,6 +36,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from backend.services import automation_test_mail
+
 # imaplib does not know the non-standard RFC2971 ID command; 163 Coremail
 # refuses SELECT/SEARCH (NO) unless it is sent before login.
 imaplib.Commands["ID"] = ("NONAUTH", "AUTH", "SELECTED")
@@ -300,11 +302,17 @@ class ScenarioEngine:
         for key, value in (headers or {}).items():
             message[key] = value
         message.set_content(body)
-        with smtplib.SMTP_SSL(
-            self.smtp_host, self.smtp_port, timeout=20, context=ssl.create_default_context()
-        ) as server:
-            server.login(self.sender, self.smtp_password)
-            server.send_message(message)
+        # Shared staged delivery: an accepted DATA submission is a success
+        # even when the subsequent QUIT fails, and transport-level failures
+        # raise with an unknown outcome instead of a plain SMTP error.
+        automation_test_mail.deliver_smtp_message(
+            message=message,
+            host=self.smtp_host,
+            port=self.smtp_port,
+            username=self.sender,
+            password=self.smtp_password,
+            timeout=20,
+        )
         self.info(f"email sent → {to_address} | {subject}")
 
     def imap_connect(self) -> imaplib.IMAP4_SSL:

@@ -220,19 +220,27 @@ def _send_via_graph(*, recipient: str, subject: str, body: str) -> str:
     return config["username"]
 
 
-def _send_via_smtp(*, recipient: str, subject: str, body: str) -> str:
-    config = _load_smtp_config()
-    sender = config["username"]
-    message = EmailMessage()
-    message["From"] = sender
-    message["To"] = recipient
-    message["Subject"] = subject
-    message.set_content(body)
+def deliver_smtp_message(
+    *,
+    message: EmailMessage,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    timeout: int = DEFAULT_TEST_SMTP_TIMEOUT_SECONDS,
+) -> None:
+    """Shared staged SMTP delivery used by the console and scenario engine.
+
+    The DATA submission decides the outcome; a QUIT failure after an accepted
+    submission is only logged. Failures are classified as ``AutomationTestMailError``
+    with outcome ``rejected`` (definitely not sent, safe to retry) or
+    ``unknown`` (server may have accepted it; never auto-retry).
+    """
     try:
         server = smtplib.SMTP_SSL(
-            config["host"],
-            config["port"],
-            timeout=config["timeout"],
+            host,
+            port,
+            timeout=timeout,
             context=ssl.create_default_context(),
         )
     except Exception as exc:  # noqa: BLE001 - construction failed, nothing sent
@@ -241,7 +249,7 @@ def _send_via_smtp(*, recipient: str, subject: str, body: str) -> str:
         ) from exc
     try:
         try:
-            server.login(sender, config["password"])
+            server.login(username, password)
             refusals = server.send_message(message)
             if refusals:
                 raise AutomationTestMailError(
@@ -271,4 +279,22 @@ def _send_via_smtp(*, recipient: str, subject: str, body: str) -> str:
             server.quit()
         except Exception:  # noqa: BLE001 - QUIT after accepted DATA is advisory
             LOGGER.warning("automation test smtp QUIT failed after submission", exc_info=True)
+
+
+def _send_via_smtp(*, recipient: str, subject: str, body: str) -> str:
+    config = _load_smtp_config()
+    sender = config["username"]
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = subject
+    message.set_content(body)
+    deliver_smtp_message(
+        message=message,
+        host=config["host"],
+        port=config["port"],
+        username=sender,
+        password=config["password"],
+        timeout=config["timeout"],
+    )
     return sender

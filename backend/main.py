@@ -146,6 +146,7 @@ from backend.services.automation_test_store import (
     SCENARIO_RUN_ACTIVE_STATUSES,
     build_automation_test_scenario_run_store,
     build_automation_test_ticket_store,
+    AutomationTestDuplicateRequestError,
 )
 from backend.services.automation_test_templates import (
     AUTOMATION_TEST_CATEGORY_IDS,
@@ -12166,16 +12167,13 @@ def create_automation_test_ticket(
                 "request_id": request_id,
             }
         )
-    except psycopg.errors.UniqueViolation:
-        # Concurrent request with the same request id won the unique index.
+    except (psycopg.errors.UniqueViolation, AutomationTestDuplicateRequestError):
+        # Concurrent request with the same request id won the race; return
+        # the recorded row without sending again.
         existing = automation_test_ticket_store.get_ticket_by_request_id(request_id or "")
         if existing is not None:
             return {"ticket": existing, "duplicate": True}
         raise
-    if request_id and ticket.get("id") and str(ticket.get("request_id") or "") != request_id:
-        # Lost a concurrent race for the same request id (memory store
-        # returns the existing row): return it without sending again.
-        return {"ticket": ticket, "duplicate": True}
     sent_at = now_iso()
     try:
         automation_test_mail.send_test_ticket_email(
