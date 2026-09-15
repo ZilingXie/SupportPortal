@@ -30,6 +30,8 @@ from backend.services.automation_ecs_contracts import (
     SCHEMA_REVISION,
     StepStatus,
     SyntheticTurnEvent,
+    ZendeskIdentity,
+    ZendeskTicketSnapshot,
     canonical_payload_digest,
 )
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
@@ -45,6 +47,34 @@ def _iso(value: datetime | None = None) -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def _new_adhoc_ticket_id() -> str:
+    """Synthetic 15-digit numeric ticket id for a Slack ad-hoc session.
+
+    The '99' prefix keeps ad-hoc ids disjoint from real Zendesk ids (~12
+    digits, no 99-prefixed range in practice); callers surface the rare PK
+    collision as a visible error.
+    """
+    return f"99{uuid4().int % 10**13:013d}"
+
+
+def _adhoc_ticket_snapshot(text: str, slack_user_id: str | None) -> ZendeskTicketSnapshot:
+    question = " ".join(str(text or "").split())
+    user = str(slack_user_id or "").strip()
+    return ZendeskTicketSnapshot(
+        id=_new_adhoc_ticket_id(),
+        status="open",
+        subject=f"Slack ad-hoc: {question[:60]}" if question else "Slack ad-hoc session",
+        description=question[:12_000],
+        requester=ZendeskIdentity(
+            id=f"slack:{user}" if user else None,
+            name=user or None,
+            email=f"slack-{user}@hermes-adhoc.invalid" if user else None,
+        ),
+        tags=["hermes-adhoc"],
+        updated_at=_now(),
+    )
 
 
 def _synthetic_turn_event_payload(
@@ -214,6 +244,28 @@ class AutomationEcsStore(Protocol):
                 )
             )
 
+    def _apply_schema_008_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 007→008 evolution: ad-hoc Slack thread sessions.
+
+        session_kind separates Zendesk-case bindings from Slack ad-hoc
+        sessions (synthetic tickets); the unique thread index makes the
+        thread→ticket claim race-free.
+        """
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS session_kind TEXT NOT NULL DEFAULT 'case'"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (namespace, slack_channel_id, slack_thread_ts) "
+                "WHERE slack_channel_id IS NOT NULL AND slack_thread_ts IS NOT NULL"
+            ).format(
+                sql.Identifier("automation_hermes_bindings_thread_uniq"),
+                self._table("automation_hermes_case_bindings"),
+            )
+        )
+
     def check_schema(self) -> None: ...
     def accept_intake(self, event: AutomationIntakeEvent, provenance: RuntimeProvenance) -> IntakeReceipt: ...
     def get_execution(self, execution_id: str) -> dict[str, Any] | None: ...
@@ -245,6 +297,16 @@ class AutomationEcsStore(Protocol):
         zendesk_ticket_id: str,
         *,
         feedback: str,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]: ...
+    def create_adhoc_hermes_session(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+        text: str,
+        slack_user_id: str | None = None,
         base_event: dict[str, Any],
         prompt_release_id: str | None = None,
     ) -> dict[str, Any]: ...
@@ -325,6 +387,23 @@ class InMemoryAutomationEcsStore:
                     sql.SQL(definition),
                 )
             )
+
+    def _apply_schema_008_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 007→008 evolution: ad-hoc Slack thread sessions."""
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS session_kind TEXT NOT NULL DEFAULT 'case'"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (namespace, slack_channel_id, slack_thread_ts) "
+                "WHERE slack_channel_id IS NOT NULL AND slack_thread_ts IS NOT NULL"
+            ).format(
+                sql.Identifier("automation_hermes_bindings_thread_uniq"),
+                self._table("automation_hermes_case_bindings"),
+            )
+        )
 
     def check_schema(self) -> None:
         if not self._migrated:
@@ -1042,6 +1121,7 @@ class InMemoryAutomationEcsStore:
                     "investigation": None,
                     "slack_channel_id": None,
                     "slack_thread_ts": None,
+                    "session_kind": "case",
                     "persona_key": None,
                     "persona_version": None,
                     "created_at": _iso(),
@@ -1193,6 +1273,94 @@ class InMemoryAutomationEcsStore:
                 ):
                     return ticket_id
         return None
+
+    def create_adhoc_hermes_session(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+        text: str,
+        slack_user_id: str | None = None,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Claim an unbound Slack thread as an ad-hoc Hermes session.
+
+        Seeds a synthetic case mirror plus an 'adhoc' binding anchored to the
+        thread, then opens the first investigation_feedback turn whose
+        reviewer feedback is the engineer's question. Later mentions of the
+        thread flow through the regular feedback path unchanged. A retry
+        after the first turn exists returns already=bound instead of a
+        second session; a seed that landed without its turn (mid-failure)
+        gets the turn created on the next call.
+        """
+        namespace = self.settings.job_namespace
+        channel = str(channel_id or "").strip()
+        thread = str(thread_ts or "").strip()
+        question = str(text or "").strip()
+        if not channel or not thread or not question:
+            raise HermesTurnStateError("", "channel_id, thread_ts, and text are required")
+        with self._lock:
+            ticket_id = self.find_hermes_ticket_by_thread(channel, thread)
+            if ticket_id is not None:
+                binding = self._hermes_bindings.get((namespace, ticket_id)) or {}
+                if str(binding.get("session_kind") or "case") != "adhoc":
+                    return {"already": "bound", "zendesk_ticket_id": ticket_id}
+            else:
+                ticket = _adhoc_ticket_snapshot(question, slack_user_id)
+                ticket_id = str(ticket.id)
+                now_value = _iso()
+                self._cases[ticket_id] = {
+                    "zendesk_ticket_id": ticket_id,
+                    "ticket": ticket.model_dump(mode="json"),
+                    "current_execution_id": "",
+                    "case_revision": 1,
+                    "active_customer": None,
+                    "latest_customer_event_id": None,
+                    "updated_at": now_value,
+                    "created_at": now_value,
+                }
+                conversation_key = f"supportportal:zendesk:{namespace}:{ticket_id}"
+                self._hermes_bindings[(namespace, ticket_id)] = {
+                    "namespace": namespace,
+                    "zendesk_instance": DEFAULT_ZENDESK_INSTANCE,
+                    "zendesk_ticket_id": ticket_id,
+                    "logical_conversation_key": conversation_key,
+                    "hermes_session_id": f"hermes-session:{uuid5(NAMESPACE_URL, conversation_key)}",
+                    "engine": "hermes",
+                    "conversation_version": 0,
+                    "direction": "investigation",
+                    "direction_reason": "slack ad-hoc session",
+                    "status": "active",
+                    "escalation": None,
+                    "investigation": None,
+                    "slack_channel_id": channel,
+                    "slack_thread_ts": thread,
+                    "session_kind": "adhoc",
+                    "persona_key": None,
+                    "persona_version": None,
+                    "created_at": now_value,
+                    "updated_at": now_value,
+                }
+            has_turns = any(
+                turn["namespace"] == namespace and turn["zendesk_ticket_id"] == ticket_id
+                for turn in self._hermes_turns.values()
+            )
+        if has_turns:
+            return {"already": "bound", "zendesk_ticket_id": ticket_id}
+        created = self.create_investigation_feedback_turn(
+            ticket_id,
+            feedback=question,
+            base_event=base_event,
+            prompt_release_id=prompt_release_id,
+        )
+        return {
+            "status": "adhoc_session_created",
+            "zendesk_ticket_id": ticket_id,
+            "turn_id": created["turn_id"],
+            "job_id": created["job_id"],
+            "case_revision": created["case_revision"],
+        }
 
     def bind_hermes_case_persona(
         self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int
@@ -1906,6 +2074,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-004",
             "automation-ecs-005",
             "automation-ecs-006",
+            "automation-ecs-007",
         }
     )
 
@@ -2101,6 +2270,7 @@ class PostgresAutomationEcsStore:
                 investigation JSONB,
                 slack_channel_id TEXT,
                 slack_thread_ts TEXT,
+                session_kind TEXT NOT NULL DEFAULT 'case',
                 persona_key TEXT,
                 persona_version INTEGER,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2182,6 +2352,7 @@ class PostgresAutomationEcsStore:
         self._apply_schema_005_migrations(cursor)
         self._apply_schema_006_migrations(cursor)
         self._apply_schema_007_migrations(cursor)
+        self._apply_schema_008_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -2356,6 +2527,29 @@ class PostgresAutomationEcsStore:
                     sql.SQL(definition),
                 )
             )
+
+    def _apply_schema_008_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 007→008 evolution: ad-hoc Slack thread sessions.
+
+        session_kind separates Zendesk-case bindings from Slack ad-hoc
+        sessions (synthetic tickets); the unique thread index makes the
+        thread→ticket claim race-free. Bindings are one-root-thread-per-case
+        by construction, so existing data satisfies the uniqueness.
+        """
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS session_kind TEXT NOT NULL DEFAULT 'case'"
+            ).format(self._table("automation_hermes_case_bindings"))
+        )
+        cursor.execute(
+            sql.SQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (namespace, slack_channel_id, slack_thread_ts) "
+                "WHERE slack_channel_id IS NOT NULL AND slack_thread_ts IS NOT NULL"
+            ).format(
+                sql.Identifier("automation_hermes_bindings_thread_uniq"),
+                self._table("automation_hermes_case_bindings"),
+            )
+        )
 
     def check_schema(self) -> None:
         with self._connect() as connection:
@@ -3792,6 +3986,107 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
         return str(row["zendesk_ticket_id"]) if row is not None else None
+
+    def create_adhoc_hermes_session(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+        text: str,
+        slack_user_id: str | None = None,
+        base_event: dict[str, Any],
+        prompt_release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Claim an unbound Slack thread as an ad-hoc Hermes session.
+
+        Seeds a synthetic case mirror plus an 'adhoc' binding anchored to the
+        thread (unique thread index makes the claim race-free), then opens
+        the first investigation_feedback turn whose reviewer feedback is the
+        engineer's question. Later mentions of the thread flow through the
+        regular feedback path unchanged. A seed that landed without its turn
+        (mid-failure) gets the turn created on the next call; a thread
+        already bound to a real Zendesk case is never hijacked.
+        """
+        namespace = self.settings.job_namespace
+        channel = str(channel_id or "").strip()
+        thread = str(thread_ts or "").strip()
+        question = str(text or "").strip()
+        if not channel or not thread or not question:
+            raise HermesTurnStateError("", "channel_id, thread_ts, and text are required")
+        ticket_id: str | None = None
+        try:
+            with self._connect() as connection:
+                with connection.transaction(), connection.cursor() as cursor:
+                    cursor.execute(
+                        sql.SQL(
+                            "SELECT zendesk_ticket_id, session_kind FROM {} WHERE namespace=%s "
+                            "AND slack_channel_id=%s AND slack_thread_ts=%s LIMIT 1"
+                        ).format(self._table("automation_hermes_case_bindings")),
+                        (namespace, channel, thread),
+                    )
+                    row = cursor.fetchone()
+                    if row is not None:
+                        ticket_id = str(row["zendesk_ticket_id"])
+                        if str(row.get("session_kind") or "case") != "adhoc":
+                            return {"already": "bound", "zendesk_ticket_id": ticket_id}
+                    else:
+                        ticket = _adhoc_ticket_snapshot(question, slack_user_id)
+                        ticket_id = str(ticket.id)
+                        conversation_key = f"supportportal:zendesk:{namespace}:{ticket_id}"
+                        cursor.execute(
+                            sql.SQL(
+                                "INSERT INTO {} (namespace,zendesk_ticket_id,ticket,current_execution_id,"
+                                "case_revision,active_customer,latest_customer_event_id) "
+                                "VALUES (%s,%s,%s,'',1,NULL,NULL)"
+                            ).format(self._table("automation_cases")),
+                            (namespace, ticket_id, Jsonb(ticket.model_dump(mode="json"))),
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                "INSERT INTO {} (namespace,zendesk_instance,zendesk_ticket_id,"
+                                "logical_conversation_key,hermes_session_id,engine,conversation_version,"
+                                "direction,direction_reason,status,session_kind,slack_channel_id,slack_thread_ts) "
+                                "VALUES (%s,%s,%s,%s,%s,'hermes',0,'investigation',%s,'active','adhoc',%s,%s)"
+                            ).format(self._table("automation_hermes_case_bindings")),
+                            (
+                                namespace,
+                                DEFAULT_ZENDESK_INSTANCE,
+                                ticket_id,
+                                conversation_key,
+                                f"hermes-session:{uuid5(NAMESPACE_URL, conversation_key)}",
+                                "slack ad-hoc session",
+                                channel,
+                                thread,
+                            ),
+                        )
+                    cursor.execute(
+                        sql.SQL(
+                            "SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s LIMIT 1"
+                        ).format(self._table("automation_hermes_agent_turns")),
+                        (namespace, ticket_id),
+                    )
+                    has_turns = cursor.fetchone() is not None
+        except psycopg.errors.UniqueViolation:
+            # A concurrent claim won the thread; expose the winner, never a second session.
+            winner = self.find_hermes_ticket_by_thread(channel, thread)
+            if winner is None:
+                raise
+            return {"already": "bound", "zendesk_ticket_id": winner}
+        if has_turns:
+            return {"already": "bound", "zendesk_ticket_id": ticket_id}
+        created = self.create_investigation_feedback_turn(
+            str(ticket_id),
+            feedback=question,
+            base_event=base_event,
+            prompt_release_id=prompt_release_id,
+        )
+        return {
+            "status": "adhoc_session_created",
+            "zendesk_ticket_id": ticket_id,
+            "turn_id": created["turn_id"],
+            "job_id": created["job_id"],
+            "case_revision": created["case_revision"],
+        }
 
     def bind_hermes_case_persona(
         self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int

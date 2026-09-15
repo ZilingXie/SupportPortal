@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-14T11:54:48Z",
-  "source_base_commit": "849fb069c75eea20706a6549712bd88d1d53349d",
-  "registry_digest": "0bc6c0901214ff60dbb326fe926a8b65c83c7499cf9085aea118f243b923b10d",
+  "generated_at": "2026-09-15T02:29:34Z",
+  "source_base_commit": "cf7aa44136fed6d1d9bccbb2da5b53aaeb3d42f0",
+  "registry_digest": "b661e4eb78a3e92f93ab56ff10b733c855f37a358d8cd69509b0940957753a6f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3678,7 +3678,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 29,
+      "task_count": 30,
       "done_count": 13,
       "blocked_count": 0
     },
@@ -12614,6 +12614,46 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-14",
           "event": "done",
           "summary": "全链装载完成并验证：55 技能（剔 argus/.env/mcps）经 drop 镜像+一次性任务拷入 /opt/data/skills，dashboard 53→108 可见可读，服务零影响。遗留（后续可选）：①调查链 enabled_toolsets 加 skills（SupportPortal 一行改动+发布，平台侧已 enabled 实证）；②jira-csd/zendesk-ticket 无凭证仅知识可用；③本地未跟踪技能（jira-csd/zendesk-ticket/find-running-webrecorder-sid）未回流上游。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-159",
+      "title": "Preprod Hermes 无 case 线程的 ad-hoc 会话（新端点 + 首答 + 后续 @ 走 feedback 流）",
+      "status": "active",
+      "owner": "codex",
+      "summary": "工程师在 Slack 未绑定线程 @bot 时，不再 ignored_unbound 丢弃：新端点 POST /api/integrations/slack/hermes-cases/adhoc-sessions（X-N8n-Request-Token 鉴权，non-production 块内，production 零暴露）创建 ad-hoc 会话——合成工单号（99+epoch-ms，15 位）+ automation_cases 镜像 + binding（schema-008 新列 session_kind='adhoc' + 线程唯一索引防双绑）+ 首个 investigation_feedback turn（work-only，复用全部围栏/幂等/停车机器）；账号库镜像 seed 使工具链可用；work-phase 提示词按 session_kind 分支用新 key hermes-adhoc-investigation-manual；结果消息无按钮无 Zendesk 死链；actions 端点对 adhoc 拒绝（投递链三重隔离）。附带修复既有缺口：reviewer_feedback 不进 run 输入（feedback 注入，惠及真实 case feedback 流）。后续同线程 @ 自动走既有 messages→investigation_feedback 流。n8n mention workflow 更新（false 分支 ACK→Claim Adhoc→POST adhoc）。需 prompt release + preprod 发布。",
+      "next_action": "发布 preprod + live 双回合验证后收口 done",
+      "acceptance_criteria": [
+        "未绑定线程经 adhoc 端点 → 会话创建 + Hermes work run 完成 + 线程内无按钮回复（Summary/Evidence/Blockers/Next steps）。",
+        "同线程再 @ → 既有 messages 端点 → investigation_feedback turn → 新回复回线程；幂等三态（bound/busy/duplicate）与围栏负路径全过。",
+        "production 端点块外不可达；ad-hoc 的 persona/draft/Zendesk 投递结构性不可达（无按钮+actions 拒绝+kind 过滤）。",
+        "回归全绿 + PG 集成（schema-008）+ prompt release 校验 + preprod 发布三检绿 + live 双回合实证。",
+        "n8n workflow 更新版交付；registry/runbook/prompt_change_log/feature_list/overview 收口。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/automation_ecs_store.py",
+        "backend/automation_ecs_api.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/automation_hermes_slack_actions.py",
+        "backend/services/engineer_slack.py",
+        "docs/integrations/n8n/Slack_App_Mention_To_SupportPortal_Engineer.json"
+      ],
+      "created_at": "2026-09-15",
+      "updated_at": "2026-09-15",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-15",
+          "event": "created",
+          "summary": "用户确认需求：无 case 线程 @bot → 绑定+Hermes 回复一次；后续同线程 @ 走正常 feedback 流。规划实证：create_investigation_feedback_turn 零 Zendesk 依赖、turn 处理快照驱动、_ensure_case_mirror 有本地镜像 seed 先例、reviewer_feedback 不进 run 输入的既有缺口。方案=合成工单号+session_kind 标记，复用 95% 现有机器。"
         }
       ]
     },

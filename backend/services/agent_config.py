@@ -29,6 +29,7 @@ from backend.services.prompts.rag_answer import (
     build_rag_answer_system_prompt,
 )
 from backend.services.prompts.hermes_support_agent import (
+    HERMES_ADHOC_INVESTIGATION_MANUAL_VERSION,
     HERMES_AUTOMATION_ENABLEMENT_MANUAL_VERSION,
     HERMES_AUTOMATION_FRAUD_MANUAL_VERSION,
     HERMES_AUTOMATION_SUSPENSION_MANUAL_VERSION,
@@ -38,6 +39,7 @@ from backend.services.prompts.hermes_support_agent import (
     HERMES_REPLY_CONTRACT_VERSION,
     HERMES_ROUTE_MANUAL_VERSION,
     HERMES_SUPPORT_AGENT_PROMPT_VERSION,
+    build_hermes_adhoc_investigation_manual,
     build_hermes_automation_enablement_manual,
     build_hermes_automation_fraud_manual,
     build_hermes_automation_suspension_manual,
@@ -612,6 +614,13 @@ def _build_agent_config_payload(personas: list[dict[str, Any]]) -> dict[str, Any
                     "hermes-support-session",
                     build_hermes_investigation_manual(),
                     version=HERMES_INVESTIGATION_MANUAL_VERSION,
+                ),
+                _prompt(
+                    "hermes-adhoc-investigation-manual",
+                    "Hermes ad-hoc Slack session investigation manual",
+                    "hermes-support-session",
+                    build_hermes_adhoc_investigation_manual(),
+                    version=HERMES_ADHOC_INVESTIGATION_MANUAL_VERSION,
                 ),
                 _prompt(
                     "hermes-persona-manual",

@@ -78,9 +78,19 @@ PHASE_TOOLSETS = {
 # which is exactly the "investigation without loaded tools" failure mode.
 INVESTIGATION_WORK_TOOLSETS = ["supportportal_work", "common", "memory"]
 
+# An ad-hoc work run additionally gets `skills`: skill_view opens the loaded
+# skill library (agora troubleshooting skills) for full-text reading. "skills"
+# is a first-class, enabled toolset on the gateway's api_server platform, so
+# the request-level subset check accepts it.
+ADHOC_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills"]
 
-def toolsets_for_phase(phase: str, *, direction: str | None) -> list[str] | None:
+
+def toolsets_for_phase(
+    phase: str, *, direction: str | None, session_kind: str | None = None
+) -> list[str] | None:
     if phase == HermesTurnPhase.WORK.value and direction == "investigation":
+        if str(session_kind or "case") == "adhoc":
+            return ADHOC_WORK_TOOLSETS
         return INVESTIGATION_WORK_TOOLSETS
     return PHASE_TOOLSETS.get(phase)
 
@@ -156,6 +166,7 @@ def phase_instructions(
     route: str | None,
     persona_style: str | None = None,
     persona_key: str | None = None,
+    session_kind: str | None = None,
 ) -> tuple[str, str]:
     """Return (instructions, prompt_key) for one phase run.
 
@@ -166,10 +177,13 @@ def phase_instructions(
     """
     core = resolve_system_prompt(CORE_PROMPT_KEY, CORE_PROMPT_FALLBACK_TEXT)
     if phase == HermesTurnPhase.WORK.value:
-        key = WORK_PROMPT_KEYS.get(
-            "investigation" if direction == "investigation" else str(route or ""),
-            "hermes-investigation-manual",
-        )
+        if str(session_kind or "case") == "adhoc":
+            key = "hermes-adhoc-investigation-manual"
+        else:
+            key = WORK_PROMPT_KEYS.get(
+                "investigation" if direction == "investigation" else str(route or ""),
+                "hermes-investigation-manual",
+            )
     else:
         key = PHASE_PROMPT_KEYS[phase]
     instructions = core
@@ -293,6 +307,7 @@ class HermesAgentTurnProcessor:
 
         if status == "pending":
             self._ensure_case_mirror(payload)
+            self._ensure_adhoc_case_mirror(payload)
             try:
                 snapshot = build_case_snapshot(
                     self.store,
@@ -555,18 +570,33 @@ class HermesAgentTurnProcessor:
         self, payload: AgentTurnJobPayload, investigation: dict[str, Any]
     ) -> None:
         # Summons only: a failed ping must never affect the turn state machine.
-        from backend.services.engineer_slack import notify_hermes_investigation_result
+        from backend.services.engineer_slack import (
+            notify_hermes_adhoc_investigation_result,
+            notify_hermes_investigation_result,
+        )
 
         try:
             ticket = payload.event.ticket
             turn = self.store.get_hermes_turn(payload.turn_id) or {}
-            outcome = notify_hermes_investigation_result(
-                ticket_id=ticket.id,
-                turn_id=payload.turn_id,
-                investigation=investigation,
-                environment=self.environment,
-                thread_ts=self._ensure_case_thread(payload, turn) or "",
-            )
+            binding = self.store.get_hermes_case_binding(ticket.id) or {}
+            if str(binding.get("session_kind") or "case") == "adhoc":
+                # Ad-hoc sessions reply in the engineer's own thread only:
+                # no root message, no action buttons, no Zendesk surface.
+                outcome = notify_hermes_adhoc_investigation_result(
+                    ticket_id=ticket.id,
+                    turn_id=payload.turn_id,
+                    investigation=investigation,
+                    environment=self.environment,
+                    thread_ts=str(binding.get("slack_thread_ts") or "").strip(),
+                )
+            else:
+                outcome = notify_hermes_investigation_result(
+                    ticket_id=ticket.id,
+                    turn_id=payload.turn_id,
+                    investigation=investigation,
+                    environment=self.environment,
+                    thread_ts=self._ensure_case_thread(payload, turn) or "",
+                )
             LOGGER.info(
                 "hermes_investigation_result_notified turn_id=%s status=%s ts=%s",
                 payload.turn_id,
@@ -735,12 +765,15 @@ class HermesAgentTurnProcessor:
                     persona_key,
                     persona["version"],
                 )
+        binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+        session_kind = str(binding.get("session_kind") or "case")
         instructions, prompt_key = phase_instructions(
             phase,
             direction=turn.get("direction"),
             route=turn.get("route"),
             persona_style=persona_style,
             persona_key=persona_key,
+            session_kind=session_kind,
         )
         turn_run = self.store.get_or_create_hermes_turn_run(
             turn_id, phase, prompt_version=prompt_key
@@ -751,15 +784,25 @@ class HermesAgentTurnProcessor:
         if not run_id:
             if before_external is not None:
                 before_external()
-            binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+            input_text = render_snapshot_for_run(snapshot)
+            reviewer_feedback = str(
+                ((turn.get("work_result") or {}).get("reviewer_feedback")) or ""
+            ).strip()
+            if reviewer_feedback:
+                # The message that opened this turn (reviewer feedback on a
+                # case, the engineer's question on an ad-hoc session) is the
+                # turn's content; the stored snapshot alone does not carry it.
+                input_text += f"\n\n--- MESSAGE FOR THIS TURN ---\n{reviewer_feedback}"
             try:
                 started = self.client.start_run(
                     session_id=str(binding.get("hermes_session_id") or ""),
                     instructions=instructions,
-                    input_text=render_snapshot_for_run(snapshot),
+                    input_text=input_text,
                     idempotency_key=str(turn_run["request_id"]),
                     workspace_key=workspace,
-                    enabled_toolsets=toolsets_for_phase(phase, direction=turn.get("direction")),
+                    enabled_toolsets=toolsets_for_phase(
+                        phase, direction=turn.get("direction"), session_kind=session_kind
+                    ),
                 )
             except HermesAgentError as exc:
                 return self._fail_phase_submission(turn_id, phase, exc)
@@ -986,6 +1029,82 @@ class HermesAgentTurnProcessor:
                 "internal_email_send_reason": "hermes_agent",
                 "route_classification": {"engine": "hermes"},
                 "automation_context": {"hermes_agent": {"engine": "hermes"}},
+                "source": "api",
+            }
+        )
+
+    def _ensure_adhoc_case_mirror(self, payload: AgentTurnJobPayload) -> None:
+        """Seed the local ticket/account mirrors for an ad-hoc session turn.
+
+        Ad-hoc sessions have no Zendesk event; the synthetic ticket snapshot
+        carried by the turn's job seeds the same local mirrors
+        _ensure_case_mirror writes for ticket.created, so the support tools
+        (case context, investigation progress, escalation) stay usable.
+        """
+        binding = self.store.get_hermes_case_binding(payload.event.ticket.id) or {}
+        if str(binding.get("session_kind") or "case") != "adhoc":
+            return
+        if self.repository is None:
+            return
+        ticket_id = payload.event.ticket.id
+        if isinstance(self.repository.get_account_case_by_ticket_id(ticket_id), dict):
+            return
+        from backend.services.automation_account_intake import (
+            _ensure_ticket_defaults,
+            derive_ticket_title,
+        )
+
+        ticket_snapshot = payload.event.ticket
+        timestamp = payload.event.occurred_at.isoformat()
+        title = " ".join(str(ticket_snapshot.subject or "").split()).strip() or derive_ticket_title(
+            str(ticket_snapshot.description or "")
+        )
+        requester_email = str(ticket_snapshot.requester.email or "").strip() or None
+        ticket = {
+            "ticket_id": ticket_id,
+            "customer_id": requester_email,
+            "requester": requester_email,
+            "subject": title,
+            "status": "open",
+            "source": "api",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "messages": [
+                {
+                    "role": "customer",
+                    "content": str(ticket_snapshot.description or "").strip(),
+                    "created_at": timestamp,
+                    "content_format": "plaintext",
+                    "source": "api",
+                }
+            ],
+        }
+        _ensure_ticket_defaults(ticket)
+        self.repository.save_ticket(ticket, new_messages=ticket.get("messages", []))
+        self.repository.save_account_case(
+            {
+                "account_case_id": f"AC-{ticket_id}",
+                "billing_ticket_id": f"AC-{ticket_id}",
+                "client_ticket_id": ticket_id,
+                "processing_profile": self.environment,
+                "zendesk_ticket_id": ticket_id,
+                "external_id": ticket_id,
+                "created_by": "slack-adhoc-session",
+                "customer_name": ticket_snapshot.requester.name or None,
+                "title": title,
+                "question": str(ticket_snapshot.description or "").strip(),
+                "route": None,
+                "execution_action": None,
+                "automation_status": "automation",
+                "execution_reason_code": None,
+                "missing_fields": [],
+                "collected_fields": {},
+                "customer_reply": None,
+                "internal_email_payload": None,
+                "internal_email_send_status": "not_applicable",
+                "internal_email_send_reason": "hermes_adhoc_session",
+                "route_classification": {"engine": "hermes"},
+                "automation_context": {"hermes_agent": {"engine": "hermes", "session_kind": "adhoc"}},
                 "source": "api",
             }
         )

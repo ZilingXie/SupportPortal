@@ -34,6 +34,7 @@ from backend.services.automation_hermes_agent import (
     resolve_persona_style,
 )
 from backend.services.automation_hermes_tools import (
+    continue_hermes_investigation,
     tool_save_investigation_progress,
     tool_save_reply_draft,
 )
@@ -268,6 +269,7 @@ class FakeHermesClient:
             {
                 "session_id": session_id,
                 "instructions": instructions,
+                "input_text": input_text,
                 "idempotency_key": idempotency_key,
                 "workspace_key": workspace_key,
                 "enabled_toolsets": list(enabled_toolsets or []),
@@ -1578,3 +1580,166 @@ class TestInvestigationThreadBinding:
             "123", source_turn_id=created["turn_id"], base_event={}
         )
         assert reply["phase"] == "persona"
+
+
+class TestAdhocSession:
+    """p2-159: unbound Slack threads become ad-hoc Hermes sessions."""
+
+    def _processor(self, store, client, repository=None, **kwargs):
+        return HermesAgentTurnProcessor(
+            store, client=client, environment="preproduction", repository=repository,
+            poll_interval_seconds=0.01, **kwargs,
+        )
+
+    def _create_adhoc(self, store, *, text="What caused the audio loss on channel 123?"):
+        created = store.create_adhoc_hermes_session(
+            channel_id="C-TEST",
+            thread_ts="900.000",
+            text=text,
+            slack_user_id="U-9",
+            base_event={"provenance": {"service_role": "slack", "source": "adhoc_mention"}},
+        )
+        assert created["status"] == "adhoc_session_created"
+        job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert job is not None and job.payload["turn_id"] == created["turn_id"]
+        return created, job
+
+    def test_adhoc_work_run_manual_toolsets_and_message_injection(self) -> None:
+        store = _store()
+        created, agent_job = self._create_adhoc(store)
+        turn_id = created["turn_id"]
+
+        def on_run_completed(run_id, idempotency_key):
+            tool_save_investigation_progress(
+                store,
+                None,
+                turn_id=turn_id,
+                summary="Checked VoQA and counters.",
+                evidence=[],
+                blockers=[],
+                next_steps=[],
+            )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch(
+            "backend.services.engineer_slack.notify_hermes_adhoc_investigation_result"
+        ) as notify_adhoc, patch(
+            "backend.services.engineer_slack.notify_hermes_investigation_result"
+        ) as notify_case:
+            outcome = self._processor(store, client).process(agent_job)
+        assert outcome["status"] == "awaiting_investigation_review"
+        # work-only, the ad-hoc manual, the widened toolset, the question itself
+        assert len(client.submissions) == 1
+        submission = client.submissions[0]
+        assert submission["enabled_toolsets"] == ["supportportal_work", "common", "memory", "skills"]
+        # the recorded manual marker is the ad-hoc key (the prompt registry is
+        # empty in unit tests, so only the core fallback text resolves)
+        work_run = store.get_or_create_hermes_turn_run(created["turn_id"], "work")
+        assert work_run["prompt_version"] == "hermes-adhoc-investigation-manual"
+        assert "MESSAGE FOR THIS TURN" in submission["input_text"]
+        assert "What caused the audio loss on channel 123?" in submission["input_text"]
+        binding = store.get_hermes_case_binding(created["zendesk_ticket_id"])
+        assert submission["session_id"] == binding["hermes_session_id"]
+        # the reply goes to the engineer's own thread via the ad-hoc variant
+        notify_adhoc.assert_called_once()
+        notify_case.assert_not_called()
+        kwargs = notify_adhoc.call_args.kwargs
+        assert kwargs["thread_ts"] == "900.000"
+        assert kwargs["ticket_id"] == created["zendesk_ticket_id"]
+        # the actions chain is closed for ad-hoc sessions
+        with pytest.raises(HermesTurnStateError, match="ad-hoc"):
+            continue_hermes_investigation(
+                store, created["zendesk_ticket_id"], base_event={}
+            )
+
+    def test_adhoc_seeds_local_mirrors_via_repository(self) -> None:
+        store = _store()
+        created, agent_job = self._create_adhoc(store)
+        saved: dict[str, Any] = {}
+
+        class Repository:
+            def get_account_case_by_ticket_id(self, ticket_id):
+                return saved.get("account_case")
+
+            def save_ticket(self, ticket, *, new_messages=None):
+                saved["ticket"] = ticket
+
+            def save_account_case(self, account_case):
+                saved["account_case"] = account_case
+
+            def get_ticket(self, ticket_id):
+                return saved.get("ticket")
+
+        def on_run_completed(run_id, idempotency_key):
+            tool_save_investigation_progress(
+                store, Repository(), turn_id=created["turn_id"],
+                summary="s", evidence=[], blockers=[], next_steps=[],
+            )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        with patch("backend.services.engineer_slack.notify_hermes_adhoc_investigation_result"):
+            outcome = self._processor(store, client, repository=Repository()).process(agent_job)
+        assert outcome["status"] == "awaiting_investigation_review"
+        assert saved["ticket"]["ticket_id"] == created["zendesk_ticket_id"]
+        assert saved["ticket"]["subject"].startswith("Slack ad-hoc:")
+        assert saved["account_case"]["created_by"] == "slack-adhoc-session"
+        assert saved["account_case"]["zendesk_ticket_id"] == created["zendesk_ticket_id"]
+
+    def test_case_feedback_run_carries_reviewer_message(self) -> None:
+        store = _store()
+        receipt = store.accept_intake(_event(), _settings().provenance())
+        route_job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert route_job is not None and route_job.execution_id == receipt.execution_id
+        handoff = store.hand_off_to_hermes_agent(route_job, prompt_release_id="prompt-1")
+
+        def on_route(run_id, idempotency_key):
+            store.record_hermes_turn_direction(handoff["turn_id"], direction="investigation", route=None)
+            tool_save_investigation_progress(
+                store, None, turn_id=handoff["turn_id"],
+                summary="first pass", evidence=[], blockers=[], next_steps=[],
+            )
+
+        client = FakeHermesClient(on_run_completed=on_route)
+        job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            self._processor(store, client).process(job)
+        # a reviewer's follow-up on the case injects the message into the run input
+        feedback = store.create_investigation_feedback_turn(
+            "123", feedback="check the audio session category first", base_event={}
+        )
+        assert feedback["turn_id"]
+        feedback_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+
+        def on_feedback(run_id, idempotency_key):
+            tool_save_investigation_progress(
+                store, None, turn_id=feedback["turn_id"],
+                summary="second pass", evidence=[], blockers=[], next_steps=[],
+            )
+
+        feedback_client = FakeHermesClient(on_run_completed=on_feedback)
+        with patch("backend.services.engineer_slack.notify_hermes_investigation_result"):
+            outcome = self._processor(store, feedback_client).process(feedback_job)
+        assert outcome["status"] == "awaiting_investigation_review"
+        work_submissions = [
+            s for s in feedback_client.submissions if s["idempotency_key"].endswith(":work")
+        ]
+        assert len(work_submissions) == 1
+        assert "MESSAGE FOR THIS TURN" in work_submissions[0]["input_text"]
+        assert "check the audio session category first" in work_submissions[0]["input_text"]
+
+    def test_adhoc_manual_registered_in_code_prompt_registry(self) -> None:
+        from backend.services.prompt_runtime import (
+            _code_snapshot,
+            reset_prompt_runtime_for_tests,
+            resolve_system_prompt,
+            use_prompt_runtime_snapshot,
+        )
+
+        reset_prompt_runtime_for_tests()
+        try:
+            with use_prompt_runtime_snapshot(_code_snapshot()):
+                text = resolve_system_prompt("hermes-adhoc-investigation-manual", "")
+                assert "no customer to reply to" in text
+                assert "skills_list" in text
+        finally:
+            reset_prompt_runtime_for_tests()

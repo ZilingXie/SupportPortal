@@ -1312,3 +1312,147 @@ def test_hermes_slack_resolve_and_feedback_messages(monkeypatch) -> None:
             expected_channel_id="C-TEST",
         )
         assert unbound == {"ok": True, "status": "ignored_unbound"}
+
+
+def test_hermes_slack_adhoc_session_endpoint(monkeypatch) -> None:
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    client = _preproduction_dashboard_client(store)
+    base = "/automation/preproduction/api/integrations/slack/hermes-cases"
+    path = f"{base}/adhoc-sessions"
+    monkeypatch.setenv("n8n_request_token", "token-1")
+    monkeypatch.setenv("ENGINEER_SLACK_TEAM_ID", "T-TEST")
+    monkeypatch.setenv("ENGINEER_SLACK_CHANNEL_ID", "C-TEST")
+    headers = {"X-N8n-Request-Token": "token-1"}
+    question = "Why did channel 123 lose audio at 10:00?"
+
+    with client:
+        assert client.post(path, json={}).status_code == 401
+        mismatched = client.post(
+            path,
+            headers=headers,
+            json={"team_id": "OTHER", "channel_id": "C-TEST", "thread_ts": "900.000", "text": "hi"},
+        )
+        assert mismatched.status_code == 403
+        wrong_channel = client.post(
+            path,
+            headers=headers,
+            json={"team_id": "T-TEST", "channel_id": "C-OTHER", "thread_ts": "900.000", "text": "hi"},
+        )
+        assert wrong_channel.status_code == 403
+        assert (
+            client.post(
+                path,
+                headers=headers,
+                json={"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "900.000"},
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                path,
+                headers=headers,
+                json={"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "900.000", "text": "   "},
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                path,
+                headers=headers,
+                json={"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "900.000", "text": "x" * 4001},
+            ).status_code
+            == 422
+        )
+
+        created = client.post(
+            path,
+            headers=headers,
+            json={
+                "team_id": "T-TEST",
+                "channel_id": "C-TEST",
+                "thread_ts": "900.000",
+                "slack_user_id": "U-9",
+                "text": question,
+            },
+        )
+        assert created.status_code == 200, created.text
+        body = created.json()
+        assert body["ok"] is True and body["status"] == "adhoc_session_created"
+        ticket_id = str(body["zendesk_ticket_id"])
+        assert len(ticket_id) == 15 and ticket_id.startswith("99") and ticket_id[2:].isdigit()
+        turn = store.get_hermes_turn(str(body["turn_id"]))
+        assert turn["turn_kind"] == "investigation_feedback"
+        assert turn["status"] == "pending"
+        assert turn["work_result"]["reviewer_feedback"] == question
+        binding = store.get_hermes_case_binding(ticket_id)
+        assert binding["session_kind"] == "adhoc"
+        assert binding["slack_channel_id"] == "C-TEST"
+        assert binding["slack_thread_ts"] == "900.000"
+        assert binding["direction"] == "investigation"
+        mirror = store.get_case_mirror(ticket_id)
+        assert str(mirror["ticket"]["subject"]).startswith("Slack ad-hoc:")
+        assert "hermes-adhoc" in mirror["ticket"]["tags"]
+
+        # a retry of the same mention claims the existing session, not a new one
+        repeat = client.post(
+            path,
+            headers=headers,
+            json={
+                "team_id": "T-TEST",
+                "channel_id": "C-TEST",
+                "thread_ts": "900.000",
+                "slack_user_id": "U-9",
+                "text": question,
+            },
+        )
+        assert repeat.status_code == 200
+        assert repeat.json() == {"ok": True, "already": "bound", "zendesk_ticket_id": ticket_id}
+
+        # the thread now resolves bound and later mentions use the regular feedback path
+        resolve = client.get(
+            f"{base}/thread-bindings/resolve",
+            headers=headers,
+            params={"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "900.000"},
+        )
+        assert resolve.status_code == 200
+        assert resolve.json() == {"status": "bound", "zendesk_ticket_id": ticket_id}
+        followup = client.post(
+            f"{base}/messages",
+            headers=headers,
+            json={
+                "team_id": "T-TEST",
+                "channel_id": "C-TEST",
+                "thread_ts": "900.000",
+                "text": "check the VoQA metrics too",
+            },
+        )
+        assert followup.status_code == 200, followup.text
+        assert followup.json()["status"] == "feedback_turn_created"
+        assert followup.json()["zendesk_ticket_id"] == ticket_id
+
+        # the draft/approve actions never serve an ad-hoc session
+        action = client.post(
+            f"{base}/actions",
+            headers=headers,
+            json={
+                "interaction_id": "i-adhoc",
+                "action": "prepare_draft",
+                "environment": "preproduction",
+                "zendesk_ticket_id": ticket_id,
+                "turn_id": turn["turn_id"],
+            },
+        )
+        assert action.status_code == 422
+        assert "ad-hoc" in str(action.json().get("detail"))
+
+        # a thread bound to a real Zendesk case is never hijacked
+        _park_investigation_turn(store)
+        _bind_thread_for(store)
+        hijack = client.post(
+            path,
+            headers=headers,
+            json={"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "777.000", "text": "hi"},
+        )
+        assert hijack.status_code == 200
+        assert hijack.json() == {"ok": True, "already": "bound", "zendesk_ticket_id": "123"}

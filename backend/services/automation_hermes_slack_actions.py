@@ -58,6 +58,11 @@ def handle_slack_hermes_action(
         )
     if not ticket_id.isdigit() or len(ticket_id) > 128:
         return _invalid("zendesk_ticket_id must be numeric")
+    binding = store.get_hermes_case_binding(ticket_id) or {}
+    if str(binding.get("session_kind") or "case") == "adhoc":
+        # Ad-hoc sessions answer in-thread only; the draft/approve chain (and
+        # the Zendesk publication behind it) must stay structurally unreachable.
+        return _invalid("actions are not supported for ad-hoc sessions")
     if action == "prepare_draft":
         return _prepare_draft(store, ticket_id, payload, environment)
     return _approve_draft(store, repository, ticket_id, payload, environment)
@@ -236,3 +241,65 @@ def resolve_hermes_thread_binding(
     if not ticket_id:
         return {"status": "ignored_unbound"}
     return {"status": "bound", "zendesk_ticket_id": ticket_id}
+
+
+def handle_slack_adhoc_session(
+    store: AutomationEcsStore,
+    payload: dict[str, Any],
+    *,
+    expected_team_id: str,
+    expected_channel_id: str,
+) -> dict[str, Any]:
+    """An @mention in an unbound thread becomes an ad-hoc Hermes session.
+
+    Reached through the n8n app-mention workflow when the hermes binding
+    resolve came back ignored_unbound. The thread is claimed (synthetic
+    ticket + adhoc binding) and the engineer's message opens the first
+    investigation_feedback turn; later mentions of the same thread flow
+    through the regular handle_slack_hermes_message feedback path.
+    """
+    team_id = str((payload or {}).get("team_id") or "").strip()
+    channel_id = str((payload or {}).get("channel_id") or "").strip()
+    thread_ts = str((payload or {}).get("thread_ts") or "").strip()
+    text = str((payload or {}).get("text") or "").strip()
+    if not (team_id and channel_id and thread_ts):
+        return _invalid("team_id, channel_id, and thread_ts are required")
+    if expected_team_id and team_id != expected_team_id:
+        return _invalid("team mismatch", status_code=403)
+    if expected_channel_id and channel_id != expected_channel_id:
+        return _invalid("channel mismatch", status_code=403)
+    if not text:
+        return _invalid("question text is required")
+    if len(text) > 4000:
+        return _invalid("question text exceeds 4000 characters")
+    try:
+        created = store.create_adhoc_hermes_session(
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            text=text,
+            slack_user_id=str((payload or {}).get("slack_user_id") or "").strip() or None,
+            base_event={
+                "provenance": {"service_role": "slack", "source": "adhoc_mention"}
+            },
+        )
+    except HermesTurnConflictError:
+        return _already("busy", "a turn is already running for this session")
+    except HermesTurnStateError as exc:
+        return _invalid(str(exc))
+    if created.get("already"):
+        return {
+            "ok": True,
+            "already": str(created["already"]),
+            "zendesk_ticket_id": created.get("zendesk_ticket_id"),
+        }
+    LOGGER.info(
+        "hermes_slack_adhoc_session ticket_id=%s turn_id=%s",
+        created.get("zendesk_ticket_id"),
+        created.get("turn_id"),
+    )
+    return {
+        "ok": True,
+        "status": "adhoc_session_created",
+        "zendesk_ticket_id": created.get("zendesk_ticket_id"),
+        "turn_id": created.get("turn_id"),
+    }

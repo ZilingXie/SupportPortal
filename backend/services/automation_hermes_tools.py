@@ -590,6 +590,13 @@ def continue_hermes_investigation(
     review = store.get_hermes_case_review(zendesk_ticket_id)
     if review is None:
         raise HermesTurnStateError(zendesk_ticket_id, "hermes case review not found")
+    binding = review.get("binding") if isinstance(review.get("binding"), dict) else {}
+    if str(binding.get("session_kind") or "case") == "adhoc":
+        # Ad-hoc sessions answer in-thread only; the persona/draft/Zendesk
+        # reply chain has no customer to serve and must stay unreachable.
+        raise HermesTurnStateError(
+            zendesk_ticket_id, "ad-hoc sessions do not continue into customer replies"
+        )
     source_turn = resolve_awaiting_investigation_turn(store, zendesk_ticket_id)
     if source_turn is None:
         # distinguish "already continued" (a repeated click) from "nothing to do"

@@ -394,6 +394,87 @@
           "name": "SupportPortal n8n Header Auth"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (INSERT INTO public.n8n_supportportal_engineer_slack_inbound_events(inbound_id,inbound_kind,engineer_case_id,slack_user_id) VALUES ($1,'app_mention',$2,$3) ON CONFLICT(inbound_id) DO NOTHING RETURNING engineer_case_id) SELECT COALESCE((SELECT engineer_case_id FROM inserted),'') engineer_case_id,EXISTS(SELECT 1 FROM inserted) forward;",
+        "options": {
+          "queryReplacement": "={{ [$('Verify And Filter Mention').first().json.event_id,'HERMES-ADHOC-' || $('Verify And Filter Mention').first().json.channel_id || '-' || $('Verify And Filter Mention').first().json.thread_ts,$('Verify And Filter Mention').first().json.slack_user_id] }}"
+        }
+      },
+      "id": "e3000000-0000-4000-8000-000000000027",
+      "name": "Claim Adhoc Mention",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        760,
+        480
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "SupportPortal n8n PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.forward }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e3000000-0000-4000-8000-000000000026",
+      "name": "Forward Adhoc Once",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_SUPPORTPORTAL_PREPRODUCTION_BASE_URL/api/integrations/slack/hermes-cases/adhoc-sessions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({team_id:$('Verify And Filter Mention').first().json.team_id,channel_id:$('Verify And Filter Mention').first().json.channel_id,thread_ts:$('Verify And Filter Mention').first().json.thread_ts,slack_user_id:$('Verify And Filter Mention').first().json.slack_user_id,text:$('Verify And Filter Mention').first().json.text}) }}",
+        "options": {}
+      },
+      "id": "e3000000-0000-4000-8000-000000000028",
+      "name": "Send Adhoc Session To SupportPortal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1250,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HEADER_AUTH_CREDENTIAL_ID",
+          "name": "SupportPortal n8n Header Auth"
+        }
+      }
     }
   ],
   "connections": {
@@ -522,7 +603,7 @@
         ],
         [
           {
-            "node": "ACK Rejected Mention",
+            "node": "Claim Adhoc Mention",
             "type": "main",
             "index": 0
           }
@@ -545,6 +626,29 @@
         [
           {
             "node": "Send Hermes Message To SupportPortal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Claim Adhoc Mention": {
+      "main": [
+        [
+          {
+            "node": "Forward Adhoc Once",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Forward Adhoc Once": {
+      "main": [
+        [
+          {
+            "node": "Send Adhoc Session To SupportPortal",
             "type": "main",
             "index": 0
           }
