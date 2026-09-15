@@ -20,13 +20,17 @@ to the console instead (fail-closed).
 
 from __future__ import annotations
 
+import logging
 import os
 import smtplib
 import ssl
+import urllib.error
 from email.message import EmailMessage
 from typing import Any
 
 from backend.services import graph_mail
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_TEST_TOKEN_CACHE = ".msgraph/automation-test-token.json"
 DEFAULT_TEST_RECIPIENT = "support@agoraio.zendesk.com"
@@ -50,7 +54,18 @@ SMTP_REQUIRED_ENV_NAMES = (
 
 
 class AutomationTestMailError(RuntimeError):
-    """Raised when the automation test mailbox is unusable."""
+    """Raised when the automation test mailbox is unusable.
+
+    ``outcome="rejected"`` means the transport definitely did not accept the
+    message (config missing, auth rejected, explicit SMTP/HTTP refusal), so a
+    retry is safe. ``outcome="unknown"`` means the message may already have
+    been accepted (timeout or connection loss after submission); callers must
+    not auto-retry those sends.
+    """
+
+    def __init__(self, message: str, *, outcome: str = "rejected") -> None:
+        super().__init__(message)
+        self.outcome = outcome
 
 
 def _clean(value: Any) -> str:
@@ -182,8 +197,26 @@ def _send_via_graph(*, recipient: str, subject: str, body: str) -> str:
             subject=subject,
             body=body,
         )
+    except urllib.error.HTTPError as exc:
+        # 5xx means the server may still have processed the accepted request.
+        outcome = "unknown" if int(getattr(exc, "code", 0) or 0) >= 500 else "rejected"
+        raise AutomationTestMailError(
+            f"automation test email send failed: {exc}", outcome=outcome
+        ) from exc
+    except ValueError as exc:
+        raise AutomationTestMailError(
+            f"automation test email send failed: {exc}", outcome="rejected"
+        ) from exc
+    except (TimeoutError, OSError) as exc:
+        # Transport-level failure during the POST: the server may have
+        # accepted and delivered the message before the client timed out.
+        raise AutomationTestMailError(
+            f"automation test email send failed: {exc}", outcome="unknown"
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - one explicit failure contract
-        raise AutomationTestMailError(f"automation test email send failed: {exc}") from exc
+        raise AutomationTestMailError(
+            f"automation test email send failed: {exc}", outcome="unknown"
+        ) from exc
     return config["username"]
 
 
@@ -196,14 +229,46 @@ def _send_via_smtp(*, recipient: str, subject: str, body: str) -> str:
     message["Subject"] = subject
     message.set_content(body)
     try:
-        with smtplib.SMTP_SSL(
+        server = smtplib.SMTP_SSL(
             config["host"],
             config["port"],
             timeout=config["timeout"],
             context=ssl.create_default_context(),
-        ) as server:
+        )
+    except Exception as exc:  # noqa: BLE001 - construction failed, nothing sent
+        raise AutomationTestMailError(
+            f"automation test email send failed: {exc}", outcome="rejected"
+        ) from exc
+    try:
+        try:
             server.login(sender, config["password"])
-            server.send_message(message)
-    except Exception as exc:  # noqa: BLE001 - one explicit failure contract
-        raise AutomationTestMailError(f"automation test email send failed: {exc}") from exc
+            refusals = server.send_message(message)
+            if refusals:
+                raise AutomationTestMailError(
+                    f"automation test email send failed: smtp refused recipients: "
+                    f"{', '.join(sorted(refusals))}",
+                    outcome="rejected",
+                )
+        except AutomationTestMailError:
+            raise
+        except smtplib.SMTPResponseException as exc:
+            # The server answered with a refusal code: nothing was accepted.
+            raise AutomationTestMailError(
+                f"automation test email send failed: {exc}", outcome="rejected"
+            ) from exc
+        except (TimeoutError, OSError) as exc:
+            # Timeout/disconnect around the DATA phase: the server may have
+            # accepted the message even though the client never saw the OK.
+            raise AutomationTestMailError(
+                f"automation test email send failed: {exc}", outcome="unknown"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - one explicit failure contract
+            raise AutomationTestMailError(
+                f"automation test email send failed: {exc}", outcome="unknown"
+            ) from exc
+    finally:
+        try:
+            server.quit()
+        except Exception:  # noqa: BLE001 - QUIT after accepted DATA is advisory
+            LOGGER.warning("automation test smtp QUIT failed after submission", exc_info=True)
     return sender

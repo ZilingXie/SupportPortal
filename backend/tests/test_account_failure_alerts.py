@@ -116,3 +116,60 @@ def test_account_rerun_stable_reason_code_is_not_redacted_as_token():
     )
 
     assert "Code: account_internal_email_recipient_missing" in sent[0]["body"]
+
+
+def test_timeout_alert_is_terminal_and_not_resent():
+    import socket as socket_module
+
+    repository = InMemoryTicketRepository()
+    mail_calls = []
+
+    def mail(**_kwargs):
+        mail_calls.append("called")
+        raise socket_module.timeout("timed out after accept")
+
+    first = notify_account_failure(
+        repository=repository,
+        incident_id="incident-timeout",
+        stage="persona",
+        code="account_ai_invocation_exhausted",
+        ticket_id="TK-T",
+        attempts=2,
+        mail_sender=mail,
+        now="2026-09-15T00:00:00Z",
+    )
+    second = notify_account_failure(
+        repository=repository,
+        incident_id="incident-timeout",
+        stage="persona",
+        code="account_ai_invocation_exhausted",
+        ticket_id="TK-T",
+        attempts=2,
+        mail_sender=mail,
+        now="2026-09-15T00:01:00Z",
+    )
+    assert first["status"] == "delivery_outcome_unknown"
+    # Terminal completion: the same incident reported again must not resend.
+    assert second["status"] == "already_claimed"
+    assert len(mail_calls) == 1
+
+
+def test_http_5xx_alert_is_outcome_unknown():
+    import urllib.error
+
+    repository = InMemoryTicketRepository()
+
+    def mail(**_kwargs):
+        raise urllib.error.HTTPError(
+            "https://graph.microsoft.com/v1.0/me/sendMail", 503, "unavailable", hdrs=None, fp=None
+        )
+
+    result = notify_account_failure(
+        repository=repository,
+        incident_id="incident-5xx",
+        stage="persona",
+        code="account_ai_invocation_exhausted",
+        mail_sender=mail,
+        now="2026-09-15T00:00:00Z",
+    )
+    assert result["status"] == "delivery_outcome_unknown"

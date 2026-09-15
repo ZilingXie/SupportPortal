@@ -104,6 +104,7 @@ class AutomationTestTicketStore:
                         send_status TEXT NOT NULL,
                         send_error TEXT,
                         email_sent_at TIMESTAMPTZ,
+                        request_id TEXT,
                         link_status TEXT NOT NULL DEFAULT 'pending',
                         zendesk_ticket_id TEXT,
                         zendesk_ticket_url TEXT,
@@ -113,6 +114,13 @@ class AutomationTestTicketStore:
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
+                    """
+                )
+                cursor.execute(
+                    f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS {self._table()}_request_id_key
+                    ON {self._table()} (request_id)
+                    WHERE request_id IS NOT NULL
                     """
                 )
         self._schema_ensured = True
@@ -133,6 +141,11 @@ class AutomationTestTicketStore:
         if self.in_memory:
             self.ensure_schema()
             with self._lock:
+                request_id = str(saved.get("request_id") or "").strip()
+                if request_id:
+                    for existing in self._memory.values():
+                        if str(existing.get("request_id") or "").strip() == request_id:
+                            return copy.deepcopy(existing)
                 self._memory_next_id += 1
                 saved["id"] = self._memory_next_id
                 self._memory[saved["id"]] = copy.deepcopy(saved)
@@ -146,8 +159,9 @@ class AutomationTestTicketStore:
                         category, subject, body, sender, recipient,
                         send_status, send_error, email_sent_at, link_status,
                         zendesk_ticket_id, zendesk_ticket_url, linked_account_case_id,
-                        linked_case_snapshot, last_checked_at, created_at, updated_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        linked_case_snapshot, last_checked_at, created_at, updated_at,
+                        request_id
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     RETURNING id, created_at::text, updated_at::text
                     """,
                     (
@@ -167,6 +181,7 @@ class AutomationTestTicketStore:
                         saved.get("last_checked_at"),
                         saved["created_at"],
                         saved["updated_at"],
+                        saved.get("request_id"),
                     ),
                 )
                 row = cursor.fetchone()
@@ -186,6 +201,9 @@ class AutomationTestTicketStore:
             "linked_account_case_id",
             "linked_case_snapshot",
             "last_checked_at",
+            "send_status",
+            "send_error",
+            "email_sent_at",
         )
         updates = {key: value for key, value in fields.items() if key in allowed}
         if not updates:
@@ -217,6 +235,29 @@ class AutomationTestTicketStore:
         return self.get_ticket(normalized_id)
 
     # -- reads ----------------------------------------------------------
+
+    def get_ticket_by_request_id(self, request_id: str) -> dict[str, Any] | None:
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            return None
+        self.ensure_schema()
+        if self.in_memory:
+            with self._lock:
+                for value in self._memory.values():
+                    if str(value.get("request_id") or "").strip() == normalized:
+                        return copy.deepcopy(value)
+                return None
+        with psycopg.connect(self._dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT * FROM {self._table()} WHERE request_id = %s ORDER BY id DESC LIMIT 1",
+                    (normalized,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                columns = [desc.name for desc in cursor.description]
+        return self._record_from_row(dict(zip(columns, row)))
 
     def get_ticket(self, ticket_id: int) -> dict[str, Any] | None:
         try:
@@ -357,7 +398,62 @@ class AutomationTestScenarioRunStore:
                     )
                     """
                 )
+                cursor.execute(
+                    f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS {self._table()}_one_active
+                    ON {self._table()} ((1))
+                    WHERE status IN ('queued', 'running', 'waiting_approval')
+                    """
+                )
         self._schema_ensured = True
+
+    def claim_run_slot(self, run_id: str, scenario_id: str) -> dict[str, Any] | None:
+        """Atomically create a run only when no active run exists.
+
+        The Postgres path relies on the partial unique index (one active run
+        per table); the memory path performs the check inside the same lock
+        as the insert. Returns the created record, or None when another run
+        is already active.
+        """
+        if self.in_memory:
+            self.ensure_schema()
+            with self._lock:
+                for run in self._memory.values():
+                    if run.get("status") in SCENARIO_RUN_ACTIVE_STATUSES:
+                        return None
+                record: dict[str, Any] = {
+                    "run_id": run_id,
+                    "scenario_id": scenario_id,
+                    "status": "queued",
+                    "subject": None,
+                    "zendesk_ticket_id": None,
+                    "zendesk_ticket_url": None,
+                    "account_case_id": None,
+                    "client_ticket_id": None,
+                    "current_step": None,
+                    "approval_hint": None,
+                    "steps": [],
+                    "cancel_requested": False,
+                    "error": None,
+                    "created_at": _now(),
+                    "updated_at": _now(),
+                }
+                self._memory[run_id] = copy.deepcopy(record)
+                return copy.deepcopy(record)
+        self.ensure_schema()
+        try:
+            with psycopg.connect(self._dsn) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        INSERT INTO {self._table()} (run_id, scenario_id, status, steps)
+                        VALUES (%s, %s, 'queued', '[]'::jsonb)
+                        """,
+                        (run_id, scenario_id),
+                    )
+        except psycopg.errors.UniqueViolation:
+            return None
+        return self.get_run(run_id)
 
     def create_run(self, run_id: str, scenario_id: str) -> dict[str, Any]:
         record: dict[str, Any] = {

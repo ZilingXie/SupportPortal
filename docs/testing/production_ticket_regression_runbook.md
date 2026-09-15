@@ -152,6 +152,7 @@
    ```
 3. 事件：`support_ticket_events` 里 `zendesk_fraud_review_handoff`、`enablement_internal_resolution_received`、`account_zendesk_status_synced`。
 4. 追踪表本身：`SELECT * FROM automation_test_tickets ORDER BY id DESC LIMIT 10;`
+   - `send_status` 值域：`pending`（已建台账待发送）→ `sent` / `failed`（明确未发出，可安全重发新请求）/ `outcome_unknown`（传输超时等可能已发出，禁止自动重发，人工核对 Zendesk 后处理）；带 `request_id` 的重复请求幂等返回既有行，不会二次发信。
 
 ## 6. 清理
 

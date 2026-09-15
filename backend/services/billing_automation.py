@@ -24,6 +24,7 @@ from backend.services.customer_reply_composer import (
     compose_customer_reply_email,
     has_trailing_customer_signature,
 )
+from backend.services import graph_mail as _graph_mail_module
 from backend.services.graph_mail import (
     acquire_graph_access_token,
     automation_internal_email_cc,
@@ -408,6 +409,7 @@ def poll_automation_request_replies(
     max_messages: int = 25,
     lookback_days: int = 7,
     subject_prefixes: tuple[str, ...] = (),
+    max_pages: int = 4,
 ) -> list[BillingRequestReply]:
     prefixes = subject_prefixes or (
         namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
@@ -424,6 +426,7 @@ def poll_automation_request_replies(
         access_token=access_token,
         max_messages=max_messages,
         lookback_days=lookback_days,
+        max_pages=max_pages,
     ):
         subject = _clean_text(summary.get("subject"))
         message_id = _clean_text(summary.get("id"))
@@ -578,12 +581,7 @@ def _read_graph_token_cache(cache_path: Path) -> dict[str, Any]:
 
 
 def _write_graph_token_cache(cache_path: Path, token_cache: dict[str, Any]) -> None:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(token_cache, indent=2, sort_keys=True), encoding="utf-8")
-    try:
-        cache_path.chmod(0o600)
-    except OSError:
-        pass
+    _graph_mail_module.write_token_cache(cache_path, token_cache)
 
 
 def _post_form_json(url: str, form: dict[str, str]) -> dict[str, Any]:
@@ -624,9 +622,20 @@ def _list_recent_inbox_messages(
     access_token: str,
     max_messages: int,
     lookback_days: int,
+    max_pages: int = 4,
 ) -> list[dict[str, Any]]:
+    """List newest inbox messages, following @odata.nextLink across pages.
+
+    Processed messages stay in the newest-first pages and deduplication is
+    the caller's claim ledger, so a single $top page can starve older
+    pending replies behind a full page of unrelated mail. Paging bounded by
+    ``max_pages`` widens the per-poll inspection window without filtering
+    isRead (shared-mailbox contract: humans reading a reply must not hide it
+    from automation).
+    """
     top = max(1, min(_safe_int(max_messages, 25), 100))
     days = max(1, min(_safe_int(lookback_days, 7), 30))
+    pages = max(1, min(_safe_int(max_pages, 4), 10))
     received_after = (
         datetime.now(timezone.utc) - timedelta(days=days)
     ).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -638,18 +647,25 @@ def _list_recent_inbox_messages(
             "$top": str(top),
         }
     )
-    request = urllib.request.Request(
-        f"{GRAPH_INBOX_MESSAGES_URL}?{params}",
-        method="GET",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        payload = _decode_json_response(response)
-    value = payload.get("value")
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    messages: list[dict[str, Any]] = []
+    url: str | None = f"{GRAPH_INBOX_MESSAGES_URL}?{params}"
+    while url and len(messages) < top * pages:
+        request = urllib.request.Request(
+            url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = _decode_json_response(response)
+        value = payload.get("value")
+        if isinstance(value, list):
+            messages.extend(item for item in value if isinstance(item, dict))
+        next_link = payload.get("@odata.nextLink")
+        url = next_link if isinstance(next_link, str) and next_link.strip() else None
+    return messages[: top * pages]
 
 
 def _get_graph_message(*, access_token: str, message_id: str) -> dict[str, Any]:

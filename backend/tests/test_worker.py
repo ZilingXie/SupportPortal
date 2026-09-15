@@ -5045,6 +5045,8 @@ class WorkerResilienceTests(unittest.TestCase):
                     "route_family": "automated",
                     "execution_action": "detailed_invoice",
                     "automation_status": "automation",
+                    "internal_email_send_status": "sent",
+                    "internal_email_payload": {"to_addresses": ["billing@example.com"]},
                 },
             ),
             (
@@ -5078,6 +5080,8 @@ class WorkerResilienceTests(unittest.TestCase):
                     "route_family": "automated",
                     "execution_action": "quota",
                     "automation_status": "automation",
+                    "internal_email_send_status": "sent",
+                    "internal_email_payload": {"to_addresses": ["billing@example.com"]},
                     "collected_fields": {"products": ["rtc"]},
                 },
             ),
@@ -5175,6 +5179,8 @@ class WorkerResilienceTests(unittest.TestCase):
                     "route": "fraud_account",
                     "route_family": "automated",
                     "execution_action": "fraud_account",
+                    "internal_email_send_status": "sent",
+                    "internal_email_payload": {"to_addresses": ["billing@example.com"]},
                 },
             ),
         )
@@ -5217,6 +5223,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 }
                 reply = types.SimpleNamespace(
                     message_id=f"{handler}-persona-render-failure",
+                    sender="billing@example.com",
                     subject=subject,
                     body_text="The internal team completed the request.",
                 )

@@ -511,6 +511,8 @@ def _record_account_worker_failure(
 BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
 BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
+BILLING_REPLY_POLL_MAX_PAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_PAGES"
+AUTOMATION_REPLY_POLL_MAX_PAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_PAGES"
 AUTOMATION_REPLY_POLL_ENABLED_ENV = "AUTOMATION_REPLY_POLL_ENABLED"
 AUTOMATION_REPLY_POLL_INTERVAL_ENV = "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
@@ -633,6 +635,13 @@ def _billing_reply_poll_max_messages_from_env() -> int:
     )
 
 
+def _billing_reply_poll_max_pages_from_env() -> int:
+    return _safe_positive_int(
+        os.getenv(AUTOMATION_REPLY_POLL_MAX_PAGES_ENV) or os.getenv(BILLING_REPLY_POLL_MAX_PAGES_ENV),
+        4,
+    )
+
+
 def _engineer_assignment_poller_enabled_from_env() -> bool:
     return str(os.getenv(ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV) or "").strip().lower() in {
         "1",
@@ -696,6 +705,7 @@ def process_automation_request_replies_once() -> list[Any]:
     replies = poll_automation_request_replies(
         handler=handle_automation_request_reply,
         max_messages=_billing_reply_poll_max_messages_from_env(),
+        max_pages=_billing_reply_poll_max_pages_from_env(),
         subject_prefixes=(
             namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
             namespaced_internal_email_subject(ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),

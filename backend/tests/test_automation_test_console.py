@@ -174,6 +174,70 @@ class AutomationTestConsoleTests(unittest.TestCase):
         # A single failed send must not be retried silently.
         self.assertEqual(len(self.sent_emails), 0)
 
+    def test_create_unknown_outcome_records_outcome_unknown_status(self) -> None:
+        def _unknown_send(*, to_address: str, subject: str, body: str) -> str:
+            raise AutomationTestMailError(
+                "automation test email send failed: timed out", outcome="unknown"
+            )
+
+        with patch.object(main.automation_test_mail, "send_test_ticket_email", _unknown_send):
+            response = self.create_ticket()
+        self.assertEqual(response.status_code, 502)
+        payload = response.json()
+        self.assertEqual(payload["send_outcome"], "unknown")
+        self.assertEqual(payload["ticket"]["send_status"], "outcome_unknown")
+        self.assertIn("timed out", payload["ticket"]["send_error"])
+        self.assertEqual(len(self.sent_emails), 0)
+
+    def test_duplicate_request_id_is_idempotent_without_resend(self) -> None:
+        first = self.client.post(
+            "/api/automation-test/tickets",
+            headers=self.auth_headers(),
+            json={
+                "category": "fraud_account",
+                "subject": "Idempotent subject",
+                "body": "Idempotent body.",
+                "request_id": "req-automation-test-1",
+            },
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertNotIn("duplicate", first.json())
+        second = self.client.post(
+            "/api/automation-test/tickets",
+            headers=self.auth_headers(),
+            json={
+                "category": "fraud_account",
+                "subject": "Idempotent subject",
+                "body": "Idempotent body.",
+                "request_id": "req-automation-test-1",
+            },
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.json()["duplicate"])
+        self.assertEqual(
+            second.json()["ticket"]["id"], first.json()["ticket"]["id"]
+        )
+        # The retry must not send a second email.
+        self.assertEqual(len(self.sent_emails), 1)
+        listing = self.client.get(
+            "/api/automation-test/tickets", headers=self.auth_headers()
+        )
+        self.assertEqual(len(listing.json()["tickets"]), 1)
+
+    def test_send_failure_still_leads_with_ledger_row(self) -> None:
+        # The pre-send insert guarantees a pending row exists even when the
+        # mail sender fails; the failure only updates that row.
+        with patch.object(
+            main.automation_test_ticket_store,
+            "insert_ticket",
+            wraps=main.automation_test_ticket_store.insert_ticket,
+        ) as insert_mock:
+            response = self.create_ticket()
+        self.assertEqual(response.status_code, 200)
+        insert_mock.assert_called_once()
+        self.assertEqual(insert_mock.call_args.args[0]["send_status"], "pending")
+        self.assertEqual(response.json()["ticket"]["send_status"], "sent")
+
     def test_refresh_links_production_case_and_snapshots_pipeline(self) -> None:
         response = self.create_ticket(category="enablement")
         self.assertEqual(response.status_code, 200)
@@ -268,6 +332,31 @@ class AutomationTestConsoleTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class AutomationTestScenarioRunSlotTests(unittest.TestCase):
+    def _memory_store(self):
+        from backend.services.automation_test_store import AutomationTestScenarioRunStore
+
+        return AutomationTestScenarioRunStore(dsn="")
+
+    def test_second_claim_while_active_returns_none(self) -> None:
+        with patch.dict(os.environ, {"AUTOMATION_TEST_ALLOW_MEMORY": "1"}, clear=False):
+            store = self._memory_store()
+            first = store.claim_run_slot("atr-first", "e1")
+            self.assertIsNotNone(first)
+            second = store.claim_run_slot("atr-second", "e1")
+            self.assertIsNone(second)
+
+    def test_claim_allowed_again_after_terminal_status(self) -> None:
+        with patch.dict(os.environ, {"AUTOMATION_TEST_ALLOW_MEMORY": "1"}, clear=False):
+            store = self._memory_store()
+            first = store.claim_run_slot("atr-first", "e1")
+            assert first is not None
+            store.update_run("atr-first", {"status": "completed"})
+            second = store.claim_run_slot("atr-second", "e1")
+            self.assertIsNotNone(second)
+            self.assertEqual(second["run_id"], "atr-second")
+
+
 class AutomationTestTemplateClassificationTests(unittest.TestCase):
     """The [zac test] subject tag must not break deterministic fast paths."""
 
@@ -353,6 +442,38 @@ class AutomationTestSmtpTransportTests(unittest.TestCase):
         "BILLING_AUTOMATION_SMTP_PASSWORD": "smtp-authorization-code",
     }
 
+    def test_smtp_quit_failure_after_accepted_data_reports_success(self) -> None:
+        with patch.dict(os.environ, self.SMTP_ENV, clear=False), patch.object(
+            automation_test_mail.smtplib, "SMTP_SSL"
+        ) as smtp_ssl:
+            instance = smtp_ssl.return_value
+            instance.send_message.return_value = {}
+            instance.quit.side_effect = OSError("connection closed during quit")
+            sender = automation_test_mail.send_test_ticket_email(
+                to_address="support@agoraio.zendesk.com",
+                subject="[zac test] Account suspended",
+                body="Our account is suspended.",
+            )
+        self.assertEqual(sender, "xieziling97@163.com")
+        instance.send_message.assert_called_once()
+        instance.quit.assert_called_once()
+
+    def test_smtp_timeout_during_send_is_outcome_unknown(self) -> None:
+        import socket as socket_module
+
+        with patch.dict(os.environ, self.SMTP_ENV, clear=False), patch.object(
+            automation_test_mail.smtplib, "SMTP_SSL"
+        ) as smtp_ssl:
+            instance = smtp_ssl.return_value
+            instance.send_message.side_effect = socket_module.timeout("timed out")
+            with self.assertRaises(automation_test_mail.AutomationTestMailError) as raised:
+                automation_test_mail.send_test_ticket_email(
+                    to_address="support@agoraio.zendesk.com",
+                    subject="[zac test] Account suspended",
+                    body="Our account is suspended.",
+                )
+        self.assertEqual(raised.exception.outcome, "unknown")
+
     def test_smtp_missing_keys_fail_closed(self) -> None:
         with patch.dict(
             os.environ,
@@ -383,7 +504,8 @@ class AutomationTestSmtpTransportTests(unittest.TestCase):
         with patch.dict(os.environ, self.SMTP_ENV, clear=False), patch.object(
             automation_test_mail.smtplib, "SMTP_SSL"
         ) as smtp_ssl:
-            instance = smtp_ssl.return_value.__enter__.return_value
+            instance = smtp_ssl.return_value
+            instance.send_message.return_value = {}
             sender = automation_test_mail.send_test_ticket_email(
                 to_address="support@agoraio.zendesk.com",
                 subject="[zac test] Account suspended",

@@ -10,3 +10,7 @@ ALTER TABLE supportportal.automation_test_tickets
 CREATE UNIQUE INDEX IF NOT EXISTS automation_test_tickets_request_id_key
     ON supportportal.automation_test_tickets (request_id)
     WHERE request_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS automation_test_scenario_runs_one_active
+    ON supportportal.automation_test_scenario_runs ((1))
+    WHERE status IN ('queued', 'running', 'waiting_approval');
