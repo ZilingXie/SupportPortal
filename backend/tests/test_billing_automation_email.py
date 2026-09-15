@@ -8,6 +8,7 @@ import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
+from backend.services import billing_automation
 from backend.services.billing_automation import (
     BILLING_ACTION_ACCOUNT_VERIFICATION,
     BillingRequestReply,
@@ -67,6 +68,10 @@ def _json_request_body(request) -> dict[str, object]:  # type: ignore[no-untyped
 
 class BillingAutomationEmailTests(unittest.TestCase):
     def setUp(self) -> None:
+        # The cross-poll inbox cursor is module state; reset it so each test
+        # exercises a known scan position.
+        billing_automation._INBOX_SCAN_CURSOR.clear()
+        billing_automation._INBOX_SCAN_CURSOR.update({"oldest_scanned": "", "exhausted": True})
         self._env_patcher = patch.dict(
             os.environ,
             {
@@ -321,6 +326,90 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertIn("receivedDateTime ge ", query["$filter"][0])
         self.assertEqual(query["$orderby"], ["receivedDateTime desc"])
 
+    def test_poll_billing_request_replies_cursor_advances_beyond_fresh_window(self) -> None:
+        # Fresh window (2x2=4) fills with unrelated mail and is truncated;
+        # the resume segment must fetch the older target reply in the same
+        # poll instead of starving it behind the fresh window forever.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "billing-graph-token.json"
+            cache_path.write_text(
+                json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
+                encoding="utf-8",
+            )
+            list_urls = []
+
+            def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                url = request.full_url
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+                if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
+                    list_urls.append(url)
+                    graph_filter = (query.get("$filter") or [""])[0]
+                    if "le " in graph_filter:
+                        # Resume segment: the older target reply, window runs dry.
+                        return _FakeHttpResponse(
+                            {
+                                "value": [
+                                    {
+                                        "id": "msg-deep",
+                                        "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-DEEP",
+                                        "from": {"emailAddress": {"address": "billing@example.com"}},
+                                        "receivedDateTime": "2026-07-01T00:00:00Z",
+                                    }
+                                ]
+                            },
+                            status=200,
+                        )
+                    return _FakeHttpResponse(
+                        {
+                            "value": [
+                                {
+                                    "id": "msg-fresh",
+                                    "subject": "Re: unrelated thread",
+                                    "from": {"emailAddress": {"address": "noise@example.com"}},
+                                    "receivedDateTime": "2026-07-02T06:00:00Z",
+                                }
+                            ],
+                            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=more",
+                        },
+                        status=200,
+                    )
+                if url.startswith("https://graph.microsoft.com/v1.0/me/messages/msg-deep?"):
+                    return _FakeHttpResponse(
+                        {
+                            "id": "msg-deep",
+                            "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-DEEP",
+                            "from": {"emailAddress": {"address": "billing@example.com"}},
+                            "body": {"contentType": "text", "content": "Approved deep in the backlog."},
+                            "receivedDateTime": "2026-07-01T00:00:00Z",
+                        },
+                        status=200,
+                    )
+                if (
+                    url == "https://graph.microsoft.com/v1.0/me/messages/msg-deep"
+                    and request.get_method() == "PATCH"
+                ):
+                    return _FakeHttpResponse(status=200)
+                raise AssertionError(f"unexpected URL {url}")
+
+            env = dict(GRAPH_ENV)
+            env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
+            with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                replies = poll_automation_request_replies(
+                    handler=lambda _reply: None,
+                    max_messages=2,
+                    max_pages=2,
+                )
+
+        self.assertEqual([reply.message_id for reply in replies], ["msg-deep"])
+        self.assertIn("Approved deep in the backlog.", replies[0].body_text)
+        # Fresh window paging (4 pages at limit) plus one resume request.
+        self.assertEqual(len(list_urls), 5)
+        for url in list_urls[:4]:
+            self.assertNotIn("receivedDateTime+le+", url)
+        self.assertIn("receivedDateTime+le+", list_urls[4])
+        # The resume window ran dry: cursor caught up for future polls.
+        self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
+
     def test_poll_billing_request_replies_follows_next_link_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
@@ -445,8 +534,8 @@ class BillingAutomationEmailTests(unittest.TestCase):
             "backend.services.billing_automation._acquire_graph_access_token",
             return_value="access-token",
         ), patch(
-            "backend.services.billing_automation._list_recent_inbox_messages",
-            return_value=[summary],
+            "backend.services.billing_automation._collect_inbox_messages",
+            return_value=([summary], False),
         ), patch(
             "backend.services.billing_automation._get_graph_message",
             return_value=message,
@@ -481,8 +570,8 @@ class BillingAutomationEmailTests(unittest.TestCase):
             "backend.services.billing_automation._acquire_graph_access_token",
             return_value="access-token",
         ), patch(
-            "backend.services.billing_automation._list_recent_inbox_messages",
-            return_value=[summary],
+            "backend.services.billing_automation._collect_inbox_messages",
+            return_value=([summary], False),
         ), patch(
             "backend.services.billing_automation._get_graph_message",
             return_value=message,
@@ -503,7 +592,8 @@ class BillingAutomationEmailTests(unittest.TestCase):
         with patch.dict(os.environ, GRAPH_ENV), patch(
             "backend.services.billing_automation._acquire_graph_access_token", return_value="access-token"
         ), patch(
-            "backend.services.billing_automation._list_recent_inbox_messages", return_value=[summary]
+            "backend.services.billing_automation._collect_inbox_messages",
+            return_value=([summary], False),
         ), patch(
             "backend.services.billing_automation._get_graph_message", return_value=message
         ), patch(
@@ -521,7 +611,8 @@ class BillingAutomationEmailTests(unittest.TestCase):
         with patch.dict(os.environ, GRAPH_ENV), patch(
             "backend.services.billing_automation._acquire_graph_access_token", return_value="access-token"
         ), patch(
-            "backend.services.billing_automation._list_recent_inbox_messages", return_value=[summary]
+            "backend.services.billing_automation._collect_inbox_messages",
+            return_value=([summary], False),
         ), patch(
             "backend.services.billing_automation._get_graph_message", return_value=message
         ), patch(

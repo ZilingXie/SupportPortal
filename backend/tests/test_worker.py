@@ -3701,6 +3701,39 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("quota_customer_followup_job_queued", event_types)
         self.assertEqual(len(commit["events"]), 2)
 
+    def test_billing_reply_for_foreign_handler_case_is_dismissed(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "AC-EN-CASE",
+            "account_case_id": "AC-EN-CASE",
+            "client_ticket_id": "TK-EN-CASE",
+            "automation_handler": "enablement",
+            "route_family": "automated",
+            "execution_action": "enablement",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["enablement@example.com"]},
+        }
+        repository.get_ticket.return_value = {"ticket_id": "TK-EN-CASE", "messages": []}
+        reply = types.SimpleNamespace(
+            message_id="msg-foreign-handler",
+            subject="Re: [Billing Request] Media Relay - Ticket TK-EN-CASE",
+            sender="enablement@example.com",
+            body_text="Still reviewing; not enabled yet.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "record_billing_request_reply"
+        ), patch.object(worker, "is_registered_automation", return_value=True):
+            handled = worker.handle_billing_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        repository.dismiss_automation_reply_claim.assert_called_once()
+        dismiss_kwargs = repository.dismiss_automation_reply_claim.call_args.kwargs
+        self.assertEqual(dismiss_kwargs["reason"], "automation_handler_mismatch")
+        repository.commit_automation_reply_result.assert_not_called()
+        repository.save_account_reply_job.assert_not_called()
+
     def test_billing_reply_from_unlisted_sender_is_terminated_by_identity_gate(self) -> None:
         repository = Mock()
         repository.claim_automation_reply.return_value = {"status": "acquired"}

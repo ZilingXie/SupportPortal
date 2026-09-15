@@ -49,6 +49,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class AutomationTestDuplicateRequestError(RuntimeError):
+    """Raised when a ticket insert collides with an existing request id."""
+
+
 class AutomationTestTicketStore:
     def __init__(self, *, dsn: str = "", schema: str = "supportportal") -> None:
         self._lock = threading.RLock()
@@ -118,7 +122,7 @@ class AutomationTestTicketStore:
                 )
                 cursor.execute(
                     f"""
-                    CREATE UNIQUE INDEX IF NOT EXISTS {self._table()}_request_id_key
+                    CREATE UNIQUE INDEX IF NOT EXISTS automation_test_tickets_request_id_key
                     ON {self._table()} (request_id)
                     WHERE request_id IS NOT NULL
                     """
@@ -145,7 +149,11 @@ class AutomationTestTicketStore:
                 if request_id:
                     for existing in self._memory.values():
                         if str(existing.get("request_id") or "").strip() == request_id:
-                            return copy.deepcopy(existing)
+                            # Raise inside the lock so concurrent callers cannot
+                            # treat a lost race as a fresh insert and send again.
+                            raise AutomationTestDuplicateRequestError(
+                                f"automation test ticket request_id already recorded: {request_id}"
+                            )
                 self._memory_next_id += 1
                 saved["id"] = self._memory_next_id
                 self._memory[saved["id"]] = copy.deepcopy(saved)
@@ -400,7 +408,7 @@ class AutomationTestScenarioRunStore:
                 )
                 cursor.execute(
                     f"""
-                    CREATE UNIQUE INDEX IF NOT EXISTS {self._table()}_one_active
+                    CREATE UNIQUE INDEX IF NOT EXISTS automation_test_scenario_runs_one_active
                     ON {self._table()} ((1))
                     WHERE status IN ('queued', 'running', 'waiting_approval')
                     """

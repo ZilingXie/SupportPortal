@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-15T05:38:47Z",
-  "source_base_commit": "a7ce5a3fe0a04c0b5f49cdbcb98ba84262f36104",
-  "registry_digest": "3792814b0c8f828355e7837ac65742a77f009d182e33496292732c5229942825",
+  "generated_at": "2026-09-15T12:05:55Z",
+  "source_base_commit": "8f1303006aa12b4dc74584698c4f811881ba1eb5",
+  "registry_digest": "73de557f5e5ce7a89eb2ab1cc2b327631f94c0847244fb9b3fc4da8698cef3c5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3399,6 +3399,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "本地官方栈重启验证（post-merge）",
           "command": "SUPPORTPORTAL_NO_BUILD_CACHE=1 restart_single_host_stack.sh --mode full --db remote；curl /health；podman exec worker grep 新符号",
           "result": "8 容器 Up；/health ok 且 app_build.ref=a7ce5a3fe0a0 与合入后 main SHA 匹配；容器内实证 _automation_reply_identity_gate/send_internal_email/claim_run_slot 新代码在镜像中（2026-09-15）"
+        },
+        {
+          "type": "test",
+          "label": "复审 r2 修复回归（7 项）",
+          "command": "pytest 定向套件（worker/billing/scenarios/console/alerts/router/graph_mail）+ node --check app.js + RUN_POSTGRES_INTEGRATION=1 store PG 临时 schema 集成",
+          "result": "89 passed + PG 集成 1 passed（真实临时 schema 建索引 round-trip）；含新增：handler 门拒绝 foreign case、BadStatusLine outcome_unknown 不重发、游标跨窗口推进（101 封积压同轮取到目标）、并发同 request_id 恰一次发送、场景引擎 QUIT 异常不误报（2026-09-15）"
         },
         {
           "type": "test",
@@ -12821,7 +12827,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "邮件发送安全加固：修复外部 review 确认的 8 项发信/回信缺口",
       "summary": "外部安全 review（基于 main 4fff5ef9）确认 8 项问题全部属实并修复，分三批 PR：(1) 发信权限边界——Billing/Quota 回信消费补发件人身份门（泛化既有 enablement gate，非授权发件人终态拒绝，fail-closed）；support_router 内联发信增加 send_internal_email 显式开关（生产默认不变），离线评测与测试全链禁发；自动化测试场景的通知识别修正恒真 AND 逻辑并加 From/Reply-To Zendesk 域白名单。(2) 重复发送与状态机——SMTP/Graph 发送结果三分类（rejected/unknown/成功），QUIT 异常不再误报失败；测试工单接口先落台账后发送并支持 request_id 幂等；Account 失败告警在结果未知（超时/连接中断）时进 outcome_unknown 终态不重发。(3) 可靠性——回信轮询消费 @odata.nextLink 分页（默认 4 页，不加 isRead 过滤保持共享邮箱契约）；测试场景 one_active 部分唯一索引原子约束；Graph token 缓存 tempfile+os.replace 原子写并统一 billing 侧重复实现。不部署，ECS 发布另行授权。",
       "status": "active",
-      "next_action": "实施侧收口（代码+定向测试+本地官方栈验证全过，PR#1194，main=a7ce5a3f）。剩部署侧：①backend/sql/migrations/2026_09_15_automation_test_ticket_request_id.sql 双库手工执行；②ECS Preproduction 发布（需授权）。部署验证后置 done。",
+      "next_action": "复审 r2 修复已合入（7 项缺口+部署说明修正）。剩部署侧：①migration 双库手工执行（未执行时新版本测试工单创建接口会因缺列失败——非仅约束不生效）；②ECS Preproduction 发布（需授权）。",
       "owner": "codex",
       "acceptance_criteria": [
         "非授权发件人的 Billing/Quota/Enablement 回信均被身份门终态拒绝（事件留痕、不重放），授权发件人流程不变。",
@@ -12857,6 +12863,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "本地官方栈重启验证（post-merge）",
           "command": "SUPPORTPORTAL_NO_BUILD_CACHE=1 restart_single_host_stack.sh --mode full --db remote；curl /health；podman exec worker grep 新符号",
           "result": "8 容器 Up；/health ok 且 app_build.ref=a7ce5a3fe0a0 与合入后 main SHA 匹配；容器内实证 _automation_reply_identity_gate/send_internal_email/claim_run_slot 新代码在镜像中（2026-09-15）"
+        },
+        {
+          "type": "test",
+          "label": "复审 r2 修复回归（7 项）",
+          "command": "pytest 定向套件（worker/billing/scenarios/console/alerts/router/graph_mail）+ node --check app.js + RUN_POSTGRES_INTEGRATION=1 store PG 临时 schema 集成",
+          "result": "89 passed + PG 集成 1 passed（真实临时 schema 建索引 round-trip）；含新增：handler 门拒绝 foreign case、BadStatusLine outcome_unknown 不重发、游标跨窗口推进（101 封积压同轮取到目标）、并发同 request_id 恰一次发送、场景引擎 QUIT 异常不误报（2026-09-15）"
         }
       ],
       "source_refs": [
@@ -12885,6 +12897,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-15",
           "event": "implementation_finalized",
           "summary": "PR#1194 合入 main（a7ce5a3f）：8 项修复+全部单测；本地官方栈全量重建（NO_BUILD_CACHE=1）三检通过（health ref 匹配/容器内新代码 grep 实证/worker 稳定）。遗留：test_rag_benchmark_runner.py 2 个既有失败为干净 main 同样失败的他线程回归，非本任务引入。"
+        },
+        {
+          "at": "2026-09-15",
+          "event": "rework_r2",
+          "summary": "用户复审驳回：补齐 7 项（前端 request_id/outcome_unknown、billing 入口 handler 白名单门（空+billing+account_suspension，生产分布实证 44/2/4）、场景引擎复用分阶段 SMTP、轮询游标跨轮推进（fresh+resume 两段）、告警默认 outcome_unknown 仅 ValueError/HTTP\u003c500 可重试、内存 insert 重复抛 AutomationTestDuplicateRequestError、索引名去 schema 限定（PG CREATE INDEX 不允许限定，集成测试复现并验证））。修正部署说明：migration 未执行会直接破坏测试工单创建接口。"
         }
       ]
     },

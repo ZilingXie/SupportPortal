@@ -13,6 +13,8 @@ os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services import automation_test_mail
+from backend.services import automation_test_scenarios
 from backend.services.automation_test_scenarios import (
     ScenarioCancelled,
     ScenarioEngine,
@@ -88,6 +90,53 @@ class _FakeImap:
     def fetch(self, num, spec):
         idx = int(num) - 1
         return ("OK", [(b"header", self._messages[idx])])
+
+
+class ScenarioSmtpDeliveryTests(unittest.TestCase):
+    def _engine(self):
+        engine = object.__new__(ScenarioEngine)
+        engine.sender = "xieziling97@163.com"
+        engine.smtp_host = "smtp.163.com"
+        engine.smtp_port = 465
+        engine.smtp_password = "code"
+        engine.listener = None
+        return engine
+
+    def test_quit_failure_after_accepted_data_does_not_fail_the_scenario(self) -> None:
+        import smtplib as smtplib_module
+        from unittest.mock import patch as mock_patch
+
+        engine = self._engine()
+        with mock_patch.object(
+            automation_test_scenarios.smtplib, "SMTP_SSL"
+        ) as smtp_ssl:
+            instance = smtp_ssl.return_value
+            instance.send_message.return_value = {}
+            instance.quit.side_effect = smtplib_module.SMTPResponseException(
+                500, b"bogus QUIT refusal"
+            )
+            engine.send_email(
+                "Re: [jac test] subject", "body", "support+1@agoraio.zendesk.com"
+            )
+        instance.login.assert_called_once()
+        instance.send_message.assert_called_once()
+        instance.quit.assert_called_once()
+
+    def test_timeout_during_data_raises_unknown_outcome_error(self) -> None:
+        import socket as socket_module
+        from unittest.mock import patch as mock_patch
+
+        engine = self._engine()
+        with mock_patch.object(
+            automation_test_scenarios.smtplib, "SMTP_SSL"
+        ) as smtp_ssl:
+            instance = smtp_ssl.return_value
+            instance.send_message.side_effect = socket_module.timeout("timed out")
+            with self.assertRaises(automation_test_mail.AutomationTestMailError) as raised:
+                engine.send_email(
+                    "Re: [jac test] subject", "body", "support+1@agoraio.zendesk.com"
+                )
+        self.assertEqual(raised.exception.outcome, "unknown")
 
 
 class NotificationRecognitionTests(unittest.TestCase):

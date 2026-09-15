@@ -95,13 +95,16 @@ def _alert_delivery_outcome(exc: BaseException) -> str:
     those incidents must never auto-retry because the recipient may already
     have the alert.
     """
+    # Only failures that provably happened before submission (missing
+    # config) or explicit refusals may retry; everything else — including
+    # response-parsing errors such as http.client.BadStatusLine raised after
+    # the POST was transmitted — is outcome_unknown and never auto-retries.
     if isinstance(exc, urllib.error.HTTPError):
         return "outcome_unknown" if int(getattr(exc, "code", 0) or 0) >= 500 else "failed"
-    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
-        # URLError and socket.timeout are OSError/TimeoutError subclasses:
-        # transport-level failures where the server may have accepted the send.
-        return "outcome_unknown"
-    return "failed"
+    if isinstance(exc, ValueError):
+        # Missing Graph config: the request was never sent.
+        return "failed"
+    return "outcome_unknown"
 
 
 def notify_account_failure(

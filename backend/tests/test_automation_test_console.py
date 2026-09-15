@@ -224,6 +224,46 @@ class AutomationTestConsoleTests(unittest.TestCase):
         )
         self.assertEqual(len(listing.json()["tickets"]), 1)
 
+    def test_concurrent_same_request_id_sends_exactly_once(self) -> None:
+        import threading
+
+        barrier = threading.Barrier(2)
+        results: list = []
+        payload = {
+            "category": "fraud_account",
+            "subject": "Concurrent idempotency subject",
+            "body": "Concurrent idempotency body.",
+            "request_id": "req-concurrent-1",
+        }
+
+        def _post(client):
+            barrier.wait(timeout=5)
+            results.append(
+                client.post("/api/automation-test/tickets", headers=self.auth_headers(), json=payload)
+            )
+
+        first_client = TestClient(main.app)
+        second_client = TestClient(main.app)
+        threads = [
+            threading.Thread(target=_post, args=(client,))
+            for client in (first_client, second_client)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+
+        self.assertTrue(all(response.status_code == 200 for response in results))
+        ticket_ids = {response.json()["ticket"]["id"] for response in results}
+        duplicates = [response.json().get("duplicate") for response in results]
+        self.assertEqual(len(ticket_ids), 1)
+        self.assertEqual(sorted(str(value) for value in duplicates), ["None", "True"])
+        self.assertEqual(len(self.sent_emails), 1)
+        listing = self.client.get(
+            "/api/automation-test/tickets", headers=self.auth_headers()
+        )
+        self.assertEqual(len(listing.json()["tickets"]), 1)
+
     def test_send_failure_still_leads_with_ledger_row(self) -> None:
         # The pre-send insert guarantees a pending row exists even when the
         # mail sender fails; the failure only updates that row.
