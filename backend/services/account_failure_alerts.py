@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import urllib.error
 from typing import Any, Callable
 
 from backend.services.graph_mail import send_graph_mail
@@ -85,6 +86,24 @@ def build_account_failure_alert(
     return subject, "\n".join(lines)
 
 
+def _alert_delivery_outcome(exc: BaseException) -> str:
+    """Classify a failed alert send.
+
+    ``failed`` means the message definitely was not delivered (missing
+    config, explicit HTTP refusal) so a retry is safe. ``outcome_unknown``
+    means the server may have accepted it (timeout, disconnect, HTTP 5xx);
+    those incidents must never auto-retry because the recipient may already
+    have the alert.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return "outcome_unknown" if int(getattr(exc, "code", 0) or 0) >= 500 else "failed"
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        # URLError and socket.timeout are OSError/TimeoutError subclasses:
+        # transport-level failures where the server may have accepted the send.
+        return "outcome_unknown"
+    return "failed"
+
+
 def notify_account_failure(
     *,
     repository: Any,
@@ -134,6 +153,36 @@ def notify_account_failure(
         )
     except Exception as exc:
         error = _safe_detail(exc)
+        outcome = _alert_delivery_outcome(exc)
+        if outcome == "outcome_unknown":
+            # The server may have accepted the message. Close the incident
+            # terminally so a later report of the same incident never sends a
+            # second alert; the audit event keeps the outcome reviewable.
+            LOGGER.exception("Account failure alert delivery outcome unknown for %s", incident_id)
+            try:
+                repository.record_workspace_audit_event(
+                    "account_failure_alert_delivery_outcome_unknown",
+                    actor_id="account-system",
+                    target_id=incident_id,
+                    payload={"incident_id": incident_id, "error": error, "recipient": ACCOUNT_FAILURE_ALERT_RECIPIENT},
+                    created_at=now,
+                )
+            except Exception:
+                LOGGER.exception("Could not record Account failure alert unknown outcome for %s", incident_id)
+            try:
+                repository.complete_idempotent_request(
+                    "account_failure_alert",
+                    key,
+                    response_payload={
+                        "status": "delivery_outcome_unknown",
+                        "incident_id": incident_id,
+                        "error": error,
+                    },
+                    updated_at=now,
+                )
+            except Exception:
+                LOGGER.exception("Could not persist Account failure alert unknown outcome for %s", incident_id)
+            return {"status": "delivery_outcome_unknown", "incident_id": incident_id, "error": error}
         LOGGER.exception("Account failure alert delivery failed for %s", incident_id)
         try:
             repository.record_workspace_audit_event(

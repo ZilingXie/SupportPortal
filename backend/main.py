@@ -12072,6 +12072,7 @@ class AutomationTestTicketCreateRequest(BaseModel):
     category: str = Field(min_length=1, max_length=64)
     subject: str = Field(min_length=1, max_length=300)
     body: str = Field(min_length=1, max_length=40000)
+    request_id: str | None = Field(default=None, max_length=128)
 
 
 def _automation_test_case_snapshot(case: dict[str, Any]) -> dict[str, Any]:
@@ -12143,38 +12144,71 @@ def create_automation_test_ticket(
     if not subject or not body:
         raise HTTPException(status_code=422, detail="subject and body are required")
     send_context = automation_test_mail.load_automation_test_send_context()
-    base_record = {
-        "category": category,
-        "subject": subject,
-        "body": body,
-        "sender": send_context["sender"] or "unconfigured",
-        "recipient": send_context["recipient"],
-    }
+    request_id = " ".join(str(request.request_id or "").split()).strip() or None
+    if request_id:
+        existing = automation_test_ticket_store.get_ticket_by_request_id(request_id)
+        if existing is not None:
+            # Idempotent retry: never send a second email for the same
+            # caller-supplied request id.
+            return {"ticket": existing, "duplicate": True}
+    # Record the ticket before sending so an accepted email can never end up
+    # with no ledger row (the insert failure path aborts before sending).
+    try:
+        ticket = automation_test_ticket_store.insert_ticket(
+            {
+                "category": category,
+                "subject": subject,
+                "body": body,
+                "sender": send_context["sender"] or "unconfigured",
+                "recipient": send_context["recipient"],
+                "send_status": "pending",
+                "send_error": None,
+                "request_id": request_id,
+            }
+        )
+    except psycopg.errors.UniqueViolation:
+        # Concurrent request with the same request id won the unique index.
+        existing = automation_test_ticket_store.get_ticket_by_request_id(request_id or "")
+        if existing is not None:
+            return {"ticket": existing, "duplicate": True}
+        raise
+    if request_id and ticket.get("id") and str(ticket.get("request_id") or "") != request_id:
+        # Lost a concurrent race for the same request id (memory store
+        # returns the existing row): return it without sending again.
+        return {"ticket": ticket, "duplicate": True}
     sent_at = now_iso()
     try:
         automation_test_mail.send_test_ticket_email(
             to_address=send_context["recipient"], subject=subject, body=body
         )
     except automation_test_mail.AutomationTestMailError as exc:
-        ticket = automation_test_ticket_store.insert_ticket(
+        outcome = str(getattr(exc, "outcome", "rejected") or "rejected")
+        send_status = "outcome_unknown" if outcome == "unknown" else "failed"
+        automation_test_ticket_store.update_ticket(
+            int(ticket["id"]),
             {
-                **base_record,
-                "send_status": "failed",
+                "send_status": send_status,
                 "send_error": str(exc),
                 "email_sent_at": sent_at,
-            }
+            },
         )
+        updated = automation_test_ticket_store.get_ticket(int(ticket["id"]))
         response.status_code = 502
-        return {"ticket": ticket, "error": str(exc)}
-    ticket = automation_test_ticket_store.insert_ticket(
+        return {
+            "ticket": updated or ticket,
+            "error": str(exc),
+            "send_outcome": outcome,
+        }
+    automation_test_ticket_store.update_ticket(
+        int(ticket["id"]),
         {
-            **base_record,
             "send_status": "sent",
             "send_error": None,
             "email_sent_at": sent_at,
-        }
+        },
     )
-    return {"ticket": ticket}
+    final_ticket = automation_test_ticket_store.get_ticket(int(ticket["id"]))
+    return {"ticket": final_ticket or ticket}
 
 
 @app.get("/api/automation-test/tickets", dependencies=[Depends(require_workspace_admin)])
@@ -12368,7 +12402,14 @@ def start_automation_test_scenario_run(scenario_id: str) -> dict[str, Any]:
             detail=f"scenario channels unavailable, no run started: {exc}",
         ) from exc
     run_id = f"atr-{uuid4().hex}"
-    run = automation_test_scenario_run_store.create_run(run_id, scenario_id)
+    run = automation_test_scenario_run_store.claim_run_slot(run_id, scenario_id)
+    if run is None:
+        # The pre-check raced with another concurrent start request; the
+        # atomic slot claim decides the single winner.
+        raise HTTPException(
+            status_code=409,
+            detail="another scenario run claimed the active slot concurrently; retry shortly",
+        )
     threading.Thread(
         target=_automation_test_scenario_thread,
         args=(run_id, scenario_id),

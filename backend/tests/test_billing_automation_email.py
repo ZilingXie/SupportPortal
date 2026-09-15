@@ -321,6 +321,80 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertIn("receivedDateTime ge ", query["$filter"][0])
         self.assertEqual(query["$orderby"], ["receivedDateTime desc"])
 
+    def test_poll_billing_request_replies_follows_next_link_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "billing-graph-token.json"
+            cache_path.write_text(
+                json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
+                encoding="utf-8",
+            )
+            list_requests = []
+
+            def _page(values, next_link=None):
+                payload = {"value": values}
+                if next_link:
+                    payload["@odata.nextLink"] = next_link
+                return _FakeHttpResponse(payload, status=200)
+
+            def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                url = request.full_url
+                parsed = urllib.parse.urlparse(url)
+                if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
+                    if "skiptoken" in parsed.query:
+                        list_requests.append(url)
+                        return _page(
+                            [
+                                {
+                                    "id": "msg-page2",
+                                    "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-2",
+                                    "from": {"emailAddress": {"address": "billing@example.com"}},
+                                    "receivedDateTime": "2026-07-02T05:00:00Z",
+                                    "isRead": False,
+                                }
+                            ]
+                        )
+                    list_requests.append(url)
+                    return _page(
+                        [
+                            {
+                                "id": f"msg-noise-{index}",
+                                "subject": "Re: unrelated thread",
+                                "from": {"emailAddress": {"address": "noise@example.com"}},
+                                "receivedDateTime": "2026-07-02T06:00:00Z",
+                            }
+                            for index in range(2)
+                        ],
+                        next_link="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=page2",
+                    )
+                if url.startswith("https://graph.microsoft.com/v1.0/me/messages/msg-page2?"):
+                    return _FakeHttpResponse(
+                        {
+                            "id": "msg-page2",
+                            "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-2",
+                            "from": {"emailAddress": {"address": "billing@example.com"}},
+                            "body": {"contentType": "text", "content": "Approved on page two."},
+                            "receivedDateTime": "2026-07-02T05:00:00Z",
+                        },
+                        status=200,
+                    )
+                if (
+                    url == "https://graph.microsoft.com/v1.0/me/messages/msg-page2"
+                    and request.get_method() == "PATCH"
+                ):
+                    return _FakeHttpResponse(status=200)
+                raise AssertionError(f"unexpected URL {url}")
+
+            env = dict(GRAPH_ENV)
+            env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
+            with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                replies = poll_billing_request_replies(handler=lambda _reply: None)
+
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].message_id, "msg-page2")
+        self.assertIn("Approved on page two.", replies[0].body_text)
+        self.assertEqual(len(list_requests), 2)
+        self.assertIn("skiptoken=page2", list_requests[1])
+
     def test_poll_billing_request_replies_ignores_unmatched_subjects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -187,13 +188,30 @@ def _read_token_cache(path: Path) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _write_token_cache(path: Path, payload: dict[str, Any]) -> None:
+def write_token_cache(path: Path, payload: dict[str, Any]) -> None:
+    """Persist the token cache atomically.
+
+    The cache holds the only refresh token; a torn in-place write (multiple
+    processes share the file via bind mounts) would force a manual re-auth.
+    Write to a 0600 temp file in the same directory, fsync, then os.replace
+    so readers always see either the old or the new complete file.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    data = json.dumps(payload, indent=2, sort_keys=True)
+    fd, temp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    temp_path = Path(temp_name)
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+_write_token_cache = write_token_cache
 
 
 def _cached_access_token(cache: dict[str, Any]) -> tuple[str, int]:

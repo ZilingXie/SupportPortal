@@ -42,6 +42,7 @@ imaplib.Commands["ID"] = ("NONAUTH", "AUTH", "SELECTED")
 
 ZENDESK_TICKET_URL = "https://agoraio.zendesk.com/agent/tickets"
 ZENDESK_SUPPORT_ADDRESS = "support@agoraio.zendesk.com"
+ZENDESK_NOTIFICATION_DOMAIN = "agoraio.zendesk.com"
 DEFAULT_SUBJECT_TAG = "[zac test] "
 DEFAULT_TURN_TIMEOUT_MIN = 20
 DEFAULT_APPROVAL_TIMEOUT_MIN = 45
@@ -335,13 +336,26 @@ class ScenarioEngine:
                 raw = fetched[0][1]
                 parsed = email.message_from_bytes(raw, policy=email.policy.default)
                 subject = str(parsed.get("Subject") or "")
-                # Only Zendesk notifications reference the ticket id in subject.
-                if "zendesk" not in str(parsed.get("From") or "").lower() and ticket_id not in subject:
+                # Only Zendesk notifications may drive the scenario engine:
+                # the sender domain must be Zendesk and the reply target must
+                # be the ticket's plus-address (or the plain support address).
+                # Anything else is treated as an unrelated inbox message.
+                sender_address = email.utils.parseaddr(str(parsed.get("From") or ""))[1].strip().lower()
+                if not sender_address.endswith(f"@{ZENDESK_NOTIFICATION_DOMAIN}"):
+                    continue
+                reply_to_address = email.utils.parseaddr(
+                    str(parsed.get("Reply-To") or parsed.get("From") or "")
+                )[1].strip().lower()
+                allowed_reply_to = {
+                    ZENDESK_SUPPORT_ADDRESS.lower(),
+                    f"support+{str(ticket_id).strip().lower()}@{ZENDESK_NOTIFICATION_DOMAIN}",
+                }
+                if reply_to_address not in allowed_reply_to:
                     continue
                 return {
                     "message_id": str(parsed.get("Message-ID") or "").strip(),
                     "references": str(parsed.get("References") or "").strip(),
-                    "reply_to": str(parsed.get("Reply-To") or parsed.get("From") or "").strip(),
+                    "reply_to": reply_to_address,
                     "subject": subject,
                 }
         return None

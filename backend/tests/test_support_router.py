@@ -682,6 +682,46 @@ Our App ID is 7994d63a6ee94bd8b16a65ea0707faad.
         self.assertIn("- Phone number:", result.customer_reply)
         self.assertIn("- Use Case:", result.customer_reply)
 
+    def test_resolve_support_message_send_disabled_skips_internal_email(self) -> None:
+        decision = SupportRouteDecision(
+            scope_label="billing",
+            route="detailed_invoice",
+            confidence=0.98,
+            reason="billing_detailed_invoice",
+            matched_signals=["detailed invoice"],
+            response_language="en",
+        )
+        extraction = DetailedInvoiceFieldExtraction(
+            status="complete",
+            collected_fields={
+                "issue_date": "6 May 2026",
+                "transaction_id": "1104245232004173824",
+                "amount": "USD 705.97",
+            },
+        )
+        with patch(
+            "backend.services.billing_automation.extract_detailed_invoice_fields",
+            return_value=extraction,
+        ), patch(
+            "backend.services.support_router.send_billing_internal_email",
+            return_value={"status": "sent", "reason": ""},
+        ) as send_mock:
+            resolution = resolve_support_message(
+                "Please send the detailed invoice. Issue date: 6 May 2026. "
+                "Transaction ID: 1104245232004173824. Amount: USD 705.97.",
+                ticket_id="TK-BILL-1",
+                customer_id="customer@example.com",
+                decision=decision,
+                send_internal_email=False,
+            )
+
+        self.assertIsNotNone(resolution.evidence_summary)
+        assert resolution.evidence_summary is not None
+        self.assertEqual(
+            resolution.evidence_summary["billing_internal_email_send_status"], "send_disabled"
+        )
+        send_mock.assert_not_called()
+
     def test_send_billing_internal_email_skips_when_graph_token_cache_missing(self) -> None:
         email_payload = {
             "to": "xieziling@agora.io",

@@ -56,3 +56,29 @@ def _stub_account_failure_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
         consumer = sys.modules.get(name)
         if consumer is not None and hasattr(consumer, "notify_account_failure"):
             monkeypatch.setattr(consumer, "notify_account_failure", _silent_notify)
+
+_ROUTER_SEND_FUNCTION_NAMES = (
+    "send_enablement_internal_email",
+    "send_billing_internal_email",
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_router_internal_email_senders(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop router inline internal emails from leaving the test process.
+
+    ``support_router.resolve_support_message`` delivers billing/enablement
+    internal emails inline. Tests that exercise routing without patching the
+    send functions themselves would otherwise reach live Graph mail through
+    the repository ``.env`` credentials. Per-test patches stack on top of this
+    fixture and keep their semantics.
+    """
+
+    def _silent_send(payload=None, **kwargs):
+        return {"status": "sent", "reason": ""}
+
+    router = sys.modules.get("backend.services.support_router")
+    if router is not None:
+        for function_name in _ROUTER_SEND_FUNCTION_NAMES:
+            if hasattr(router, function_name):
+                monkeypatch.setattr(router, function_name, _silent_send)

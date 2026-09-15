@@ -470,12 +470,12 @@ class ReplyIdentityTests(unittest.TestCase):
 
     def test_allowed_recipient_passes_the_gate(self):
         self.assertIsNone(
-            worker_module._enablement_reply_identity_gate(self._case(), self._reply())
+            worker_module._automation_reply_identity_gate(self._case(), self._reply())
         )
 
     def test_non_recipient_sender_is_stopped(self):
         self.assertEqual(
-            worker_module._enablement_reply_identity_gate(
+            worker_module._automation_reply_identity_gate(
                 self._case(), self._reply(sender="stranger@example.com")
             ),
             "enablement_reply_sender_unverified",
@@ -484,21 +484,21 @@ class ReplyIdentityTests(unittest.TestCase):
     def test_missing_recipient_snapshot_is_stopped(self):
         case = self._case(payload={"delivery_key": "enablement:AC-MANUAL-1:v1"})
         self.assertEqual(
-            worker_module._enablement_reply_identity_gate(case, self._reply()),
+            worker_module._automation_reply_identity_gate(case, self._reply()),
             "enablement_reply_recipients_unknown",
         )
 
     def test_not_waiting_state_is_stopped(self):
         case = self._case(status="awaiting_public_reply")
         self.assertEqual(
-            worker_module._enablement_reply_identity_gate(case, self._reply()),
+            worker_module._automation_reply_identity_gate(case, self._reply()),
             "enablement_reply_not_awaiting_confirmation",
         )
 
     def test_already_completed_application_is_stopped(self):
         case = self._case(workflow_state="completed")
         self.assertEqual(
-            worker_module._enablement_reply_identity_gate(case, self._reply()),
+            worker_module._automation_reply_identity_gate(case, self._reply()),
             "enablement_reply_already_completed",
         )
 

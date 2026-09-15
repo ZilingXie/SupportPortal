@@ -511,6 +511,8 @@ def _record_account_worker_failure(
 BILLING_REPLY_POLL_ENABLED_ENV = "BILLING_AUTOMATION_REPLY_POLL_ENABLED"
 BILLING_REPLY_POLL_INTERVAL_ENV = "BILLING_AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 BILLING_REPLY_POLL_MAX_MESSAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_MESSAGES"
+BILLING_REPLY_POLL_MAX_PAGES_ENV = "BILLING_AUTOMATION_REPLY_POLL_MAX_PAGES"
+AUTOMATION_REPLY_POLL_MAX_PAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_PAGES"
 AUTOMATION_REPLY_POLL_ENABLED_ENV = "AUTOMATION_REPLY_POLL_ENABLED"
 AUTOMATION_REPLY_POLL_INTERVAL_ENV = "AUTOMATION_REPLY_POLL_INTERVAL_SECONDS"
 AUTOMATION_REPLY_POLL_MAX_MESSAGES_ENV = "AUTOMATION_REPLY_POLL_MAX_MESSAGES"
@@ -633,6 +635,13 @@ def _billing_reply_poll_max_messages_from_env() -> int:
     )
 
 
+def _billing_reply_poll_max_pages_from_env() -> int:
+    return _safe_positive_int(
+        os.getenv(AUTOMATION_REPLY_POLL_MAX_PAGES_ENV) or os.getenv(BILLING_REPLY_POLL_MAX_PAGES_ENV),
+        4,
+    )
+
+
 def _engineer_assignment_poller_enabled_from_env() -> bool:
     return str(os.getenv(ENGINEER_ASSIGNMENT_POLLER_ENABLED_ENV) or "").strip().lower() in {
         "1",
@@ -696,6 +705,7 @@ def process_automation_request_replies_once() -> list[Any]:
     replies = poll_automation_request_replies(
         handler=handle_automation_request_reply,
         max_messages=_billing_reply_poll_max_messages_from_env(),
+        max_pages=_billing_reply_poll_max_pages_from_env(),
         subject_prefixes=(
             namespaced_internal_email_subject(BILLING_INTERNAL_EMAIL_SUBJECT_PREFIX),
             namespaced_internal_email_subject(ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX),
@@ -2802,8 +2812,10 @@ def _unquoted_enablement_reply_segment(note: str) -> str:
     return "\n".join(kept).strip()
 
 
-def _enablement_reply_identity_gate(account_case: dict[str, Any], reply: Any) -> str | None:
-    """Verify the enablement reply sender before any completion judgement.
+def _automation_reply_identity_gate(
+    account_case: dict[str, Any], reply: Any, handler: str = "enablement"
+) -> str | None:
+    """Verify the automation reply sender before any completion judgement.
 
     Only addresses that were actual To/Cc recipients of the current
     application's internal email may confirm completion; group members and
@@ -2823,13 +2835,13 @@ def _enablement_reply_identity_gate(account_case: dict[str, Any], reply: Any) ->
     if legacy_to:
         allowed.add(legacy_to)
     if not allowed:
-        return "enablement_reply_recipients_unknown"
+        return f"{handler}_reply_recipients_unknown"
     sender = str(getattr(reply, "sender", "") or "").strip().lower()
     if not sender or sender not in allowed:
-        return "enablement_reply_sender_unverified"
+        return f"{handler}_reply_sender_unverified"
     status = str(account_case.get("internal_email_send_status") or "").strip().lower()
     if status not in {"sent", "delivery_unknown"}:
-        return "enablement_reply_not_awaiting_confirmation"
+        return f"{handler}_reply_not_awaiting_confirmation"
     manual_workflow = (account_case.get("automation_context") or {}).get(
         "enablement_manual_workflow"
     )
@@ -2842,15 +2854,16 @@ def _enablement_reply_identity_gate(account_case: dict[str, Any], reply: Any) ->
     return None
 
 
-def _stop_enablement_reply_processing(
+def _stop_automation_reply_processing(
     *,
     reply_key: str,
     owner_token: str,
     client_ticket_id: str,
     account_case: dict[str, Any],
     reason: str,
+    handler: str = "enablement",
 ) -> str:
-    """Terminally dismiss an enablement reply that failed the identity gate."""
+    """Terminally dismiss an automation reply that failed the identity gate."""
     ticket_repository.dismiss_automation_reply_claim(
         reply_key,
         owner_token=owner_token,
@@ -2863,17 +2876,19 @@ def _stop_enablement_reply_processing(
     try:
         ticket_repository.record_event(
             client_ticket_id or None,
-            "enablement_reply_processing_stopped",
+            f"{handler}_reply_processing_stopped",
             {
                 "account_case_id": case_id,
+                "handler": handler,
                 "reason": reason,
                 "created_at": now_iso(),
             },
         )
     except Exception:  # pragma: no cover - event recording is best effort
-        LOGGER.debug("enablement reply stop event could not be recorded", exc_info=True)
+        LOGGER.debug("automation reply stop event could not be recorded", exc_info=True)
     LOGGER.warning(
-        "Enablement reply processing stopped ticket_id=%s reason=%s reply_key=%s",
+        "Automation reply processing stopped handler=%s ticket_id=%s reason=%s reply_key=%s",
+        handler,
         client_ticket_id,
         reason,
         reply_key,
@@ -3743,6 +3758,16 @@ def handle_billing_request_reply(reply: Any) -> str:
         note = "\n\n".join(part for part in (body_note, attachment_note) if part)
         if not note:
             raise ValueError("billing reply body is empty")
+        stop_reason = _automation_reply_identity_gate(billing_ticket, reply, "billing")
+        if stop_reason is not None:
+            return _stop_automation_reply_processing(
+                reply_key=reply_key,
+                owner_token=owner_token,
+                client_ticket_id=client_ticket_id,
+                account_case=billing_ticket,
+                reason=stop_reason,
+                handler="billing",
+            )
         timestamp = now_iso()
         billing_ticket_id = str(billing_ticket.get("billing_ticket_id") or "").strip()
         execution_action = str(
@@ -3977,7 +4002,7 @@ def _queue_enablement_completion_reply_job(
             completed_at=timestamp,
         )
         if not completion_claimed:
-            return _stop_enablement_reply_processing(
+            return _stop_automation_reply_processing(
                 reply_key=reply_key,
                 owner_token=owner_token,
                 client_ticket_id=client_ticket_id,
@@ -4377,19 +4402,20 @@ def _handle_non_billing_automation_reply(reply: Any, *, handler: str) -> str:
         note = str(getattr(reply, "body_text", "") or "").strip()
         if not note:
             raise ValueError(f"{handler} reply body is empty")
-        if handler == "enablement":
-            stop_reason = _enablement_reply_identity_gate(account_case, reply)
-            if stop_reason is None:
+        if handler in {"enablement", "quota"}:
+            stop_reason = _automation_reply_identity_gate(account_case, reply, handler)
+            if stop_reason is None and handler == "enablement":
                 note = _unquoted_enablement_reply_segment(note)
                 if not note:
                     stop_reason = "enablement_reply_quoted_only"
             if stop_reason is not None:
-                return _stop_enablement_reply_processing(
+                return _stop_automation_reply_processing(
                     reply_key=reply_key,
                     owner_token=owner_token,
                     client_ticket_id=client_ticket_id,
                     account_case=account_case,
                     reason=stop_reason,
+                    handler=handler,
                 )
         collected_fields = account_case.get("collected_fields")
         collected_fields = collected_fields if isinstance(collected_fields, dict) else {}
