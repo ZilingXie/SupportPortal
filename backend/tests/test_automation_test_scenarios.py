@@ -69,6 +69,77 @@ class ScriptedEngine(ScenarioEngine):
         return super().wait_for(description, probe, min(timeout_seconds, 3))
 
 
+class _FakeImap:
+    def __init__(self, raw_headers: list[bytes]) -> None:
+        self._messages = raw_headers
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def select(self, *args, **kwargs):
+        return ("OK", None)
+
+    def search(self, *args, **kwargs):
+        return ("OK", [b" ".join(str(i + 1).encode() for i in range(len(self._messages)))])
+
+    def fetch(self, num, spec):
+        idx = int(num) - 1
+        return ("OK", [(b"header", self._messages[idx])])
+
+
+class NotificationRecognitionTests(unittest.TestCase):
+    @staticmethod
+    def _engine(raw_headers: list[bytes]) -> ScenarioEngine:
+        engine = object.__new__(ScenarioEngine)
+        fake = _FakeImap(raw_headers)
+        engine.imap_connect = lambda: fake  # type: ignore[method-assign]
+        return engine
+
+    def test_unrelated_sender_with_ticket_subject_is_ignored(self) -> None:
+        engine = self._engine([
+            b"From: attacker@evil.example\r\n"
+            b"Subject: Re: [jac test] Account flagged - Ticket 90001\r\n"
+            b"Reply-To: attacker@evil.example\r\n\r\n",
+        ])
+        self.assertIsNone(engine.imap_find_notification("90001", "01-Jan-2026"))
+
+    def test_zendesk_sender_with_foreign_reply_to_is_ignored(self) -> None:
+        engine = self._engine([
+            b"From: support@agoraio.zendesk.com\r\n"
+            b"Subject: Re: [jac test] Account flagged - Ticket 90002\r\n"
+            b"Reply-To: attacker@evil.example\r\n\r\n",
+        ])
+        self.assertIsNone(engine.imap_find_notification("90002", "01-Jan-2026"))
+
+    def test_legitimate_zendesk_notification_is_accepted(self) -> None:
+        engine = self._engine([
+            b'From: Zendesk Support <support@agoraio.zendesk.com>\r\n'
+            b"Subject: Re: [jac test] Account flagged - Ticket 90003\r\n"
+            b"Reply-To: support+90003@agoraio.zendesk.com\r\n"
+            b"Message-ID: <n-90003@agoraio.zendesk.com>\r\n\r\n",
+        ])
+        notification = engine.imap_find_notification("90003", "01-Jan-2026")
+        self.assertIsNotNone(notification)
+        assert notification is not None
+        self.assertEqual(notification["reply_to"], "support+90003@agoraio.zendesk.com")
+        self.assertEqual(notification["message_id"], "<n-90003@agoraio.zendesk.com>")
+
+    def test_unrelated_sender_does_not_shadow_later_legitimate_notification(self) -> None:
+        engine = self._engine([
+            b"From: attacker@evil.example\r\n"
+            b"Subject: Re: [jac test] Ticket 90004\r\n"
+            b"Reply-To: attacker@evil.example\r\n\r\n",
+            b"From: support@agoraio.zendesk.com\r\n"
+            b"Subject: Re: [jac test] Account flagged - Ticket 90004\r\n"
+            b"Reply-To: support+90004@agoraio.zendesk.com\r\n\r\n",
+        ])
+        notification = engine.imap_find_notification("90004", "01-Jan-2026")
+        self.assertIsNotNone(notification)
+
+
 class ScenarioEngineTests(unittest.TestCase):
     def test_wait_for_polls_until_value(self) -> None:
         engine = ScriptedEngine()

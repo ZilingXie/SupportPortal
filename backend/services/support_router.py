@@ -1443,6 +1443,7 @@ def resolve_support_message(
     has_active_engineer_case: bool = False,
     rag_answerer: Callable[[str], tuple[str, float, list[str], list[dict[str, str]], bool]] | None = None,
     decision: SupportRouteDecision | None = None,
+    send_internal_email: bool = True,
 ) -> SupportResolution:
     decision = decision or decide_support_route(
         message,
@@ -1487,9 +1488,13 @@ def resolve_support_message(
             generate_customer_reply=not bool(ticket_id),
         )
         email_send_result = (
-            send_enablement_internal_email(enablement_result.internal_email)
-            if enablement_result.internal_email
-            else {"status": "not_ready", "reason": "missing_required_fields"}
+            (
+                send_enablement_internal_email(enablement_result.internal_email)
+                if enablement_result.internal_email
+                else {"status": "not_ready", "reason": "missing_required_fields"}
+            )
+            if send_internal_email
+            else {"status": "send_disabled"}
         )
         return SupportResolution(
             answer=enablement_result.customer_reply,
@@ -1533,9 +1538,13 @@ def resolve_support_message(
             generate_customer_reply=not bool(ticket_id),
         )
         email_send_result = (
-            send_billing_internal_email(billing_result.internal_email)
-            if billing_result.internal_email
-            else {"status": "not_ready", "reason": "missing_required_fields"}
+            (
+                send_billing_internal_email(billing_result.internal_email)
+                if billing_result.internal_email
+                else {"status": "not_ready", "reason": "missing_required_fields"}
+            )
+            if send_internal_email
+            else {"status": "send_disabled"}
         )
         return SupportResolution(
             answer=billing_result.customer_reply,

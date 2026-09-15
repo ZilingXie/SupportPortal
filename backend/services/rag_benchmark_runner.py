@@ -542,12 +542,19 @@ def _execute_case(
     rag_result_holder: dict[str, RagQueryResult] = {}
     resolution_holder: dict[str, SupportResolution] = {}
 
+    def _offline_resolver(*args: Any, **kwargs: Any) -> Any:
+        # The offline benchmark must never deliver real internal emails even
+        # when the repository .env carries live Graph mail credentials.
+        if resolver is resolve_support_message:
+            kwargs.setdefault("send_internal_email", False)
+        return resolver(*args, **kwargs)
+
     def _route_agent(**_kwargs: Any) -> SupportRouteDecision:
         if case.route_aware:
             if route_decider is not None:
                 return _coerce_route_decision(route_decider(case.question, ticket_subject=None, ticket_context=None))
             if message_resolver is not None:
-                resolution = resolver(
+                resolution = _offline_resolver(
                     case.question,
                     ticket_subject=None,
                     ticket_context=None,
@@ -592,7 +599,7 @@ def _execute_case(
         cached_resolution = resolution_holder.get("result")
         if isinstance(cached_resolution, SupportResolution) and _clean_text(cached_resolution.answer_route) != "rag":
             return cached_resolution
-        resolution = resolver(
+        resolution = _offline_resolver(
             case.question,
             ticket_subject=None,
             ticket_context=None,
@@ -1480,7 +1487,9 @@ def run_benchmark(
                         raise RuntimeError("run_rag_query returned None; verify RAG configuration before running the benchmark")
                     execution_result = _wrap_rag_result(case, result)
                 else:
-                    resolution = resolve_support_message(case.question, decision=decision)
+                    resolution = resolve_support_message(
+                        case.question, decision=decision, send_internal_email=False
+                    )
                     synthetic_result = _build_synthetic_result(case=case, resolution=resolution)
                     execution_result = _execution_result_from_resolution(
                         case=case,

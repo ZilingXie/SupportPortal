@@ -3099,6 +3099,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "title": "Detailed invoice request",
             "question": "Please send the detailed invoice.",
             "automation_status": "automation",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["billing@example.com"]},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ACC-1",
@@ -3665,6 +3667,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "automation_handler": "quota",
             "automation_status": "internal_processing",
             "route_status": "automated",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["quota@example.com"]},
             "collected_fields": {"app_ids": ["app-prod"], "products": ["rtc", "rtm", "chat"]},
         }
         repository.get_ticket.return_value = {
@@ -3675,6 +3679,7 @@ class WorkerResilienceTests(unittest.TestCase):
         reply = types.SimpleNamespace(
             message_id="quota-msg-1",
             subject="Re: [Quota Request] RTC, RTM, Chat - Ticket 12512",
+            sender="quota@example.com",
             body_text="The requested limits are approved for the event window.",
         )
 
@@ -3695,6 +3700,71 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("quota_internal_resolution_received", event_types)
         self.assertIn("quota_customer_followup_job_queued", event_types)
         self.assertEqual(len(commit["events"]), 2)
+
+    def test_billing_reply_from_unlisted_sender_is_terminated_by_identity_gate(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "billing_ticket_id": "BT-TK-ACC-1",
+            "client_ticket_id": "TK-ACC-1",
+            "automation_status": "automation",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["billing@example.com"]},
+        }
+        repository.get_ticket.return_value = {"ticket_id": "TK-ACC-1", "messages": []}
+        reply = types.SimpleNamespace(
+            message_id="msg-spoofed-billing",
+            subject="Re: [Billing Request] Detailed invoice request - Ticket TK-ACC-1",
+            sender="attacker@example.com",
+            body_text="Done. The detailed invoice was sent to the customer email.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "record_billing_request_reply"
+        ), patch.object(worker, "is_registered_automation", return_value=True):
+            handled = worker.handle_billing_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        dismiss_kwargs = repository.dismiss_automation_reply_claim.call_args.kwargs
+        self.assertEqual(dismiss_kwargs["reason"], "billing_reply_sender_unverified")
+        event_args = repository.record_event.call_args.args
+        self.assertEqual(event_args[1], "billing_reply_processing_stopped")
+        self.assertEqual(event_args[2]["handler"], "billing")
+        repository.commit_automation_reply_result.assert_not_called()
+        repository.save_account_reply_job.assert_not_called()
+
+    def test_quota_reply_from_unlisted_sender_is_terminated_by_identity_gate(self) -> None:
+        repository = Mock()
+        repository.claim_automation_reply.return_value = {"status": "acquired"}
+        repository.get_billing_ticket_by_client_ticket_id.return_value = {
+            "account_case_id": "AC-12512",
+            "billing_ticket_id": "AC-12512",
+            "client_ticket_id": "12512",
+            "automation_handler": "quota",
+            "automation_status": "internal_processing",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["quota@example.com"]},
+            "collected_fields": {"products": ["rtc"]},
+        }
+        repository.get_ticket.return_value = {"ticket_id": "12512", "messages": []}
+        reply = types.SimpleNamespace(
+            message_id="quota-msg-spoofed",
+            subject="Re: [Quota Request] RTC - Ticket 12512",
+            sender="attacker@example.com",
+            body_text="The requested limits are approved.",
+        )
+
+        with patch.object(worker, "ticket_repository", repository):
+            handled = worker.handle_automation_request_reply(reply)
+
+        self.assertEqual(handled, "completed")
+        dismiss_kwargs = repository.dismiss_automation_reply_claim.call_args.kwargs
+        self.assertEqual(dismiss_kwargs["reason"], "quota_reply_sender_unverified")
+        event_args = repository.record_event.call_args.args
+        self.assertEqual(event_args[1], "quota_reply_processing_stopped")
+        self.assertEqual(event_args[2]["handler"], "quota")
+        repository.commit_automation_reply_result.assert_not_called()
+        repository.save_account_reply_job.assert_not_called()
 
     def test_handle_enablement_request_reply_is_idempotent(self) -> None:
         repository = Mock()
@@ -4089,6 +4159,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "title": "Detailed invoice request",
             "question": "Please send the detailed invoice.",
             "automation_status": "automation",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["billing@example.com"]},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ACC-1",
@@ -4142,6 +4214,8 @@ class WorkerResilienceTests(unittest.TestCase):
             "title": "Detailed invoice request",
             "question": "Please send the detailed invoice.",
             "automation_status": "automation",
+            "internal_email_send_status": "sent",
+            "internal_email_payload": {"to_addresses": ["billing@example.com"]},
         }
         repository.get_ticket.return_value = {
             "ticket_id": "TK-ACC-1",
@@ -4246,6 +4320,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "automation_handler": "billing",
             "automation_status": "automation",
             "processing_profile": "production",
+            "internal_email_send_status": "sent",
             "internal_email_payload": {"delivery_key": "billing-delivery-1", "to_addresses": ["reviewer@example.com"]},
         }
         repository.get_ticket.return_value = {
@@ -4278,7 +4353,7 @@ class WorkerResilienceTests(unittest.TestCase):
         reply = types.SimpleNamespace(
             message_id="msg-di-pdf",
             subject="Re: [Billing Request] Detailed invoice request - Ticket TK-DI-DONE",
-            sender="billing@example.com",
+            sender="reviewer@example.com",
             body_text="The detailed invoice is attached.",
             attachment_names=("invoice-approval.pdf",),
             attachments=(
