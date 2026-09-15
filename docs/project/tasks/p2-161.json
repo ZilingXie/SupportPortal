@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-161",
+  "title": "Preprod Hermes 无 case 线程的 ad-hoc 会话（新端点 + 首答 + 后续 @ 走 feedback 流）",
+  "status": "active",
+  "owner": "codex",
+  "summary": "工程师在 Slack 未绑定线程 @bot 时，不再 ignored_unbound 丢弃：新端点 POST /api/integrations/slack/hermes-cases/adhoc-sessions（X-N8n-Request-Token 鉴权，non-production 块内，production 零暴露）创建 ad-hoc 会话——合成工单号（99+13 位随机数字，15 位）+ automation_cases 镜像 + binding（schema-008 新列 session_kind='adhoc' + 线程唯一索引防双绑）+ 首个 investigation_feedback turn（work-only，复用全部围栏/幂等/停车机器）；账号库镜像 seed 使工具链可用；work-phase 提示词按 session_kind 分支用新 key hermes-adhoc-investigation-manual，toolsets 加 skills（skill_view 开放 agora 技能）；结果消息无按钮无 Zendesk 面；actions 端点与 continue_hermes_investigation 对 adhoc 拒绝（投递链隔离）。附带修复既有缺口：reviewer_feedback 经 MESSAGE FOR THIS TURN 段注入 work run 输入（惠及真实 case feedback 流）。后续同线程 @ 自动走既有 messages→investigation_feedback 流。n8n mention workflow 更新（false 分支 ACK→Claim Adhoc→POST adhoc）。实现 PR#1188（main=dbe379fa 起）。\n\n**登记勘误**：本任务原登记 p2-159（PR#1188）；并发 LLM 模型策略线程（PR#1189，其自有规划中占用 p2-159 但当时未入 registry）合入时删除了本任务的 p2-159.json 并登记自身为 p2-160，触发同号竞态。本文件将任务重新登记为 p2-161，内容与证据不变。",
+  "next_action": "preprod 发布（从合并后 main 重建）+ live 双回合验证后收口 done",
+  "acceptance_criteria": [
+    "未绑定线程经 adhoc 端点 → 会话创建 + Hermes work run 完成 + 线程内无按钮回复（Summary/Evidence/Blockers/Next steps）。",
+    "同线程再 @ → 既有 messages 端点 → investigation_feedback turn → 新回复回线程；幂等（bound/duplicate）与围栏负路径全过。",
+    "production 端点块外不可达；ad-hoc 的 persona/draft/Zendesk 投递结构性不可达（无按钮+actions 拒绝+continue 拒绝）。",
+    "回归全绿 + PG 集成（schema-008）+ prompt release 校验 + preprod 发布三检绿 + live 双回合实证。",
+    "n8n workflow 更新版交付；registry/runbook/prompt_change_log/feature_list/overview 收口。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Implementation regression (PR#1188)",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_automation_ecs_api.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_route_worker.py",
+      "details": "277 passed + 3 subtests。新增：adhoc 端点测试（401/403/422/创建/合成号 99 前缀 15 位/repeat=bound/threads resolve→messages 后续流/actions 对 adhoc 422/真实 case 线程不被劫持）、编排四例（adhoc work run 的 manual key+skills toolsets+消息注入+adhoc 通知变体+actions 闭合、镜像 seed、case feedback 消息注入、prompt registry 解析）、n8n 契约（false 分支→Claim Adhoc→POST adhoc-sessions、HERMES-ADHOC- 前缀）。"
+    },
+    {
+      "type": "test",
+      "label": "PostgreSQL real-database integration (schema-008)",
+      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<root .env> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py",
+      "details": "10 passed（9 既有 + 新增 TestPostgresAdhocSession：seed/binding/turn/repeat=bound/反查/真实 case 线程不劫持/线程唯一索引直插被拒）。SCHEMA_REVISION 断言更新为 automation-ecs-008。"
+    },
+    {
+      "type": "deployment",
+      "label": "Prompt release pr-c4177da97c6e",
+      "command": "python -m backend.scripts.prompt_release prepare --build-ref dbe379fa && validate --release-id pr-c4177da97c6e",
+      "details": "38 prompts（新增 hermes-adhoc-investigation-manual v1），validate ok（content_fingerprint sha256:e3257fd2…）。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_ecs_store.py",
+    "backend/automation_ecs_api.py",
+    "backend/services/automation_hermes_agent.py",
+    "backend/services/automation_hermes_slack_actions.py",
+    "backend/services/engineer_slack.py",
+    "docs/integrations/n8n/Slack_App_Mention_To_SupportPortal_Engineer.json"
+  ],
+  "created_at": "2026-09-15",
+  "updated_at": "2026-09-15",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {
+      "at": "2026-09-15",
+      "event": "created",
+      "summary": "原登记 p2-159（PR#1188 实现，277 单测+PG 10 全绿）；并发 PR#1189 删除该登记并登记自身为 p2-160（同号竞态：对方在自有规划占用 p2-159 但未及时入 registry）。本文件以 p2-161 重新登记，legacy_ids 保留 p2-159 溯源。"
+    }
+  ]
+}
