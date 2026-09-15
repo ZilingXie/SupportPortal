@@ -94,10 +94,14 @@ class ProjectOverviewContractTests(unittest.TestCase):
         self.assertIn('{ id: "workflow", label: "Hermes 流程" }', html)
         self.assertIn("function renderWorkflow()", html)
         self.assertIn("superseded / cancel_requested", html)
-        self.assertIn("继续调查", html)
-        self.assertIn("revision 未变化", html)
+        self.assertIn("人工审阅", html)
+        self.assertIn("生成回复草稿", html)
+        self.assertIn("investigation_reply", html)
+        self.assertIn("investigation_feedback", html)
+        self.assertIn("固定人格、回复规则与业务合同", html)
         self.assertIn("发送 Zendesk 公开回复", html)
-        self.assertEqual(html.count("发送前最终检查"), 1)
+        self.assertEqual(html.count("发送前复核"), 1)
+        self.assertIn("Turn completed 不等于已送达", html)
 
     def test_compact_board_meeting_dialog_and_full_feature_list_contract(self) -> None:
         html = (ROOT / "docs/projectoverview.html").read_text(encoding="utf-8")
