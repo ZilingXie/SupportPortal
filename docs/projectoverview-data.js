@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T08:46:17Z",
-  "source_base_commit": "9d7f6ce432432d12f1ea5d34e7ea4a5c3bd4ea81",
-  "registry_digest": "bc59309aecfb7ec0d2b0bf7b21ace248ab1a23118eb11a9335b59767b36ec22e",
+  "generated_at": "2026-09-16T10:21:01Z",
+  "source_base_commit": "778793f3b171ca0f42763fe12a74bb0ce07ad87f",
+  "registry_digest": "d56b7b8037cd958ec8377725bddc2e0961c52ffcaaec3b23d0733db7cd57b2ce",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3034,6 +3034,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Status sync endpoint and full parity regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_status_sync",
           "details": "94 项通过：status 端点鉴权/非法状态 422、solved 关 Engineer Case（线程事件+ticket resolved+派单 resolve 断言）、open 不触发收尾；既有评论/intake/runtime/contracts/compose 全回归绿。"
+        },
+        {
+          "type": "test",
+          "label": "Deterministic ticket.updated route and status semantics regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_case_workflow.py backend/tests/test_hermes_case_contracts.py backend/tests/test_hermes_case_ledger.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_runtime.py backend/tests/test_account_zendesk_status_sync.py",
+          "details": "125 项通过：ticket.updated 走固定 system route 并创建 Processing Job，未解析引擎、未调用 Route LLM 或 Persona；Worker 传递真实 ticket.updated_at；Store、Contracts、Hermes 及 solved/closed、重开、重复、stale 语义回归通过。"
         },
         {
           "type": "test",
@@ -9154,15 +9160,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-112",
-      "title": "/automation/production 替代 /production：Phase D 状态同步端点（纯移植）",
+      "title": "ECS Zendesk 状态同步：确定性 Route 与 n8n 唯一环境投递",
       "status": "active",
       "owner": "zac",
-      "summary": "Phase D：把旧栈 Zendesk 工单状态同步搬进 /automation/production——automation_account_reply_sync.py 增 sync_account_case_ticket_status（main.py PUT .../status 语义移植：状态投影 update_account_case_zendesk_status + solved/closed 时关闭活跃 Engineer Case（build/close_case_context + engineer_case_closed 线程事件 + ticket resolved + EngineerAssignmentService.resolve_case））；runtime 新增 PUT /api/integrations/zendesk/account-cases/{id}/status 端点（token 鉴权、zendesk_status 白名单校验、updated_at ISO 规范化、404/409 语义复刻）。任务号 p2-111 已被并行链（#928 RAGFlow persona 渲染）占用，顺延为 p2-112。",
-      "next_action": "待用户 EC2 部署 + n8n case_status_sync 的 production origin 换 URL 后做真实工单状态同步验收（solved 关 case/Engineer Case）。随后 Phase E：Slack 协作收口（工程师 AI 调查回合 _process_engineer_investigation_message 移植 + Slack 入向双目标路由 + fraud 公开回复后 assignee 转人工）。",
+      "summary": "ECS 已有 sync_account_case_ticket_status 状态投影及 solved/closed、重开、重复与乱序处理，但 ticket.updated intake 在 Route Worker 中仍经过 Hermes/legacy 引擎选择、Route LLM 与 Persona，且 [case]Sync Status 尚未投递 ECS。本任务新增 ticket.updated 确定性 system route（execution_action=ticket_status_sync、reason=ticket_updated），直接排入 Processing Job 并复用现有状态实现；后续 n8n 将保留旧 EC2 双分支，查询 ECS Production/Preproduction Case membership 后仅向唯一命中的环境投递稳定幂等事件。",
+      "next_action": "完成代码 PR、官方本地栈验证并部署 ECS Preproduction；使用明确授权的 Preproduction 测试 Case 验证 ticket.updated 全链路且无 Route LLM/Persona 阶段。验证通过后等待单独的 Production 部署授权；Production 部署完成后再发布 [case]Sync Status 的 ECS 唯一环境投递分支，并等待首个未来自然事件验收。不补偿或重放 13531。",
       "acceptance_criteria": [
-        "PUT .../status 在 /automation/production 下可用，鉴权与 422/404 语义与旧栈一致。",
-        "solved/closed 触发：本地 ticket 置 resolved+closed_at、活跃 Engineer Case 关闭（线程事件+investigation 收尾）、派单 resolve。",
-        "非终态状态只做投影不触发收尾；旧栈与 preprod/staging 零行为变化。"
+        "ticket.updated 在 Route Worker 中优先进入固定 system/ticket_status_sync 路径，不调用 Route LLM、Persona resolver 或 Hermes handoff，并创建 Processing Job。",
+        "Processing Worker 使用 Zendesk status 与真实 ticket.updated_at 调用现有 sync_account_case_ticket_status；solved/closed、重开、重复与 stale event 保持既有语义。",
+        "[case]Sync Status 保留旧 EC2 分支；ECS membership 零命中跳过、唯一命中投递、双命中以 ambiguous_ecs_case_environment 失败关闭，且相同 Zendesk 更新产生完全一致的 intake payload。",
+        "ECS 依次完成 Preproduction 验证与单独授权的 Production 部署后才发布 n8n；13531 不补偿、不重跑，凭据不新增、不修改、不复制。"
       ],
       "blockers": [],
       "evidence": [
@@ -9171,22 +9178,35 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Status sync endpoint and full parity regression",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_comment_sync backend.tests.test_automation_production_runtime_contract backend.tests.test_automation_account_intake backend.tests.test_automation_contracts backend.tests.test_route_service_contract backend.tests.test_automation_runtime_contract backend.tests.test_split_environment_deployment backend.tests.test_single_host_compose backend.tests.test_account_zendesk_status_sync",
           "details": "94 项通过：status 端点鉴权/非法状态 422、solved 关 Engineer Case（线程事件+ticket resolved+派单 resolve 断言）、open 不触发收尾；既有评论/intake/runtime/contracts/compose 全回归绿。"
+        },
+        {
+          "type": "test",
+          "label": "Deterministic ticket.updated route and status semantics regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_case_workflow.py backend/tests/test_hermes_case_contracts.py backend/tests/test_hermes_case_ledger.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_runtime.py backend/tests/test_account_zendesk_status_sync.py",
+          "details": "125 项通过：ticket.updated 走固定 system route 并创建 Processing Job，未解析引擎、未调用 Route LLM 或 Persona；Worker 传递真实 ticket.updated_at；Store、Contracts、Hermes 及 solved/closed、重开、重复、stale 语义回归通过。"
         }
       ],
       "source_refs": [
         "backend/services/automation_account_reply_sync.py",
+        "backend/automation_ecs_route_worker.py",
+        "backend/automation_ecs_worker.py",
         "backend/automation_production_runtime.py",
         "backend/main.py",
         "backend/services/engineer_cases.py",
         "docs/integrations/n8n/automation_environments_cutover.md"
       ],
       "created_at": "2026-08-24",
-      "updated_at": "2026-08-24",
+      "updated_at": "2026-09-16",
       "history": [
         {
           "at": "2026-08-24",
           "event": "created",
           "summary": "Phase C（p2-110/PR#927）合并后开工 Phase D。payload_to_record/close_for_customer_resolution 两个 main.py 薄壳按 B 纯移植方案搬入 reply_sync 模块（依赖 engineer_cases 三个 service 函数均已在 production 镜像内）。"
+        },
+        {
+          "at": "2026-09-16",
+          "event": "implementation_started",
+          "summary": "修复 [case]Sync Status 未覆盖 ECS 的链路缺口：先增加 ticket.updated 确定性 ECS route 并验证现有状态投影语义；按 Preproduction、Production、n8n 的顺序发布，且不补偿 13531。"
         }
       ],
       "legacy_refs": [
