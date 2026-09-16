@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "dV5vNA6l1MbDMHZt",
+    "workflowName": "[ops]Error Alert",
+    "snapshotKind": "published",
+    "versionId": "e61ca2a5-b0f9-4867-aa45-561d86cce6a4",
+    "draftVersionId": "e61ca2a5-b0f9-4867-aa45-561d86cce6a4",
+    "publishedVersionId": "e61ca2a5-b0f9-4867-aa45-561d86cce6a4",
+    "updatedAt": "2026-09-16T04:11:58.812Z",
+    "parentFolderId": "38jn9lYBMhDSyrzo"
+  },
+  "workflow": {
+    "name": "[ops]Error Alert",
+    "description": "接收关联工作流的执行错误，由 AI 生成简短故障摘要，再上报 n8n 状态页的 failure 接口；属于支持自动化的告警配套流程，不负责自动重试。",
+    "nodes": [
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.errorTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "id": "0f69546a-0fcb-4a97-87a8-dadec6512f35",
+        "name": "Error Trigger"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://n8n.stellarix.space/status/api/v1/ingest/failure",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "workflowName",
+                "value": "={{ $('Error Trigger').item.json.workflow.name }}"
+              },
+              {
+                "name": "workflowURL",
+                "value": "=https://n8n.stellarix.space/workflow/{{ $('Error Trigger').item.json.workflow.id }}"
+              },
+              {
+                "name": "executionID",
+                "value": "={{ $('Error Trigger').item.json.execution.id }}"
+              },
+              {
+                "name": "executionURL",
+                "value": "={{ $('Error Trigger').item.json.execution.url }}"
+              },
+              {
+                "name": "summary",
+                "value": "={{ $json.output[0].content[0].text }}"
+              },
+              {
+                "name": "description",
+                "value": "={{ $('Error Trigger').item.json.execution.error.description }}"
+              },
+              {
+                "name": "time",
+                "value": "={{$now.toFormat(\"yyyy-MM-dd'T'HH:mm\")}}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          576,
+          0
+        ],
+        "id": "f3796403-92c9-42aa-b8a6-a869e5ee7fcf",
+        "name": "HTTP Request"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "responses": {
+            "values": [
+              {
+                "role": "system",
+                "content": "You are a technical summarizer with extensive experience in analyzing and condensing complex error messages and workflow failures into succinct summaries. Your expertise lies in understanding the context of workflow executions and identifying the key points that capture the essence of the issue at hand.\n\nYour task is to summarize the details of an n8n workflow execution failure. I will provide the error details you have encountered, and I want you to distill them into a brief summary in around 10 words.\n\nKeep in mind that clarity and conciseness are crucial in the summarization process. Aim to highlight the key error message."
+              },
+              {
+                "content": "={{ $json.execution.error.toJsonString() }}"
+              }
+            ]
+          },
+          "builtInTools": {},
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.1,
+        "position": [
+          208,
+          0
+        ],
+        "id": "706a5da9-9e96-4148-a0c9-388e0b3fda9c",
+        "name": "Message a model",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Error Trigger": {
+        "main": [
+          [
+            {
+              "node": "Message a model",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Message a model": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "HTTP Request",
+        "path": "nodes.HTTP Request.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

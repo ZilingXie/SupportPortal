@@ -1,0 +1,1408 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "kyiA0QuiVx6JJ03i",
+    "workflowName": "[slack]Route Support",
+    "snapshotKind": "draft",
+    "versionId": "c41c09db-3924-40ed-9d48-f51c571e584e",
+    "draftVersionId": "c41c09db-3924-40ed-9d48-f51c571e584e",
+    "publishedVersionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
+    "updatedAt": "2026-09-16T04:11:24.191Z",
+    "parentFolderId": "Uj4fViHZGMeAhqTa"
+  },
+  "workflow": {
+    "name": "[slack]Route Support",
+    "description": "监听 Slack 消息，经 AI 筛选和支持请求判定后创建 Zendesk 工单并回传链接；缺少团队资料时等待人工补全。指定内部频道的线程消息通过子流程转交 SupportPortal ECS Production。",
+    "nodes": [
+      {
+        "parameters": {
+          "trigger": [
+            "message"
+          ],
+          "watchWorkspace": true,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.slackTrigger",
+        "typeVersion": 1,
+        "position": [
+          -480,
+          -576
+        ],
+        "id": "48d668d0-12f9-4d83-8379-a7776eb8ff1c",
+        "name": "Slack Trigger",
+        "webhookId": "0995fafc-60c3-4210-9644-e5de08cbdc5a",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "=Customer said {{ $('Slack Trigger').item.json.text }}"
+              },
+              {
+                "content": "I want you to act as a **support ticket qualification assistant**. Your goal is to evaluate whether a user’s message qualifies as a **support ticket**.  \n\n**Instructions:**  \n- If the message reports an issue, bug, or error, **approve** it.  \n- If the message asks a question (technical, product-related, or needing assistance), **approve** it.  \n- If the message is a general inquiry, administrative request, or unrelated to support, **disapprove** it and explain why.  \n- if the meessage already includes a ticket, for example, I just opened a support ticket (https://agoraio.zendesk.com/hc/en-us/requests/8537), **disapprove** it.\n\n**Output format:**  \n- For qualified messages → `approve`  \n- For non-qualified messages → `disapprove: [reason]`  \n\n**Examples:**  \n- Input: “I can’t log into my account.”  \n  → Output: `approve`  \n\n- Input: “Can we add Ben to the Slack channel?”  \n  → Output: `disapprove: This is an administrative request, not a support issue.`  \n\n- Input: “How do I change my password?”  \n  → Output: `approve`  \n\n- Input: “Just wanted to say thanks for the update!”  \n  → Output: `disapprove: This is a comment, not a support request.`  \n\nUse these rules to consistently determine and return whether the message qualifies as a support ticket.",
+                "role": "system"
+              }
+            ]
+          },
+          "simplify": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          1664,
+          -448
+        ],
+        "id": "ca18df1c-29cc-405d-a8ec-3dd03dbcb8dd",
+        "name": "AI_Check",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "I want you to act as a **support ticket title generator**. Your task is to read a customer’s question or message and create a **clear, concise, and descriptive title** suitable for a support ticket.  \n\nHere’s how you should approach it:  \n- Identify the **core issue or request** in the customer’s message.  \n- Summarize it in **one short, professional sentence or phrase** (ideally under 10 words).  \n- Avoid unnecessary words like *“question about”* or *“issue with”* unless needed.  \n- If the message is general or not technical, still generate a **neutral, helpful title** that captures the intent.  \n\n**Examples:**  \n- Customer message: “How do I enable log upload?” → Title: “Enabling Log Upload”  \n- Customer message: “My API requests are timing out” → Title: “API Request Timeout Issue”  \n- Customer message: “Can we add Ben to the Slack channel?” → Title: “Request to Add Team Member to Slack Channel”  \n\nOnce I provide a customer message, generate only the ticket title following these rules.",
+                "role": "assistant"
+              },
+              {
+                "content": "={{ $('Slack Trigger').item.json.text }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          2464,
+          -480
+        ],
+        "id": "85aeb643-12f0-41ec-97c1-7a31139744a7",
+        "name": "generate_title",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://agoraio.zendesk.com/api/v2/tickets.json",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"ticket\": {\n    \"comment\": {\n      \"body\": {{ JSON.stringify($('Slack Trigger').item.json.text) }}\n    },\n    \"tags\": \"slack_bot_created\",\n    \"priority\": \"low\",\n    \"subject\": {{ JSON.stringify(\"[Slack Bot]\" + $('generate_title').item.json.message.content) }},\n    \"assignee_email\": {{ JSON.stringify($('Query_Team_Exist').item.json.named_cse + \"@agora.io\") }},\n    \"requester\": {{ JSON.stringify($('Query_Team_Exist').item.json.cx_email) }},\n    \"custom_fields\": [\n      {\n        \"id\": 31503099534100,\n        \"value\": \"video_calling\"\n      },\n      {\n        \"id\": 34577037850644,\n        \"value\": \"not_notify\"\n      }\n    ]\n  }\n}",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2816,
+          -480
+        ],
+        "id": "2c79281c-b796-4de6-9551-4a7f2ca15433",
+        "name": "create_ticket"
+      },
+      {
+        "parameters": {
+          "resource": "user",
+          "user": {
+            "__rl": true,
+            "value": "={{ $('Slack Trigger').item.json.user }}",
+            "mode": "id"
+          }
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          1216,
+          -448
+        ],
+        "id": "cc323b0c-9804-4959-bb21-e53d10cc3a5d",
+        "name": "get_user_info",
+        "webhookId": "abdeb8d4-2b06-4c36-96f9-da43a93699f5",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "resource": "channel",
+          "operation": "get",
+          "channelId": {
+            "__rl": true,
+            "value": "={{ $('Slack Trigger').item.json.channel }}",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          1440,
+          -448
+        ],
+        "id": "882b9541-d248-4fae-a00c-ea653e113fea",
+        "name": "Get a channel",
+        "webhookId": "2c64a2c8-867b-40c5-87b5-928d6016ffa7",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "select": "user",
+          "user": {
+            "__rl": true,
+            "value": "=@{{ $('Query_Team_Exist').item.json.named_cse }}",
+            "mode": "username"
+          },
+          "text": "={{ $('get_user_info').item.json.name }} has sent a message in {{ $('Get a channel').item.json.name_normalized }}. \nCheck it from https://agoraiolab.slack.com/archives/{{ $('Get a channel').item.json.id }}/p{{ $('get_ts').item.json.ts }}\nA new zendesk ticket has been created:\n{{ $json.ticket.url }}",
+          "otherOptions": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          144,
+          -880
+        ],
+        "id": "f355017c-4565-42c5-a05d-1eaf64113edd",
+        "name": "Send a message",
+        "webhookId": "7f86a38f-e3d8-4577-a9b8-8050f9e8ec87",
+        "disabled": true,
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "6f003ddf-0625-4bfe-aac5-8e17404d8ca6",
+                "leftValue": "={{ $json.team_id }}",
+                "rightValue": "NULL",
+                "operator": {
+                  "type": "string",
+                  "operation": "notExists",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "looseTypeValidation": true,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          992,
+          -640
+        ],
+        "id": "8ecad2c6-101c-483a-9a8d-e01ba877d106",
+        "name": "If_not_exist"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT * FROM slack_team WHERE team_id = '{{ $('Slack Trigger').item.json.team }}'",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          768,
+          -576
+        ],
+        "id": "b8bcd045-0ff2-4775-a667-c0a911af3371",
+        "name": "Query_Team_Exist",
+        "alwaysOutputData": true,
+        "credentials": {
+          "postgres": {
+            "id": "ddbl9KA6m6Aq8O9l",
+            "name": "aws-posgre-zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO slack_team (team_id, cx_email, CID, named_cse,team_name)\nVALUES ('{{ $('Slack Trigger').item.json.team }}', '{{ $json.data.Cx_Contact_Email }}', {{ $json.data.CID }}, '{{ $json.data['Named_CSE(Slack account name)'] }}','{{ $json.data.Customer_Company_Name }}');",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1440,
+          -640
+        ],
+        "id": "dab3d753-980d-4a8e-a97c-c8eadfd7a46a",
+        "name": "Execute a SQL query",
+        "credentials": {
+          "postgres": {
+            "id": "ddbl9KA6m6Aq8O9l",
+            "name": "aws-posgre-zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "sendAndWait",
+          "user": {
+            "__rl": true,
+            "value": "@xieziling",
+            "mode": "username"
+          },
+          "message": "=Received a new message in thread: \nhttps://agoraiolab.slack.com/archives/{{ $('Slack Trigger').item.json.channel }}/p{{ $('get_ts').item.json.ts }}\nPlease fill in the details for the customer ",
+          "responseType": "customForm",
+          "formFields": {
+            "values": [
+              {
+                "fieldLabel": "CID",
+                "fieldType": "number",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Cx_Contact_Email",
+                "fieldType": "email",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Named_CSE(Slack account name)",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Customer_Company_Name",
+                "requiredField": true
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          1216,
+          -640
+        ],
+        "id": "8e28561d-2396-4df6-83ab-719db960bd7d",
+        "name": "Fill_Team_Info",
+        "webhookId": "7f86a38f-e3d8-4577-a9b8-8050f9e8ec87",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "TS",
+                "value": "={{ $json.ts }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          544,
+          -576
+        ],
+        "id": "0a3956f3-cde1-45d5-8135-c688d54de901",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "bfe7d557-107f-413e-86b2-c7222171c801",
+                "leftValue": "={{ $json.choices[0].message.content }}",
+                "rightValue": "approve",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2016,
+          -448
+        ],
+        "id": "dace5124-6c88-44ed-a3ea-3d16f0283ee9",
+        "name": "If_approve"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "4ae67eaf-2d9e-4a12-9cd9-4580f1d9dfa7",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1728,
+          -640
+        ],
+        "id": "3598d81f-fbe1-4321-b066-4811fb462bd5",
+        "name": "If_query_success"
+      },
+      {
+        "parameters": {
+          "select": "user",
+          "user": {
+            "__rl": true,
+            "value": "@xieziling",
+            "mode": "username"
+          },
+          "text": "=Team {{ $('Slack Trigger').item.json.team }} insert failed. Please check execution {{ $('Slack Trigger').item.json.ts }} for more details",
+          "otherOptions": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          2016,
+          -640
+        ],
+        "id": "dd8d2bcb-9ec4-4046-9fb3-02e885ac5818",
+        "name": "notify_on_slack",
+        "webhookId": "7f86a38f-e3d8-4577-a9b8-8050f9e8ec87",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "3713e740-e343-4967-ba8b-e2b645bd7f8a",
+                "leftValue": "={{ $json.team }} ",
+                "rightValue": "T1CBEDLJY",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "or"
+          },
+          "looseTypeValidation": true,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -32,
+          -1088
+        ],
+        "id": "df3afb49-c8b0-49b9-8eca-51d8f0d4e32e",
+        "name": "If_agora"
+      },
+      {
+        "parameters": {
+          "jsCode": "const ts =$('Slack Trigger').first().json.event_ts.replace('.', '');\n\nreturn {ts};"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          320,
+          -576
+        ],
+        "id": "f7e68969-34b9-4df1-b200-82290eaef48e",
+        "name": "get_ts"
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $json.ticket.id }}.json ",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"ticket\": {\n    \"comment\": {\n      \"body\": \"This ticket is auto generated from thread: https://agoraiolab.slack.com/archives/{{ $('Get a channel').item.json.id }}/p{{ $('get_ts').item.json.ts }}\",\n      \"public\": true\n    },\n    \"status\": \"solved\",\n    \"custom_fields\": [\n      {\n        \"id\": 36379228408724,\n        \"value\": \"true\"\n      }\n    ]\n  }\n}",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3040,
+          -480
+        ],
+        "id": "1706da2a-d63d-484a-be57-5a8a523ac8f3",
+        "name": "Add_Comment"
+      },
+      {
+        "parameters": {
+          "operation": "sendAndWait",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "value": "https://app.slack.com/client/T1CBEDLJY/C09MHTN69L5",
+            "mode": "url"
+          },
+          "message": "={{ $('get_user_info').item.json.name }} has sent a message in {{ $('Get a channel').item.json.name_normalized }}. \nIt seems to be a question. Check it from https://agoraiolab.slack.com/archives/{{ $('Get a channel').item.json.id }}/p{{ $('get_ts').item.json.ts }}\n",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          -480,
+          -864
+        ],
+        "id": "93c81e0e-c0b9-4892-aac9-5520c78b0b48",
+        "name": "Send message and wait for response",
+        "webhookId": "8c0cfed4-51d9-406e-ad5a-8d79589038a4",
+        "disabled": true,
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "42c0ecd0-f26a-4f4b-8b52-ffc8b1f2e923",
+                "leftValue": "={{ $json.data.approved }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -256,
+          -864
+        ],
+        "id": "4b040ada-abc3-4ce0-896b-8708d7a7f18d",
+        "name": "If_Approved",
+        "disabled": true
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "781168c3-1494-4d92-9dd4-3acde2ceedd0",
+                "leftValue": "={{ $('Slack Trigger').item.json.thread_ts}}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "exists",
+                  "singleValue": true
+                }
+              },
+              {
+                "id": "50bfb463-5f86-464d-8c1f-765c7cd66fab",
+                "leftValue": "={{ $('Slack Trigger').item.json.message.thread_ts }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "exists",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "or"
+          },
+          "looseTypeValidation": true,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          192,
+          -1088
+        ],
+        "id": "9ff19b47-f206-4044-b0d5-83fb7c691517",
+        "name": "If_thread"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "420a1eea-0fee-42bf-afa3-ec73aca49572",
+                "leftValue": "={{ $('Slack Trigger').user_team }}",
+                "rightValue": "T1CBEDLJY",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          416,
+          -1088
+        ],
+        "id": "ffdcea84-ab36-4b70-807b-859fdcbc5c32",
+        "name": "If_attachment"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "cf5da039-54c4-41a7-84de-0f62079ac471",
+                "leftValue": "={{ $json.message.user }}",
+                "rightValue": "U077N69QBU5",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              },
+              {
+                "id": "3c2a9c28-1280-4671-b4c1-2efea41b3343",
+                "leftValue": "={{ $json.user }}",
+                "rightValue": "U077N69QBU5",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "or"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -480,
+          -1088
+        ],
+        "id": "acfebce2-018e-455b-a756-45a0470026ad",
+        "name": "If_zac"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f0c7fc78-ab40-4081-a763-526be9a0bba3",
+                "leftValue": "={{ $('Slack Trigger').item.json.subtype }}",
+                "rightValue": "bot_message",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              },
+              {
+                "id": "cc5053fc-48b1-4cf8-8e0f-73bf5bcf619d",
+                "leftValue": "={{ $('Slack Trigger').item.json.message.subtype }}",
+                "rightValue": "bot_message",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "or"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -256,
+          -1088
+        ],
+        "id": "3715371a-80ed-4a80-b9a2-e100303c3061",
+        "name": "If_bot"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "={{ JSON.stringify($('Slack Trigger').item.json) }}"
+              },
+              {
+                "content": "I want you to act as a Slack message filter and analyzer.  \nYour job is to take a webhook response from Slack that is triggered whenever a new message is received, and decide whether that message needs to be processed or not.  \n\nYou must apply the following rules strictly:  \n1. Bot messages don’t need to be processed.  \n   - A bot message can be identified when the field `\"subtype\"` has the value `\"bot_message\"`.  \n2. Messages from team `\"T1CBEDLJY\"` don’t need to be processed.  \n   - If any field value in the JSON equals `\"T1CBEDLJY\"`, the message should not be processed.  \n3. Attachments without a message don’t need to be processed.  \n   - If the message payload only contains attachments and no actual message text, skip it.  \n4. Thread messages don’t need to be processed.  \n   - Thread messages can be identified by the presence of the `\"thread_ts\"` field.  \n\nExpected Output:  \n- `true` → The message needs to be processed.  \n- `false with reason` → The message should be ignored based on the above rules.  \n\nThis prompt ensures you analyze incoming Slack webhook messages precisely according to the given business rules and return a clear boolean decision (`true` or `false`).",
+                "role": "system"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          -256,
+          -576
+        ],
+        "id": "f91a1c38-dec7-446d-81aa-b7db653e13a7",
+        "name": "Message a model",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "60a5207c-40ff-4ad8-8bc8-5f1d6585a7fa",
+                "leftValue": "={{ $json.message.content }}",
+                "rightValue": "true",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "looseTypeValidation": true,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          96,
+          -576
+        ],
+        "id": "878f4ff4-7b20-480f-b816-14531f7310f2",
+        "name": "If"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "approve"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          2240,
+          -480
+        ],
+        "id": "b3629b55-e1f8-4b83-ab98-077e9156001d",
+        "name": "Execution Data1"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "disapprove"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          2240,
+          -288
+        ],
+        "id": "38748428-00f1-43a4-8140-df249047305f",
+        "name": "Execution Data2"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $('create_ticket').item.json.ticket.id }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          3264,
+          -480
+        ],
+        "id": "3e0d6d50-2694-45d9-88ae-50f2d095ae0d",
+        "name": "Execution Data3"
+      },
+      {
+        "parameters": {
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "value": "https://app.slack.com/client/T1CBEDLJY/C09MHTN69L5",
+            "mode": "url",
+            "__regex": "https://app.slack.com/client/.*/([a-zA-Z0-9]{2,})"
+          },
+          "text": "={{ $('get_user_info').item.json.name }} has sent a message in {{ $('Get a channel').item.json.name_normalized }}. \nCheck it from https://agoraiolab.slack.com/archives/{{ $('Get a channel').item.json.id }}/p{{ $('get_ts').item.json.ts }}\nA new zendesk ticket has been created:\nhttps://agoraio.zendesk.com/agent/tickets/{{ $json.ticket.id }}",
+          "otherOptions": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          3488,
+          -480
+        ],
+        "id": "b4708396-da21-479f-95a0-1b35db408103",
+        "name": "Send a message1",
+        "webhookId": "8c0cfed4-51d9-406e-ad5a-8d79589038a4",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "ff52d94b-2ff8-413e-b042-a8645ef11f6d",
+                "leftValue": "={{ $('Slack Trigger').item.json.channel }}",
+                "rightValue": "C0BS0N61D1R",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          352,
+          -432
+        ],
+        "id": "4adccbfb-c4cc-436c-9e80-ac91c13df410",
+        "name": "If1"
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "r1HIW8UNuCabiOPn",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/r1HIW8UNuCabiOPn",
+            "cachedResultName": "NonAutomate_to_slack_fixed"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "Input": "={{ $('Slack Trigger').item.json }}"
+            },
+            "matchingColumns": [
+              "test"
+            ],
+            "schema": [
+              {
+                "id": "Input",
+                "displayName": "Input",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          656,
+          -432
+        ],
+        "id": "76d92bfe-c977-4494-b589-10308f469e03",
+        "name": "Call 'NonAutomate_to_slack'"
+      }
+    ],
+    "connections": {
+      "Slack Trigger": {
+        "main": [
+          [
+            {
+              "node": "Message a model",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI_Check": {
+        "main": [
+          [
+            {
+              "node": "If_approve",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "generate_title": {
+        "main": [
+          [
+            {
+              "node": "create_ticket",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_user_info": {
+        "main": [
+          [
+            {
+              "node": "Get a channel",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get a channel": {
+        "main": [
+          [
+            {
+              "node": "AI_Check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send a message": {
+        "main": [
+          []
+        ]
+      },
+      "If_not_exist": {
+        "main": [
+          [
+            {
+              "node": "Fill_Team_Info",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "get_user_info",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Query_Team_Exist": {
+        "main": [
+          [
+            {
+              "node": "If_not_exist",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fill_Team_Info": {
+        "main": [
+          [
+            {
+              "node": "Execute a SQL query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute a SQL query": {
+        "main": [
+          [
+            {
+              "node": "If_query_success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data": {
+        "main": [
+          [
+            {
+              "node": "Query_Team_Exist",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_approve": {
+        "main": [
+          [
+            {
+              "node": "Execution Data1",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Execution Data2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_query_success": {
+        "main": [
+          [
+            {
+              "node": "Query_Team_Exist",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "notify_on_slack",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_agora": {
+        "main": [
+          [],
+          [
+            {
+              "node": "If_thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_ts": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_ticket": {
+        "main": [
+          [
+            {
+              "node": "Add_Comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Add_Comment": {
+        "main": [
+          [
+            {
+              "node": "Execution Data3",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send message and wait for response": {
+        "main": [
+          [
+            {
+              "node": "If_Approved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_Approved": {
+        "main": [
+          []
+        ]
+      },
+      "If_thread": {
+        "main": [
+          [],
+          [
+            {
+              "node": "If_attachment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_attachment": {
+        "main": [
+          [],
+          []
+        ]
+      },
+      "If_zac": {
+        "main": [
+          [],
+          [
+            {
+              "node": "If_bot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_bot": {
+        "main": [
+          [],
+          [
+            {
+              "node": "If_agora",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Message a model": {
+        "main": [
+          [
+            {
+              "node": "If",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [
+            {
+              "node": "get_ts",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "If1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data1": {
+        "main": [
+          [
+            {
+              "node": "generate_title",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data3": {
+        "main": [
+          [
+            {
+              "node": "Send a message1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If1": {
+        "main": [
+          [
+            {
+              "node": "Call 'NonAutomate_to_slack'",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "create_ticket",
+        "path": "nodes.create_ticket.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "create_ticket",
+        "path": "nodes.create_ticket.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "create_ticket",
+        "path": "nodes.create_ticket.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Add_Comment",
+        "path": "nodes.Add_Comment.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Add_Comment",
+        "path": "nodes.Add_Comment.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Add_Comment",
+        "path": "nodes.Add_Comment.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

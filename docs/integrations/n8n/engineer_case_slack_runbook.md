@@ -2,8 +2,11 @@
 
 This integration is independent of the Account automation handoff workflows.
 SupportPortal owns durable Case events, thread bindings, direct Slack delivery,
-and AI/approval state. n8n owns Slack ingress verification, fixed Team/Channel
-filtering, mention enforcement, and inbound idempotency.
+AI/approval state, and the Slack signing secret used by the custom interaction
+Webhook. n8n owns the visual ingress flow, fixed Team/Channel filtering,
+mention enforcement, and inbound idempotency; free n8n forwards the exact
+interaction request body and signature headers to SupportPortal for
+cryptographic verification before any business action.
 
 ## Required configuration
 
@@ -12,7 +15,6 @@ Configure these only in n8n or its deployment environment:
 - `REPLACE_WITH_SLACK_TEAM_ID`
 - `REPLACE_WITH_SLACK_CHANNEL_ID`
 - `REPLACE_WITH_SLACK_BOT_USER_ID`
-- `SUPPORTPORTAL_SLACK_SIGNING_SECRET`
 - the PostgreSQL credential and SupportPortal `X-N8n-Request-Token` header
   credential
 - `REPLACE_WITH_SUPPORTPORTAL_BASE_URL`
@@ -32,13 +34,15 @@ Configure these only in n8n or its deployment environment:
   answers in-thread; every later mention of the thread resolves `bound` and
   takes the regular feedback path.
 
-Configure these in the SupportPortal production environment:
+Configure these in the indicated SupportPortal environment:
 
 - `PRODUCTION_ENGINEER_SLACK_ACCESS_TOKEN`
 - `PRODUCTION_ENGINEER_SLACK_TEAM_ID`
 - `PRODUCTION_ENGINEER_SLACK_CHANNEL_ID`
 - `PRODUCTION_ENGINEER_SLACK_TIMEOUT_SECONDS`
 - the existing `n8n_request_token`
+- `ENGINEER_SLACK_SIGNING_SECRET`, injected only into the Preproduction API
+  role from `/supportportal/preproduction/engineer-slack-signing-secret`
 
 The Slack access token is a deployment secret and must never enter a tracked
 file or SupportPortal payload. Team and Channel are fixed deployment settings;
@@ -50,17 +54,21 @@ inbound payloads cannot override them.
 2. Import and configure `Slack_App_Mention_To_SupportPortal_Engineer.json` and
    `Slack_Interaction_To_SupportPortal_Engineer.json`.
 3. Replace all non-secret placeholders and bind credentials in the n8n UI.
-4. Enable raw request bodies for both Slack ingress webhooks and allow the
-   `crypto` built-in in n8n Code nodes. The two signature-verification Code
-   nodes read only `SUPPORTPORTAL_SLACK_SIGNING_SECRET` from the n8n deployment
-   environment, so that environment must permit Code-node access to this value
-   (for example, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` on deployments that block
-   `$env` by default). If the imported workflow reports environment-variable
-   access denied, keep both ingress workflows inactive until this prerequisite
-   is deliberately configured; never paste the signing secret into the export.
-   Set the Slack Event Subscription and Interactivity request URLs to those
-   webhooks.
-5. Activate the two Slack ingress workflows.
+4. Enable raw request bodies on the Slack interaction Webhook. Before parsing
+   or routing the action, POST `raw_body`, `request_timestamp`, and `signature`
+   to
+   `/automation/{environment}/api/integrations/slack/verify-request` using the
+   existing `X-N8n-Request-Token` credential. Continue only after a 200
+   `{"ok": true}` response. The SupportPortal API verifies Slack's v0 HMAC and
+   five-minute timestamp window using its managed signing secret. Never paste
+   the signing secret into a workflow, execution, export, n8n variable, or data
+   table. Set the Slack Event Subscription and Interactivity request URLs to
+   the verified ingress workflows.
+5. Activate the interaction workflow only after the verifier call succeeds in
+   the target environment. The checked-in App Mention export still contains
+   the legacy Code-node environment-variable verifier; keep that template
+   inactive on free n8n. The current live Slack message route uses n8n's native
+   Slack Trigger instead of that custom Webhook template.
 
 ## Required behavior
 

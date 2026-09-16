@@ -1,0 +1,962 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "zc2ndUDqDAS0uX1Y",
+    "workflowName": "[case]Sync Comments",
+    "snapshotKind": "published",
+    "versionId": "30a88a17-aea8-44f2-a7f6-7d603daf68f3",
+    "draftVersionId": "30a88a17-aea8-44f2-a7f6-7d603daf68f3",
+    "publishedVersionId": "30a88a17-aea8-44f2-a7f6-7d603daf68f3",
+    "updatedAt": "2026-09-16T05:47:50.881Z",
+    "parentFolderId": "m6g0McsPdron3eH9"
+  },
+  "workflow": {
+    "name": "[case]Sync Comments",
+    "description": "接收 Zendesk 新评论事件，按已有 Case 归属向旧 Production 同步评论快照，并向 ECS Production、Preproduction 发送 comment.created 事件；连接 Zendesk 与 SupportPortal 的评论处理链路。",
+    "nodes": [
+      {
+        "parameters": {
+          "url": "=https://support.stellarix.space/api/integrations/zendesk/account-cases/{{ $json.body.detail.id }}/comment-sync-target",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {}
+        },
+        "id": "6c4f6cf6-bbc5-44dc-923b-2ff468d79920",
+        "name": "Account Case membership check",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -496,
+          -16
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f6e5b090-399b-438f-85d5-e86318fec765",
+                "leftValue": "={{ $json.is_account_case }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "4eeb05a5-cc18-4ba6-8411-240e9e5c24df",
+        "name": "Is Account Case",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -272,
+          -16
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const pages = $('Get_Case_Comment').all().map(item => item.json || {});\nconst webhookBody = $('Zen_New_Comment_Webhook').first().json?.body || {};\n\nif (!pages.length) {\n  throw new Error('Get_Case_Comment returned no pages');\n}\n\nconst comments = pages.flatMap(page =>\n  Array.isArray(page.comments) ? page.comments : []\n);\n\nconst users = pages.flatMap(page =>\n  Array.isArray(page.users) ? page.users : []\n);\n\nif (!comments.length) {\n  throw new Error('Zendesk comments response is empty');\n}\n\nconst firstCount = pages[0]?.count;\nconst expectedCount =\n  firstCount === null || firstCount === undefined || firstCount === ''\n    ? null\n    : Number(firstCount);\n\nconst lastPage = pages[pages.length - 1];\n\nif (\n  lastPage.next_page != null ||\n  (\n    expectedCount !== null &&\n    Number.isFinite(expectedCount) &&\n    comments.length !== expectedCount\n  )\n) {\n  throw new Error(\n    `Zendesk comment snapshot is incomplete: expected=${expectedCount}, received=${comments.length}`\n  );\n}\n\nconst userById = new Map(\n  users\n    .filter(user => user && user.id !== null && user.id !== undefined)\n    .map(user => [String(user.id), user])\n);\n\nfunction staffFlag(value) {\n  if (!value || typeof value !== 'object') {\n    return null;\n  }\n\n  if (typeof value.is_staff === 'boolean') {\n    return value.is_staff;\n  }\n\n  if (typeof value.is_agent === 'boolean') {\n    return value.is_agent;\n  }\n\n  const role = String(value.role || '').trim().toLowerCase();\n\n  if (['agent', 'admin', 'staff', 'support'].includes(role)) {\n    return true;\n  }\n\n  if (['end-user', 'end_user', 'customer', 'requester', 'user'].includes(role)) {\n    return false;\n  }\n\n  return null;\n}\n\nconst eventComment = webhookBody.event?.comment || {};\nconst eventCommentId = String(eventComment.id || '');\nconst eventAuthor =\n  eventComment.author && typeof eventComment.author === 'object'\n    ? eventComment.author\n    : {};\n\nconst commentsPayload = comments.map(comment => {\n  const commentId = String(comment.id);\n  const commentAuthorId =\n    comment.author_id === null || comment.author_id === undefined\n      ? null\n      : String(comment.author_id);\n\n  const currentAuthor =\n    commentId === eventCommentId\n      ? eventAuthor\n      : {};\n\n  const currentAuthorId =\n    commentAuthorId || (\n      currentAuthor.id === null || currentAuthor.id === undefined\n        ? null\n        : String(currentAuthor.id)\n    );\n\n  const user = currentAuthorId\n    ? userById.get(currentAuthorId)\n    : null;\n\n  const userIsAgent = staffFlag(user);\n  const webhookIsAgent =\n    commentId === eventCommentId\n      ? staffFlag(currentAuthor)\n      : null;\n\n  if (\n    userIsAgent !== null &&\n    webhookIsAgent !== null &&\n    userIsAgent !== webhookIsAgent\n  ) {\n    throw new Error(`Author identity conflict for comment ${commentId}`);\n  }\n\n  const isAgent =\n    userIsAgent !== null\n      ? userIsAgent\n      : webhookIsAgent;\n\n  const role =\n    isAgent === true\n      ? 'agent'\n      : isAgent === false\n        ? 'end-user'\n        : 'unknown';\n\n  const isPublic =\n    typeof comment.public === 'boolean'\n      ? comment.public\n      : comment.is_public === true;\n\n  return {\n    id: comment.id,\n    public: isPublic,\n    author: {\n      id: currentAuthorId,\n      name: user?.name || comment.author_name || currentAuthor.name || null,\n      role,\n      is_agent: isAgent\n    },\n    body: String(comment.body ?? comment.plain_body ?? ''),\n    via_channel: comment.via?.channel ?? null,\n    created_at: comment.created_at\n  };\n});\n\nconst latestCommentAt = comments\n  .map(comment => String(comment.created_at || '').trim())\n  .filter(Boolean)\n  .sort()\n  .at(-1);\n\nconst sourceUpdatedAt = String(\n  webhookBody.detail?.updated_at ||\n  webhookBody.time ||\n  latestCommentAt ||\n  ''\n).trim();\n\nif (!sourceUpdatedAt) {\n  throw new Error('source_updated_at is missing');\n}\n\nreturn [\n  {\n    json: {\n      source_updated_at: sourceUpdatedAt,\n      snapshot_complete: true,\n      trigger_comment_id: eventCommentId, \n      comments: commentsPayload\n    }\n  }\n];"
+        },
+        "id": "1373a315-aa5b-48cc-9122-d8efb78724b5",
+        "name": "Build complete comment snapshot",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          176,
+          -16
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://support.stellarix.space/api/integrations/zendesk/account-cases/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "3fa77757-9269-463c-8870-5efce6fcef34",
+        "name": "Sync comments to SupportPortal",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          400,
+          -16
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "3b75c538-533b-4be4-a422-df76effeac24",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -944,
+          176
+        ],
+        "id": "8d1a9d0f-2bfb-44b3-87fe-b91622c8b5bb",
+        "name": "Zen_New_Comment_Webhook",
+        "webhookId": "3b75c538-533b-4be4-a422-df76effeac24"
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments.json?include=users&per_page=100",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -48,
+          -16
+        ],
+        "id": "14bc35cb-5426-46ab-8d68-ee54ca5c3840",
+        "name": "Get_Case_Comment"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $json.body.detail.id }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -720,
+          176
+        ],
+        "id": "e1ced965-c832-4e59-8518-d83d7f4ea83f",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "url": "=https://support.stellarix.space/production/api/integrations/zendesk/account-cases/{{ $json.body.detail.id }}/comment-sync-target",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {}
+        },
+        "id": "dd8d27e6-cc9f-40da-9ebb-c25c3b783d1e",
+        "name": "prodCase membership check",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -496,
+          176
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f6e5b090-399b-438f-85d5-e86318fec765",
+                "leftValue": "={{ $json.is_account_case }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "188cb025-d082-480c-a10e-80b567b33637",
+        "name": "Is prodCase",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -272,
+          176
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments.json?include=users&per_page=100",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -48,
+          176
+        ],
+        "id": "1fc7e09d-d500-4a40-a55d-51d12bbdf73b",
+        "name": "Get_Case_Comment2"
+      },
+      {
+        "parameters": {
+          "jsCode": "const pages = $input.all().map(item => item.json || {});\nconst webhookBody = $('Zen_New_Comment_Webhook').first().json?.body || {};\n\nif (!pages.length) {\n  throw new Error('Get_Case_Comment returned no pages');\n}\n\nconst comments = pages.flatMap(page =>\n  Array.isArray(page.comments) ? page.comments : []\n);\n\nconst users = pages.flatMap(page =>\n  Array.isArray(page.users) ? page.users : []\n);\n\nif (!comments.length) {\n  throw new Error('Zendesk comments response is empty');\n}\n\nconst firstCount = pages[0]?.count;\nconst expectedCount =\n  firstCount === null || firstCount === undefined || firstCount === ''\n    ? null\n    : Number(firstCount);\n\nconst lastPage = pages[pages.length - 1];\n\nif (\n  lastPage.next_page != null ||\n  (\n    expectedCount !== null &&\n    Number.isFinite(expectedCount) &&\n    comments.length !== expectedCount\n  )\n) {\n  throw new Error(\n    `Zendesk comment snapshot is incomplete: expected=${expectedCount}, received=${comments.length}`\n  );\n}\n\nconst userById = new Map(\n  users\n    .filter(user => user && user.id !== null && user.id !== undefined)\n    .map(user => [String(user.id), user])\n);\n\nfunction staffFlag(value) {\n  if (!value || typeof value !== 'object') {\n    return null;\n  }\n\n  if (typeof value.is_staff === 'boolean') {\n    return value.is_staff;\n  }\n\n  if (typeof value.is_agent === 'boolean') {\n    return value.is_agent;\n  }\n\n  const role = String(value.role || '').trim().toLowerCase();\n\n  if (['agent', 'admin', 'staff', 'support'].includes(role)) {\n    return true;\n  }\n\n  if (['end-user', 'end_user', 'customer', 'requester', 'user'].includes(role)) {\n    return false;\n  }\n\n  return null;\n}\n\nconst eventComment = webhookBody.event?.comment || {};\nconst eventCommentId = String(eventComment.id || '');\nconst eventAuthor =\n  eventComment.author && typeof eventComment.author === 'object'\n    ? eventComment.author\n    : {};\n\nconst commentsPayload = comments.map(comment => {\n  const commentId = String(comment.id);\n  const commentAuthorId =\n    comment.author_id === null || comment.author_id === undefined\n      ? null\n      : String(comment.author_id);\n\n  const currentAuthor =\n    commentId === eventCommentId\n      ? eventAuthor\n      : {};\n\n  const currentAuthorId =\n    commentAuthorId || (\n      currentAuthor.id === null || currentAuthor.id === undefined\n        ? null\n        : String(currentAuthor.id)\n    );\n\n  const user = currentAuthorId\n    ? userById.get(currentAuthorId)\n    : null;\n\n  const userIsAgent = staffFlag(user);\n  const webhookIsAgent =\n    commentId === eventCommentId\n      ? staffFlag(currentAuthor)\n      : null;\n\n  if (\n    userIsAgent !== null &&\n    webhookIsAgent !== null &&\n    userIsAgent !== webhookIsAgent\n  ) {\n    throw new Error(`Author identity conflict for comment ${commentId}`);\n  }\n\n  const isAgent =\n    userIsAgent !== null\n      ? userIsAgent\n      : webhookIsAgent;\n\n  const role =\n    isAgent === true\n      ? 'agent'\n      : isAgent === false\n        ? 'end-user'\n        : 'unknown';\n\n  const isPublic =\n    typeof comment.public === 'boolean'\n      ? comment.public\n      : comment.is_public === true;\n\n  return {\n    id: comment.id,\n    public: isPublic,\n    author: {\n      id: currentAuthorId,\n      name: user?.name || comment.author_name || currentAuthor.name || null,\n      role,\n      is_agent: isAgent\n    },\n    body: String(comment.body ?? comment.plain_body ?? ''),\n    via_channel: comment.via?.channel ?? null,\n    created_at: comment.created_at\n  };\n});\n\nconst latestCommentAt = comments\n  .map(comment => String(comment.created_at || '').trim())\n  .filter(Boolean)\n  .sort()\n  .at(-1);\n\nconst sourceUpdatedAt = String(\n  webhookBody.detail?.updated_at ||\n  webhookBody.time ||\n  latestCommentAt ||\n  ''\n).trim();\n\nif (!sourceUpdatedAt) {\n  throw new Error('source_updated_at is missing');\n}\n\nreturn [\n  {\n    json: {\n      source_updated_at: sourceUpdatedAt,\n      snapshot_complete: true,\n      trigger_comment_id: eventCommentId, \n      comments: commentsPayload\n    }\n  }\n];"
+        },
+        "id": "a0e7c708-756a-4e55-950d-715181dd7d7c",
+        "name": "Build complete comment snapshot1",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          176,
+          176
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://support.stellarix.space/production/api/integrations/zendesk/account-cases/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "57d2f356-2447-4215-8fba-faa17a8daa61",
+        "name": "Sync comments to prod",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          400,
+          176
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "2b2c7e47-0766-4a22-8382-9fc60d25a7a8",
+                "leftValue": "={{ Array.isArray($json.executions) && $json.executions.length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "2e6487a1-a9b4-433b-ba0f-6752ab2a5bc8",
+        "name": "Is ECS Account Case",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -272,
+          368
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments.json?include=users&per_page=100",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {
+                "followRedirects": true,
+                "maxRedirects": 21
+              }
+            },
+            "pagination": {}
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -48,
+          368
+        ],
+        "id": "5811694f-6b24-4221-8a78-2881f128fb1f",
+        "name": "Get_ECS_Case_Comment"
+      },
+      {
+        "parameters": {
+          "jsCode": "const pages = $input.all().map(item => item.json || {});\nconst webhookBody = $('Zen_New_Comment_Webhook').first().json?.body || {};\nconst detail = webhookBody.detail && typeof webhookBody.detail === 'object'\n  ? webhookBody.detail\n  : {};\nconst eventComment = webhookBody.event?.comment && typeof webhookBody.event.comment === 'object'\n  ? webhookBody.event.comment\n  : {};\n\nif (!pages.length) {\n  throw new Error('Get_ECS_Case_Comment returned no pages');\n}\n\nconst comments = pages.flatMap(page =>\n  Array.isArray(page.comments) ? page.comments : []\n);\nconst users = pages.flatMap(page =>\n  Array.isArray(page.users) ? page.users : []\n);\nif (!comments.length) {\n  throw new Error('Zendesk comments response is empty');\n}\n\nconst firstCount = pages[0]?.count;\nconst expectedCount =\n  firstCount === null || firstCount === undefined || firstCount === ''\n    ? null\n    : Number(firstCount);\nconst lastPage = pages[pages.length - 1];\nif (\n  lastPage.next_page != null ||\n  (expectedCount !== null && Number.isFinite(expectedCount) && comments.length !== expectedCount)\n) {\n  throw new Error(\n    'Zendesk comment snapshot is incomplete: expected=' + expectedCount + ', received=' + comments.length\n  );\n}\n\nconst ticketId = String(detail.id || '').trim();\nconst eventCommentId = String(eventComment.id || '').trim();\nif (!/^\\d+$/.test(ticketId)) {\n  throw new Error('Zendesk ticket id is missing or not numeric');\n}\nif (!/^\\d+$/.test(eventCommentId)) {\n  throw new Error('Zendesk webhook comment id is missing or not numeric');\n}\nif (!comments.some(comment => String(comment.id) === eventCommentId)) {\n  throw new Error('Webhook comment ' + eventCommentId + ' is not present in the Zendesk snapshot');\n}\n\nconst userById = new Map(\n  users\n    .filter(user => user && user.id !== null && user.id !== undefined)\n    .map(user => [String(user.id), user])\n);\n\nfunction staffFlag(value) {\n  if (!value || typeof value !== 'object') {\n    return null;\n  }\n  if (typeof value.is_staff === 'boolean') return value.is_staff;\n  if (typeof value.is_agent === 'boolean') return value.is_agent;\n  const role = String(value.role || '').trim().toLowerCase();\n  if (['agent', 'admin', 'staff', 'support'].includes(role)) return true;\n  if (['end-user', 'end_user', 'customer', 'requester', 'user'].includes(role)) return false;\n  return null;\n}\n\nconst commentsPayload = comments.map(comment => {\n  const commentId = String(comment.id);\n  const commentAuthorId =\n    comment.author_id === null || comment.author_id === undefined\n      ? null\n      : String(comment.author_id);\n  const currentAuthor = commentId === eventCommentId ? eventComment.author || {} : {};\n  const user = commentAuthorId ? userById.get(commentAuthorId) : null;\n  const userIsAgent = staffFlag(user);\n  const webhookIsAgent = commentId === eventCommentId ? staffFlag(currentAuthor) : null;\n  if (userIsAgent !== null && webhookIsAgent !== null && userIsAgent !== webhookIsAgent) {\n    throw new Error('Author identity conflict for comment ' + commentId);\n  }\n  const isAgent = userIsAgent !== null ? userIsAgent : webhookIsAgent;\n  return {\n    id: commentId,\n    public: typeof comment.public === 'boolean' ? comment.public : comment.is_public === true,\n    author: {\n      id: commentAuthorId,\n      name: user?.name || comment.author_name || currentAuthor.name || null,\n      role: isAgent === true ? 'agent' : isAgent === false ? 'end-user' : 'unknown',\n      is_agent: isAgent,\n    },\n    body: String(comment.body ?? comment.plain_body ?? ''),\n    via_channel: comment.via?.channel ?? null,\n    created_at: comment.created_at,\n  };\n});\n\nconst sourceUpdatedAt = String(\n  detail.updated_at || webhookBody.time || eventComment.created_at || commentsPayload.at(-1)?.created_at || ''\n).trim();\nif (!sourceUpdatedAt) {\n  throw new Error('source_updated_at is missing');\n}\n\nconst status = String(detail.status || 'open').trim().toLowerCase();\nif (!['new', 'open', 'pending', 'hold', 'solved', 'closed'].includes(status)) {\n  throw new Error('Zendesk ticket status is invalid: ' + status);\n}\n\nconst requester = detail.requester && typeof detail.requester === 'object'\n  ? detail.requester\n  : webhookBody.requester && typeof webhookBody.requester === 'object'\n    ? webhookBody.requester\n    : {};\nconst organization = detail.organization && typeof detail.organization === 'object'\n  ? detail.organization\n  : null;\n\nreturn [{\n  json: {\n    schema_version: 'automation-intake-v1',\n    event_id: 'zendesk:ticket:' + ticketId + ':comment:' + eventCommentId,\n    event_type: 'comment.created',\n    occurred_at: sourceUpdatedAt,\n    ticket: {\n      id: ticketId,\n      status,\n      subject: String(detail.subject || ''),\n      description: String(detail.description || ''),\n      requester: {\n        id: requester.id == null ? (detail.requester_id == null ? null : String(detail.requester_id)) : String(requester.id),\n        name: requester.name == null ? null : String(requester.name),\n        email: requester.email == null ? null : String(requester.email),\n        role: requester.role == null ? 'end-user' : String(requester.role),\n        is_agent: typeof requester.is_agent === 'boolean' ? requester.is_agent : false,\n      },\n      organization: organization\n        ? {\n            id: organization.id == null ? null : String(organization.id),\n            name: organization.name == null ? null : String(organization.name),\n            email: organization.email == null ? null : String(organization.email),\n            role: organization.role == null ? null : String(organization.role),\n            is_agent: typeof organization.is_agent === 'boolean' ? organization.is_agent : null,\n          }\n        : null,\n      tags: Array.isArray(detail.tags) ? detail.tags.map(tag => String(tag)) : [],\n      custom_fields: detail.custom_fields && typeof detail.custom_fields === 'object'\n        ? detail.custom_fields\n        : {},\n      updated_at: detail.updated_at || null,\n    },\n    comment_snapshot: {\n      source_updated_at: sourceUpdatedAt,\n      snapshot_complete: true,\n      trigger_comment_id: eventCommentId,\n      comments: commentsPayload,\n    },\n  },\n}];"
+        },
+        "id": "0f0dc19b-3586-46d4-8211-3cab0eb2b15a",
+        "name": "Build ECS comment.created intake",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          176,
+          368
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/production/v1/intake",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "e2f7675f-190d-4941-a7ab-888a53566089",
+        "name": "Send comment event to ECS Production",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          400,
+          368
+        ],
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "=https://supportcenter.stellarix.space/automation/production/v1/cases/{{ $json.body.detail.id }}/executions",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {}
+        },
+        "id": "ace5ded1-5fd9-4ec4-91d8-fbf55188db9b",
+        "name": "ECS production",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -496,
+          368
+        ],
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "=https://supportcenter.stellarix.space/automation/preproduction/v1/cases/{{ $json.body.detail.id }}/executions",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {}
+        },
+        "id": "e96e821c-c01d-4bfb-b985-96e2e4e667d1",
+        "name": "ECS preproduction",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -496,
+          544
+        ],
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "2b2c7e47-0766-4a22-8382-9fc60d25a7a8",
+                "leftValue": "={{ Array.isArray($json.executions) && $json.executions.length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "904c7b14-80d4-49ad-99ff-5ec4faf714b9",
+        "name": "Is ECS Account Case1",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -304,
+          544
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zen_New_Comment_Webhook').item.json.body.detail.id }}/comments.json?include=users&per_page=100",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {
+                "followRedirects": true,
+                "maxRedirects": 21
+              }
+            },
+            "pagination": {}
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -64,
+          528
+        ],
+        "id": "30973094-72a7-4da7-b510-aad6a590f1f5",
+        "name": "Get_ECS_Case_Comment1"
+      },
+      {
+        "parameters": {
+          "jsCode": "const pages = $input.all().map(item => item.json || {});\nconst webhookBody = $('Zen_New_Comment_Webhook').first().json?.body || {};\nconst detail = webhookBody.detail && typeof webhookBody.detail === 'object'\n  ? webhookBody.detail\n  : {};\nconst eventComment = webhookBody.event?.comment && typeof webhookBody.event.comment === 'object'\n  ? webhookBody.event.comment\n  : {};\n\nif (!pages.length) {\n  throw new Error('Get_ECS_Case_Comment returned no pages');\n}\n\nconst comments = pages.flatMap(page =>\n  Array.isArray(page.comments) ? page.comments : []\n);\nconst users = pages.flatMap(page =>\n  Array.isArray(page.users) ? page.users : []\n);\nif (!comments.length) {\n  throw new Error('Zendesk comments response is empty');\n}\n\nconst firstCount = pages[0]?.count;\nconst expectedCount =\n  firstCount === null || firstCount === undefined || firstCount === ''\n    ? null\n    : Number(firstCount);\nconst lastPage = pages[pages.length - 1];\nif (\n  lastPage.next_page != null ||\n  (expectedCount !== null && Number.isFinite(expectedCount) && comments.length !== expectedCount)\n) {\n  throw new Error(\n    'Zendesk comment snapshot is incomplete: expected=' + expectedCount + ', received=' + comments.length\n  );\n}\n\nconst ticketId = String(detail.id || '').trim();\nconst eventCommentId = String(eventComment.id || '').trim();\nif (!/^\\d+$/.test(ticketId)) {\n  throw new Error('Zendesk ticket id is missing or not numeric');\n}\nif (!/^\\d+$/.test(eventCommentId)) {\n  throw new Error('Zendesk webhook comment id is missing or not numeric');\n}\nif (!comments.some(comment => String(comment.id) === eventCommentId)) {\n  throw new Error('Webhook comment ' + eventCommentId + ' is not present in the Zendesk snapshot');\n}\n\nconst userById = new Map(\n  users\n    .filter(user => user && user.id !== null && user.id !== undefined)\n    .map(user => [String(user.id), user])\n);\n\nfunction staffFlag(value) {\n  if (!value || typeof value !== 'object') {\n    return null;\n  }\n  if (typeof value.is_staff === 'boolean') return value.is_staff;\n  if (typeof value.is_agent === 'boolean') return value.is_agent;\n  const role = String(value.role || '').trim().toLowerCase();\n  if (['agent', 'admin', 'staff', 'support'].includes(role)) return true;\n  if (['end-user', 'end_user', 'customer', 'requester', 'user'].includes(role)) return false;\n  return null;\n}\n\nconst commentsPayload = comments.map(comment => {\n  const commentId = String(comment.id);\n  const commentAuthorId =\n    comment.author_id === null || comment.author_id === undefined\n      ? null\n      : String(comment.author_id);\n  const currentAuthor = commentId === eventCommentId ? eventComment.author || {} : {};\n  const user = commentAuthorId ? userById.get(commentAuthorId) : null;\n  const userIsAgent = staffFlag(user);\n  const webhookIsAgent = commentId === eventCommentId ? staffFlag(currentAuthor) : null;\n  if (userIsAgent !== null && webhookIsAgent !== null && userIsAgent !== webhookIsAgent) {\n    throw new Error('Author identity conflict for comment ' + commentId);\n  }\n  const isAgent = userIsAgent !== null ? userIsAgent : webhookIsAgent;\n  return {\n    id: commentId,\n    public: typeof comment.public === 'boolean' ? comment.public : comment.is_public === true,\n    author: {\n      id: commentAuthorId,\n      name: user?.name || comment.author_name || currentAuthor.name || null,\n      role: isAgent === true ? 'agent' : isAgent === false ? 'end-user' : 'unknown',\n      is_agent: isAgent,\n    },\n    body: String(comment.body ?? comment.plain_body ?? ''),\n    via_channel: comment.via?.channel ?? null,\n    created_at: comment.created_at,\n  };\n});\n\nconst sourceUpdatedAt = String(\n  detail.updated_at || webhookBody.time || eventComment.created_at || commentsPayload.at(-1)?.created_at || ''\n).trim();\nif (!sourceUpdatedAt) {\n  throw new Error('source_updated_at is missing');\n}\n\nconst status = String(detail.status || 'open').trim().toLowerCase();\nif (!['new', 'open', 'pending', 'hold', 'solved', 'closed'].includes(status)) {\n  throw new Error('Zendesk ticket status is invalid: ' + status);\n}\n\nconst requester = detail.requester && typeof detail.requester === 'object'\n  ? detail.requester\n  : webhookBody.requester && typeof webhookBody.requester === 'object'\n    ? webhookBody.requester\n    : {};\nconst organization = detail.organization && typeof detail.organization === 'object'\n  ? detail.organization\n  : null;\n\nreturn [{\n  json: {\n    schema_version: 'automation-intake-v1',\n    event_id: 'zendesk:ticket:' + ticketId + ':comment:' + eventCommentId,\n    event_type: 'comment.created',\n    occurred_at: sourceUpdatedAt,\n    ticket: {\n      id: ticketId,\n      status,\n      subject: String(detail.subject || ''),\n      description: String(detail.description || ''),\n      requester: {\n        id: requester.id == null ? (detail.requester_id == null ? null : String(detail.requester_id)) : String(requester.id),\n        name: requester.name == null ? null : String(requester.name),\n        email: requester.email == null ? null : String(requester.email),\n        role: requester.role == null ? 'end-user' : String(requester.role),\n        is_agent: typeof requester.is_agent === 'boolean' ? requester.is_agent : false,\n      },\n      organization: organization\n        ? {\n            id: organization.id == null ? null : String(organization.id),\n            name: organization.name == null ? null : String(organization.name),\n            email: organization.email == null ? null : String(organization.email),\n            role: organization.role == null ? null : String(organization.role),\n            is_agent: typeof organization.is_agent === 'boolean' ? organization.is_agent : null,\n          }\n        : null,\n      tags: Array.isArray(detail.tags) ? detail.tags.map(tag => String(tag)) : [],\n      custom_fields: detail.custom_fields && typeof detail.custom_fields === 'object'\n        ? detail.custom_fields\n        : {},\n      updated_at: detail.updated_at || null,\n    },\n    comment_snapshot: {\n      source_updated_at: sourceUpdatedAt,\n      snapshot_complete: true,\n      trigger_comment_id: eventCommentId,\n      comments: commentsPayload,\n    },\n  },\n}];"
+        },
+        "id": "344f6710-dab9-43f9-a7da-b05f370d452d",
+        "name": "Build ECS comment.created intake1",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          144,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/intake",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "88705198-d69d-47cd-af00-499713079141",
+        "name": "to ECS preproduction1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          400,
+          544
+        ],
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Account Case membership check": {
+        "main": [
+          [
+            {
+              "node": "Is Account Case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Account Case": {
+        "main": [
+          [
+            {
+              "node": "Get_Case_Comment",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Build complete comment snapshot": {
+        "main": [
+          [
+            {
+              "node": "Sync comments to SupportPortal",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zen_New_Comment_Webhook": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_Case_Comment": {
+        "main": [
+          [
+            {
+              "node": "Build complete comment snapshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data": {
+        "main": [
+          [
+            {
+              "node": "prodCase membership check",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "ECS production",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "ECS preproduction",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "prodCase membership check": {
+        "main": [
+          [
+            {
+              "node": "Is prodCase",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is prodCase": {
+        "main": [
+          [
+            {
+              "node": "Get_Case_Comment2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_Case_Comment2": {
+        "main": [
+          [
+            {
+              "node": "Build complete comment snapshot1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build complete comment snapshot1": {
+        "main": [
+          [
+            {
+              "node": "Sync comments to prod",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is ECS Account Case": {
+        "main": [
+          [
+            {
+              "node": "Get_ECS_Case_Comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_ECS_Case_Comment": {
+        "main": [
+          [
+            {
+              "node": "Build ECS comment.created intake",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build ECS comment.created intake": {
+        "main": [
+          [
+            {
+              "node": "Send comment event to ECS Production",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "ECS production": {
+        "main": [
+          [
+            {
+              "node": "Is ECS Account Case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "ECS preproduction": {
+        "main": [
+          [
+            {
+              "node": "Is ECS Account Case1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is ECS Account Case1": {
+        "main": [
+          [
+            {
+              "node": "Get_ECS_Case_Comment1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_ECS_Case_Comment1": {
+        "main": [
+          [
+            {
+              "node": "Build ECS comment.created intake1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build ECS comment.created intake1": {
+        "main": [
+          [
+            {
+              "node": "to ECS preproduction1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "availableInMCP": true,
+      "executionOrder": "v1",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment2",
+        "path": "nodes.Get_Case_Comment2.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment2",
+        "path": "nodes.Get_Case_Comment2.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment2",
+        "path": "nodes.Get_Case_Comment2.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_ECS_Case_Comment",
+        "path": "nodes.Get_ECS_Case_Comment.parameters.headerParameters.parameters.0.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_ECS_Case_Comment",
+        "path": "nodes.Get_ECS_Case_Comment.parameters.headerParameters.parameters.1.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_ECS_Case_Comment",
+        "path": "nodes.Get_ECS_Case_Comment.parameters.headerParameters.parameters.2.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_ECS_Case_Comment1",
+        "path": "nodes.Get_ECS_Case_Comment1.parameters.headerParameters.parameters.0.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_ECS_Case_Comment1",
+        "path": "nodes.Get_ECS_Case_Comment1.parameters.headerParameters.parameters.1.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_ECS_Case_Comment1",
+        "path": "nodes.Get_ECS_Case_Comment1.parameters.headerParameters.parameters.2.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

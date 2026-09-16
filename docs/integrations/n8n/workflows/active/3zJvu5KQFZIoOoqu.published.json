@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "3zJvu5KQFZIoOoqu",
+    "workflowName": "[ops]Error Test|Zendesk",
+    "snapshotKind": "published",
+    "versionId": "ecafca03-3502-4dab-929d-89ce95ec4aa9",
+    "draftVersionId": "ecafca03-3502-4dab-929d-89ce95ec4aa9",
+    "publishedVersionId": "ecafca03-3502-4dab-929d-89ce95ec4aa9",
+    "updatedAt": "2026-09-16T05:51:57.638Z",
+    "parentFolderId": "38jn9lYBMhDSyrzo"
+  },
+  "workflow": {
+    "name": "[ops]Error Test|Zendesk",
+    "description": "私有运维测试流程：收到内部 Chat 输入后触发可控错误，用于验证共享错误告警；不访问真实 Zendesk 工单。",
+    "nodes": [
+      {
+        "parameters": {
+          "public": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          0
+        ],
+        "id": "6e9b38da-3f97-4846-8027-c663a3f488a4",
+        "name": "When chat message received",
+        "webhookId": "bdb42fdd-0145-4d37-9429-5dd4bf7effc9"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "id",
+                "value": "={{ $now }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          208,
+          0
+        ],
+        "id": "4f915c6e-eea1-4029-8e73-63d9f2d03d82",
+        "name": "Execution Data"
+      },
+      {
+        "id": "898069bf-4158-4f55-97df-c1d8e62ebabe",
+        "name": "Generate Controlled Failure",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "throw new Error('Controlled n8n error-handler test');"
+        }
+      }
+    ],
+    "connections": {
+      "When chat message received": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Generate Controlled Failure",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Controlled Failure": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

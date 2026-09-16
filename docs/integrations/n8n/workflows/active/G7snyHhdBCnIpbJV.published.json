@@ -1,0 +1,303 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "G7snyHhdBCnIpbJV",
+    "workflowName": "[review]Aged",
+    "snapshotKind": "published",
+    "versionId": "0327ce93-c289-4bc4-b888-40d2071958ac",
+    "draftVersionId": "0327ce93-c289-4bc4-b888-40d2071958ac",
+    "publishedVersionId": "0327ce93-c289-4bc4-b888-40d2071958ac",
+    "updatedAt": "2026-09-16T04:11:45.903Z",
+    "parentFolderId": "UfVNL6lt6WgPEZ7T"
+  },
+  "workflow": {
+    "name": "[review]Aged",
+    "description": "每个工作日北京时间 06:00 查询创建超过 30 天且未解决的 Tier1 工单，随机抽取 1 条调用 [review]Case|Subflow，进入 Slack 人工评审与质检记录流程。",
+    "nodes": [
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/search.json?query=status<solved tags:tier1 created<{{ $now.minus({ days: 30 }).toISODate() }} -assignee:__REDACTED_EMAIL__ -tags:sa -asignee:__REDACTED_EMAIL__",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          256
+        ],
+        "id": "58610b34-b1a7-4892-beec-38c0bcefdfcf",
+        "name": "get_open_case"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "6ccc8614-ede0-4c32-8839-5dea7d113f81",
+                "leftValue": "={{ $json.count }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          448,
+          256
+        ],
+        "id": "fa3f75bd-a88f-49f4-b0a7-ddab7ac5fce8",
+        "name": "If"
+      },
+      {
+        "parameters": {
+          "jsCode": "// 初始化一个数组来存放提取的 case id\nconst caseIds = [];\n\n// 检查输入数据的结构，并提取 id\nif ($input.first() && $input.first().json) {\n  const data = $input.first().json;\n\n  // 方法1：假设数据格式严格为 [{ results: [...] }]\n  if (Array.isArray(data) && data[0] && data[0].results) {\n    const tickets = data[0].results;\n    for (const ticket of tickets) {\n      if (ticket.id) {\n        caseIds.push(ticket.id);\n      }\n    }\n  }\n  // 方法2：更通用的方式，直接寻找 results 数组\n  else if (data.results) {\n    const tickets = data.results;\n    for (const ticket of tickets) {\n      if (ticket.id) {\n        caseIds.push(ticket.id);\n      }\n    }\n  } else {\n    // 如果数据结构不符，输出原始数据以便调试\n    console.log('未找到 results 数据，原始数据为:', JSON.stringify(data, null, 2));\n  }\n}\n\n// 将结果输出为指定的格式：包含 tag 和 caseid\nconst items = [];\nfor (const id of caseIds) {\n  // 为每个 ID 创建一个新的 item，包含固定 tag 和小写 caseid\n  items.push({\n    json: {\n      tag: \"Long Aged\",\n      caseId: id  // 注意：这里是小写的 caseid，不是 caseId\n    }\n  });\n}\n\n// 如果有提取到 ID，则输出 items；否则返回一个空数组\nreturn items.length > 0 ? items : [];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          0,
+          32
+        ],
+        "id": "04814cc0-9ebf-455b-b32e-0d80523b68ff",
+        "name": "get_all_case",
+        "disabled": true
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "b1Unpl6miABzcTmZ",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/b1Unpl6miABzcTmZ",
+            "cachedResultName": "case_review_subflow"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "mode": "each",
+          "options": {
+            "waitForSubWorkflow": false
+          }
+        },
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          896,
+          256
+        ],
+        "id": "a905dd1e-e19c-40b2-b41f-80ce9fbdaab7",
+        "name": "Execute Workflow"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $json.caseId }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          1120,
+          256
+        ],
+        "id": "d280a174-ac8a-43de-ac74-5bdc5a1711d1",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 6 * * 1-5"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          0,
+          256
+        ],
+        "id": "73f87d0c-e65a-4308-a63a-85ff6741b315",
+        "name": "Schedule Trigger"
+      },
+      {
+        "parameters": {
+          "jsCode": "// 获取输入数据\nconst data = $input.all()[0].json;\n\n// 确保有数据\nif (!data.results || data.results.length === 0) {\n  return [{ json: { error: \"没有找到任何 case\" } }];\n}\n\n// 获取结果数组\nconst results = data.results;\nconst totalCases = results.length;\n\n// 确定要选择多少个案例（如果总数小于5，则选择所有）\nconst numToSelect = Math.min(1, totalCases);\n\n// 创建一个数组来存储已选择的索引，避免重复选择\nconst selectedIndices = new Set();\nconst selectedCases = [];\n\n// 随机选择不重复的案例\nwhile (selectedCases.length < numToSelect) {\n  const randomIndex = Math.floor(Math.random() * totalCases);\n  \n  // 如果这个索引还没有被选择过\n  if (!selectedIndices.has(randomIndex)) {\n    selectedIndices.add(randomIndex);\n    selectedCases.push(results[randomIndex]);\n  }\n}\n\n// 创建输出项，格式为包含 tag 和 caseid 的对象\nconst items = [];\nfor (const selectedCase of selectedCases) {\n  items.push({\n    json: {\n      tag: \"Longaged\",\n      caseId: selectedCase.id\n    }\n  });\n}\n\n// 返回输出\nreturn items;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          256
+        ],
+        "id": "c556977f-7511-4ebf-a8c3-0bd615bb4fd7",
+        "name": "1_random_case"
+      }
+    ],
+    "connections": {
+      "get_open_case": {
+        "main": [
+          [
+            {
+              "node": "If",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [],
+          [
+            {
+              "node": "1_random_case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_all_case": {
+        "main": [
+          []
+        ]
+      },
+      "Execute Workflow": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "node": "get_open_case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "1_random_case": {
+        "main": [
+          [
+            {
+              "node": "Execute Workflow",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "timezone": "Asia/Shanghai",
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "get_open_case",
+        "path": "nodes.get_open_case.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "get_open_case",
+        "path": "nodes.get_open_case.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "get_open_case",
+        "path": "nodes.get_open_case.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": null,
+        "path": "workflow.nodes.0.parameters.url",
+        "field": null,
+        "reason": "email"
+      },
+      {
+        "nodeName": null,
+        "path": "workflow.nodes.0.parameters.url",
+        "field": null,
+        "reason": "email"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

@@ -1,0 +1,311 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "vvyPwdWXvJENN1zm",
+    "workflowName": "[review]Random",
+    "snapshotKind": "published",
+    "versionId": "257ec67f-e977-4558-872a-cdcc29759aa9",
+    "draftVersionId": "257ec67f-e977-4558-872a-cdcc29759aa9",
+    "publishedVersionId": "257ec67f-e977-4558-872a-cdcc29759aa9",
+    "updatedAt": "2026-09-16T04:11:45.303Z",
+    "parentFolderId": "UfVNL6lt6WgPEZ7T"
+  },
+  "workflow": {
+    "name": "[review]Random",
+    "description": "每个工作日北京时间 06:00 查询未解决且未 reviewed 的 Tier1 工单，为配置的每位负责人随机抽取 1 条，调用 [review]Case|Subflow 完成人工评审，并更新 reviewed 标签。",
+    "nodes": [
+      {
+        "parameters": {
+          "jsCode": "// 获取输入数据\nconst data = $input.all()[0].json;\n\n// 确保有数据\nif (!data.results || data.results.length === 0) {\n  return [{ json: { error: \"没有找到任何 case\" } }];\n}\n\n// 获取结果数组\nconst results = data.results;\nconst totalCases = results.length;\n\n// 确定要选择多少个案例（如果总数小于5，则选择所有）\nconst numToSelect = Math.min(1, totalCases);\n\n// 创建一个数组来存储已选择的索引，避免重复选择\nconst selectedIndices = new Set();\nconst selectedCases = [];\n\n// 随机选择不重复的案例\nwhile (selectedCases.length < numToSelect) {\n  const randomIndex = Math.floor(Math.random() * totalCases);\n  \n  // 如果这个索引还没有被选择过\n  if (!selectedIndices.has(randomIndex)) {\n    selectedIndices.add(randomIndex);\n    selectedCases.push(results[randomIndex]);\n  }\n}\n\n// 创建输出项，格式为包含 tag 和 caseid 的对象\nconst items = [];\nfor (const selectedCase of selectedCases) {\n  items.push({\n    json: {\n      tag: \"Random\",\n      caseId: selectedCase.id\n    }\n  });\n}\n\n// 返回输出\nreturn items;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          0,
+          -208
+        ],
+        "id": "bd52e65f-edd9-4029-b1bd-3d4445c4057c",
+        "name": "get_random_case"
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/search.json?query=status<solved tags:tier1 -tags:reviewed",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          16
+        ],
+        "id": "56e4bf7b-14da-4b88-a5f2-ab2ba645311d",
+        "name": "get_open_case"
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "b1Unpl6miABzcTmZ",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/b1Unpl6miABzcTmZ",
+            "cachedResultName": "case_review_subflow"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "mode": "each",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          672,
+          16
+        ],
+        "id": "86850efe-c317-438a-98bb-96c4d36dda6f",
+        "name": "Call 'case_review_subflow'"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $json['Ticket #'] }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          896,
+          16
+        ],
+        "id": "daff78e2-7326-47d0-a219-e7247ce4f531",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Call \\'case_review_subflow\\'').item.json['Ticket #'] }}/tags.json ",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n    \"tags\": [\"reviewed\"]\n}\n",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1120,
+          16
+        ],
+        "id": "3ef3d926-1506-40a5-8084-b7eb56b4ab22",
+        "name": "update_tag"
+      },
+      {
+        "parameters": {
+          "jsCode": "// 1. 定义目标负责人ID列表\nconst targetAssignees = [\n  40430228336660,\n  31116972667028,\n  31222576351636,\n  31116509485716,\n  31116382774932,\n  37443910673684\n];\n\n// 2. 获取输入中的工单数组\nconst allTickets = $input.first().json.results || [];\n\n// 3. 按 assignee_id 分组工单\nconst groupedByAssignee = {};\nallTickets.forEach(ticket => {\n  const aid = ticket.assignee_id;\n  if (!groupedByAssignee[aid]) {\n    groupedByAssignee[aid] = [];\n  }\n  groupedByAssignee[aid].push(ticket);\n});\n\nconst output = [];\n\n// 4. 为每个目标负责人随机选取一个工单（如果有）\ntargetAssignees.forEach(id => {\n  const ticketsForThisUser = groupedByAssignee[id];\n  \n  if (ticketsForThisUser && ticketsForThisUser.length > 0) {\n    const randomIndex = Math.floor(Math.random() * ticketsForThisUser.length);\n    const selectedTicket = ticketsForThisUser[randomIndex];\n    \n    // 转换为所需格式，tag固定为\"Random\"\n    output.push({\n      tag: \"Random\",\n      caseId: selectedTicket.case_id || selectedTicket.id\n    });\n  }\n});\n\n// 5. 返回格式化后的数组\nreturn output;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          16
+        ],
+        "id": "6162efeb-149c-4037-8385-3c8b9ae33ed8",
+        "name": "1_random_case_per_agent"
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 6 * * 1-5"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          0,
+          16
+        ],
+        "id": "7c00e75a-0eb7-4915-96ae-9eb7d2c39f7a",
+        "name": "Schedule Trigger"
+      }
+    ],
+    "connections": {
+      "get_random_case": {
+        "main": [
+          []
+        ]
+      },
+      "get_open_case": {
+        "main": [
+          [
+            {
+              "node": "1_random_case_per_agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call 'case_review_subflow'": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data": {
+        "main": [
+          [
+            {
+              "node": "update_tag",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "1_random_case_per_agent": {
+        "main": [
+          [
+            {
+              "node": "Call 'case_review_subflow'",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "node": "get_open_case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "timezone": "Asia/Shanghai",
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "get_open_case",
+        "path": "nodes.get_open_case.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "get_open_case",
+        "path": "nodes.get_open_case.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "get_open_case",
+        "path": "nodes.get_open_case.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "update_tag",
+        "path": "nodes.update_tag.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "update_tag",
+        "path": "nodes.update_tag.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "update_tag",
+        "path": "nodes.update_tag.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}
