@@ -1,12 +1,12 @@
 # 启用 n8n 工作流说明
 
-范围、分类和核对时间见[工作流目录](./README.md)。本页的 16 段 **n8n description** 与 2026-09-16 的远端回读逐字一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
+范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，本页各节标题保留旧名。16 段 **n8n description** 与 2026-09-16 的远端回读逐字一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
 
 说明优先使用已发布图；画布上禁用或未连接的节点不计入当前主路径。知识生成、Slack 操作与质检流程仍各自承担原有职责，纳入本地文档不代表都直接调用 SupportPortal。
 
 <a id="w-208nrQNRfpkSkQhM"></a>
 
-## 2_slack - SupportPortal Account Handoff -> Slack
+## [slack]Notify Handoff（旧名 2_slack - SupportPortal Account Handoff -> Slack）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/208nrQNRfpkSkQhM) · 直接接入 / Slack 通知
 
@@ -21,7 +21,7 @@
 
 <a id="w-b1Unpl6miABzcTmZ"></a>
 
-## case_review_subflow
+## [review]Case|Subflow（旧名 case_review_subflow）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/b1Unpl6miABzcTmZ) · 配套 / 支持质检
 
@@ -30,14 +30,14 @@
 > 接收父流程的工单 ID 和审查类型，获取 Zendesk 工单与评论，由 AI 提炼问题和摘要，在 Slack 等待人工评审，再添加 reviewed 标签并写入 Google Sheets；属于支持质检配套流程。
 
 - **入口与主路径**：父流程输入 `caseId`、`tag` → Zendesk 工单、负责人及评论 → AI 问题概括和摘要 → Slack `sendAndWait` 表单 → 添加 `reviewed` 标签 → Google Sheets。
-- **调用与依赖**：由 random、longage、negative 三个评审流程调用；使用 Zendesk、AI、Slack、Google Sheets，错误交给 `error_handle`。
+- **调用与依赖**：由 `[review]Random`、`[review]Aged`、`[review]Rating` 三个评审流程按 workflow ID 调用；使用 Zendesk、AI、Slack、Google Sheets，错误交给 `[ops]Error Alert`。
 - **与项目的关系**：支持质检配套流程，当前没有直接调用 SupportPortal API。
 - **人工检查**：表单记录审查类别、建议和通过/失败。已经等待人工输入的 execution 应沿原等待入口继续，重新执行会创建另一轮评审。
 - **已知配置问题**：状态条件为 `status != solved OR status != closed`，无法排除这两种状态；详见[待核对配置](#configuration-findings)。
 
 <a id="w-zc2ndUDqDAS0uX1Y"></a>
 
-## commen_sync_ecs_production
+## [case]Sync Comments（旧名 commen_sync_ecs_production）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/zc2ndUDqDAS0uX1Y) · 直接接入 / 评论同步
 
@@ -53,7 +53,7 @@
 
 <a id="w-GgDxPEWtW7ltT5BW"></a>
 
-## CSD_2_KB
+## [kb]Build|CSD（旧名 CSD_2_KB）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/GgDxPEWtW7ltT5BW) · 知识入库 / CSD
 
@@ -64,12 +64,12 @@
 - **入口与主路径**：Schedule Trigger → OAuth → Jira → 顺序处理 → PostgreSQL 去重 → AI 筛选/生成英文 KB → Zendesk 草稿 → SupportPortal Memory。
 - **筛选与输出**：查询 CSD 项目中 RESOLVED 的 Bug，更新时间在过去 24 小时、创建时间在过去 60 天，排除 Won't Do、Duplicate、Reject。AI 判断是否具备清晰原因和解决方案。
 - **与项目的关系**：调用 `/dashboard/memory/api/v1/knowledge/wiki/create`、`/wiki/raw/write`、`/wiki/ingest`；契约来源见 [Memory 接入说明](../../deploy_hermes_investigator_ecs.md)。Zendesk 设置 `draft=true`、`notify_subscribers=false`。
-- **画布与依赖**：手动触发节点没有连接主链；旧 `2_rag` 节点禁用。依赖 Jira/OAuth、PostgreSQL、AI、Zendesk、Memory；错误交给 `error_handle`。
+- **画布与依赖**：手动触发节点没有连接主链；旧 `2_rag` 节点禁用。依赖 Jira/OAuth、PostgreSQL、AI、Zendesk、Memory；错误交给 `[ops]Error Alert`。
 - **排错与重试**：`csd` 去重记录在 AI 和外部写入之前产生。整轮重跑可能跳过未完成条目；直接删去重记录又可能重复创建草稿/Wiki。先定位已完成的外部写入和失败步骤，再决定恢复方式。本次未重放历史失败执行。
 
 <a id="w-dV5vNA6l1MbDMHZt"></a>
 
-## error_handle
+## [ops]Error Alert（旧名 error_handle）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/dV5vNA6l1MbDMHZt) · 配套 / 故障上报
 
@@ -84,37 +84,37 @@
 
 <a id="w-G7snyHhdBCnIpbJV"></a>
 
-## longage_case_review
+## [review]Aged（旧名 longage_case_review）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/G7snyHhdBCnIpbJV) · 配套 / 长龄工单质检
 
 **n8n description**
 
-> 每个工作日北京时间 06:00 查询创建超过 30 天且未解决的 Tier1 工单，随机抽取 1 条调用 case_review_subflow，进入 Slack 人工评审与质检记录流程。
+> 每个工作日北京时间 06:00 查询创建超过 30 天且未解决的 Tier1 工单，随机抽取 1 条调用 [review]Case|Subflow，进入 Slack 人工评审与质检记录流程。
 
 - **入口**：工作流时区 `Asia/Shanghai`，cron `0 6 * * 1-5`。
-- **主路径**：查询创建超过 30 天、未解决的 Tier1 工单并应用排除条件 → 从返回结果随机取 1 条 → 以 `tag=Longaged` 调用 `case_review_subflow`。
+- **主路径**：查询创建超过 30 天、未解决的 Tier1 工单并应用排除条件 → 从返回结果随机取 1 条 → 以 `tag=Longaged` 调用 `[review]Case|Subflow`。
 - **与项目的关系**：支持质量检查；实际写入和人工等待由评审子流程承担。
 - **实现与排错**：抽样代码是 `Math.min(1, totalCases)`，不能按旧代码注释理解为抽取 5 条。重新抽样可能选到不同工单；优先检查原有子流程执行。
 
 <a id="w-WT43uQ1i8SPsYRJi"></a>
 
-## negative_case_review
+## [review]Rating（旧名 negative_case_review）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/WT43uQ1i8SPsYRJi) · 配套 / 满意度质检
 
 **n8n description**
 
-> 接收 Zendesk 满意度 Webhook，跳过评分为 GOOD 的事件，将其余工单标记为 Negative 并调用 case_review_subflow，进入 Slack 人工评审与质检记录流程。
+> 接收 Zendesk 满意度 Webhook，跳过评分为 GOOD 的事件，将其余工单标记为 Negative 并调用 [review]Case|Subflow，进入 Slack 人工评审与质检记录流程。
 
-- **入口与主路径**：Zendesk 满意度 POST Webhook → 判断评分 → GOOD 停止，其余输入生成 `tag=Negative`、`caseId` → `case_review_subflow`。
+- **入口与主路径**：Zendesk 满意度 POST Webhook → 判断评分 → GOOD 停止，其余输入生成 `tag=Negative`、`caseId` → `[review]Case|Subflow`。
 - **与项目的关系**：支持质量检查，依赖评审子流程和其中的 Zendesk、Slack、Google Sheets。
 - **排错边界**：当前配置并非仅接受经过严格校验的 BAD；非 GOOD 的其他值也进入评审分支。排查时先看实际评分输入。
 - **重试**：先检查是否已创建等待中的评审，避免重复发出表单。
 
 <a id="w-1am2EuuDMV3RUwsJ"></a>
 
-## new_case_2_supporportal_prod
+## [case]Intake|ECS Route（旧名 new_case_2_supporportal_prod）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/1am2EuuDMV3RUwsJ) · 直接接入 / ECS 新工单
 
@@ -129,7 +129,7 @@
 
 <a id="w-qFSNOmYXr97N2UGX"></a>
 
-## new_case_2_supporportal_staging
+## [case]Intake|EC2 Staging（旧名 new_case_2_supporportal_staging）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/qFSNOmYXr97N2UGX) · 直接接入 / 历史 Staging
 
@@ -145,37 +145,37 @@
 
 <a id="w-r1HIW8UNuCabiOPn"></a>
 
-## NonAutomate_to_slack_fixed
+## [slack]Forward Thread|Prod（旧名 NonAutomate_to_slack_fixed）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/r1HIW8UNuCabiOPn) · 直接接入 / Slack 消息
 
 **n8n description**
 
-> 供 Slack_zen_Bot 调用：校验指定内部频道内由人发送的线程 @提及消息，解析 ECS Production 的 Engineer Case 线程绑定，再将消息转发给 SupportPortal。
+> 供 [slack]Route Support 调用：校验指定内部频道内由人发送的线程 @提及消息，解析 ECS Production 的 Engineer Case 线程绑定，再将消息转发给 SupportPortal。
 
-- **入口与主路径**：由 `Slack_zen_Bot` 调用 → 校验人类消息、非 bot、无 subtype、指定内部团队/频道、非空线程文本及 @提及 → 查询线程绑定 → 已绑定时提交消息。
+- **入口与主路径**：由 `[slack]Route Support` 按 workflow ID 调用 → 校验人类消息、非 bot、无 subtype、指定内部团队/频道、非空线程文本及 @提及 → 查询线程绑定 → 已绑定时提交消息。
 - **实际目标**：ECS Production 的 `/automation/production/api/integrations/slack/engineer-cases/thread-bindings/resolve` 和同前缀的 `/messages`。
 - **与项目的关系**：数据方向是 Slack → SupportPortal，不能按名称理解为向 Slack 发消息。
 - **排错与重试**：先看各过滤条件、线程绑定返回和消息接收记录；不要为了通过过滤而改写真实身份或线程字段。
 
 <a id="w-vvyPwdWXvJENN1zm"></a>
 
-## random_case_review
+## [review]Random（旧名 random_case_review）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/vvyPwdWXvJENN1zm) · 配套 / 随机质检
 
 **n8n description**
 
-> 每个工作日北京时间 06:00 查询未解决且未 reviewed 的 Tier1 工单，为配置的每位负责人随机抽取 1 条，调用 case_review_subflow 完成人工评审，并更新 reviewed 标签。
+> 每个工作日北京时间 06:00 查询未解决且未 reviewed 的 Tier1 工单，为配置的每位负责人随机抽取 1 条，调用 [review]Case|Subflow 完成人工评审，并更新 reviewed 标签。
 
 - **入口**：工作流时区 `Asia/Shanghai`，cron `0 6 * * 1-5`。
-- **主路径**：查询未解决且没有 `reviewed` 标签的 Tier1 工单 → 对六位已配置负责人分别从返回结果随机抽 1 条 → 以 `tag=Random` 调用 `case_review_subflow` → 更新 `reviewed` 标签。
+- **主路径**：查询未解决且没有 `reviewed` 标签的 Tier1 工单 → 对六位已配置负责人分别从返回结果随机抽 1 条 → 以 `tag=Random` 调用 `[review]Case|Subflow` → 更新 `reviewed` 标签。
 - **与项目的关系**：支持质检配套；人工评审和记录由子流程承担。
 - **画布与重试**：`get_random_case` 节点未连入主路径。检查父子 execution 和标签更新时间；整轮重跑会重新抽样，不能替代恢复原评审。
 
 <a id="w-FKv8vtZBQk6tH4Gt"></a>
 
-## Slack Interaction to SupportPortal - Consume Button V3
+## [slack]Handle Action|Preprod（旧名 Slack Interaction to SupportPortal - Consume Button V3）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/FKv8vtZBQk6tH4Gt) · 直接接入 / Slack 操作
 
@@ -190,7 +190,7 @@
 
 <a id="w-kyiA0QuiVx6JJ03i"></a>
 
-## Slack_zen_Bot
+## [slack]Route Support（旧名 Slack_zen_Bot）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/kyiA0QuiVx6JJ03i) · 上游接入 / Slack 建单
 
@@ -199,14 +199,14 @@
 > 监听 Slack 消息，经 AI 筛选和支持请求判定后创建 Zendesk 工单并回传链接；缺少团队资料时等待人工补全。指定内部频道的线程消息通过子流程转交 SupportPortal ECS Production。
 
 - **入口与主路径**：Slack 事件 → AI 首轮过滤及支持请求判断 → PostgreSQL `slack_team` 资料 → 必要时 Slack `sendAndWait` 补资料 → 生成标题 → 创建 Zendesk 工单和评论/关联 → Slack 回传链接。
-- **另一条已连接路径**：首轮过滤的 false 分支中，符合配置的内部频道消息调用 `NonAutomate_to_slack_fixed`，进入 ECS Production。
-- **与项目的关系**：Zendesk 上游来源，并提供内部 Slack 线程向 SupportPortal 的消息通道；依赖 Slack、AI、PostgreSQL、Zendesk、消息转交子流程及 `error_handle`。
-- **版本边界**：这是唯一存在未发布草稿的启用流程。本页按已发布版本描述；草稿与线上节点图不同，部分旧过滤节点未连入主链。描述同步没有发布草稿。
+- **另一条已连接路径**：首轮过滤的 false 分支中，符合配置的内部频道消息调用 `[slack]Forward Thread|Prod`，进入 ECS Production。
+- **与项目的关系**：Zendesk 上游来源，并提供内部 Slack 线程向 SupportPortal 的消息通道；依赖 Slack、AI、PostgreSQL、Zendesk、消息转交子流程及 `[ops]Error Alert`。
+- **版本边界**：这是唯一存在未发布草稿的启用流程。本页按已发布版本描述；草稿与线上节点图不同，部分旧过滤节点未连入主链。描述同步与改名整理均未发布草稿。
 - **排错与重试**：优先沿现有人工等待继续；建单后故障需先找已有 Zendesk 工单，避免重复建单。检查 SQL 节点时注意已有字符串插值配置，本次未修改。
 
 <a id="w-03B6AvcrOgRkWlUc"></a>
 
-## status_sync_automation_production
+## [case]Sync Status（旧名 status_sync_automation_production）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) · 直接接入 / 状态联动
 
@@ -221,21 +221,21 @@
 
 <a id="w-3zJvu5KQFZIoOoqu"></a>
 
-## test_error
+## [ops]Error Test|Zendesk（旧名 test_error）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/3zJvu5KQFZIoOoqu) · 配套 / 运维测试
 
 **n8n description**
 
-> 通过聊天入口接收工单号，记录执行信息并查询 Zendesk 工单，用于联调错误处理链路；执行失败时由 error_handle 接收，属于运维测试流程。
+> 通过聊天入口接收工单号，记录执行信息并查询 Zendesk 工单，用于联调错误处理链路；执行失败时由 [ops]Error Alert 接收，属于运维测试流程。
 
 - **入口与主路径**：Chat Trigger → 记录执行数据 → 将 `chatInput` 作为 Zendesk 工单查询输入。
-- **与项目的关系**：错误链路联调工具，失败交给 `error_handle`。
+- **与项目的关系**：错误链路联调工具，失败交给 `[ops]Error Alert`。
 - **行为边界**：输入有效工单号时可能成功，并非无条件制造错误。失败联调可能触发状态页上报；本次没有执行测试。
 
 <a id="w-MM3Z3T469Eru3Q1I"></a>
 
-## ticket_2_KB
+## [kb]Build|Solved Cases（旧名 ticket_2_KB）
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) · 知识入库 / Zendesk
 
@@ -246,7 +246,7 @@
 - **入口与主路径**：Zendesk 关闭事件 POST Webhook → 仅 SOLVED → PostgreSQL `ticket(solved_ticket)` 去重 → 评论/作者查询、脱敏与对话组装 → AI 技术问题筛选 → KB 标题、正文和 HTML。
 - **输出与项目关系**：Zendesk 草稿（`draft=true`、`notify_subscribers=false`）→ Google Sheets → `support.stellarix.space` 的 `/api/engineer/knowledge/articles`。
 - **人工门控现状**：Slack 审批节点禁用或未连入主链；当前实际链路依赖 AI 筛选，不能描述为经过人工批准后入库。
-- **依赖与重试**：依赖 Zendesk、PostgreSQL、AI、Google Sheets、SupportPortal，错误交给 `error_handle`。去重 INSERT ON CONFLICT 在下游处理前执行；整轮重跑可能跳过半成品，强行清除记录可能重复创建草稿。先核对三个输出位置。
+- **依赖与重试**：依赖 Zendesk、PostgreSQL、AI、Google Sheets、SupportPortal，错误交给 `[ops]Error Alert`。去重 INSERT ON CONFLICT 在下游处理前执行；整轮重跑可能跳过半成品，强行清除记录可能重复创建草稿。先核对三个输出位置。
 
 <a id="configuration-findings"></a>
 
@@ -256,16 +256,16 @@
 
 | 顺序 | 工作流 | 已核实配置 | 下一步 |
 | --- | --- | --- | --- |
-| 1 | [status_sync_automation_production](#w-03B6AvcrOgRkWlUc) | 已处理（2026-09-16）：实际故障是 ECS 归属检查调用的 `/api/integrations/*` 端点在 `automation_ecs_api` 上不存在（请求落 UI 静态兜底），保留历史 1138 次执行全部失败；三处 `Zen_New_Comment_Webhook` 失效引用从未被执行到 | 已删除整条 ECS 分支并发布 `6cfb5781`，详见运维说明；后续如需 ECS 状态联动走 `/v1/intake` 且须先实现 ECS 侧消费 |
-| 2 | [new_case_2_supporportal_staging](#w-qFSNOmYXr97N2UGX) | 仍投递旧 EC2 Staging 路径，而仓库 Nginx 对该路由配置 410 | 核对线上端点与实际部署，决定目标环境和迁移/停用方案 |
-| 3 | [case_review_subflow](#w-b1Unpl6miABzcTmZ) | `status != solved OR status != closed` 不能排除 solved/closed | 明确允许评审的状态集合，再调整条件并验证边界 |
-| 4 | [Slack_zen_Bot](#w-kyiA0QuiVx6JJ03i) | 已发布图与草稿不同；本次保留未发布修改 | 后续编辑前对比两版，避免描述更新或无关修复顺带发布草稿 |
+| 1 | [[case]Sync Status](#w-03B6AvcrOgRkWlUc)（旧名 status_sync_automation_production） | 已处理（2026-09-16）：实际故障是 ECS 归属检查调用的 `/api/integrations/*` 端点在 `automation_ecs_api` 上不存在（请求落 UI 静态兜底），保留历史 1138 次执行全部失败；三处 `Zen_New_Comment_Webhook` 失效引用从未被执行到 | 已删除整条 ECS 分支并发布 `6cfb5781`，详见运维说明；后续如需 ECS 状态联动走 `/v1/intake` 且须先实现 ECS 侧消费 |
+| 2 | [[case]Intake\|EC2 Staging](#w-qFSNOmYXr97N2UGX)（旧名 new_case_2_supporportal_staging） | 仍投递旧 EC2 Staging 路径，而仓库 Nginx 对该路由配置 410 | 核对线上端点与实际部署，决定目标环境和迁移/停用方案 |
+| 3 | [[review]Case\|Subflow](#w-b1Unpl6miABzcTmZ)（旧名 case_review_subflow） | `status != solved OR status != closed` 不能排除 solved/closed | 明确允许评审的状态集合，再调整条件并验证边界 |
+| 4 | [[slack]Route Support](#w-kyiA0QuiVx6JJ03i)（旧名 Slack_zen_Bot） | 已发布图与草稿不同；改名整理后仍未发布 | 后续编辑前对比两版，避免描述更新或无关修复顺带发布草稿 |
 
 ## 共用恢复注意事项
 
 | 场景 | 已有行为 | 恢复前必须查清 |
 | --- | --- | --- |
-| CSD_2_KB / ticket_2_KB | 去重写入早于 KB 草稿、Wiki/知识入库 | 哪些输出已创建，哪些步骤未完成；是否能复用已有资源继续 |
+| [kb]Build\|CSD / [kb]Build\|Solved Cases | 去重写入早于 KB 草稿、Wiki/知识入库 | 哪些输出已创建，哪些步骤未完成；是否能复用已有资源继续 |
 | 交接通知 | 先认领事件，再发 Slack、记录 delivered | pending 是否已实际投递；不要把相同事件重发当作可靠补偿 |
 | 质检 / Slack 团队资料表单 | Slack sendAndWait 等待人工输入 | 原 execution 是否仍等待；使用原等待入口，避免创建新表单 |
 | Slack 建单 / 按钮动作 | 会创建工单或提交业务动作并更新消息 | 接收方是否已处理，重跑是否重复写入 |
