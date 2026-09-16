@@ -116,8 +116,10 @@ class _FakeRelayClient:
     def pull_event(self, listener_instance_id, readiness_epoch):
         return self.events.pop(0) if self.events else None
 
-    def ack_event(self, event, *, listener_instance_id, readiness_epoch):
-        self.acked.append(event)
+    def ack_event(
+        self, event, *, listener_instance_id, readiness_epoch, **fencing
+    ):
+        self.acked.append({"event": event, "fencing": dict(fencing)})
 
     def complete_task(self, task_id, **kwargs):
         self.completed_tasks.append(task_id)
@@ -389,8 +391,11 @@ class RelayInboxTests(unittest.TestCase):
         self.assertEqual(result["applied_status"], "applied")
         request = self.repository.get_enablement_relay_request(self.request_id)
         self.assertEqual(request["status"], "completed")
-        # Persist-before-ack ordering held; the task was closed as owner.
+        # Persist-before-ack ordering held; the task was closed as owner. The
+        # message ACK carried fresh fencing values from the task detail.
         self.assertEqual(len(client.acked), 1)
+        self.assertEqual(client.acked[0]["fencing"]["expected_task_version"], 3)
+        self.assertEqual(client.acked[0]["fencing"]["turn_sequence"], 2)
         self.assertEqual(client.completed_tasks, ["task-1"])
         # Exactly one deterministic completion job.
         jobs = [
@@ -462,6 +467,23 @@ class RelayInboxTests(unittest.TestCase):
         failure.assert_awaited_once()
         # The auto failure path never prepares a manual enablement email.
         prepare.assert_not_called()
+
+    def test_notification_event_acked_and_never_applied(self):
+        client, _payload = self._client_with_result()
+        client.events.clear()
+        client.events.append(
+            {"event_id": "ev-note-1", "task_id": "task-1", "event_type": "delivery_changed"}
+        )
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        # Notification-class event consumed (light ack) without touching state.
+        self.assertEqual(len(client.acked), 1)
+        self.assertIsNone(self.repository.get_enablement_relay_result(self.request_id))
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "dispatched")
+        self.assertEqual(client.completed_tasks, [])
 
     def test_expiry_sweep_fails_closed(self):
         request = self.repository.get_enablement_relay_request(self.request_id)

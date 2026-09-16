@@ -271,29 +271,59 @@ class AgentRelayClient:
         *,
         listener_instance_id: str,
         readiness_epoch: int,
+        turn_sequence: int | None = None,
+        expected_task_version: int | None = None,
     ) -> None:
-        message_id = str(event.get("message_id") or "").strip()
+        """ACK one pulled event.
+
+        Message events (``message_id`` present) use the message-ack form whose
+        fencing values (``turn_sequence`` / ``expected_task_version``) MUST be
+        taken from a fresh ``GET /tasks/{id}`` — the server rejects stale
+        versions and the ack itself advances the task version.  Notification
+        events use the lighter ``/events/{event_id}/ack`` form.
+        """
         event_id = str(event.get("event_id") or "").strip()
-        task_id = str(event.get("task_id") or "").strip()
-        if not message_id or not event_id or not task_id:
+        if not event_id:
             raise AgentRelayError(
                 "agentrelay_event_invalid",
-                "AgentRelay event is missing ids required for ack",
+                "AgentRelay event is missing event_id required for ack",
                 retryable=False,
             )
+        message_id = str(event.get("message_id") or "").strip()
+        task_id = str(event.get("task_id") or "").strip()
+        if message_id and task_id:
+            if turn_sequence is None or expected_task_version is None:
+                raise AgentRelayError(
+                    "agentrelay_event_invalid",
+                    "Message-event ack requires fresh turn_sequence and "
+                    "expected_task_version from GET /tasks/{id}",
+                    retryable=False,
+                )
+            self._request(
+                "POST",
+                f"/workers/{_path_segment(self._config.agent_id)}"
+                f"/messages/{_path_segment(message_id)}/ack",
+                payload={
+                    "task_id": task_id,
+                    "event_id": event_id,
+                    "message_id": message_id,
+                    "turn_sequence": int(turn_sequence),
+                    "expected_task_version": int(expected_task_version),
+                    "listener_instance_id": str(listener_instance_id),
+                    "readiness_epoch": int(readiness_epoch),
+                    "idempotency_key": f"ack:{event_id}",
+                },
+            )
+            return
+        # Notification-class event: no message binding, light ack form.
         self._request(
             "POST",
             f"/workers/{_path_segment(self._config.agent_id)}"
-            f"/messages/{_path_segment(message_id)}/ack",
+            f"/events/{_path_segment(event_id)}/ack",
             payload={
-                "task_id": task_id,
-                "event_id": event_id,
-                "message_id": message_id,
-                "turn_sequence": int(event.get("turn_sequence") or 1),
-                "expected_task_version": int(event.get("task_version") or 1),
+                "idempotency_key": f"ack:{event_id}",
                 "listener_instance_id": str(listener_instance_id),
                 "readiness_epoch": int(readiness_epoch),
-                "idempotency_key": f"ack:{event_id}",
             },
         )
 
