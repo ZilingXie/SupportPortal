@@ -49,3 +49,15 @@ def test_check_is_read_only() -> None:
     store.check_schema.assert_called_once_with()
     store.migrate.assert_not_called()
     assert result["mode"] == "check"
+
+
+def test_enablement_relay_tables_are_registered_runtime_tables() -> None:
+    # p2-163 regression: the relay request/result tables must be part of the
+    # runtime schema contract, otherwise the deploy-time schema check passes
+    # without them and no role ever creates them (RUNTIME_SCHEMA_MODE=check).
+    from backend.services.automation_ecs_schema import ACCOUNT_RUNTIME_TABLES
+
+    assert {
+        "support_enablement_relay_requests",
+        "support_enablement_relay_results",
+    } <= ACCOUNT_RUNTIME_TABLES
