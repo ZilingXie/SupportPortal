@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T06:15:17Z",
+  "capturedAt": "2026-09-16T08:42:47.313Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "MM3Z3T469Eru3Q1I",
     "workflowName": "[kb]Build|Solved Cases",
     "snapshotKind": "published",
-    "versionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
-    "draftVersionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
-    "publishedVersionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
-    "updatedAt": "2026-09-16T04:11:43.890Z",
+    "versionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
+    "draftVersionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
+    "publishedVersionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
+    "updatedAt": "2026-09-16T08:27:00.293Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
     "name": "[kb]Build|Solved Cases",
-    "description": "接收 Zendesk SOLVED 事件，先在 PostgreSQL 去重，再整理评论并由 AI 判断是否适合入库；生成英文 Zendesk KB 草稿、写入 Google Sheets，并提交到 SupportPortal 知识库接口。",
+    "description": "接收 Zendesk SOLVED 事件，经 PostgreSQL 去重、评论脱敏和 AI 筛选生成英文 KB 草稿；同步至 Tencent Memory，创建 Wiki、写入 Markdown 并触发 ingest，再写入 Google Sheets 和 SupportPortal 知识库。",
     "nodes": [
       {
         "parameters": {
@@ -832,7 +832,7 @@
         "type": "n8n-nodes-base.googleSheets",
         "typeVersion": 4.7,
         "position": [
-          1728,
+          2624,
           608
         ],
         "id": "0b31d2ca-b0d9-40ef-905f-d5f993738170",
@@ -871,7 +871,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
         "position": [
-          2400,
+          3296,
           608
         ],
         "id": "9ba95200-2bb2-4a9c-822d-0a8ecb9c81c6",
@@ -886,7 +886,7 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1952,
+          2848,
           608
         ],
         "id": "75505d48-dfb9-498f-924f-22e3234b66cc",
@@ -899,11 +899,142 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          2176,
+          3072,
           608
         ],
         "id": "5d11bd94-4edd-4b94-a841-ab4f05cff8c6",
         "name": "Code in JavaScript1"
+      },
+      {
+        "id": "592df6c5-b737-45e2-8d69-7cbb656392d8",
+        "name": "2_tencent_title",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1728,
+          608
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/create",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tdai-Service-Id",
+                "value": "default"
+              },
+              {
+                "name": "X-Tdai-User-Key",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "team-7oif6fsv17"
+              },
+              {
+                "name": "name",
+                "value": "={{ $('Generate_KB_Title').item.json.choices[0].message.content }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "71545d60-e8f4-4fc6-b135-bf6ee335f90a",
+        "name": "Edit Fields",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1952,
+          608
+        ],
+        "parameters": {
+          "mode": "raw",
+          "jsonOutput": "={{ JSON.stringify({\n   team_id: \"team-7oif6fsv17\",\n   wiki_id: $json.data.wiki_id,\n   files: [{ filename: \"article.md\", content:$('Geneate_KB_Content').item.json.choices[0].message.content }]\n}) }} ",
+          "includeOtherFields": true,
+          "options": {}
+        }
+      },
+      {
+        "id": "ca9e8114-171d-4c2e-b6bf-7d7dd5af66d4",
+        "name": "2_tencent_body",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2176,
+          608
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/raw/write",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tdai-Service-Id",
+                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-Service-Id').value }}"
+              },
+              {
+                "name": "X-Tdai-User-Key",
+                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-User-Key').value }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ team_id: $json.team_id, wiki_id: $json.wiki_id, files: $json.files }) }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "6065d213-be82-4f3b-abf1-c4005d678fc6",
+        "name": "2_tencent_ingest",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2400,
+          608
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/ingest",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tdai-Service-Id",
+                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-Service-Id').value }}"
+              },
+              {
+                "name": "X-Tdai-User-Key",
+                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-User-Key').value }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ wiki_id: $('Edit Fields').item.json.wiki_id }) }}",
+          "options": {}
+        }
       }
     ],
     "connections": {
@@ -1096,17 +1227,6 @@
           ]
         ]
       },
-      "HTTP_Create_KB": {
-        "main": [
-          [
-            {
-              "node": "Append row in sheet",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Execution Data": {
         "main": [
           [
@@ -1234,6 +1354,61 @@
             }
           ]
         ]
+      },
+      "HTTP_Create_KB": {
+        "main": [
+          [
+            {
+              "node": "2_tencent_title",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "2_tencent_title": {
+        "main": [
+          [
+            {
+              "node": "Edit Fields",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Edit Fields": {
+        "main": [
+          [
+            {
+              "node": "2_tencent_body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "2_tencent_body": {
+        "main": [
+          [
+            {
+              "node": "2_tencent_ingest",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "2_tencent_ingest": {
+        "main": [
+          [
+            {
+              "node": "Append row in sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -1303,6 +1478,12 @@
         "nodeName": "HTTP Request",
         "path": "nodes.HTTP Request.parameters.headerParameters.parameters.2.value",
         "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "2_tencent_title",
+        "path": "nodes.2_tencent_title.parameters.headerParameters.parameters.1.value",
+        "field": "X-Tdai-User-Key",
         "reason": "secret_named_field"
       }
     ],

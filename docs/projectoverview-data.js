@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T07:14:39Z",
-  "source_base_commit": "15446ed3828574cc041a51aae9d9b7f774422bb4",
-  "registry_digest": "81f86059f077cd201c74a678120dbfe344f219acf3bf58a53c43ffa3e0ec2736",
+  "generated_at": "2026-09-16T08:46:17Z",
+  "source_base_commit": "9d7f6ce432432d12f1ea5d34e7ea4a5c3bd4ea81",
+  "registry_digest": "bc59309aecfb7ec0d2b0bf7b21ace248ab1a23118eb11a9335b59767b36ec22e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4238,14 +4238,39 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "RAG/KG 入库流水线",
       "goal": "建立文档去重、图谱构建、模型选择和异步入库链路。",
       "acceptance_criteria": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "新增 Tencent 节点配置",
+          "command": "n8n validate_node_config",
+          "details": "四个复用节点均 valid=true；发布前 Solved Cases/CSD 的发布图分别与本地快照一致，且 draftMatchesPublished=true。"
+        },
+        {
+          "type": "test",
+          "label": "完整节点图静态校验",
+          "command": "n8n validate_workflow",
+          "details": "36 个节点的候选图 valid=true；6 条 warning 均属于原工作流已有问题，本次没有新增 warning。"
+        },
+        {
+          "type": "deployment",
+          "label": "n8n 发布并独立回读",
+          "command": "n8n update_workflow + publish_workflow + get_workflow_details",
+          "details": "工作流 MM3Z3T469Eru3Q1I 通过 15 个原子操作更新并发布为 f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83；active=true、36 节点，草稿与发布图一致，原有节点参数和 settings 不变。原发布版 d5944711-2d8a-461c-b2b6-1f6f9e9be0bb 保留于版本历史。未触发业务执行；实际 Wiki 写入和 ingest 等待自然合格工单验证。"
+        },
+        {
+          "type": "test",
+          "label": "Git 快照脱敏校验",
+          "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
+          "details": "16 published snapshots、1 divergent draft、65 redacted values 均通过；Tencent User Key 在新增快照中被替换为占位符，未写入明文。"
+        }
+      ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
       "legacy_ids": [],
-      "status": "planned",
-      "task_count": 4,
-      "done_count": 0,
+      "status": "active",
+      "task_count": 5,
+      "done_count": 1,
       "blocked_count": 0
     },
     {
@@ -13066,6 +13091,71 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-16",
           "event": "pg_contracts_passed",
           "summary": "PostgreSQL 隔离 DSN 契约通过：结果与重复投递单胜者（首投 winner、重复证据化、request 停在 result_received）；4 线程 Barrier 并发释放恰一次（FOR UPDATE SKIP LOCKED + 谓词）。修复 PG claim 的 lease_expires_at 绑定（Python 侧计算，避免 interval 类型错配）。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-164",
+      "title": "n8n Solved Cases KB 同步至 Tencent Memory",
+      "status": "done",
+      "owner": "zac",
+      "summary": "在 [kb]Build|Solved Cases 中复用 [kb]Build|CSD 的 Wiki create、Markdown raw/write、ingest 链路；生成 Zendesk KB 草稿后同步至同一 Tencent Memory team，再继续原有 Google Sheets 与 SupportPortal 知识输出。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "已发布的 Solved Cases 节点图包含 Wiki 创建、article.md 写入和 ingest，使用 CSD 同一 team 和认证配置。",
+        "正文取自 Geneate_KB_Content 的配对 item，Wiki ID 沿当前 item 传递；原节点参数、凭据引用、触发器与错误处理设置保持原配置。",
+        "发布前后保存脱敏快照及 draft/published version ID，快照校验通过；不重放历史业务 execution。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "新增 Tencent 节点配置",
+          "command": "n8n validate_node_config",
+          "details": "四个复用节点均 valid=true；发布前 Solved Cases/CSD 的发布图分别与本地快照一致，且 draftMatchesPublished=true。"
+        },
+        {
+          "type": "test",
+          "label": "完整节点图静态校验",
+          "command": "n8n validate_workflow",
+          "details": "36 个节点的候选图 valid=true；6 条 warning 均属于原工作流已有问题，本次没有新增 warning。"
+        },
+        {
+          "type": "deployment",
+          "label": "n8n 发布并独立回读",
+          "command": "n8n update_workflow + publish_workflow + get_workflow_details",
+          "details": "工作流 MM3Z3T469Eru3Q1I 通过 15 个原子操作更新并发布为 f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83；active=true、36 节点，草稿与发布图一致，原有节点参数和 settings 不变。原发布版 d5944711-2d8a-461c-b2b6-1f6f9e9be0bb 保留于版本历史。未触发业务执行；实际 Wiki 写入和 ingest 等待自然合格工单验证。"
+        },
+        {
+          "type": "test",
+          "label": "Git 快照脱敏校验",
+          "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
+          "details": "16 published snapshots、1 divergent draft、65 redacted values 均通过；Tencent User Key 在新增快照中被替换为占位符，未写入明文。"
+        }
+      ],
+      "source_refs": [
+        "docs/integrations/n8n/workflows/active/MM3Z3T469Eru3Q1I.published.json",
+        "docs/integrations/n8n/workflows/manifest.json",
+        "docs/operations/n8n/active-workflows.md"
+      ],
+      "created_at": "2026-09-16",
+      "updated_at": "2026-09-16",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-ingestion-pipeline",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-16T08:25:32.417Z",
+          "event": "created",
+          "summary": "用户授权为 Solved Cases 添加与 CSD 一致的 Tencent Memory KB 副本；不变更凭据对象。"
+        },
+        {
+          "at": "2026-09-16T08:27:00.293Z",
+          "event": "published",
+          "summary": "四个 Tencent Memory 节点发布并回读一致；保持原有 Google Sheets、SupportPortal 和错误工作流链路，Git 保存脱敏发布快照。"
         }
       ]
     },
