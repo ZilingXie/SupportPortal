@@ -16,6 +16,7 @@ from backend.services.automation_ecs_store import (
     HermesTurnConflictError,
     HermesTurnStateError,
 )
+from backend.services.enablement_automation import enablement_workflow_mode
 from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_tools")
@@ -347,21 +348,22 @@ async def tool_execute_automation_action(
         internal_email_reason = str(delivery_result.reason)
     elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
         if automation_handler == "enablement":
-            account_case, _reply_job, workflow_outcome, archer_result = (
+            account_case, _reply_job, workflow_outcome = (
                 await _run_enablement_workflow(
                     repository=repository,
                     account_case=account_case,
                     ticket_id=ticket_id,
                     email_payload=dict(attempt["internal_email_to_send"]),
+                    customer_email=str(ticket.get("customer_id") or "") or None
+                    if isinstance(ticket, dict)
+                    else None,
                     persona_assignment=None,
                     processing_profile=environment,
                     trigger_message_created_at=timestamp,
                 )
             )
             executed_actions.append(
-                f"enablement_archer:{archer_result.outcome}"
-                if archer_result is not None
-                else f"enablement_manual:{workflow_outcome}"
+                f"enablement_{enablement_workflow_mode()}:{workflow_outcome}"
             )
             internal_email_status = str(account_case.get("internal_email_send_status") or "")
             internal_email_reason = str(account_case.get("internal_email_send_reason") or "")

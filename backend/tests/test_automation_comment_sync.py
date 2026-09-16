@@ -769,7 +769,7 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
                 "job_id": "job-manual",
                 "status": "persona_v8_scheduled",
                 "payload": {"reply_intent": "submission_confirmation"},
-            }, "review_requested", None
+            }, "review_requested"
 
         with patch.object(reply_module, "_apply_ownership_gate", return_value=True), patch.object(
             reply_module, "_build_enablement_attempt", return_value=complete_attempt
@@ -866,25 +866,28 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
             "field_extraction": NS(status="ok"),
         }
 
-        async def archer_workflow(**kwargs):
+        async def auto_workflow(**kwargs):
             self.assertTrue(saved_cases)
             self.assertEqual(kwargs["account_case"]["collected_fields"]["app_id"], new_app_id)
-            # archer mode's first durable write is archer_pending, not the
-            # manual awaiting_public_reply gate.
-            self.assertEqual(kwargs["account_case"]["internal_email_send_status"], "archer_pending")
-            enabled_case = {
+            # Auto mode is reply-first gated too (p2-163): the pre-write is the
+            # awaiting_public_reply gate with the auto reason.
+            self.assertEqual(kwargs["account_case"]["internal_email_send_status"], "awaiting_public_reply")
+            self.assertEqual(kwargs["account_case"]["internal_email_send_reason"], "enablement_auto_review")
+            gated_case = {
                 **kwargs["account_case"],
                 "missing_fields": [],
-                "internal_email_send_status": "not_applicable",
                 "automation_context": {
-                    "enablement_archer": {"outcome": "enabled", "reason_code": "archer_enabled"}
+                    "enablement_auto_workflow": {
+                        "state": "awaiting_public_reply",
+                        "request_id": "enr-AC-13200-v2",
+                    }
                 },
             }
-            return enabled_case, {
-                "job_id": "job-archer",
+            return gated_case, {
+                "job_id": "job-auto",
                 "status": "persona_v8_scheduled",
-                "payload": {"reply_intent": "enablement_archer_enabled"},
-            }, "archer_enabled", NS(outcome="enabled")
+                "payload": {"reply_intent": "submission_confirmation"},
+            }, "review_requested"
 
         with patch.dict(os.environ, {"ENABLEMENT_WORKFLOW_MODE": "archer"}), patch.object(
             reply_module, "_apply_ownership_gate", return_value=True
@@ -894,7 +897,7 @@ class UsageCaptureAndPrepareTest(unittest.TestCase):
             reply_module,
             "_run_enablement_workflow",
             new_callable=AsyncMock,
-            side_effect=archer_workflow,
+            side_effect=auto_workflow,
         ) as run_workflow, patch.object(
             reply_module, "decide_account_route", side_effect=AssertionError("active handler must continue")
         ):

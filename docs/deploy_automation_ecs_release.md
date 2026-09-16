@@ -314,64 +314,35 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。
 
-## Enablement 工作流模式（p2-152 起：manual 默认 + Archer 可切换）
+## Enablement 工作流模式（p2-163 起：manual 默认 + auto 经 AgentRelay/Mac 执行）
 
-`p2-152` 起 Enablement 由 `ENABLEMENT_WORKFLOW_MODE`（`manual` | `archer`，默认 `manual`）
-在四个执行入口（split intake、客户评论 resume、Hermes 工具、legacy main 入口/rerun）统一分发。
-manual 模式即 `p2-149` 人工开通流程，行为不变；archer 模式恢复回退前的自动开通编排
-（enabled→完成回复关单；appid_invalid/project_not_found→清 App ID 重问；
-enable_failed→owner 失败告警+回退内部邮件一次+人工升级）。未知取值 fail-closed。
+`ENABLEMENT_WORKFLOW_MODE`（`manual` | `archer`，默认 `manual`）仍经
+`--enablement-workflow-mode` 发布入口生效，申请创建时固定模式：
 
-凭据门禁（双向 fail-closed）：
+- **manual**：现有 p2-149 人工流程（回复先行 → 内部邮件门禁 → 人工开通回信 → 完成回复）。
+- **archer（auto）**：回复先行门禁确认送达后，每个申请派发一个 AgentRelay Task；Mac 工作日
+  10:00 汇总预检（归属/状态/dry-run）→ 两次人工审批 → `pilot` 执行（typeId=6/region=2/
+  maxSubscribeLoad=10，独立回读为准，已有 50 不降配）→ 结果回传；ECS 持久化后关闭 Task。
+- **auto 失败**统一进通用 automation 失败链（internal note + 人工接管 + 通知邮件），
+  不自动转 manual、不发 manual 开通邮件。**切换到 manual = 故障缓解**：停止新 auto 派发，
+  在途申请按 runbook 表收尾。
 
-- manual 渲染的 Worker task definition 含 `ARCHER_OAUTH_COOKIE` 即拒绝（register 前 jq 断言 +
-  `validate_worker_contract`）；
-- archer 渲染必须注入 `/supportportal/{env}/archer-oauth-cookie`（缺失即拒绝），且 Provider 探针
-  必须回报 `archer_read_get_ok=true`；
-- `archer-oauth-cookie` SSM 参数当前不存在（无 Archer 权限），manual 模式不消费任何 Archer 凭据。
+### 凭据与部署合同（p2-163）
 
-切换到 archer 模式（拿到 Archer 权限后）：
-
-1. 创建 SSM SecureString `/supportportal/{env}/archer-oauth-cookie`（`oauth2-token` 根凭证，
-   注意约 7 天绝对过期风险，见 `docs/archer_direct_auth_architecture.md` §6）；
-2. 以 `--enablement-workflow-mode archer` 走标准发布（pipeline 会在渲染前校验 SSM 参数存在）；
-3. 发布门禁与 provider probe 验证通过后，用受控工单做一次 archer 全链验收；
-4. 切回 manual 同样走发布，凭据自动剥离（无需先删 SSM 参数）。
+- **两模式一律禁止 `ARCHER_OAUTH_COOKIE`**：ECS 运行时不持有任何个人 Archer 凭据
+  （register 前 jq 断言 + `validate_worker_contract` fail-closed；archer 直连实现已从 ECS 删除，
+  仅 Mac 侧 skill 经 pilot CLI 触碰 Archer）。
+- Worker 每次渲染注入 AgentRelay 身份（两模式均注入，切换后迟到的结果仍可收取作证据）：
+  SSM `/supportportal/{env}/agentrelay-base-url`、`agentrelay-agent-id`、`agentrelay-username`、
+  `agentrelay-token`。部署前置检查 `ensure_agentrelay_parameters` 会在缺参时明确报错。
+- 身份配置流程见 `docs/operations/agentrelay-server-provisioning-prompt.md`（在 relay 服务器
+  Agent 上执行）；HTTP 契约见 `docs/operations/agentrelay-http-contract.md`。
+- Provider 探针不再检查 Archer（Mac 登录态由本地 skill 报告，不作为 ECS 健康门禁）。
 
 ### manual 人工开通流程（默认）
 
-`p2-149` 起 Enablement 默认为人工开通流程，Worker **不持有任何 Archer 凭证**：
-task definition 不注入 `ARCHER_OAUTH_COOKIE`，Provider 探针不检查 Archer，
+`p2-149` 起 Enablement 默认为人工开通流程，Worker 不持有任何 Archer 凭据，
 `archer-oauth-cookie` SSM 参数仅作为历史凭证保留（不删除、不消费）。
-
-目标流程（回复在先、邮件在后）：
-
-```text
-信息齐全（本地 32 位 hex 格式校验）
- → 客户收到 submission_confirmation 回复（"已收到、将与内部团队 review、最多 24 小时、周一至周五"）
- → 公开回复经 Zendesk readback 确认 delivered 后，内部开通邮件才被释放并发送（一次）
- → 人工在 Archer 开通后直接回复该邮件 enabled（仅限本次邮件 To/Cc 个人收件人）
- → AI 生成 enablement_completed_and_close 最终公开回复
- → 公开回复读回确认后 Zendesk solved + 本地关闭
-```
-
-机制要点：
-
-- 内部邮件先以 `awaiting_public_reply` 状态持久化（prepare 协议），claim 协议
-  在该状态下不可领取；Zendesk 公开回复 readback 仅持久化送达账本；
-  Worker 周期中的有界扫描是唯一自动释放入口，确认本次申请已送达后原子释放为 `pending`，进程重启可继续。
-- 回信处理执行三重校验：发件人精确匹配本次邮件 To/Cc 快照（不扩展组员）、
-  Case 处于等待人工确认态（`sent`/`delivery_unknown`）、完成识别只看未引用正文段；
-  任一不过即终止自动处理并留 `enablement_reply_processing_stopped` 事件。
-- 等待人工开通是正常流程状态，不标记自动化失败、不提前关 Case。
-- 首个新工单验收顺序（全部使用全新工单）：
-  1. 非法格式 App ID：零网络调用，公开回复要求正确的 32 位 App ID，Case 保持 open。
-  2. 有效 App ID：客户确认回复公开送达 **早于** 内部邮件发送时间；内部收件人收到
-     申请邮件；人工回复 `enabled` 后 Persona 发布最终公开回复，Zendesk solved。
-  3. 反例：非 To/Cc 收件人、引用段中的 enabled、等待前回信均不得触发完成；
-     重复 enabled 邮件只产生一次最终回复。
-
-失败路径仅在自然发生时观察。生产验收不得重放或修改历史 Case。
 
 ## Schema Bootstrap
 

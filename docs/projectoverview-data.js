@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T04:31:42Z",
-  "source_base_commit": "7dfc388e36dedb5d07d530fa118c99798d916a81",
-  "registry_digest": "2dd3cbe79bd6380acbad3ac93d79b6f9e26eeca53017ceca229fea876e03c838",
+  "generated_at": "2026-09-16T05:19:28Z",
+  "source_base_commit": "c1c912cf1130b5ee35a9056e455f42acd11a2868",
+  "registry_digest": "5a21adbfcd580f2c9d79b424ae9cfd12145bfb785b4b3d65f912fcf38e8a5b16",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1168,6 +1168,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Auto relay + failure targeted suites (20 suites)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_enablement_rag_resume.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_failure_alerts.py backend/tests/test_automation_persona.py backend/tests/test_automation_ecs_worker.py backend/tests/test_worker.py backend/tests/test_automation_provider_probe.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_single_host_compose.py backend/tests/test_automation_ecs_terraform.py",
+          "details": "545 passed / 152 subtests / 2 skipped（PG 门控）。新增：auto 门禁+请求创建+版本取代（intake）、release+dispatch+幂等重放+拒绝入失败链+模式切换缓解、inbox 成功单次完成 job+重复证据化+request_id 绑定校验+config_mismatch 失败零 manual 邮件+到期 fail-closed（auto_relay 9 用例）、失败链真实四件套+同请求不重警+跨请求独立 incident+零 manual 邮件（auto_failure 4 用例）。既有失败 2 个均为 main 上同组合可复现的顺序依赖旧账（rag_resume 告警分类、worker legacy rag executor），非本任务引入；根 main 同组合 3 失败（含已删除的旧 Archer 类）。 PG 真库隔离 DSN：2 passed（result/失败单胜者 + 4 线程并发释放恰一次）。"
+        },
+        {
+          "type": "document",
+          "label": "Contract + provisioning + docs",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
+          "details": "AgentRelay HTTP 契约与服务器配置 Prompt 落 docs/operations/（索引已挂）；deploy runbook「Enablement 工作流模式」重写（p2-163：两模式禁 Archer 凭据+relay SSM 四参+ensure_agentrelay_parameters 前置）；archer 架构文档改「直连实现已删除」；feature_list/prompt_change_log/.env.example 同步。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1273,7 +1285,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 37,
+      "task_count": 38,
       "done_count": 19,
       "blocked_count": 0
     },
@@ -12970,6 +12982,90 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-163",
+      "title": "Enablement auto 模式改为 Mac/Pilot 执行 + AgentRelay 跨机链路",
+      "status": "active",
+      "owner": "zac",
+      "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
+      "next_action": "代码+测试+文档已完成待 finalize；剩：①用户在 relay 服务器执行配置 Prompt 创建 supportportal-preproduction/production 身份并把四元组写入 /supportportal/{env}/ SSM → ②finalize 合码 → ③preproduction 部署（--enablement-workflow-mode manual 先行）→ ④受控验收（auto 成功=fcd0dab1...36fc、auto 失败、manual 切换演练）后转 done。",
+      "acceptance_criteria": [
+        "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
+        "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
+        "第一次审批前零开通写入；第二次审批前零业务结果回传。",
+        "新开通 maxSubscribeLoad=10/region=2/typeId=6；已有 50 或参数不同只报告差异停止自动修改；成功以写后独立回读为准（退出码/changed/文案不作为判据，403-as-enabled 防御）。",
+        "auto 失败统一进 _record_execution_failure 链：internal note、人工接管、通知邮件各有实际状态与证据；incident 按 request_id 区分幂等。",
+        "结果未知不盲目重写；重复事件/重启不重复派发、通知或客户完成回复；人工接管后迟到结果只作证据不复活。",
+        "切 manual 停止新 auto 派发，在途申请按既定表收尾（不批量转 manual）。",
+        "Relay Task 完成与 Zendesk 工单完成分别验证；两次审批绑定执行计划与回传内容，参数变化使旧审批失效。",
+        "preproduction 受控验收：auto 成功（真实开通+回读+客户回复）、auto 失败（note/接管/邮件、无 manual 邮件）、manual 切换演练，均有证据。"
+      ],
+      "blockers": [
+        "AgentRelay ECS 服务身份未创建：需用户在 relay 服务器执行 docs/operations/agentrelay-server-provisioning-prompt.md，并把 (base-url/agent-id/username/token) 写入 /supportportal/{env}/ SSM——部署前置检查 ensure_agentrelay_parameters 会强制该条件。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Auto relay + failure targeted suites (20 suites)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_enablement_rag_resume.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_failure_alerts.py backend/tests/test_automation_persona.py backend/tests/test_automation_ecs_worker.py backend/tests/test_worker.py backend/tests/test_automation_provider_probe.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_single_host_compose.py backend/tests/test_automation_ecs_terraform.py",
+          "details": "545 passed / 152 subtests / 2 skipped（PG 门控）。新增：auto 门禁+请求创建+版本取代（intake）、release+dispatch+幂等重放+拒绝入失败链+模式切换缓解、inbox 成功单次完成 job+重复证据化+request_id 绑定校验+config_mismatch 失败零 manual 邮件+到期 fail-closed（auto_relay 9 用例）、失败链真实四件套+同请求不重警+跨请求独立 incident+零 manual 邮件（auto_failure 4 用例）。既有失败 2 个均为 main 上同组合可复现的顺序依赖旧账（rag_resume 告警分类、worker legacy rag executor），非本任务引入；根 main 同组合 3 失败（含已删除的旧 Archer 类）。 PG 真库隔离 DSN：2 passed（result/失败单胜者 + 4 线程并发释放恰一次）。"
+        },
+        {
+          "type": "document",
+          "label": "Contract + provisioning + docs",
+          "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
+          "details": "AgentRelay HTTP 契约与服务器配置 Prompt 落 docs/operations/（索引已挂）；deploy runbook「Enablement 工作流模式」重写（p2-163：两模式禁 Archer 凭据+relay SSM 四参+ensure_agentrelay_parameters 前置）；archer 架构文档改「直连实现已删除」；feature_list/prompt_change_log/.env.example 同步。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_account_intake.py",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/enablement_automation.py",
+        "backend/services/enablement_archer_executor.py",
+        "backend/services/archer_direct_client.py",
+        "backend/services/automation_provider_probe.py",
+        "backend/services/agentrelay_client.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/worker.py",
+        "backend/automation_ecs_worker.py",
+        "backend/sql/ticket_storage.sql",
+        "backend/scripts/automation_ecs_deploy.py",
+        "deployment/deploy_automation_ecs_release.sh",
+        "docs/deploy_automation_ecs_release.md",
+        "docs/archer_direct_auth_architecture.md",
+        "docs/feature_list.md",
+        ".codex/skills/supportportal-media-relay-enablement/"
+      ],
+      "created_at": "2026-09-16",
+      "updated_at": "2026-09-16",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-149",
+        "p2-152"
+      ],
+      "history": [
+        {
+          "at": "2026-09-16",
+          "event": "created",
+          "summary": "用户定稿四步设计（归属/预检/执行/回读）与 12 节方案：auto 在 Mac 经 Pilot 执行、ECS 派发/收取 Relay Task、失败进通用 automation 失败链；AskUserQuestion 四项拍板=relay 契约看 ZilingXie/agentRelay+agent-relay-mcp 并出服务器配置 Prompt、Mac 定时由用户 Codex 侧拉起、彻底删除 ECS 直连实现、Phase 5 用用户真实 AppID fcd0dab13017495bbe25a63bfdb236fc（邮箱 [email redacted]）受控验收（nimtoo 项目禁碰）。"
+        },
+        {
+          "at": "2026-09-16",
+          "event": "implementation_complete",
+          "summary": "运行时：relay 请求/结果双表（DDL 双源+版本 bump v10）+ 仓储 mixin（InMemory/PG 双实现：release-after-readback、dispatch claim/lease（过期重领）、result 单胜者、finish/applied）；agentrelay_client（Bearer+双头、幂等键、retryable/outcome_unknown 分类、headless listener 注册/readiness/恢复拉取/ack/complete）；auto intake 回复先行门禁+business-day 文案+appid 取代升版本；worker 三循环（派发/收取/到期）+成功=确定性完成 job+失败统一链（incident 按 request_id 区分）；ECS 直连全删（executor/DirectArcherClient/vendored skill/双向凭据门禁/probe 探针/Dockerfile worker 剪除）；部署合同注入 relay 四 SSM+前置存在性检查。本地 skill（四步+两次审批+不降配+独立回读+恢复不重执行）。"
+        },
+        {
+          "at": "2026-09-16",
+          "event": "pg_contracts_passed",
+          "summary": "PostgreSQL 隔离 DSN 契约通过：结果与重复投递单胜者（首投 winner、重复证据化、request 停在 result_received）；4 线程 Barrier 并发释放恰一次（FOR UPDATE SKIP LOCKED + 谓词）。修复 PG claim 的 lease_expires_at 绑定（Python 侧计算，避免 interval 类型错配）。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -18288,7 +18384,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 全文阅读待调查链启用 skills 工具集）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
-        "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，preproduction/production 均可经发布工具 `--enablement-workflow-mode` 启用，p2-152）。",
+        "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]

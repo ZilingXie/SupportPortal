@@ -28,9 +28,9 @@ COPY ui /tmp/backend-src/ui
 COPY docs /tmp/backend-src/docs
 COPY dictionary /tmp/backend-src/dictionary
 COPY deployment/automation_ecs_entrypoint.sh /app/automation_ecs_entrypoint.sh
-# p2-139: the vendored Pilot binary is no longer installed. The worker talks to
-# Archer through the direct OAuth chain (ARCHER_OAUTH_COOKIE), the download
-# source rotates its unsigned binary, and nothing at runtime reads the binary.
+# p2-139/p2-163: the vendored Pilot binary is not installed and the worker no
+# longer talks to Archer at all — the auto enablement workflow dispatches
+# AgentRelay tasks executed on a Mac; only the Mac runs the pilot CLI.
 RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
     cp -a /tmp/backend-src/backend/. /app/backend/ && \
     cp -a /tmp/backend-src/ui/. /app/ui/ && \
@@ -81,6 +81,7 @@ RUN mkdir -p /app/backend /app/ui /app/docs /app/dictionary && \
         /app/backend/services/rag_reset.py; \
       rm -rf /app/backend/tests /app/backend/scripts /app/ui /app/docs /app/dictionary; \
     elif [ "${AUTOMATION_IMAGE_ROLE}" = "ecs-worker" ]; then \
+      rm -rf /app/backend/skills/archer-cross-channel-hosting; \
       rm -f /app/backend/main.py \
         /app/backend/route_service.py \
         /app/backend/automation_runtime.py \

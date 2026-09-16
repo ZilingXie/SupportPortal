@@ -593,6 +593,62 @@ CREATE TABLE IF NOT EXISTS support_hermes_rejection_receipts (
     created_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS support_enablement_relay_requests (
+    request_id TEXT PRIMARY KEY,
+    account_case_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    zendesk_ticket_id TEXT,
+    customer_email TEXT,
+    app_id TEXT NOT NULL,
+    request_version INTEGER NOT NULL DEFAULT 1,
+    workflow_mode TEXT NOT NULL DEFAULT 'archer' CHECK (workflow_mode IN ('manual','archer')),
+    reply_job_id TEXT NOT NULL DEFAULT '',
+    target_params JSONB NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'gated','dispatch_pending','dispatching','dispatched',
+        'result_received','completed','failed','expired','cancelled'
+    )),
+    dispatch_status TEXT NOT NULL DEFAULT 'not_created' CHECK (dispatch_status IN (
+        'not_created','creating','created','create_failed','closed'
+    )),
+    relay_task_id TEXT,
+    batch_id TEXT,
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    relay_task_expires_at TIMESTAMPTZ NOT NULL,
+    suppression_reason TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_enablement_relay_requests_idem
+    ON support_enablement_relay_requests (idempotency_key);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_enablement_relay_requests_one_active
+    ON support_enablement_relay_requests (account_case_id)
+    WHERE status IN ('gated','dispatch_pending','dispatching','dispatched');
+
+CREATE INDEX IF NOT EXISTS idx_support_enablement_relay_requests_sweep
+    ON support_enablement_relay_requests (status, relay_task_expires_at);
+
+CREATE TABLE IF NOT EXISTS support_enablement_relay_results (
+    result_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE REFERENCES support_enablement_relay_requests(request_id) ON DELETE CASCADE,
+    outcome TEXT NOT NULL CHECK (outcome IN (
+        'enabled','already_satisfied','config_mismatch','ownership_mismatch',
+        'project_not_found','enable_failed','outcome_unknown','cancelled_by_user'
+    )),
+    write_attempted BOOLEAN NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    readback JSONB,
+    approval_ref JSONB,
+    relay_message_id TEXT NOT NULL DEFAULT '',
+    applied_status TEXT NOT NULL DEFAULT 'pending' CHECK (applied_status IN ('pending','applied','superseded')),
+    applied_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS support_hermes_summary_snapshots (
     snapshot_id TEXT PRIMARY KEY,
     engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,

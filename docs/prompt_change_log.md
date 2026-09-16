@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+
+## 2026-09-16 - Enablement auto mode moves to AgentRelay + Mac pilot (p2-163)
+
+- Behavior: `ENABLEMENT_WORKFLOW_MODE=archer` now means the auto (relay) workflow: the customer submission confirmation (business-day review copy, no 24h promise on this path) is gated behind the Zendesk public readback, then one AgentRelay Task is dispatched per application and executed on the Mac via the pilot CLI. The manual mode keeps the p2-149 contract, including its "up to 24 hours" copy.
+- Completion input: success is judged only by the relay result's independent read-back (outcome enabled/already_satisfied produce one deterministic completion reply job `enablement_completed_and_close`); every other outcome routes to the unified automation failure chain (internal note, human takeover, idempotent owner alert) and never prepares a manual enablement email.
+- ECS contract: the Archer direct implementation (executor/direct client/vendored skill) is deleted; no mode may carry `ARCHER_OAUTH_COOKIE`; the provider probe no longer checks Archer. The worker always carries the AgentRelay identity so late results stay receivable after a manual-mode switch.
+- Verification: new suites test_enablement_auto_relay / test_enablement_auto_failure / test_enablement_auto_postgres plus the existing enablement/regression suites; the manual zero-relay-request guard replaces the former zero-Archer-call guard.
+
 ## 2026-09-14 — Preproduction LLM 模型策略：调查 astra/medium、其余 luna/max (p2-160)
 
 - 范围：仅 Preproduction。工程师调查回合的实际执行模型由 Hermes 栈 EFS config.yaml 决定（`model.default` → `gpt-6-astra`、`agent.reasoning_effort: medium`；worker 请求体的 model/effort 一直被网关忽略），随 hermes 任务合并部署生效。

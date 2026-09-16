@@ -13,6 +13,7 @@
 | 某类改动应该运行哪些测试；测试会不会产生业务写入 | [测试导航](./testing.md) | 相关测试文件、fixture 和目标环境 |
 | 个人 n8n 工作流有哪些、实际做什么、接入哪个环境，如何定位执行问题 | [n8n 运维目录](./n8n/README.md) | 按项目过滤的远端清单、已发布/草稿节点图与具体 execution |
 | 执行已授权的 ECS 部署 | [ECS 部署 Runbook](../deploy_automation_ecs_release.md) | 正式 pipeline、目标环境的发布证据 |
+| Enablement auto（AgentRelay 跨机链路）的 HTTP 契约与服务器身份配置 | [AgentRelay HTTP 契约](./agentrelay-http-contract.md)、[服务器配置 Prompt](./agentrelay-server-provisioning-prompt.md) | live 协议 manifest、agent-relay-mcp 公开客户端源码、ECS worker SSM 参数 |
 | 维护 EC2 或本地单机栈 | [单机部署指南](../deploy_single_host_ec2.md) | 对应部署脚本与当前栈模式 |
 
 先读与当前任务有关的一页，再打开其中列出的来源。不需要每次会话通读本目录或完整代码地图。

@@ -723,14 +723,22 @@ def render_automation_reply(
     elif account_scope and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
         current_intent_policy = submission_confirmation_policy
         if behavior == "enablement":
-            current_intent_policy += (
-                "For an Enablement submission, make two facts clear in your own words: activation may take up to 24 "
-                "hours, and changes roll out on weekdays (Monday-Friday). Weave them into your sentences rather than "
-                "quoting them like a policy line. Style reference (match the tone and rhythm, do not copy the "
-                "wording): 'Thanks for sending this over - I've logged the request and will handle the rest on my "
-                "side. Activation usually completes within 24 hours and changes go out on weekdays, so I'll keep an "
-                "eye on it and update you once it's live.' "
-            )
+            if str(facts.get("activation_sla") or "") == "business-day review":
+                current_intent_policy += (
+                    "For an Enablement submission under automatic review, make two facts clear in your own words: "
+                    "the request is reviewed and processed on business days (Monday-Friday), and the customer will "
+                    "be notified once it is complete. Do not promise a 24-hour turnaround. Weave them into your "
+                    "sentences rather than quoting them like a policy line. "
+                )
+            else:
+                current_intent_policy += (
+                    "For an Enablement submission, make two facts clear in your own words: activation may take up to 24 "
+                    "hours, and changes roll out on weekdays (Monday-Friday). Weave them into your sentences rather than "
+                    "quoting them like a policy line. Style reference (match the tone and rhythm, do not copy the "
+                    "wording): 'Thanks for sending this over - I've logged the request and will handle the rest on my "
+                    "side. Activation usually completes within 24 hours and changes go out on weekdays, so I'll keep an "
+                    "eye on it and update you once it's live.' "
+                )
     elif intent == ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION:
         current_intent_policy = (
             "For a Fraud handoff, commit clearly that someone from the relevant team will contact the customer "

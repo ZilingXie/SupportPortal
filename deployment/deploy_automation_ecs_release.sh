@@ -791,14 +791,17 @@ render_role_task_definition() {
     render-task-definition "${args[@]}" >/dev/null
 }
 
-ensure_enablement_archer_secret() {
-  # Switching to archer mode (p2-152) requires the SSO root credential to
-  # already exist; fail before rendering instead of letting run-task crash.
-  [[ "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]] || return 0
-  aws ssm get-parameter --region "${REGION}" \
-    --name "/supportportal/${ENVIRONMENT}/archer-oauth-cookie" \
-    --query 'Parameter.Name' --output text >/dev/null 2>&1 \
-    || fail "ENABLEMENT_WORKFLOW_MODE=archer requires SSM parameter /supportportal/${ENVIRONMENT}/archer-oauth-cookie to exist"
+ensure_agentrelay_parameters() {
+  # p2-163: the worker's AgentRelay identity must exist under the environment
+  # SSM prefix before rendering; see
+  # docs/operations/agentrelay-server-provisioning-prompt.md for provisioning.
+  local name
+  for name in agentrelay-base-url agentrelay-agent-id agentrelay-username agentrelay-token; do
+    aws ssm get-parameter --region "${REGION}" \
+      --name "/supportportal/${ENVIRONMENT}/${name}" \
+      --query 'Parameter.Name' --output text >/dev/null 2>&1 \
+      || fail "Worker AgentRelay parameter /supportportal/${ENVIRONMENT}/${name} does not exist; provision the relay identity first"
+  done
 }
 
 prepare_schema_bootstrap() {
@@ -1184,10 +1187,6 @@ run_provider_probe() {
         and .zendesk_identity_ok == true
         and ([.recipients.enablement,.recipients.fraud_account,.recipients.account_suspension]
           | all(.valid == true and .to_count > 0 and .cc_count > 0))'
-      if [[ "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]]; then
-        probe_filter="${probe_filter}
-        and .archer_read_get_ok == true"
-      fi
       if ! printf '%s\n' "${probe_line}" | jq -e "${probe_filter}" >/dev/null; then
         fail "Provider probe result failed validation"
         return 1
@@ -1406,7 +1405,7 @@ main() {
   done
   [[ "${preflight_failed}" = "0" ]] \
     || fail "Parallel Terraform, Prompt, ECR, or EC2 backup preflight failed"
-  ensure_enablement_archer_secret
+  ensure_agentrelay_parameters
   [[ -n "${PREFLIGHT_EVIDENCE}" ]] || TERRAFORM_STATUS="passed"
   SOURCE_PROMPT_STATUS="passed"
   EC2_BACKUP_STATUS="passed"
@@ -1453,18 +1452,13 @@ main() {
   unset suspension_recipients_json
   SUSPENSION_RECIPIENTS_STATUS="passed"
 
-  # p2-152: the Enablement workflow mode owns the Archer credential — manual
-  # renders must not carry it into the new revision, archer renders must.
-  if [[ "${ENABLEMENT_WORKFLOW_MODE}" != "archer" ]]; then
-    if jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
-        "${TEMP_DIR}/worker.register.json" >/dev/null; then
-      fail "Rendered Worker task definition still references ARCHER_OAUTH_COOKIE"
-      return 1
-    fi
-  else
-    jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
-      "${TEMP_DIR}/worker.register.json" >/dev/null \
-      || fail "Rendered Worker task definition is missing ARCHER_OAUTH_COOKIE in archer enablement mode"
+  # p2-149/p2-163: the rendered Worker must not reference the Archer
+  # credential in either enablement mode — the auto workflow dispatches
+  # AgentRelay tasks and only the Mac-side skill touches Archer.
+  if jq -e '.taskDefinition.containerDefinitions[]? | select(.name == "worker") | .secrets[]? | select(.name == "ARCHER_OAUTH_COOKIE")' \
+      "${TEMP_DIR}/worker.register.json" >/dev/null; then
+    fail "Rendered Worker task definition still references ARCHER_OAUTH_COOKIE"
+    return 1
   fi
   RETIRED_ARCHER_SECRET_STATUS="passed"
 

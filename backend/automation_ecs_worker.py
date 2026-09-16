@@ -78,13 +78,6 @@ def _execution_status(outcome: dict[str, Any]) -> ExecutionStatus:
             else ""
         ),
     }
-    archer_context = (
-        (account_case.get("automation_context") or {}).get("enablement_archer")
-        if isinstance(account_case, dict)
-        else None
-    )
-    if isinstance(archer_context, dict) and archer_context.get("outcome") == "enable_failed":
-        return ExecutionStatus.HUMAN_REVIEW
     if "outcome_unknown" in external_statuses:
         return ExecutionStatus.OUTCOME_UNKNOWN
     response_status = str(effective.get("response_status") or "").strip().lower()
