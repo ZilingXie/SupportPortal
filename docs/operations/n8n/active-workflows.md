@@ -212,12 +212,12 @@
 
 **n8n description**
 
-> 监听 Zendesk 状态变化，获取工单并按 Case 归属同步到旧主栈和旧 Production。ECS 分支目前配置为评论同步且引用不存在的节点，需另行修复；属于 SupportPortal 状态联动流程。
+> 监听 Zendesk 状态变化，获取工单并按 Case 归属把状态同步到旧主栈与旧 Production（仅旧 EC2 环境）。原 ECS 分支调用的 /api/integrations 端点在 ECS 上不存在、从未成功，已于 2026-09-16 移除；ECS 由 /v1/intake 事件驱动，不做状态联动。属于 SupportPortal 状态联动流程。
 
 - **入口与主路径**：Zendesk 状态变化触发 → 读取工单 → 查询 Case 归属 → 旧根 API 与旧 `/production/api` 分支分别 PUT 状态。
-- **ECS 分支现状**：配置内容是评论同步，非状态同步。`Get_Case_Comment3`、`Sync comments to automation production` 引用了本流程不存在的 `Zen_New_Comment_Webhook`。
-- **与项目的关系**：SupportPortal 状态联动中的历史与 ECS 混合配置。
-- **排错边界**：上述为节点图/表达式静态核对结果；本次未读取最新失败执行来证明具体运行故障。修复前需确定 ECS 所需事件契约及正确触发数据来源。
+- **ECS 分支移除记录（2026-09-16）**：原 ECS 分支的归属检查 GET `supportcenter.stellarix.space/automation/production/api/integrations/zendesk/account-cases/{id}/comment-sync-target` 持续 404——线上该前缀由 `automation_ecs_api` 应答，没有 `/api/integrations/*` 路由，未匹配请求落到 UI 静态兜底（GET 404 / PUT 405，无凭据探测与仓库源码双重确认）。保留执行历史 1138 次全部失败、无成功记录；下游 `Get_Case_Comment3`、`Build complete comment snapshot2`、`Sync comments to automation production` 三处还各自引用本流程不存在的 `Zen_New_Comment_Webhook`，因 404 发生在上游而从未被执行到。已删除整条 ECS 分支（5 个节点）并发布版本 `6cfb5781`。
+- **与项目的关系**：旧 EC2 双环境状态联动；ECS 侧不经此流程。ECS 的 `ticket.updated` intake 事件目前也仅留痕（route 阶段标记 `ticket_updated_no_turn` 忽略），如需 ECS 状态联动须先在 ECS 侧实现消费逻辑。
+- **排错边界**：移除已回读确认（9 节点、仅两条旧栈分支、激活版本与草稿一致）；后续以真实 Zendesk 状态变化产生的成功 execution 为准。
 
 <a id="w-3zJvu5KQFZIoOoqu"></a>
 
@@ -252,11 +252,11 @@
 
 ## 待核对配置
 
-下列问题来自本次节点图、表达式和仓库配置核对，**均未在本任务修复或通过业务重跑验证**。优先级体现后续核对顺序，不代表已经测得的故障严重程度。
+下列问题来自 2026-09-16 节点图、表达式和仓库配置核对。第 1 项当日已处理（见下表）；其余**未修复，也未通过业务重跑验证**。优先级体现后续核对顺序，不代表已经测得的故障严重程度。
 
 | 顺序 | 工作流 | 已核实配置 | 下一步 |
 | --- | --- | --- | --- |
-| 1 | [status_sync_automation_production](#w-03B6AvcrOgRkWlUc) | 两个 ECS 评论节点引用不存在的 `Zen_New_Comment_Webhook`；该分支也不是状态事件 | 读取受影响执行，确认期望的状态/评论契约及正确数据源后修复 |
+| 1 | [status_sync_automation_production](#w-03B6AvcrOgRkWlUc) | 已处理（2026-09-16）：实际故障是 ECS 归属检查调用的 `/api/integrations/*` 端点在 `automation_ecs_api` 上不存在（请求落 UI 静态兜底），保留历史 1138 次执行全部失败；三处 `Zen_New_Comment_Webhook` 失效引用从未被执行到 | 已删除整条 ECS 分支并发布 `6cfb5781`，详见运维说明；后续如需 ECS 状态联动走 `/v1/intake` 且须先实现 ECS 侧消费 |
 | 2 | [new_case_2_supporportal_staging](#w-qFSNOmYXr97N2UGX) | 仍投递旧 EC2 Staging 路径，而仓库 Nginx 对该路由配置 410 | 核对线上端点与实际部署，决定目标环境和迁移/停用方案 |
 | 3 | [case_review_subflow](#w-b1Unpl6miABzcTmZ) | `status != solved OR status != closed` 不能排除 solved/closed | 明确允许评审的状态集合，再调整条件并验证边界 |
 | 4 | [Slack_zen_Bot](#w-kyiA0QuiVx6JJ03i) | 已发布图与草稿不同；本次保留未发布修改 | 后续编辑前对比两版，避免描述更新或无关修复顺带发布草稿 |
