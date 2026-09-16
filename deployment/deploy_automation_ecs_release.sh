@@ -1084,10 +1084,12 @@ verify_cloudwatch() {
   for role in api route worker; do
     group="$(jq -r --arg role "${role}" '.taskDefinition.containerDefinitions[] | select(.name == $role) | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/${role}.current.json")"
     [[ -n "${group}" && "${group}" != "null" ]] || fail "${role} CloudWatch log group is missing"
+    # --query applies per page on paginated calls and can emit several lines
+    # ("0\n0"), which breaks --argjson below; count over the merged JSON.
     count="$(aws logs filter-log-events --region "${REGION}" --log-group-name "${group}" \
       --log-stream-name-prefix "${role}/${role}/" --start-time "${start_ms}" \
       --filter-pattern '?ERROR ?Traceback ?Exception' \
-      --query 'length(events)' --output text)"
+      --output json | jq '[.events[]?] | length')"
     jq -n --arg role "${role}" --argjson error_count "${count}" \
       '{role:$role,error_count:$error_count}' >"${TEMP_DIR}/${role}.cloudwatch-count.json"
     [[ "${count}" = "0" ]] || fail "${role} CloudWatch errors detected after deployment"

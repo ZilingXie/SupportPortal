@@ -26,6 +26,8 @@ ACCOUNT_RUNTIME_TABLES = frozenset(
         "support_account_automation_classification_emails",
         "support_account_zendesk_comment_deliveries",
         "support_account_slack_deliveries",
+        "support_enablement_relay_requests",
+        "support_enablement_relay_results",
         "support_engineer_cases",
         "support_engineer_case_messages",
         "support_engineer_case_events",
