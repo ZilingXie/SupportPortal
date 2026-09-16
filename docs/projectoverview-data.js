@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T05:19:28Z",
-  "source_base_commit": "c1c912cf1130b5ee35a9056e455f42acd11a2868",
-  "registry_digest": "5a21adbfcd580f2c9d79b424ae9cfd12145bfb785b4b3d65f912fcf38e8a5b16",
+  "generated_at": "2026-09-16T06:11:36Z",
+  "source_base_commit": "c577961b1966e18ee89e5aac087daf2b75d37c01",
+  "registry_digest": "0c0e83660a5d8a9f196a96c469c769295ce8cdf6769889c3a2201746415c3e3a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4057,6 +4057,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Engineer Slack root messages now neutralize Slack user and broadcast control tokens only in the rendered customer title/problem while preserving the structured source text, Zendesk URL, route reason, thread workflow and direct-post contract; targeted Slack and Production intake regression passed 189 tests and 14 subtests.",
           "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_account_intake.py"
+        },
+        {
+          "type": "test",
+          "summary": "Free-n8n Slack request verification is implemented in the Preproduction SupportPortal API with n8n-token authentication, managed signing-secret injection, Slack v0 HMAC verification, and a five-minute replay window; the route and secret remain absent from Production. API/deployment/bootstrap/workflow coverage passed 111 tests; the n8n verifier draft remains unpublished until Preproduction deployment and secret configuration.",
+          "ref": "backend/automation_ecs_api.py, backend/services/automation_hermes_slack_actions.py, backend/tests/test_automation_ecs_api.py, backend/tests/test_automation_ecs_deploy.py, backend/tests/test_bootstrap_automation_preproduction.py"
         },
         {
           "type": "test",
@@ -14670,14 +14675,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "通过 Slack 向工程师送达 Round Robin 派单",
       "status": "active",
       "owner": "unassigned",
-      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。Zendesk status sync 对绑定 Case thread 发送状态变化通知，不触发 AI 或客户交付。n8n 只负责固定 Team/Channel/thread 的入站控制。",
-      "next_action": "由用户部署 Slack mention neutralization 后，以新的 Production Non automated 测试工单确认客户正文中的 Slack user/broadcast token 只显示为普通文本且不产生通知；同时在固定测试 Channel 真实点击一次 n8n Slack Interaction 按钮，并在错误 Channel @bot 确认只 ACK；另由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
+      "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。Zendesk status sync 对绑定 Case thread 发送状态变化通知，不触发 AI 或客户交付。n8n 负责固定 Team/Channel/thread 的可视化入站控制；免费版 n8n 的 Slack Interaction 原始请求由 SupportPortal 使用托管 signing secret 验签。",
+      "next_action": "在 Preproduction SSM 配置 engineer-slack-signing-secret，部署包含 /api/integrations/slack/verify-request 的 API release，验证有效/伪造/过期签名后发布 n8n Slack Action 草稿 8d23501d-d39d-4c00-88b2-565825c1d546，并在固定测试 Channel 真实点击一次按钮；Production 保持未授权。另以新测试工单完成 Slack mention neutralization 与错误 Channel ACK 验收，并由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
       "acceptance_criteria": [
         "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
         "Production Non automated Case 的客户标题和问题即使包含 Slack user/channel/broadcast token，也只作为普通文本显示且不触发 mention 通知。",
         "Production Non automated Engineer Case 的真实 Zendesk status transition 只队列一条 `Ticket's Status has been changed from XXX to XXX.` Slack thread 通知；重复或 stale status 不新增事件，solved/closed 仍关闭 Engineer Case。",
         "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
-        "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。"
+        "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。",
+        "Slack Interaction 在解析和调用业务接口前通过 SupportPortal 校验原始请求的 v0 HMAC 与五分钟时间窗；无效、过期或未配置的验签请求失败关闭且不产生业务动作。"
       ],
       "blockers": [],
       "evidence": [
@@ -14735,13 +14741,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "summary": "Engineer Slack root messages now neutralize Slack user and broadcast control tokens only in the rendered customer title/problem while preserving the structured source text, Zendesk URL, route reason, thread workflow and direct-post contract; targeted Slack and Production intake regression passed 189 tests and 14 subtests.",
           "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_account_intake.py"
+        },
+        {
+          "type": "test",
+          "summary": "Free-n8n Slack request verification is implemented in the Preproduction SupportPortal API with n8n-token authentication, managed signing-secret injection, Slack v0 HMAC verification, and a five-minute replay window; the route and secret remain absent from Production. API/deployment/bootstrap/workflow coverage passed 111 tests; the n8n verifier draft remains unpublished until Preproduction deployment and secret configuration.",
+          "ref": "backend/automation_ecs_api.py, backend/services/automation_hermes_slack_actions.py, backend/tests/test_automation_ecs_api.py, backend/tests/test_automation_ecs_deploy.py, backend/tests/test_bootstrap_automation_preproduction.py"
         }
       ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
       "created_at": "2026-08-16",
-      "updated_at": "2026-08-28",
+      "updated_at": "2026-09-16",
       "history": [
         {
           "at": "2026-08-16",
@@ -14807,6 +14818,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-08-28",
           "event": "slack_mentions_neutralized",
           "summary": "Production Non automated root message 对客户标题和问题中的 Slack user/channel/broadcast token 做出站转义，避免上游 `\u003c@U...>` 在固定协作频道触发真实 mention；结构化原文和系统生成内容保持不变。"
+        },
+        {
+          "at": "2026-09-16",
+          "event": "slack_signature_verifier_implemented",
+          "summary": "为不支持 Code 节点环境变量的免费 n8n 增加 SupportPortal 外部验签接口和 API 角色托管 signing secret；n8n Interaction 草稿在解析前调用验签接口，待 Preproduction 配置、部署和验证后发布。"
         }
       ],
       "legacy_refs": [

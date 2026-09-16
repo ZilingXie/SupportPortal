@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "WT43uQ1i8SPsYRJi",
+    "workflowName": "[review]Rating",
+    "snapshotKind": "published",
+    "versionId": "00263e90-7dbd-41f3-a617-9e8421be5d2f",
+    "draftVersionId": "00263e90-7dbd-41f3-a617-9e8421be5d2f",
+    "publishedVersionId": "00263e90-7dbd-41f3-a617-9e8421be5d2f",
+    "updatedAt": "2026-09-16T04:11:46.487Z",
+    "parentFolderId": "UfVNL6lt6WgPEZ7T"
+  },
+  "workflow": {
+    "name": "[review]Rating",
+    "description": "接收 Zendesk 满意度 Webhook，跳过评分为 GOOD 的事件，将其余工单标记为 Negative 并调用 [review]Case|Subflow，进入 Slack 人工评审与质检记录流程。",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "d1f69c89-2810-449c-8e7c-0b2f082aa294",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -208,
+          208
+        ],
+        "id": "3f5f378c-59fc-4ac0-800e-17be69ab3793",
+        "name": "Negative_case",
+        "webhookId": "d1f69c89-2810-449c-8e7c-0b2f082aa294"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "c5f23ab7-e675-4f80-ba02-506554b43b23",
+                "leftValue": "={{ $json.body.event.satisfaction_score.score }}",
+                "rightValue": "GOOD",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          16,
+          208
+        ],
+        "id": "f8394a26-32ab-46f5-9009-3efea090cef6",
+        "name": "If"
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "b1Unpl6miABzcTmZ",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/b1Unpl6miABzcTmZ",
+            "cachedResultName": "case_review_subflow"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          464,
+          208
+        ],
+        "id": "17eba86a-c9e1-4171-8022-410fbc605774",
+        "name": "Call 'case_review_subflow'"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn {\n  \"tag\":\"Negative\",\n  \"caseId\":$('Negative_case').first().json.body.detail.id\n}"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          208
+        ],
+        "id": "689e1d83-5e49-4d84-8b68-e3232c55b4d0",
+        "name": "Code in JavaScript"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $json['Ticket #'] }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          672,
+          208
+        ],
+        "id": "0d254d5a-7125-42ee-a713-f22efbdae003",
+        "name": "Execution Data"
+      }
+    ],
+    "connections": {
+      "Negative_case": {
+        "main": [
+          [
+            {
+              "node": "If",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Code in JavaScript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code in JavaScript": {
+        "main": [
+          [
+            {
+              "node": "Call 'case_review_subflow'",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call 'case_review_subflow'": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

@@ -181,8 +181,10 @@ class EngineerSlackWorkflowContractTests(unittest.TestCase):
     def test_runbook_assigns_outbound_to_supportportal(self) -> None:
         raw = (N8N_DIR / "engineer_case_slack_runbook.md").read_text(encoding="utf-8")
         self.assertIn("PRODUCTION_ENGINEER_SLACK_ACCESS_TOKEN", raw)
-        self.assertIn("N8N_BLOCK_ENV_ACCESS_IN_NODE=false", raw)
-        self.assertIn("exact raw request body", raw)
+        self.assertIn("ENGINEER_SLACK_SIGNING_SECRET", raw)
+        self.assertIn("/api/integrations/slack/verify-request", raw)
+        self.assertIn("raw request bodies", raw)
+        self.assertNotIn("N8N_BLOCK_ENV_ACCESS_IN_NODE=false", raw)
         self.assertIn("never automatically replayed", raw)
         self.assertNotIn("PRODUCTION_ENGINEER_SLACK_N8N_WEBHOOK_URL", raw)
 

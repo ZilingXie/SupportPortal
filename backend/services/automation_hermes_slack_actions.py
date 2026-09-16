@@ -8,7 +8,10 @@ slow work (the persona run) happens later in the worker.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import time
 from typing import Any
 
 from backend.services.automation_ecs_store import (
@@ -26,6 +29,37 @@ from backend.services.automation_hermes_tools import (
 LOGGER = logging.getLogger("supportportal.automation_hermes_slack_actions")
 
 _ALLOWED_ACTIONS = frozenset({"prepare_draft", "approve_draft"})
+_SLACK_SIGNATURE_MAX_AGE_SECONDS = 300
+
+
+def verify_slack_request_signature(
+    *,
+    raw_body: str,
+    request_timestamp: str,
+    signature: str,
+    signing_secret: str,
+    now: float | None = None,
+) -> bool:
+    """Verify Slack's v0 request signature without exposing the signing secret."""
+
+    secret = str(signing_secret or "").strip()
+    timestamp = str(request_timestamp or "").strip()
+    supplied = str(signature or "").strip()
+    if not secret or not raw_body or not timestamp or not supplied:
+        return False
+    try:
+        timestamp_value = int(timestamp)
+    except ValueError:
+        return False
+    current_time = time.time() if now is None else float(now)
+    if abs(current_time - timestamp_value) > _SLACK_SIGNATURE_MAX_AGE_SECONDS:
+        return False
+    expected = "v0=" + hmac.new(
+        secret.encode("utf-8"),
+        f"v0:{timestamp}:{raw_body}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(supplied, expected)
 
 
 def _invalid(detail: str, status_code: int = 422) -> dict[str, Any]:

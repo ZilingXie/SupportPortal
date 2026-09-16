@@ -54,6 +54,9 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
     "zendesk_basic_auth": "zendesk-basic-auth",
     "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
 }
+API_SLACK_SIGNING_SECRET_SUFFIXES = {
+    "ENGINEER_SLACK_SIGNING_SECRET": "engineer-slack-signing-secret",
+}
 # Enablement execution mode switch (p2-152): "manual" keeps the p2-149 human
 # review flow; "archer" restores the Archer auto-enablement workflow.
 ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
@@ -536,6 +539,7 @@ def render_initial_task_definition(
             # needs the Zendesk credentials and configured assignee email.
             "zendesk_basic_auth": "zendesk-basic-auth",
             "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
+            "ENGINEER_SLACK_SIGNING_SECRET": "engineer-slack-signing-secret",
         },
         "route": {
             "AUTOMATION_DB_DSN": "automation-db-dsn",
@@ -865,6 +869,11 @@ def render_task_definition(
                     _parameter_arn(prefix_arn, HERMES_AGENT_SECRET_SUFFIXES[name]),
                 )
     if role == "api":
+        if environment != "preproduction":
+            _remove_secret_references(
+                container,
+                set(API_SLACK_SIGNING_SECRET_SUFFIXES),
+            )
         # The dashboard hermes-review approve path resolves the current Zendesk
         # comments revision on the API role when no comment-sync row exists yet
         # (read_ticket_ownership_snapshot); ensure the readback credentials are
@@ -877,7 +886,10 @@ def render_task_definition(
         except ValueError:
             prefix_arn = None
         if prefix_arn:
-            for name, suffix in sorted(API_ZENDESK_READBACK_SECRET_SUFFIXES.items()):
+            required_api_secrets = dict(API_ZENDESK_READBACK_SECRET_SUFFIXES)
+            if environment == "preproduction":
+                required_api_secrets.update(API_SLACK_SIGNING_SECRET_SUFFIXES)
+            for name, suffix in sorted(required_api_secrets.items()):
                 _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
     if role == "worker":
         # Ensure the AgentRelay transport identity is present on every rendered

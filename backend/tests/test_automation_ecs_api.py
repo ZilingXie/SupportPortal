@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import os
 import re
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -323,6 +326,13 @@ def test_staging_and_legacy_paths_are_not_exposed() -> None:
     with client:
         assert client.post("/production/account", json={}).status_code == 404
         assert client.post("/automation/staging/v1/intake", json={}).status_code == 404
+        assert (
+            client.post(
+                "/automation/production/api/integrations/slack/verify-request",
+                json={},
+            ).status_code
+            == 405
+        )
         assert client.post("/automation/production/v1/reset", json={}).status_code == 401
 
 
@@ -1226,6 +1236,79 @@ def test_hermes_slack_action_endpoint_approves_draft(monkeypatch) -> None:
 
 def _bind_thread_for(store: InMemoryAutomationEcsStore, ticket_id: str = "123") -> None:
     store.bind_hermes_case_thread(ticket_id, channel_id="C-TEST", thread_ts="777.000")
+
+
+def test_slack_request_verification_for_free_n8n(monkeypatch) -> None:
+    store = InMemoryAutomationEcsStore(_preproduction_settings())
+    store.migrate()
+    client = _preproduction_dashboard_client(store)
+    path = "/automation/preproduction/api/integrations/slack/verify-request"
+    headers = {"X-N8n-Request-Token": "token-1"}
+    raw_body = "payload=%7B%22type%22%3A%22block_actions%22%7D"
+    timestamp = str(int(time.time()))
+    secret = "test-slack-signing-secret"
+
+    monkeypatch.setenv("n8n_request_token", "token-1")
+    monkeypatch.delenv("ENGINEER_SLACK_SIGNING_SECRET", raising=False)
+    with client:
+        assert client.post(path, json={}).status_code == 401
+        unconfigured = client.post(
+            path,
+            headers=headers,
+            json={
+                "raw_body": raw_body,
+                "request_timestamp": timestamp,
+                "signature": "v0=" + "0" * 64,
+            },
+        )
+        assert unconfigured.status_code == 503
+
+        monkeypatch.setenv("ENGINEER_SLACK_SIGNING_SECRET", secret)
+        invalid = client.post(
+            path,
+            headers=headers,
+            json={
+                "raw_body": raw_body,
+                "request_timestamp": timestamp,
+                "signature": "v0=" + "0" * 64,
+            },
+        )
+        assert invalid.status_code == 401
+
+        stale_timestamp = str(int(timestamp) - 301)
+        stale_signature = "v0=" + hmac.new(
+            secret.encode(),
+            f"v0:{stale_timestamp}:{raw_body}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        stale = client.post(
+            path,
+            headers=headers,
+            json={
+                "raw_body": raw_body,
+                "request_timestamp": stale_timestamp,
+                "signature": stale_signature,
+            },
+        )
+        assert stale.status_code == 401
+
+        signature = "v0=" + hmac.new(
+            secret.encode(),
+            f"v0:{timestamp}:{raw_body}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        verified = client.post(
+            path,
+            headers=headers,
+            json={
+                "raw_body": raw_body,
+                "request_timestamp": timestamp,
+                "signature": signature,
+            },
+        )
+        assert verified.status_code == 200
+        assert verified.json() == {"ok": True}
+        assert verified.headers["cache-control"] == "no-store"
 
 
 def test_hermes_slack_resolve_and_feedback_messages(monkeypatch) -> None:

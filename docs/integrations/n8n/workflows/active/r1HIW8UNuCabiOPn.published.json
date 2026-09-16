@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "r1HIW8UNuCabiOPn",
+    "workflowName": "[slack]Forward Thread|Prod",
+    "snapshotKind": "published",
+    "versionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
+    "draftVersionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
+    "publishedVersionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
+    "updatedAt": "2026-09-16T05:48:00.607Z",
+    "parentFolderId": "Uj4fViHZGMeAhqTa"
+  },
+  "workflow": {
+    "name": "[slack]Forward Thread|Prod",
+    "description": "供 [slack]Route Support 调用：校验指定内部频道内由人发送的线程 @提及消息，解析 ECS Production 的 Engineer Case 线程绑定，再将消息转发给 SupportPortal。",
+    "nodes": [
+      {
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "Input",
+                "type": "any"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -528,
+          112
+        ],
+        "id": "68283eda-f124-42b7-a12f-53aa23da5fee",
+        "name": "When Executed by Another Workflow"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "1f5a928d-226b-4d6a-b756-68d6e381dc57",
+                "leftValue": "={{ $json.Input.type === 'message' && $json.Input.team === 'T1CBEDLJY' && $json.Input.channel === 'C0BS0N61D1R' && typeof $json.Input.thread_ts === 'string' && $json.Input.thread_ts.trim().length > 0 && typeof $json.Input.user === 'string' && $json.Input.user.trim().length > 0 && !$json.Input.bot_id && !$json.Input.subtype && typeof $json.Input.text === 'string' && $json.Input.text.includes('<@U08RVQSJQF2>') && $json.Input.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -304,
+          112
+        ],
+        "id": "7cdcb087-dbd0-4b54-8b5c-9248e0c5c724",
+        "name": "Validate Slack Mention"
+      },
+      {
+        "parameters": {
+          "url": "https://supportcenter.stellarix.space/automation/production/api/integrations/slack/engineer-cases/thread-bindings/resolve",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "T1CBEDLJY"
+              },
+              {
+                "name": "channel_id",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "thread_ts",
+                "value": "={{ $json.Input.thread_ts }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "11fb7c88-9b12-4e47-b38c-c25fd558eaec",
+        "name": "Resolve Active Binding1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -80,
+          112
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "6f6e1a10-4c54-4e89-a912-000000000006",
+                "leftValue": "={{ $json.status === 'bound' && !!$json.engineer_case_id }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "1d9cf1ac-bc4f-42c1-b2c1-ac8e2de74df3",
+        "name": "Bound Case Thread1",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          144,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/production/api/integrations/slack/engineer-cases/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({\n  schema_version: 1,\n  event_id:\n    $('When Executed by Another Workflow').item.json.Input.client_msg_id ||\n    [\n      $('When Executed by Another Workflow').item.json.Input.team,\n      $('When Executed by Another Workflow').item.json.Input.channel,\n      $('When Executed by Another Workflow').item.json.Input.ts\n    ].join(':'),\n  engineer_case_id: $json.engineer_case_id,\n  slack_user_id:\n    $('When Executed by Another Workflow').item.json.Input.user,\n  text: String(\n    $('When Executed by Another Workflow').item.json.Input.text || ''\n  ).replace(/<@U08RVQSJQF2>/g, '').trim(),\n  occurred_at: new Date(\n    Number(\n      $('When Executed by Another Workflow').item.json.Input.event_ts ||\n      $('When Executed by Another Workflow').item.json.Input.ts\n    ) * 1000\n  ).toISOString()\n}) }}",
+          "options": {}
+        },
+        "id": "4c032328-47b0-45f2-9e5d-c7516baddeb2",
+        "name": "Send Message To SupportPortal1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          368,
+          112
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Validate Slack Mention",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Slack Mention": {
+        "main": [
+          [
+            {
+              "node": "Resolve Active Binding1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Active Binding1": {
+        "main": [
+          [
+            {
+              "node": "Bound Case Thread1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Bound Case Thread1": {
+        "main": [
+          [
+            {
+              "node": "Send Message To SupportPortal1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "availableInMCP": true,
+      "executionOrder": "v1",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

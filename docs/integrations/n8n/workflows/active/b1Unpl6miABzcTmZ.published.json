@@ -1,0 +1,836 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "b1Unpl6miABzcTmZ",
+    "workflowName": "[review]Case|Subflow",
+    "snapshotKind": "published",
+    "versionId": "ba271e6f-bb8c-41f1-89e7-42f9d9d7554a",
+    "draftVersionId": "ba271e6f-bb8c-41f1-89e7-42f9d9d7554a",
+    "publishedVersionId": "ba271e6f-bb8c-41f1-89e7-42f9d9d7554a",
+    "updatedAt": "2026-09-16T04:11:44.677Z",
+    "parentFolderId": "UfVNL6lt6WgPEZ7T"
+  },
+  "workflow": {
+    "name": "[review]Case|Subflow",
+    "description": "接收父流程的工单 ID 和审查类型，获取 Zendesk 工单与评论，由 AI 提炼问题和摘要，在 Slack 等待人工评审，再添加 reviewed 标签并写入 Google Sheets；属于支持质检配套流程。",
+    "nodes": [
+      {
+        "parameters": {
+          "inputSource": "passthrough"
+        },
+        "id": "c055762a-8fe7-4141-a639-df2372f30060",
+        "typeVersion": 1.1,
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "position": [
+          768,
+          1264
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('When Executed by Another Workflow').item.json.caseId }}/comments.json",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1872,
+          1264
+        ],
+        "id": "680ddd84-8627-473b-85ce-d5500b9ce4b5",
+        "name": "Get_Case_Comment"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "You are a highly experienced technical support analyst with a keen ability to distill complex information into concise summaries for senior management review. Your expertise lies in identifying key issues, solutions, and customer sentiments within support tickets.\n\nYour task is to summarize a support ticket in no more than 100 words. I will provide you with the ticket conversations. Keep in mind that the summary should highlight the main issue, the steps taken to address it, and any pending actions or follow-up needed. Aim to maintain a professional tone that is suitable for senior management review.",
+                "role": "system"
+              },
+              {
+                "content": "={{ $('Aggregate').all().toJsonString() }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          2896,
+          1264
+        ],
+        "id": "2d40832a-ee59-42ec-8095-fb848a277be4",
+        "name": "Summarize",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "function processComments(comments) {\n  if (!Array.isArray(comments)) {\n    console.error(\"警告：comments 不是数组！实际值为：\", comments);\n    return [];\n  }\n  \n  return comments.map(comment => {\n    return {\n      author_id: comment.author_id,\n      //ispublic: comment.public,\n      body: comment.body\n    };\n  });\n}\n\nconst inputData = $input.first().json;\nconst processedData = processComments(inputData.comments);\n\n// 直接返回处理后的数组，不添加额外包装\nreturn processedData;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2096,
+          1264
+        ],
+        "id": "168dc496-f41b-481d-8407-540dd6a659f0",
+        "name": "restructure1"
+      },
+      {
+        "parameters": {
+          "aggregate": "aggregateAllItemData",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.aggregate",
+        "typeVersion": 1,
+        "position": [
+          2320,
+          1264
+        ],
+        "id": "c259d215-0202-4965-8bfd-b65af9b8ec54",
+        "name": "Aggregate"
+      },
+      {
+        "parameters": {
+          "authentication": "serviceAccount",
+          "operation": "append",
+          "documentId": {
+            "__rl": true,
+            "value": "1GWWiKP3PZvttXzZQIL6uggElZja6201sRE7aC5bhyB8",
+            "mode": "list",
+            "cachedResultName": "Case_Review",
+            "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1GWWiKP3PZvttXzZQIL6uggElZja6201sRE7aC5bhyB8/edit?usp=drivesdk"
+          },
+          "sheetName": {
+            "__rl": true,
+            "value": "={{ $('When Executed by Another Workflow').item.json.tag }}Case",
+            "mode": "name"
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "Date": "={{$now.toISODate()}}",
+              "Ticket #": "={{ $('Get_Case_info').item.json.ticket.id }}",
+              "Description": "={{ $('Description').item.json.output[0].content[0].text }}",
+              "Owner": "={{ $('Get_user_info').item.json.identities[0].value }}",
+              "Pass or Fail": "={{ $('Pending Slack').item.json.data['Pass or failed'][0] }}",
+              "Suggestions": "={{ $('Pending Slack').item.json.data.Suggestions }}",
+              "Month": "={{$now.toFormat('LLLL')}}",
+              "Category": "={{ $('Pending Slack').item.json.data['Review Catagory'][0] }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "Month",
+                "displayName": "Month",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Date",
+                "displayName": "Date",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Ticket #",
+                "displayName": "Ticket #",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Owner",
+                "displayName": "Owner",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Pass or Fail",
+                "displayName": "Pass or Fail",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Category",
+                "displayName": "Category",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Suggestions",
+                "displayName": "Suggestions",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Action Items",
+                "displayName": "Action Items",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": true
+              },
+              {
+                "id": "Improvement Completed (Y/N)",
+                "displayName": "Improvement Completed (Y/N)",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [
+          3952,
+          1264
+        ],
+        "id": "d11edaa3-9714-4dbe-8a55-af59a1c93f3b",
+        "name": "Append row in sheet",
+        "credentials": {
+          "googleApi": {
+            "id": "lTbMtQNsReiFKYr7",
+            "name": "zac_google_account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('When Executed by Another Workflow').item.json.caseId }}.json",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1216,
+          1264
+        ],
+        "id": "d04324f1-4262-4ec6-bfff-da4f26169497",
+        "name": "Get_Case_info"
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/users/{{ $('Get_Case_info').item.json.ticket.assignee_id }}/identities",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1648,
+          1264
+        ],
+        "id": "edfa5099-be21-4218-a101-4cca1c31fd58",
+        "name": "Get_user_info"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "responses": {
+            "values": [
+              {
+                "content": "={{ $('Aggregate').all().toJsonString() }}"
+              },
+              {
+                "role": "system",
+                "content": "You are a skilled technical support specialist with a knack for summarizing complex issues concisely.\n\nYour task is to describe the key issue of a support ticket in one clear and direct sentence.\n\nKeep in mind that the description should focus solely on the issue itself without referencing any individuals or context."
+              }
+            ]
+          },
+          "builtInTools": {},
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 2.1,
+        "position": [
+          2544,
+          1264
+        ],
+        "id": "af1c0367-8fc2-4003-90d9-17bc488ecfc6",
+        "name": "Description",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "sendAndWait",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "value": "C0AF47M8L9L",
+            "mode": "id"
+          },
+          "message": "=[{{ $('When Executed by Another Workflow').item.json.tag }} Case Review]\nTicket #{{ $('When Executed by Another Workflow').item.json.caseId }} is pending review\nhttps://agoraio.zendesk.com/agent/tickets/{{ $('When Executed by Another Workflow').item.json.caseId }}\n\n{{ $json.message.content }}",
+          "responseType": "customForm",
+          "formFields": {
+            "values": [
+              {
+                "fieldLabel": "Review Catagory",
+                "fieldType": "checkbox",
+                "fieldOptions": {
+                  "values": [
+                    {
+                      "option": "Kill SLA"
+                    },
+                    {
+                      "option": "Wrong Ticket Status"
+                    },
+                    {
+                      "option": "Lack of follow-up "
+                    },
+                    {
+                      "option": "Gave wrong information "
+                    },
+                    {
+                      "option": "No proper investigation "
+                    },
+                    {
+                      "option": "Escalation Not Done "
+                    },
+                    {
+                      "option": "No Issue"
+                    }
+                  ]
+                },
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Suggestions",
+                "placeholder": "Suggestions",
+                "requiredField": true
+              },
+              {
+                "fieldLabel": "Pass or failed",
+                "fieldType": "checkbox",
+                "fieldOptions": {
+                  "values": [
+                    {
+                      "option": "Pass"
+                    },
+                    {
+                      "option": "Failed"
+                    }
+                  ]
+                },
+                "limitSelection": "exact",
+                "requiredField": true
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          3248,
+          1264
+        ],
+        "id": "856b9e64-35ec-4d75-bdd4-8970c642e6f1",
+        "name": "Pending Slack",
+        "webhookId": "4a86d7cc-a643-48de-9a5d-ac92619c672c",
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $json.caseId }}"
+              },
+              {
+                "key": "category",
+                "value": "={{ $json.tag }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          992,
+          1264
+        ],
+        "id": "eb32bcff-c49c-40c9-88e4-28c46f80309f",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "jsCode": "// 获取输入数据\nconst inputData = $input.all();\n\n// 检查输入是否存在且包含所需字段\nif (inputData[0] && inputData[0].json.data && Array.isArray(inputData[0].json.data[\"Review Catagory\"])) {\n  const reviewCategories = inputData[0].json.data[\"Review Catagory\"];\n  \n  // 将数组转换为所需的字符串格式\n  const outputString = `${reviewCategories.join(', ')}`;\n  \n  // 返回字符串\n  return [{ json: { output: outputString } }];\n}\n\n// 如果没有数据，返回空字符串\nreturn [{ json: { output: '' } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3472,
+          1264
+        ],
+        "id": "8c19b264-6141-450b-9d2f-e861b60e824a",
+        "name": "Code in JavaScript"
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/update_many.json?ids={{ $('When Executed by Another Workflow').item.json.caseId }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"ticket\": {\n    \"additional_tags\": [\"reviewed\"]\n  }\n}\n",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3712,
+          1264
+        ],
+        "id": "c736a77e-0334-45c8-9e89-059f0fda92e3",
+        "name": "update_tag"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "ea624996-623b-402b-bb46-3c770d2ad212",
+                "leftValue": "={{ $json.ticket.status }}",
+                "rightValue": "solved",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              },
+              {
+                "id": "37b0f77e-4e48-4243-bbec-89f1410db9fa",
+                "leftValue": "={{ $json.ticket.status }}",
+                "rightValue": "closed",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "or"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1424,
+          1264
+        ],
+        "id": "fe84ce2f-9674-401f-a376-f9da21789d0a",
+        "name": "If"
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_Case_Comment": {
+        "main": [
+          [
+            {
+              "node": "restructure1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Summarize": {
+        "main": [
+          [
+            {
+              "node": "Pending Slack",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "restructure1": {
+        "main": [
+          [
+            {
+              "node": "Aggregate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate": {
+        "main": [
+          [
+            {
+              "node": "Description",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_Case_info": {
+        "main": [
+          [
+            {
+              "node": "If",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_user_info": {
+        "main": [
+          [
+            {
+              "node": "Get_Case_Comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Description": {
+        "main": [
+          [
+            {
+              "node": "Summarize",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pending Slack": {
+        "main": [
+          [
+            {
+              "node": "Code in JavaScript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data": {
+        "main": [
+          [
+            {
+              "node": "Get_Case_info",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code in JavaScript": {
+        "main": [
+          [
+            {
+              "node": "update_tag",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Append row in sheet": {
+        "main": [
+          []
+        ]
+      },
+      "update_tag": {
+        "main": [
+          [
+            {
+              "node": "Append row in sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [
+            {
+              "node": "Get_user_info",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_info",
+        "path": "nodes.Get_Case_info.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_info",
+        "path": "nodes.Get_Case_info.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_info",
+        "path": "nodes.Get_Case_info.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_user_info",
+        "path": "nodes.Get_user_info.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_user_info",
+        "path": "nodes.Get_user_info.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_user_info",
+        "path": "nodes.Get_user_info.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "update_tag",
+        "path": "nodes.update_tag.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "update_tag",
+        "path": "nodes.update_tag.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "update_tag",
+        "path": "nodes.update_tag.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

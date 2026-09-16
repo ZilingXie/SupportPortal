@@ -73,6 +73,14 @@ class DashboardLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
 
 
+class SlackSignatureVerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw_body: str = Field(min_length=1, max_length=1_000_000)
+    request_timestamp: str = Field(min_length=1, max_length=32)
+    signature: str = Field(min_length=1, max_length=256)
+
+
 DASHBOARD_COOKIE_NAME = "supportportal_automation_dashboard"
 _ROUTE_FIELDS = (
     "route_family",
@@ -1066,6 +1074,33 @@ def create_app(    *,
                 },
                 headers={"Cache-Control": "no-store"},
             )
+
+        @app.post(
+            f"{base}/api/integrations/slack/verify-request",
+            dependencies=[Depends(_require_n8n_request_token)],
+        )
+        async def ecs_verify_slack_request(
+            payload: SlackSignatureVerificationRequest,
+        ) -> JSONResponse:
+            """Verify Slack's signature for n8n instances that cannot access secrets."""
+            from backend.services.automation_hermes_slack_actions import (
+                verify_slack_request_signature,
+            )
+
+            signing_secret = str(os.getenv("ENGINEER_SLACK_SIGNING_SECRET") or "").strip()
+            if not signing_secret:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Slack request verification is not configured",
+                )
+            if not verify_slack_request_signature(
+                raw_body=payload.raw_body,
+                request_timestamp=payload.request_timestamp,
+                signature=payload.signature,
+                signing_secret=signing_secret,
+            ):
+                raise HTTPException(status_code=401, detail="invalid Slack request signature")
+            return JSONResponse(content={"ok": True}, headers={"Cache-Control": "no-store"})
 
         @app.post(
             f"{base}/api/integrations/slack/hermes-cases/actions",

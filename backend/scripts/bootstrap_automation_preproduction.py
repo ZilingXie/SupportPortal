@@ -29,6 +29,7 @@ SOURCE_COPY_SUFFIXES = (
     "account-slack-n8n-webhook-url",
     "account-slack-n8n-status-url",
     "engineer-slack-access-token",
+    "engineer-slack-signing-secret",
     "billing-graph-client-secret",
     "enablement-internal-email-recipients",
     "fraud-internal-email-recipients",

@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "03B6AvcrOgRkWlUc",
+    "workflowName": "[case]Sync Status",
+    "snapshotKind": "published",
+    "versionId": "6cfb5781-11bf-4596-bd99-64c092969b92",
+    "draftVersionId": "6cfb5781-11bf-4596-bd99-64c092969b92",
+    "publishedVersionId": "6cfb5781-11bf-4596-bd99-64c092969b92",
+    "updatedAt": "2026-09-16T05:47:53.165Z",
+    "parentFolderId": "m6g0McsPdron3eH9"
+  },
+  "workflow": {
+    "name": "[case]Sync Status",
+    "description": "监听 Zendesk 状态变化，获取工单并按 Case 归属把状态同步到旧主栈与旧 Production（仅旧 EC2 环境）。原 ECS 分支调用的 /api/integrations 端点在 ECS 上不存在、从未成功，已于 2026-09-16 移除；ECS 由 /v1/intake 事件驱动，不做状态联动。属于 SupportPortal 状态联动流程。",
+    "nodes": [
+      {
+        "parameters": {
+          "options": {},
+          "conditions": {
+            "any": [
+              {
+                "operation": "changed"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.zendeskTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          96
+        ],
+        "id": "fb51d9b8-5261-4a08-a0f8-ba4920aaca2e",
+        "name": "Zendesk Trigger",
+        "webhookId": "aeb4fc22-d2c0-4e62-b1d5-b945950154e9",
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "=https://support.stellarix.space/api/integrations/zendesk/account-cases/{{ $('Zendesk Trigger').item.json['ticket.id'] }}/comment-sync-target",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {}
+        },
+        "id": "207e1424-7ebe-447d-8eaa-6abeda447707",
+        "name": "Account Case membership check",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          -96
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f6e5b090-399b-438f-85d5-e86318fec765",
+                "leftValue": "={{ $json.is_account_case }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "baa953ff-2fe5-4f37-9b2f-5e74b27876e0",
+        "name": "Is Account Case",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          896,
+          -96
+        ]
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $('Zendesk Trigger').item.json['ticket.id'] }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          448,
+          96
+        ],
+        "id": "d315d15e-0bb9-4fd2-882b-356d8f56032c",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "url": "=https://support.stellarix.space/production/api/integrations/zendesk/account-cases/{{ $('Zendesk Trigger').item.json['ticket.id'] }}/comment-sync-target",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {}
+        },
+        "id": "1a770bbd-d1ee-4ff8-9a5f-f6d8ab6fcd85",
+        "name": "prodCase membership check",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          96
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f6e5b090-399b-438f-85d5-e86318fec765",
+                "leftValue": "={{ $json.is_account_case }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "e58a9f1e-80f2-4a5f-bce5-b9165f4323df",
+        "name": "Is prodCase",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          896,
+          96
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://support.stellarix.space/production/api/integrations/zendesk/account-cases/{{ $('Zendesk Trigger').item.json['ticket.id'] }}/status",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "zendesk_status",
+                "value": "={{ $('get_case_info').item.json.ticket.status }}"
+              },
+              {
+                "name": "updated_at",
+                "value": "={{ $now }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1120,
+          96
+        ],
+        "id": "a68e636e-f56c-4cf8-adf1-185344215877",
+        "name": "HTTP Request1",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $json['ticket.id'] }}.json",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/json"
+              },
+              {
+                "name": "authorization",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          224,
+          96
+        ],
+        "id": "605e1da9-9f5e-48cb-9869-ddeb1f4199bb",
+        "name": "get_case_info"
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://support.stellarix.space/api/integrations/zendesk/account-cases/{{ $('Zendesk Trigger').item.json['ticket.id'] }}/status",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "zendesk_status",
+                "value": "={{ $('get_case_info').item.json.ticket.status }}"
+              },
+              {
+                "name": "updated_at",
+                "value": "={{ $now }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1120,
+          -96
+        ],
+        "id": "6f919293-eb12-4568-a743-5b27d1cf70a0",
+        "name": "HTTP Request2",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Account Case membership check": {
+        "main": [
+          [
+            {
+              "node": "Is Account Case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data": {
+        "main": [
+          [
+            {
+              "node": "Account Case membership check",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "prodCase membership check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "prodCase membership check": {
+        "main": [
+          [
+            {
+              "node": "Is prodCase",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Zendesk Trigger": {
+        "main": [
+          [
+            {
+              "node": "get_case_info",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Account Case": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is prodCase": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_case_info": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "availableInMCP": true,
+      "executionOrder": "v1",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "get_case_info",
+        "path": "nodes.get_case_info.parameters.headerParameters.parameters.1.value",
+        "field": "authorization",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

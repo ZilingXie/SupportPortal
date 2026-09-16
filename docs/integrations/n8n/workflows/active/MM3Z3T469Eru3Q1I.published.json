@@ -1,0 +1,1311 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-16T06:15:17Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "MM3Z3T469Eru3Q1I",
+    "workflowName": "[kb]Build|Solved Cases",
+    "snapshotKind": "published",
+    "versionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
+    "draftVersionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
+    "publishedVersionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
+    "updatedAt": "2026-09-16T04:11:43.890Z",
+    "parentFolderId": "SLMnELm0z3huA2Cr"
+  },
+  "workflow": {
+    "name": "[kb]Build|Solved Cases",
+    "description": "接收 Zendesk SOLVED 事件，先在 PostgreSQL 去重，再整理评论并由 AI 判断是否适合入库；生成英文 Zendesk KB 草稿、写入 Google Sheets，并提交到 SupportPortal 知识库接口。",
+    "nodes": [
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "={{ $json.choices[0].message.content }}"
+              },
+              {
+                "content": "Convert the given content into html format. Do not include html``` and ```. Refer to the example below:\n<h2 id=\"h_01JXYM3SPWW1Y0ZFBK0DZ73FDN\">Issue Description:</h2>\n<p>\n  Users need to enable log upload in the Agora Web SDK to send SDK logs to Agora's\n  servers for debugging and troubleshooting purposes.\n</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM42P5KQPG78V3E24TME8E\">Platform/SDK:</h2>\n<p>Agora Web SDK (v4.x)</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM48GYGS6VA4H34BEMJXM4\">Error Message (optional):</h2>\n<p>N/A</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM4DGP0793VHZV0FZ2C89H\">Step by Step Solution:</h2>\n<h3 id=\"h_01JXYM4JVGXY22EWEFD0FTJZ8H\">\n  1. <strong>Enable Log Upload:</strong>\n</h3>\n<p>\n  - Use the <code>enableLogUpload()</code> method from the <code>AgoraRTC</code>\n  global interface to start uploading logs.\n</p>\n<p>\n  <code>AgoraRTC.enableLogUpload();</code>\n</p>\n<p>\n  This begins automatic log uploads immediately with no parameters required.\n</p>\n<p>&nbsp;</p>\n<h3 id=\"h_01JXYM4NRY5Q8B0TPF92XBD3HV\">\n  2. <strong>(Optional) Set Log Level:</strong>\n</h3>\n<p>\n  - To manage which logs are recorded and uploaded, apply the\n  <code>setLogLevel()</code> function with the desired log level:\n</p>\n<p>\n  <code>AgoraRTC.setLogLevel(AgoraRTC.LOG_LEVEL.DEBUG); // For the most detailed logs</code>\n</p>\n<p>\n  <code>or</code>\n</p>\n<p>\n  <code>AgoraRTC.setLogLevel(AgoraRTC.LOG_LEVEL.INFO); // Default setting</code>\n</p>\n<p>&nbsp;</p>\n<h3 id=\"h_01JXYM4VJNNNTXXSX951B4GKBW\">\n  3. <strong>(Optional) Disable Log Upload:</strong>\n</h3>\n<p>\n  - When logging is no longer needed, stop the log uploads using:\n</p>\n<p>\n  <code>AgoraRTC.disableLogUpload();</code>\n</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM4ZQ4DVCDQ5N523EX5T1S\">Root Cause:</h2>\n<p>\n  Users require a mechanism to gather and upload logs for debugging purposes when\n  they encounter audio/video issues or connection problems, which the SDK supports\n  via the <code>enableLogUpload</code> function.\n</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM563BGHWZ7MHRT783K2RM\">Prevention/Best Practice:</h2>\n<p>\n  Always set an appropriate log level to ensure only necessary information is collected\n  and shared. Be cautious about leaving log upload enabled in production environments\n  unless required for ongoing troubleshooting. Example\n</p>\n<pre><code>javascript\n// Initialize AgoraRTC and enable logs\nAgoraRTC.setLogLevel(AgoraRTC.LOG_LEVEL.DEBUG); // Optional\nAgoraRTC.enableLogUpload(); // Start uploading logs\n\n// Later, if needed:\nAgoraRTC.disableLogUpload(); // Stop uploading</code></pre>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM593KRCQ9EEHPGXJKTR0B\">Corresponding Document/Link (optional):</h2>\n<p>\n  - <a href=\"#\">AgoraRTC.enableLogUpload() Documentation</a>\n</p>\n<p>\n  - <a href=\"#\">AgoraRTC.setLogLevel() Documentation</a>\n</p>\n",
+                "role": "system"
+              }
+            ]
+          },
+          "simplify": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          1152,
+          608
+        ],
+        "id": "a7c83f9e-6818-4f2e-a9b4-10adc7576fed",
+        "name": "Convert_HTML",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT EXISTS (\n  SELECT 1 \n  FROM ticket \n  WHERE solved_ticket = $1\n) AS exists_flag;",
+          "options": {
+            "queryReplacement": "={{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}"
+          }
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          -2944,
+          -32
+        ],
+        "id": "cb004577-194c-403b-84bd-cd0a975a356e",
+        "name": "Check_Dup",
+        "credentials": {
+          "postgres": {
+            "id": "ddbl9KA6m6Aq8O9l",
+            "name": "aws-posgre-zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "5653c832-f603-4f90-a10c-02c5f45707bc",
+                "leftValue": "={{ $json.exists_flag }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -2720,
+          -32
+        ],
+        "id": "58998d0c-9646-4515-af2a-e37dac3edb85",
+        "name": "If_not_dup"
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}/comments.json",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {}
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1824,
+          704
+        ],
+        "id": "a9653009-89e4-4f24-834b-c3e5d477332c",
+        "name": "Get_Case_Comment"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "=Geneate a suitable title for the give artile. The format should be [AI Generated][Ticket#{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}][title] \nMake sure the title is always in English.",
+                "role": "assistant"
+              },
+              {
+                "content": "={{ $('Remove_blank').item.json.result.toJsonString() }}"
+              }
+            ]
+          },
+          "simplify": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          96,
+          608
+        ],
+        "id": "2dae09ef-dcfb-4a3a-901d-c4a1cf0354b6",
+        "name": "Generate_KB_Title",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "# Role\nYou are a Senior Customer Support Engineer and Technical Writer at Agora. Your task is to transform raw customer support tickets into clear, accurate, and publishable knowledge base articles for end users.\n\n# Input\nThe input may include an issue description, operating system, product category, SDK or platform details, logs, error messages, customer comments, support engineer comments, and documentation links.\n\n# Goal\nFor each distinct issue in the ticket, generate one structured KB article. No article title is needed unless explicitly requested.\n\nThe article should help end users understand the issue, identify whether it applies to their environment, and follow the correct resolution steps.\n\n# Source Fidelity\nUse only information supported by the ticket, support comments, or provided documentation links.\n\nDo not invent:\n- SDK versions\n- Platforms or operating systems\n- Error messages\n- Root causes\n- Solution steps\n- Configuration names\n- Documentation links\n\nIf the root cause or solution is not clearly supported by the ticket or comments, state that the ticket does not provide enough information to confirm it.\n\n# Public vs Internal Classification\nDefault classification: External/Public KB.\n\nClassify the article as Internal SOP if the ticket contains any of the following:\n- Private or internal configuration names\n- Customer-specific identifiers\n- Credentials, tokens, App IDs, channel names, server addresses, or private parameters\n- Internal backend operations\n- Unreleased features\n- Troubleshooting steps that should not be exposed publicly\n\nIf classified as Internal SOP, add this line at the top:\nArticle Type: Internal SOP\n\nOtherwise, add:\nArticle Type: External/Public KB\n\nRemove or mask private customer information before writing the article.\n\n# Writing Style Rules\n1. Use professional, concise, and user-friendly language.\n2. Avoid unnecessary jargon. When technical terms are required, explain them clearly.\n3. Avoid second-person wording such as “you” and “your”. Use objective or imperative phrasing instead.\n4. Do not use em dashes.\n5. Avoid parentheses for supplementary explanations. Integrate the information naturally into the sentence.\n6. Parentheses may be preserved only when they are part of an exact error message, API name, method name, SDK name, code snippet, or official product term.\n7. Avoid speculation, casual phrasing, and unsupported assumptions.\n8. Keep each section self-contained and easy to scan.\n\n# Required Article Structure\nUse the following Markdown structure and order:\n\n### Issue Description\nProvide a concise summary of the user-facing problem, including when or where it occurs if that information is available.\n\n### Platform and SDK Context\nList the relevant environment details derived from the ticket.\nUse bullet points.\n\nInclude details such as:\n- Operating system\n- SDK or product\n- SDK version\n- Client, browser, framework, device, or integration type\n- Product category\n\nIf a detail is not provided, omit it.\n\n### Error Message\nInclude the exact error message only if one is explicitly reported in the ticket, logs, or comments.\nOmit this section if no explicit error message is available.\n\n### Root Cause Analysis\nExplain the confirmed technical cause in 1 to 2 concise sentences.\nIf the cause is not confirmed, write:\nThe ticket does not provide enough information to confirm the root cause.\n\n### Step-by-Step Solution\nProvide the resolution steps based only on the ticket comments, support engineer guidance, or provided documentation.\n\nUse a numbered list.\nEach step should start with a short bold action label, followed by a clear instruction.\n\n### Summary and Best Practice\nSummarize the resolution and include prevention guidance when applicable.\nOmit unsupported best practices.\n\n### Corresponding Document/Link\nInclude only official documentation links or links provided in the ticket.\nOmit this section if no reliable link is available.\n\n# Output Rules\nProvide only the final KB article content.\nDo not include analysis, notes, explanations, or conversational filler.\nDo not mention that information was rewritten from a ticket.",
+                "role": "system"
+              },
+              {
+                "content": "={{ $('Remove_blank').item.json.result.toJsonString() }}"
+              }
+            ]
+          },
+          "simplify": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          800,
+          608
+        ],
+        "id": "225fb3c0-03ff-4aad-a4b9-c34d46745fb9",
+        "name": "Geneate_KB_Content",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"article\": {\n    \"body\": {{ JSON.stringify($('Convert_HTML').item.json.choices[0].message.content) }},\n    \"locale\": \"en-us\",\n    \"permission_group_id\": 32310220630420,\n    \"title\": \"{{ $('Generate_KB_Title').item.json.choices[0].message.content }}\",\n    \"user_segment_id\": 27214812738964,\n    \"draft\": true\n  },\n  \"notify_subscribers\": false\n}",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1504,
+          608
+        ],
+        "id": "247276dd-fdcd-4de4-9c94-e23a2415de14",
+        "name": "HTTP_Create_KB"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO ticket (solved_ticket) VALUES ($1);",
+          "options": {
+            "queryReplacement": "={{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}"
+          }
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          -2496,
+          -32
+        ],
+        "id": "5800f132-7d99-4fff-9bb9-1c6d3cfc5b74",
+        "name": "Update_DB",
+        "credentials": {
+          "postgres": {
+            "id": "ddbl9KA6m6Aq8O9l",
+            "name": "aws-posgre-zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "sendAndWait",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "value": "C08R5JWM3N1",
+            "mode": "list",
+            "cachedResultName": "ai_kb_review"
+          },
+          "message": "=A KB is pending review for ticket {{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}:\nhttps://agoraio.zendesk.com/agent/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}\n[AI {{ $('AI_Approval').item.json.choices[0].message.content}}]\n\nSummary:\n{{ $('Summarize').item.json.choices[0].message.content }}",
+          "approvalOptions": {
+            "values": {
+              "approvalType": "double"
+            }
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.3,
+        "position": [
+          -2944,
+          192
+        ],
+        "id": "b19163a4-c0b6-4982-9561-78363b983a04",
+        "name": "Pending Slack",
+        "webhookId": "6251491d-960f-4d71-9e2a-9f47f434ec53",
+        "disabled": true,
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5-chat-latest",
+            "mode": "list",
+            "cachedResultName": "GPT-5-CHAT-LATEST"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "I want you to act as a conversation summarizer for customer support interactions, with a focus on capturing the key technical aspects of the dialogue in a concise 200-word summary. Your task is to distill the exchange between the agent and the customer, highlighting the technical issues raised, the solutions offered, and any pertinent technical details that are crucial for understanding the resolution of the problem.\n\nConversation Summary\n\nIn the conversation, the customer contacted support regarding persistent connectivity issues with their Wi-Fi network. The agent began by confirming the customer's device type, which was a Windows laptop running on Windows 11. The customer described intermittent connectivity drops, particularly when streaming video content. \n\nThe agent guided the customer through several troubleshooting steps, including checking the Wi-Fi signal strength and ensuring that the device was within range of the router. They also confirmed that the router firmware was up-to-date. After observing that the problem persisted, the agent suggested resetting the network adapter settings and performing a DNS flush. \n\nFurthermore, the agent inquired about other devices on the network and discovered that multiple devices experienced similar issues, indicating a potential router problem. The conversation concluded with the agent recommending a factory reset of the router and offering to follow up after the customer implemented the changes. This summary encapsulates the technical dialogue between the customer and the agent, focusing on the connectivity issues and systematic troubleshooting steps taken.",
+                "role": "system"
+              },
+              {
+                "content": "={{ $('Remove_blank').item.json.result.toJsonString() }}"
+              }
+            ]
+          },
+          "simplify": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          448,
+          608
+        ],
+        "id": "75616b68-5d88-44d4-8407-f11606dbd9e1",
+        "name": "Summarize",
+        "disabled": true,
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "42c0ecd0-f26a-4f4b-8b52-ffc8b1f2e923",
+                "leftValue": "={{ $json.data.approved }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -2720,
+          192
+        ],
+        "id": "0c7c4c6b-529b-4107-8c80-95bf426736c9",
+        "name": "If_Approved",
+        "disabled": true
+      },
+      {
+        "parameters": {
+          "jsCode": "function processComments(comments) {\n  if (!Array.isArray(comments)) {\n    console.error(\"警告：comments 不是数组！实际值为：\", comments);\n    return [];\n  }\n  \n  return comments.map(comment => {\n    return {\n      author_id: comment.author_id,\n      //ispublic: comment.public,\n      body: comment.body\n    };\n  });\n}\n\nconst inputData = $input.first().json;\nconst processedData = processComments(inputData.comments);\n\n// 直接返回处理后的数组，不添加额外包装\nreturn processedData;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1600,
+          704
+        ],
+        "id": "0be4ddda-f00b-4593-8b33-5259de06d588",
+        "name": "restructure1"
+      },
+      {
+        "parameters": {
+          "batchSize": "=1",
+          "options": {
+            "reset": false
+          }
+        },
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          -1376,
+          704
+        ],
+        "id": "3e9d87f4-9940-46a7-bb4b-36c4a26715b9",
+        "name": "Loop Over each comment"
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/users/{{ $json.author_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "Cookie",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "cookie",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1152,
+          704
+        ],
+        "id": "10065dd2-5a52-4142-a368-a41a72f6bb69",
+        "name": "HTTP Request"
+      },
+      {
+        "parameters": {
+          "jsCode": "function maskSensitiveInfo(inputText) {\n  if (!inputText || typeof inputText !== 'string') return inputText;\n\n  // 步骤1：按单词分割文本（保留空格和标点）\n  const words = inputText.split(/(\\s+|\\W+)/); // 正则分割保留分隔符\n  const maskedWords = words.map(word => {\n    // 跳过非单词字符（如空格、标点）\n    if (!/\\w/.test(word)) return word;\n\n    // 步骤2：检查单词中数字总数 ≥5\n    const digitCount = (word.match(/\\d/g) || []).length;\n    if (digitCount < 5) return word;\n\n    // 步骤3：替换单词中的所有数字为 *\n    return word.replace(/\\d/g, '*');\n  });\n\n  return maskedWords.join('');\n}\n\n// Safely get the first item from the 'Loop Over each comment' node\nconst item = $('Loop Over each comment').first();\n\n// Check if the item and the required 'body' property exist before processing\nif (item && item.json && item.json.body) {\n  const res = maskSensitiveInfo(item.json.body);\n\n  return [{\n    result: res\n  }];\n}\n\n// If no item or body is found, return an empty array.\n// This tells n8n to stop this execution path without an error.\nreturn [];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -928,
+          704
+        ],
+        "id": "f1475024-9ed3-474c-b836-8c3b1dca3625",
+        "name": "Mask1"
+      },
+      {
+        "parameters": {
+          "jsCode": "const rawEmail = $('HTTP Request').first()?.json?.user.email || '未找到邮箱';\nlet body = $input.first()?.json?.result || '未找到内容';\n//let time = $('AI_Filter').first().json.created_at;\n//let createTime= \"Created At\"\n\n// 移除所有换行符（兼容Windows/Unix/Mac系统）\nbody = body.replace(/(\\r\\n|\\n|\\r)/gm, ' '); // [2,5](@ref)\n\n// 处理邮箱格式\nlet processedEmail;\nif (rawEmail.endsWith('@agora.io')) {\n    processedEmail = 'agent'; \n} else {\n    processedEmail = 'Customer';\n}\n\n// 返回{邮箱: 内容}格式的对象\nreturn { \n    //[createTime]:time,\n    [processedEmail]: body    \n};"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -640,
+          784
+        ],
+        "id": "3fc0e778-eacd-4101-b225-edff9b9bc963",
+        "name": "Conversation"
+      },
+      {
+        "parameters": {
+          "aggregate": "aggregateAllItemData",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.aggregate",
+        "typeVersion": 1,
+        "position": [
+          -1152,
+          512
+        ],
+        "id": "6c0ccc78-80d5-4ca9-ab1d-1df8848bbf61",
+        "name": "Aggregate"
+      },
+      {
+        "parameters": {
+          "jsCode": "function cleanInput(input) {\n    // 1. 提取最内层有效数组（input[0].data）\n    const dataArray =input;\n    \n    // 2. 过滤空对象：保留至少包含一个有效键值对的对象\n    const filteredArray = dataArray.filter(item => {\n        return Object.keys(item).length > 0; // 仅保留非空对象[6,8](@ref)\n    });\n    \n    return filteredArray;\n}\n\n// 示例调用\n\nconst result = cleanInput($input.first().json.data);\nreturn {result}"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -928,
+          512
+        ],
+        "id": "5edbc030-fdc7-4987-9cae-0103c8375e81",
+        "name": "Remove_blank"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "ticket",
+                "value": "={{ $json.body.detail.id }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -2496,
+          704
+        ],
+        "id": "febdce7f-2a30-476a-9228-0533dfd1b11f",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "modelId": {
+            "__rl": true,
+            "value": "gpt-5.6-luna",
+            "mode": "list",
+            "cachedResultName": "GPT-5.6-LUNA"
+          },
+          "messages": {
+            "values": [
+              {
+                "content": "I want you to act as a **technical support ticket reviewer**. Your task is to evaluate technical support tickets and decide whether they are suitable to be converted into knowledge base articles.  \n\nYou should carefully read the ticket and categorize it based on the following rules:  \n\n- If it is a **billing issue**, return → `disapproved`  \n- If the **customer never responded after creating the ticket**, return → `disapproved`  \n- If it’s an **account suspended** ticket, return → `disapproved`  \n- If it’s a **product activation request** that does **not** include any technical discussion, return → `disapproved`  \n- If it’s a **ticket regarding account deletion**, return → `disapproved`  \n- If the **customer did not clearly confirm that the resolution solved the issue**, return → `disapproved`  \n- if this ticket is contains content \"This ticket is auto generated from thread: https://agoraiolab.slack.com\", return → `disapproved`  \n- For all other cases where the ticket contains technical discussion, troubleshooting steps, or confirmed resolution that could help others, return → `approved`  \n\n\n**Output format:**  \n- For approved tickets → `approved`  \n- For disapproved tickets → `disapproved`\n\nOnce I provide you with a technical support ticket, you will respond only with the appropriate decision following the above rules.",
+                "role": "system"
+              },
+              {
+                "content": "={{ $json.result.toJsonString() }}"
+              }
+            ]
+          },
+          "simplify": false,
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          -704,
+          512
+        ],
+        "id": "073d0cdd-11d4-43c1-9a46-780aacdfa770",
+        "name": "AI_Approval",
+        "credentials": {
+          "openAiApi": {
+            "id": "YRyAKkkVeN9iPoKS",
+            "name": "Zac_Openai"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "8b4496e7-3429-43b2-85b5-21db43c04ed9",
+                "leftValue": "={{ $json.choices[0].message.content }}",
+                "rightValue": "approved",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -352,
+          512
+        ],
+        "id": "c3045f26-a08c-4e3a-9104-4f4b6e810cb0",
+        "name": "AI_Filter"
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "579adbd3-0eeb-4a70-a45a-3a469328eece",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -2944,
+          704
+        ],
+        "id": "7102ba41-e434-4a78-9f0b-9f5ac5ff026f",
+        "name": "Ticket_Closure_Trigger",
+        "webhookId": "579adbd3-0eeb-4a70-a45a-3a469328eece"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f4f5d78a-3e02-4677-9e49-524e5248b4ce",
+                "leftValue": "={{ $json.body.detail.status }}",
+                "rightValue": "SOLVED",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -2720,
+          704
+        ],
+        "id": "f0d98d80-bc7b-44ca-a18f-6c31536a2a9d",
+        "name": "If"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "reject"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -2496,
+          192
+        ],
+        "id": "c1592bc5-1a86-4b40-8a11-24714b09180b",
+        "name": "Execution Data1"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "reject"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -128,
+          416
+        ],
+        "id": "c3ffa76e-8faf-4e61-8e82-6e7f451bca0a",
+        "name": "Execution Data2"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "approve"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -128,
+          608
+        ],
+        "id": "7df6f34c-e8f3-4774-abc9-3a7b19f84530",
+        "name": "Execution Data3"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO ticket (solved_ticket) \nVALUES ($1) \nON CONFLICT (solved_ticket) \nDO NOTHING\nRETURNING solved_ticket;",
+          "options": {
+            "queryReplacement": "={{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}"
+          }
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          -2272,
+          704
+        ],
+        "id": "f605b02c-d49a-43ad-887c-65ed1e0cac5e",
+        "name": "Update_DB1",
+        "credentials": {
+          "postgres": {
+            "id": "ddbl9KA6m6Aq8O9l",
+            "name": "aws-posgre-zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "0b82f951-858c-4cca-a376-b5f384d077dd",
+                "leftValue": "={{ $json.solved_ticket }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "exists",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -2048,
+          704
+        ],
+        "id": "ff5e267d-1937-4bcb-ac9f-3ae0c213706d",
+        "name": "If1"
+      },
+      {
+        "parameters": {
+          "authentication": "serviceAccount",
+          "operation": "append",
+          "documentId": {
+            "__rl": true,
+            "value": "1vYq8tgE4zTxEQXdjuzNvgsbmnwQnIfnKYQDZsIUdpyo",
+            "mode": "id"
+          },
+          "sheetName": {
+            "__rl": true,
+            "value": "gid=0",
+            "mode": "list",
+            "cachedResultName": "query",
+            "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1vYq8tgE4zTxEQXdjuzNvgsbmnwQnIfnKYQDZsIUdpyo/edit#gid=0"
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "Date": "={{$now.toISODate()}}",
+              "Comment": "={{ $('Get_Case_Comment').item.json.comments[0].body }}",
+              "Ticket": "={{ $('If1').item.json.solved_ticket }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "Date",
+                "displayName": "Date",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "Ticket",
+                "displayName": "Ticket",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true,
+                "removed": false
+              },
+              {
+                "id": "Comment",
+                "displayName": "Comment",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [
+          1728,
+          608
+        ],
+        "id": "0b31d2ca-b0d9-40ef-905f-d5f993738170",
+        "name": "Append row in sheet",
+        "retryOnFail": true,
+        "credentials": {
+          "googleApi": {
+            "id": "lTbMtQNsReiFKYr7",
+            "name": "zac_google_account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://support.stellarix.space/api/engineer/knowledge/articles",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "title",
+                "value": "={{ $('Code in JavaScript').item.json.extractedTitle }}"
+              },
+              {
+                "name": "source_url",
+                "value": "={{ $('HTTP_Create_KB').item.json.article.url }}"
+              },
+              {
+                "name": "content",
+                "value": "={{ $json.text }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2400,
+          608
+        ],
+        "id": "9ba95200-2bb2-4a9c-822d-0a8ecb9c81c6",
+        "name": "2_rag",
+        "retryOnFail": true,
+        "waitBetweenTries": 5000
+      },
+      {
+        "parameters": {
+          "jsCode": "const text = $('Generate_KB_Title').first().json.choices[0].message.content.trim();\n\nreturn {\n  extractedTitle: text.match(/^\\[[^\\]]*]\\[[^\\]]*]\\[(.*)]$/)?.[1] ?? null,\n};\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1952,
+          608
+        ],
+        "id": "75505d48-dfb9-498f-924f-22e3234b66cc",
+        "name": "Code in JavaScript"
+      },
+      {
+        "parameters": {
+          "jsCode": "const text = $('Geneate_KB_Content').first().json.choices[0].message.content\n\nreturn {text}"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2176,
+          608
+        ],
+        "id": "5d11bd94-4edd-4b94-a841-ab4f05cff8c6",
+        "name": "Code in JavaScript1"
+      }
+    ],
+    "connections": {
+      "Convert_HTML": {
+        "main": [
+          [
+            {
+              "node": "HTTP_Create_KB",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check_Dup": {
+        "main": [
+          [
+            {
+              "node": "If_not_dup",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_not_dup": {
+        "main": [
+          [
+            {
+              "node": "Update_DB",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_Case_Comment": {
+        "main": [
+          [
+            {
+              "node": "restructure1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate_KB_Title": {
+        "main": [
+          [
+            {
+              "node": "Summarize",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Geneate_KB_Content": {
+        "main": [
+          [
+            {
+              "node": "Convert_HTML",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update_DB": {
+        "main": [
+          []
+        ]
+      },
+      "Pending Slack": {
+        "main": [
+          [
+            {
+              "node": "If_Approved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Summarize": {
+        "main": [
+          [
+            {
+              "node": "Geneate_KB_Content",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If_Approved": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Execution Data1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "restructure1": {
+        "main": [
+          [
+            {
+              "node": "Loop Over each comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over each comment": {
+        "main": [
+          [
+            {
+              "node": "Aggregate",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "HTTP Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP Request": {
+        "main": [
+          [
+            {
+              "node": "Mask1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mask1": {
+        "main": [
+          [
+            {
+              "node": "Conversation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Conversation": {
+        "main": [
+          [
+            {
+              "node": "Loop Over each comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate": {
+        "main": [
+          [
+            {
+              "node": "Remove_blank",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Remove_blank": {
+        "main": [
+          [
+            {
+              "node": "AI_Approval",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP_Create_KB": {
+        "main": [
+          [
+            {
+              "node": "Append row in sheet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data": {
+        "main": [
+          [
+            {
+              "node": "Update_DB1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI_Approval": {
+        "main": [
+          [
+            {
+              "node": "AI_Filter",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI_Filter": {
+        "main": [
+          [
+            {
+              "node": "Execution Data3",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Execution Data2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ticket_Closure_Trigger": {
+        "main": [
+          [
+            {
+              "node": "If",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data3": {
+        "main": [
+          [
+            {
+              "node": "Generate_KB_Title",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update_DB1": {
+        "main": [
+          [
+            {
+              "node": "If1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If1": {
+        "main": [
+          [
+            {
+              "node": "Get_Case_Comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Append row in sheet": {
+        "main": [
+          [
+            {
+              "node": "Code in JavaScript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code in JavaScript": {
+        "main": [
+          [
+            {
+              "node": "Code in JavaScript1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code in JavaScript1": {
+        "main": [
+          [
+            {
+              "node": "2_rag",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "timezone": "Asia/Shanghai",
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "Get_Case_Comment",
+        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "HTTP_Create_KB",
+        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "HTTP_Create_KB",
+        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "HTTP_Create_KB",
+        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "HTTP Request",
+        "path": "nodes.HTTP Request.parameters.headerParameters.parameters.0.value",
+        "field": "Authorization",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "HTTP Request",
+        "path": "nodes.HTTP Request.parameters.headerParameters.parameters.1.value",
+        "field": "Cookie",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "HTTP Request",
+        "path": "nodes.HTTP Request.parameters.headerParameters.parameters.2.value",
+        "field": "cookie",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}

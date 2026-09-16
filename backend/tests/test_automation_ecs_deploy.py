@@ -189,6 +189,17 @@ def test_render_task_definition_only_changes_image_and_provenance(tmp_path: Path
 def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     current = _task_definition(tmp_path, "api")
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    payload["taskDefinition"]["containerDefinitions"][0]["secrets"].append(
+        {
+            "name": "ENGINEER_SLACK_SIGNING_SECRET",
+            "valueFrom": (
+                "arn:aws:ssm:us-east-1:123456789012:"
+                "parameter/supportportal/production/engineer-slack-signing-secret"
+            ),
+        }
+    )
+    current.write_text(json.dumps(payload), encoding="utf-8")
 
     rendered = render_task_definition(
         role="api",
@@ -205,6 +216,7 @@ def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: P
     assert secrets["ZENDESK_AI_ASSIGNEE_EMAIL"].endswith(
         "parameter/supportportal/production/zendesk-ai-assignee-email"
     )
+    assert "ENGINEER_SLACK_SIGNING_SECRET" not in secrets
 
 
 def _as_preproduction(current: Path) -> None:
@@ -565,6 +577,30 @@ def test_disabled_case_workflow_can_keep_persona_endpoint(
     assert {
         item["name"]: item["value"] for item in rendered_container["environment"]
     }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
+
+
+def test_render_preproduction_api_carries_slack_signing_secret(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+    _as_preproduction(current)
+
+    rendered = render_task_definition(
+        role="api",
+        current_path=current,
+        manifest_path=manifest,
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+    )
+
+    secrets = {
+        item["name"]: item["valueFrom"]
+        for item in rendered["containerDefinitions"][0]["secrets"]
+    }
+    assert secrets["ENGINEER_SLACK_SIGNING_SECRET"].endswith(
+        "parameter/supportportal/preproduction/engineer-slack-signing-secret"
+    )
 
 
 @pytest.mark.parametrize("role", ["api", "worker"])
