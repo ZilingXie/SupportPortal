@@ -152,6 +152,15 @@ class EnablementRelayPostgresTests(unittest.TestCase):
             self.assertEqual(stored["outcome"], "enabled")
             request = repository.get_enablement_relay_request(request_id)
             self.assertEqual(request["status"], "result_received")
+            # The ANY(%s) status scan must accept the tuple input the worker
+            # passes (psycopg renders tuples as record literals, not arrays).
+            scanned = repository.list_enablement_relay_requests(
+                statuses=("dispatched", "result_received", "dispatch_pending", "dispatching")
+            )
+            self.assertEqual(
+                [item["request_id"] for item in scanned],
+                [request_id],
+            )
         finally:
             repository.close()
             self._drop_schema(dsn, schema)
