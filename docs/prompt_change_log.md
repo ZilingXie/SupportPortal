@@ -1,6 +1,13 @@
 # Prompt Change Log
 
 
+## 2026-09-16 - Enablement auto acceptance hardening: bound approvals and server-side read-back gate (p2-163)
+
+- Behavior: the local skill's first approval is now bound to the exact application and report version (action=approve_execution + request_id + request_version + report_digest covering AppID/email/target params/state/dry-run plan; opaque strings rejected; precheck re-run at execute time must reproduce the digest). A dry-run with exit 0 but mismatched or unverifiable planned parameters is blocked (dry_run_params_mismatch / dry_run_params_unverified) and never writes. A timed-out write records write_attempted=true with outcome_unknown unless the independent read-back confirms the target.
+- Completion input: the ECS worker enforces the completion contract server-side — an enabled/already_satisfied relay result only creates the customer completion reply when its independent read-back satisfies the request's target parameters (state=enabled, region and maxSubscribeLoad match the snapshot) AND its approval_ref is bound to the application; otherwise the unified failure chain runs and no completion is sent.
+- Verification: new suite test_enablement_local_pilot (approval-binding negatives, digest determinism, dry-run gating, timeout classification, match robustness) plus three relay-inbox negatives (wrong/missing read-back, unbound approval → zero completion jobs, failure chain with relay_result_target_mismatch / relay_result_approval_unbound).
+
+
 ## 2026-09-16 - Enablement auto mode moves to AgentRelay + Mac pilot (p2-163)
 
 - Behavior: `ENABLEMENT_WORKFLOW_MODE=archer` now means the auto (relay) workflow: the customer submission confirmation (business-day review copy, no 24h promise on this path) is gated behind the Zendesk public readback, then one AgentRelay Task is dispatched per application and executed on the Mac via the pilot CLI. The manual mode keeps the p2-149 contract, including its "up to 24 hours" copy.

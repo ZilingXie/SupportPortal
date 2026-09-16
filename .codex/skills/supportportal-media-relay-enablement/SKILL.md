@@ -33,8 +33,11 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
 2. 对每个申请运行预检（本技能 `scripts/relay_enablement.py precheck`），生成统一报告
    `report-<date>.md`：case/申请版本/工单、邮箱+AppID+Project/Company ID 归属核验、当前状态与
    目标参数、dry-run 结果、建议动作（可执行 / 已满足 / 暂缓 / 阻断）与异常原因。
-3. **第一次审批**：请 owner 批准（全部 / 部分 / 暂缓 / 修改建议）。批准只授权当前报告版本中的
-   申请；邮箱、AppID、实例或目标参数变化后旧审批失效。
+3. **第一次审批**：请 owner 批准（全部 / 部分 / 暂缓 / 修改建议）。批准 JSON 必填字段：
+   `action="approve_execution"`、`request_id`、`request_version`、`report_digest`（取自当前
+   precheck 报告条目的 `report_digest`，其覆盖申请身份/AppID/邮箱/目标参数/当前状态/dry-run 计划）。
+   执行器在写入前**现场重算 precheck 并比对 digest**：任何字段变化（邮箱、AppID、实例、目标参数、
+   状态或 dry-run 计划）都会使旧审批失效并中止；非 JSON 字符串一律拒绝。
 4. 批准后逐申请执行（`execute` 子命令：先复核申请仍有效，再 `pilot archer open`，随后独立
    `pilot archer status` 回读），按 Task 生成分组回传草稿：成功项说明是否写入/实际回读值/验证
    时间；失败项说明阶段/原因/是否尝试过写入/已知状态，并明确"ECS 将触发 internal note、人工接管
@@ -54,12 +57,15 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
 
 | 检查结果 | 处理 |
 |---|---|
-| 未配置，归属与 dry-run 通过 | 审批后开通（outcome=enabled） |
+| 未配置，归属通过，dry-run 退出码 0 且计划参数（typeId/status/region/maxSubscribeLoad）与目标完全一致 | 审批后开通（outcome=enabled） |
+| dry-run 退出码 0 但计划参数与目标不一致 | 阻断（dry_run_params_mismatch），永不写入 |
+| dry-run 输出缺参数或不可解析 | 阻断（dry_run_params_unverified），永不写入 |
+| 只读命令（归属/状态/dry-run）超时或无法运行 | 阻断（pilot_timeout），可稍后重跑预检 |
 | 已启用且 region=2 / maxSubscribeLoad=10 | 不重复写入（outcome=already_satisfied） |
 | 已启用但参数不同（含 50） | 报告差异，停止自动修改（outcome=config_mismatch） |
 | 邮箱与 AppID 不匹配、项目不存在 | 不写入（outcome=ownership_mismatch / project_not_found） |
 | 写入返回成功但回读失败/不一致 | 不判成功，保存证据（outcome=enable_failed 或 outcome_unknown） |
-| Pilot 超时/中断/回读不可用 | outcome_unknown：不盲目重写，交接要求人工先核对 |
+| Pilot open 超时/中断/回读不可用 | write_attempted=true + outcome_unknown（写入可能已被服务端接受）；若事后独立回读确认满足目标则升级 enabled；否则不盲目重写，交接要求人工先核对 |
 
 ## 结果回传契约（reply 消息的 text part，单条 JSON）
 
@@ -71,11 +77,15 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
   "write_attempted": true,
   "detail": "<脱敏说明，禁止包含 AppID 全量/邮箱/token>",
   "readback": {"state": "enabled", "region": 2, "maxSubscribeLoad": 10, "verified_at": "<iso8601>"},
-  "approval_ref": {"batch": "<报告批次>", "approved_by": "zac", "approved_at": "<iso8601>"}
+  "approval_ref": {"action": "approve_execution", "request_id": "<原样>", "request_version": 1, "report_digest": "<第一次审批的 digest>", "batch": "<报告批次>", "approved_by": "zac", "approved_at": "<iso8601>"}
 }
 ```
 
 - `request_id` 必须与申请完全一致（ECS 按此绑定，不匹配即拒绝消费）。
+- **ECS 侧强制校验**：`enabled`/`already_satisfied` 结果必须携带满足目标参数的独立回读
+  （state=enabled、region 与 maxSubscribeLoad 与申请快照一致）且审批引用绑定本申请
+  （action=approve_execution、request_id 一致）；任一不满足按失败交接（internal note+人工接管+
+  通知邮件），绝不创建客户完成回复。
 - 写入前再次通过只读状态确认申请未被取消/接管/auto 仍启用；与写入之间的短竞态无法原子撤销，
   结果不确定时按 `outcome_unknown` 交接并要求人工先核对。
 

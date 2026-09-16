@@ -134,7 +134,13 @@ def _result_payload(request_id: str, *, outcome: str = "enabled") -> dict:
         "write_attempted": outcome == "enabled",
         "detail": "Enabled Media Relay; read-back confirmed region=2 load=10.",
         "readback": {"state": "enabled", "region": 2, "maxSubscribeLoad": 10},
-        "approval_ref": {"batch": "b-1", "approved_by": "zac"},
+        "approval_ref": {
+            "action": "approve_execution",
+            "request_id": request_id,
+            "request_version": 1,
+            "batch": "b-1",
+            "approved_by": "zac",
+        },
     }
 
 
@@ -467,6 +473,83 @@ class RelayInboxTests(unittest.TestCase):
         failure.assert_awaited_once()
         # The auto failure path never prepares a manual enablement email.
         prepare.assert_not_called()
+
+    def _client_with_override(self, payload_override):
+        import copy
+
+        client, payload = self._client_with_result()
+        payload.update(payload_override)
+        client.task_details["task-1"]["messages"][-1]["parts"][0]["text"] = json.dumps(
+            payload
+        )
+        return client, payload
+
+    def test_enabled_with_wrong_readback_never_creates_completion(self):
+        client, _payload = self._client_with_override(
+            {"readback": {"state": "enabled", "region": 2, "maxSubscribeLoad": 50}}
+        )
+        failure = AsyncMock()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
+            WORKER, "_record_execution_failure", failure
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        # No completion job; request failed into the unified chain; the relay
+        # task was still consumed (acked + closed).
+        jobs = [
+            job
+            for job in self.repository._account_reply_jobs.values()
+            if job.get("job_id") == f"enablement-relay-complete-{self.request_id}"
+        ]
+        self.assertEqual(jobs, [])
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "failed")
+        self.assertEqual(request["suppression_reason"], "relay_result_target_mismatch")
+        failure.assert_awaited_once()
+        self.assertEqual(len(client.acked), 1)
+        self.assertEqual(client.completed_tasks, ["task-1"])
+
+    def test_enabled_without_readback_never_creates_completion(self):
+        client, _payload = self._client_with_override({"readback": None})
+        failure = AsyncMock()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
+            WORKER, "_record_execution_failure", failure
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        jobs = [
+            job
+            for job in self.repository._account_reply_jobs.values()
+            if job.get("job_id") == f"enablement-relay-complete-{self.request_id}"
+        ]
+        self.assertEqual(jobs, [])
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "failed")
+        self.assertEqual(request["suppression_reason"], "relay_result_target_mismatch")
+
+    def test_enabled_with_unbound_approval_never_creates_completion(self):
+        client, _payload = self._client_with_override(
+            {"approval_ref": {"batch": "b-1", "approved_by": "zac"}}
+        )
+        failure = AsyncMock()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
+            WORKER, "_record_execution_failure", failure
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        jobs = [
+            job
+            for job in self.repository._account_reply_jobs.values()
+            if job.get("job_id") == f"enablement-relay-complete-{self.request_id}"
+        ]
+        self.assertEqual(jobs, [])
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "failed")
+        self.assertEqual(request["suppression_reason"], "relay_result_approval_unbound")
+        failure.assert_awaited_once()
 
     def test_notification_event_acked_and_never_applied(self):
         client, _payload = self._client_with_result()
